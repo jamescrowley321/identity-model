@@ -1,0 +1,30 @@
+{
+  "sub": "248289761001",
+  "name": "Jane Doe",
+  "given_name": "Jane",
+  "family_name": "Doe",
+  "middle_name": "Quinn",
+  "nickname": "Janie",
+  "preferred_username": "j.doe",
+  "profile": "https://example.com/janedoe",
+  "picture": "https://example.com/janedoe/me.jpg",
+  "website": "https://blog.example.com/janedoe",
+  "email": "janedoe@example.com",
+  "email_verified": true,
+  "gender": "female",
+  "birthdate": "1972-03-31",
+  "zoneinfo": "Europe/Paris",
+  "locale": "en-US",
+  "phone_number": "+1 (425) 555-1212",
+  "phone_number_verified": false,
+  "address": {
+    "formatted": "1234 Hollywood Blvd.\nLos Angeles, CA 90210\nUSA",
+    "street_address": "1234 Hollywood Blvd.",
+    "locality": "Los Angeles",
+    "region": "CA",
+    "postal_code": "90210",
+    "country": "USA"
+  },
+  "updated_at": 1700000000,
+  "department": "Engineering"
+}

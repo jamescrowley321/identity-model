@@ -1,0 +1,78 @@
+{
+  "capability": "userinfo",
+  "spec": "OpenID Connect Core 1.0 §5.3 / §5.1",
+  "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#UserInfo",
+  "required_fields": [
+    "sub"
+  ],
+  "tests": [
+    {
+      "id": "UI-001",
+      "title": "Fetch claims with Bearer authentication",
+      "given": "A reachable userinfo_endpoint and a valid access token",
+      "when": "Fetch is invoked with the access token",
+      "then": "The request carries an Authorization: Bearer header and the typed standard §5.1 claims are returned",
+      "fixture": "userinfo/standard-claims.json",
+      "references": ["§5.3", "§5.1", "§5.3.1"]
+    },
+    {
+      "id": "UI-002",
+      "title": "Subject consistency match passes",
+      "given": "An expected subject equal to the UserInfo sub",
+      "when": "Fetch is invoked with subject validation enabled",
+      "then": "The response is returned without error",
+      "fixture": "userinfo/standard-claims.json",
+      "references": ["§5.3.2"]
+    },
+    {
+      "id": "UI-003",
+      "title": "Subject consistency mismatch errors",
+      "given": "An expected subject different from the UserInfo sub",
+      "when": "Fetch is invoked with subject validation enabled",
+      "then": "A subject-mismatch error is raised",
+      "fixture": "userinfo/standard-claims.json",
+      "references": ["§5.3.2"]
+    },
+    {
+      "id": "UI-004",
+      "title": "Handle 401 with WWW-Authenticate challenge",
+      "given": "A userinfo_endpoint that returns HTTP 401 with a WWW-Authenticate header",
+      "when": "Fetch is invoked",
+      "then": "A typed error carrying the status and the WWW-Authenticate challenge is raised",
+      "references": ["§5.3.3", "RFC 6750 §3"]
+    },
+    {
+      "id": "UI-005",
+      "title": "Handle 403 error response",
+      "given": "A userinfo_endpoint that returns HTTP 403",
+      "when": "Fetch is invoked",
+      "then": "A typed error carrying the 403 status is raised",
+      "references": ["§5.3.3", "RFC 6750 §3"]
+    },
+    {
+      "id": "UI-006",
+      "title": "Handle 5xx / non-JSON response",
+      "given": "A userinfo_endpoint that returns HTTP 500 with a non-JSON body",
+      "when": "Fetch is invoked",
+      "then": "A descriptive request error carrying the status is raised",
+      "references": ["§5.3"]
+    },
+    {
+      "id": "UI-007",
+      "title": "Preserve custom claims",
+      "given": "A UserInfo response containing standard and non-standard claims",
+      "when": "Fetch is invoked",
+      "then": "Custom claims are accessible via the response claim map and standard claims remain typed",
+      "fixture": "userinfo/standard-claims.json",
+      "references": ["§5.1", "§5.1.2"]
+    },
+    {
+      "id": "UI-008",
+      "title": "Apply functional options",
+      "given": "A custom HTTP client and request timeout supplied via options",
+      "when": "Fetch is invoked",
+      "then": "The supplied client is used for the request and the timeout bounds a slow endpoint",
+      "references": ["§5.3"]
+    }
+  ]
+}
