@@ -58,6 +58,16 @@ func (c *cache) store(key string, cfg *ProviderConfiguration, ttl time.Duration)
 
 // fetch returns the cached configuration for issuerURL or fetches it, caching
 // the result. Concurrent misses for the same issuer collapse to one fetch.
+//
+// Concurrency semantics: when several callers miss the cache simultaneously,
+// only the first triggers the HTTP request and the rest wait on its result.
+// The shared fetch runs on a context detached from any single caller (via
+// [context.WithoutCancel]), so one caller cancelling or timing out cannot
+// poison the request other callers depend on; each caller still observes its
+// own context cancellation through the select below. The timeout and cache TTL
+// applied to the shared fetch are those of the caller that wins the flight
+// (first-wins) — callers needing distinct timeouts should not rely on the
+// shared cache for that guarantee.
 func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
 	// DISC-004: serve a fresh cache entry without any HTTP request.
 	if doc, ok := c.lookup(issuerURL); ok {
@@ -65,13 +75,17 @@ func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	}
 
 	// Singleflight collapses concurrent misses into one in-flight request.
-	v, err, _ := c.group.Do(issuerURL, func() (interface{}, error) {
+	// DoChan (not Do) lets each caller honour its own context independently.
+	ch := c.group.DoChan(issuerURL, func() (interface{}, error) {
 		// Re-check under the flight in case another goroutine just populated
 		// the cache (DISC-005 boundary).
 		if doc, ok := c.lookup(issuerURL); ok {
 			return doc, nil
 		}
-		doc, err := fetchAndValidate(ctx, issuerURL, cfg)
+		// Detach from the winning caller's context so its cancellation does
+		// not abort the fetch the other waiters share. fetchAndValidate still
+		// bounds the request with the configured (or default) timeout.
+		doc, err := fetchAndValidate(context.WithoutCancel(ctx), issuerURL, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -79,17 +93,14 @@ func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*Prov
 		c.store(issuerURL, doc, cfg.cacheTTL)
 		return doc, nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return v.(*ProviderConfiguration), nil
-}
 
-// reset clears all cached entries and restores the wall clock. Test-only helper
-// to isolate cases that share the package-global cache.
-func (c *cache) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]cacheEntry)
-	c.now = time.Now
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*ProviderConfiguration), nil
+	}
 }

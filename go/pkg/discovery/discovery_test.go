@@ -278,6 +278,13 @@ func TestFetchConfiguration_IgnoresUnknownFields(t *testing.T) {
 	if _, ok := cfg.Extra["x_custom_extension_field"]; !ok {
 		t.Errorf("expected unknown field preserved in Extra, got %v", cfg.Extra)
 	}
+	// Extra must hold ONLY unmodelled fields: modelled metadata is exposed via
+	// named struct fields and must not be duplicated here.
+	for _, modelled := range []string{"issuer", "token_endpoint", "jwks_uri", "response_types_supported"} {
+		if _, ok := cfg.Extra[modelled]; ok {
+			t.Errorf("modelled field %q leaked into Extra: %v", modelled, cfg.Extra)
+		}
+	}
 }
 
 // DISC-010: http:// issuers are rejected by default and allowed only with
@@ -420,6 +427,16 @@ func TestFetchConfiguration_ErrorsNotCached(t *testing.T) {
 }
 
 // --- helpers ---
+
+// reset clears all cached entries and restores the wall clock. Test-only helper
+// (defined in a _test.go file so it never ships in the library binary) to
+// isolate cases that share the package-global cache.
+func (c *cache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]cacheEntry)
+	c.now = time.Now
+}
 
 func contains(s []string, v string) bool {
 	for _, x := range s {
