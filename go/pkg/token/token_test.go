@@ -303,6 +303,60 @@ func TestTokenResponse_ExpiresInString(t *testing.T) {
 	}
 }
 
+// expires_in is optional (RFC 6749 §5.1): a null, empty-string, or fractional
+// value must not discard an otherwise valid token. Regression for review-fix.
+func TestTokenResponse_ExpiresInTolerant(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"null", `{"access_token":"at","token_type":"Bearer","expires_in":null}`, 0},
+		{"empty_string", `{"access_token":"at","token_type":"Bearer","expires_in":""}`, 0},
+		{"float", `{"access_token":"at","token_type":"Bearer","expires_in":3600.0}`, 3600},
+		{"float_string", `{"access_token":"at","token_type":"Bearer","expires_in":"3600.0"}`, 3600},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got capturedRequest
+			srv := newTokenServer(t, http.StatusOK, tc.body, &got)
+			resp, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret", WithInsecureAllowHTTP())
+			if err != nil {
+				t.Fatalf("ClientCredentials: %v", err)
+			}
+			if resp.AccessToken != "at" {
+				t.Errorf("access_token = %q, want at", resp.AccessToken)
+			}
+			if resp.ExpiresIn != tc.want {
+				t.Errorf("expires_in = %d, want %d", resp.ExpiresIn, tc.want)
+			}
+		})
+	}
+}
+
+// Extra params must not inject reserved client-auth parameters. On the Basic
+// path client_id is absent from the body, so a guard keyed only on form.Has
+// would let WithExtraParams smuggle a contradicting client_id. Regression.
+func TestClientCredentials_ExtraParamsCannotInjectClientID(t *testing.T) {
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, successBody, &got)
+
+	_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret",
+		WithExtraParams(map[string]string{"client_id": "evil", "client_secret": "evil"}),
+		WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	// Basic-auth identity is authoritative; no client_id/client_secret in body.
+	if got.form.Has("client_id") || got.form.Has("client_secret") {
+		t.Errorf("reserved client-auth params injected into body: %v", got.form)
+	}
+	user, _, _ := parseBasicAuth(got.authHeader)
+	if user != "cid" {
+		t.Errorf("Basic auth user = %q, want cid", user)
+	}
+}
+
 // A custom timeout bounds the request.
 func TestTokenRequest_Timeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

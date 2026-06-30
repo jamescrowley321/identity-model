@@ -46,8 +46,17 @@ func main() {
 	fmt.Printf("code_verifier=%s\ncode_challenge=%s\ncode_challenge_method=%s\n", v, challenge, token.ChallengeMethodS256)
 
 	// Step 2: build the authorization request URL the user agent would visit.
-	authURL := buildAuthorizeURL(*authzEndpoint, *clientID, *redirectURI, *scopes, challenge)
-	fmt.Printf("authorize_url=%s\n", authURL)
+	// state is an opaque, crypto-random value the client stores and compares
+	// against the value returned to the redirect URI, defeating CSRF on the
+	// authorization response (RFC 6749 §10.12). GenerateCodeVerifier yields a
+	// suitable high-entropy random string.
+	state, err := token.GenerateCodeVerifier()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate state: %v\n", err)
+		os.Exit(1)
+	}
+	authURL := buildAuthorizeURL(*authzEndpoint, *clientID, *redirectURI, *scopes, challenge, state)
+	fmt.Printf("state=%s\nauthorize_url=%s\n", state, authURL)
 
 	// Step 3 (optional): exchange the returned code with the verifier.
 	if *tokenEndpoint == "" || *code == "" {
@@ -68,13 +77,15 @@ func main() {
 }
 
 // buildAuthorizeURL assembles an RFC 6749 §4.1.1 authorization request carrying
-// the PKCE S256 challenge (RFC 7636 §4.3).
-func buildAuthorizeURL(endpoint, clientID, redirectURI, scopes, challenge string) string {
+// the PKCE S256 challenge (RFC 7636 §4.3) and an opaque state value for CSRF
+// protection (RFC 6749 §10.12).
+func buildAuthorizeURL(endpoint, clientID, redirectURI, scopes, challenge, state string) string {
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", clientID)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("scope", scopes)
+	q.Set("state", state)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", token.ChallengeMethodS256)
 	sep := "?"

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // TokenResponse is a successful OAuth 2.0 token endpoint response
@@ -76,15 +77,40 @@ func (r *TokenResponse) UnmarshalJSON(data []byte) error {
 }
 
 // flexibleInt64 decodes a JSON value that is either a number or a numeric
-// string into an int64.
+// string into an int64. expires_in is an optional parameter (RFC 6749 §5.1),
+// so a JSON null or empty string is treated as absent (0) rather than an error:
+// a valid token must not be discarded over a missing-but-present lifetime. A
+// fractional value (e.g. 3600.0, sent by some providers) is truncated to whole
+// seconds.
 func flexibleInt64(v json.RawMessage) (int64, error) {
+	if string(v) == "null" {
+		return 0, nil
+	}
 	var n json.Number
 	if err := json.Unmarshal(v, &n); err == nil {
-		return n.Int64()
+		if n == "" {
+			return 0, nil
+		}
+		if i, err := n.Int64(); err == nil {
+			return i, nil
+		}
+		if f, err := n.Float64(); err == nil {
+			return int64(f), nil
+		}
+		return 0, fmt.Errorf("expected integer seconds, got %q", n.String())
 	}
 	var s string
 	if err := json.Unmarshal(v, &s); err != nil {
 		return 0, fmt.Errorf("expected number or numeric string")
 	}
-	return strconv.ParseInt(s, 10, 64)
+	if s = strings.TrimSpace(s); s == "" {
+		return 0, nil
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i, nil
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return int64(f), nil
+	}
+	return 0, fmt.Errorf("expected numeric string, got %q", s)
 }

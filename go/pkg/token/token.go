@@ -19,6 +19,20 @@ const (
 	maxBodyBytes = 1 << 20
 )
 
+// reservedParams are owned by the grant and client-authentication logic. They
+// can never be set or overridden via [WithExtraParams], so that caller-supplied
+// extras cannot contradict the request's identity (e.g. injecting a body
+// client_id that disagrees with the Basic-auth credentials) or its grant shape.
+var reservedParams = map[string]bool{
+	"grant_type":    true,
+	"client_id":     true,
+	"client_secret": true,
+	"code":          true,
+	"redirect_uri":  true,
+	"code_verifier": true,
+	"scope":         true,
+}
+
 // ClientCredentials performs the OAuth 2.0 client credentials grant
 // (RFC 6749 §4.4): it POSTs grant_type=client_credentials to tokenEndpoint and
 // returns the typed [TokenResponse].
@@ -98,10 +112,12 @@ func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, client
 		useBasic = true
 	}
 
-	// Extra params are applied last but never override reserved grant
-	// parameters already present.
+	// Extra params are applied last but never override reserved grant or
+	// client-auth parameters (whether or not they are already present in the
+	// form — on the Basic path client_id is absent from the body yet must not
+	// be injectable).
 	for k, v := range cfg.extraParams {
-		if form.Has(k) {
+		if reservedParams[k] || form.Has(k) {
 			continue
 		}
 		form.Set(k, v)
