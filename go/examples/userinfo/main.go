@@ -41,10 +41,12 @@ func main() {
 		return
 	}
 
+	// The context deadline bounds the whole call (discovery + fetch); no need to
+	// also pass userinfo.WithTimeout, which would re-apply the same budget.
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	opts := []userinfo.Option{userinfo.WithTimeout(*timeout)}
+	opts := []userinfo.Option{}
 	if *insecureHTTP {
 		opts = append(opts, userinfo.WithInsecureAllowHTTP())
 	}

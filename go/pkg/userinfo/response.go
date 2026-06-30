@@ -3,6 +3,7 @@ package userinfo
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 )
 
 // Address is the OIDC "address" claim, a structured postal address
@@ -97,29 +98,34 @@ func (r *UserInfoResponse) UnmarshalJSON(data []byte) error {
 	// avoids recursing into this UnmarshalJSON, while a parallel struct keeps
 	// the public field set free of json tags.
 	var std struct {
-		Sub                 string   `json:"sub"`
-		Name                string   `json:"name"`
-		GivenName           string   `json:"given_name"`
-		FamilyName          string   `json:"family_name"`
-		MiddleName          string   `json:"middle_name"`
-		Nickname            string   `json:"nickname"`
-		PreferredUsername   string   `json:"preferred_username"`
-		Profile             string   `json:"profile"`
-		Picture             string   `json:"picture"`
-		Website             string   `json:"website"`
-		Email               string   `json:"email"`
-		EmailVerified       *bool    `json:"email_verified"`
-		Gender              string   `json:"gender"`
-		Birthdate           string   `json:"birthdate"`
-		Zoneinfo            string   `json:"zoneinfo"`
-		Locale              string   `json:"locale"`
-		PhoneNumber         string   `json:"phone_number"`
-		PhoneNumberVerified *bool    `json:"phone_number_verified"`
-		Address             *Address `json:"address"`
-		UpdatedAt           int64    `json:"updated_at"`
+		Sub                 string          `json:"sub"`
+		Name                string          `json:"name"`
+		GivenName           string          `json:"given_name"`
+		FamilyName          string          `json:"family_name"`
+		MiddleName          string          `json:"middle_name"`
+		Nickname            string          `json:"nickname"`
+		PreferredUsername   string          `json:"preferred_username"`
+		Profile             string          `json:"profile"`
+		Picture             string          `json:"picture"`
+		Website             string          `json:"website"`
+		Email               string          `json:"email"`
+		EmailVerified       *bool           `json:"email_verified"`
+		Gender              string          `json:"gender"`
+		Birthdate           string          `json:"birthdate"`
+		Zoneinfo            string          `json:"zoneinfo"`
+		Locale              string          `json:"locale"`
+		PhoneNumber         string          `json:"phone_number"`
+		PhoneNumberVerified *bool           `json:"phone_number_verified"`
+		Address             *Address        `json:"address"`
+		UpdatedAt           json.RawMessage `json:"updated_at"`
 	}
 	if err := json.Unmarshal(data, &std); err != nil {
 		return fmt.Errorf("decode standard claims: %w", err)
+	}
+
+	updatedAt, err := parseUpdatedAt(std.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("decode updated_at: %w", err)
 	}
 
 	r.Sub = std.Sub
@@ -141,7 +147,34 @@ func (r *UserInfoResponse) UnmarshalJSON(data []byte) error {
 	r.PhoneNumber = std.PhoneNumber
 	r.PhoneNumberVerified = std.PhoneNumberVerified
 	r.Address = std.Address
-	r.UpdatedAt = std.UpdatedAt
+	r.UpdatedAt = updatedAt
 
 	return nil
+}
+
+// parseUpdatedAt decodes the optional "updated_at" claim, defined by OIDC as a
+// JSON number of seconds since the Unix epoch (§5.1). Some providers serialize
+// it with a fractional or exponent part (e.g. 1.7e9); such a value is truncated
+// to whole seconds rather than sinking the entire response decode and dropping
+// every claim. An absent or null claim maps to 0. Values that cannot be
+// represented as an int64 (overflow, Inf, NaN) are rejected so a crafted number
+// cannot silently wrap to a garbage time.
+func parseUpdatedAt(v json.RawMessage) (int64, error) {
+	if len(v) == 0 || string(v) == "null" {
+		return 0, nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(v, &n); err != nil {
+		return 0, fmt.Errorf("expected number, got %s", v)
+	}
+	if i, err := n.Int64(); err == nil {
+		return i, nil
+	}
+	if f, err := n.Float64(); err == nil {
+		if math.IsInf(f, 0) || math.IsNaN(f) || f >= math.MaxInt64 || f < math.MinInt64 {
+			return 0, fmt.Errorf("updated_at out of range: %v", f)
+		}
+		return int64(f), nil
+	}
+	return 0, fmt.Errorf("expected integer seconds, got %q", n.String())
 }

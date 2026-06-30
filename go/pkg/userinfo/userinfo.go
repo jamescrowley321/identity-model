@@ -35,6 +35,9 @@ func Fetch(ctx context.Context, userInfoEndpoint, accessToken string, opts ...Op
 	if parsed.Scheme != "https" && !(cfg.allowHTTP && parsed.Scheme == "http") {
 		return nil, &RequestError{Op: "userinfo endpoint", Err: fmt.Errorf("https required for %q (use WithInsecureAllowHTTP for http)", userInfoEndpoint)}
 	}
+	if parsed.Host == "" {
+		return nil, &RequestError{Op: "userinfo endpoint", Err: fmt.Errorf("endpoint has no host: %q", userInfoEndpoint)}
+	}
 	if accessToken == "" {
 		return nil, &RequestError{Op: "userinfo request", Err: fmt.Errorf("access token is required")}
 	}
@@ -112,8 +115,10 @@ func snippet(b []byte) string {
 	const max = 200
 	s := strings.TrimSpace(string(b))
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > max {
-		return s[:max] + "…"
+	// Truncate on a rune boundary so a multi-byte UTF-8 sequence in the body is
+	// never cut in half, which would emit invalid UTF-8 in the diagnostic string.
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
 	}
 	return s
 }

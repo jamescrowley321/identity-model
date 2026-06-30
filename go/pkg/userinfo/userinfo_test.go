@@ -74,6 +74,48 @@ func TestFetch_StandardClaims(t *testing.T) {
 	}
 }
 
+// UI-002 (regression): a provider that serializes updated_at with a fractional
+// or exponent part must not sink the whole decode and drop every claim — the
+// value is truncated to whole seconds. Out-of-range values are rejected.
+func TestFetch_UpdatedAt_FractionalAndExponent(t *testing.T) {
+	serve := func(body string) (*UserInfoResponse, error) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		defer srv.Close()
+		return Fetch(context.Background(), srv.URL, "tok", WithInsecureAllowHTTP())
+	}
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want int64
+	}{
+		{"exponent", `1.7e9`, 1700000000},
+		{"fractional", `1700000000.9`, 1700000000},
+		{"integer", `1700000000`, 1700000000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := serve(`{"sub":"abc","updated_at":` + tc.raw + `}`)
+			if err != nil {
+				t.Fatalf("Fetch: %v", err)
+			}
+			if resp.Sub != "abc" {
+				t.Errorf("Sub dropped: %q", resp.Sub)
+			}
+			if resp.UpdatedAt != tc.want {
+				t.Errorf("UpdatedAt = %d, want %d", resp.UpdatedAt, tc.want)
+			}
+		})
+	}
+
+	// An out-of-range exponent (parses to +Inf) is rejected rather than wrapping.
+	if _, err := serve(`{"sub":"abc","updated_at":1e400}`); err == nil {
+		t.Error("expected error for out-of-range updated_at, got nil")
+	}
+}
+
 // UI-002: subject validation passes when the expected sub matches.
 func TestFetch_SubjectValidation_Match(t *testing.T) {
 	srv, _ := claimsServer(t)
