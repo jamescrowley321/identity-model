@@ -334,6 +334,25 @@ func TestTokenResponse_ExpiresInTolerant(t *testing.T) {
 	}
 }
 
+// An out-of-range, Inf, or NaN expires_in must be rejected, not silently
+// wrapped to a garbage int64. Regression for the float-tolerance fix.
+func TestTokenResponse_ExpiresInRejectsGarbage(t *testing.T) {
+	for _, body := range []string{
+		`{"access_token":"at","token_type":"Bearer","expires_in":1e30}`,
+		`{"access_token":"at","token_type":"Bearer","expires_in":"9999999999999999999999999"}`,
+		`{"access_token":"at","token_type":"Bearer","expires_in":"Inf"}`,
+		`{"access_token":"at","token_type":"Bearer","expires_in":"NaN"}`,
+		`{"access_token":"at","token_type":"Bearer","expires_in":"abc"}`,
+	} {
+		var got capturedRequest
+		srv := newTokenServer(t, http.StatusOK, body, &got)
+		_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret", WithInsecureAllowHTTP())
+		if err == nil {
+			t.Errorf("expected error for body %s, got nil", body)
+		}
+	}
+}
+
 // Extra params must not inject reserved client-auth parameters. On the Basic
 // path client_id is absent from the body, so a guard keyed only on form.Has
 // would let WithExtraParams smuggle a contradicting client_id. Regression.

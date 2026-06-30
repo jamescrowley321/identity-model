@@ -3,6 +3,7 @@ package token
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -95,7 +96,7 @@ func flexibleInt64(v json.RawMessage) (int64, error) {
 			return i, nil
 		}
 		if f, err := n.Float64(); err == nil {
-			return int64(f), nil
+			return floatToSeconds(f)
 		}
 		return 0, fmt.Errorf("expected integer seconds, got %q", n.String())
 	}
@@ -110,7 +111,17 @@ func flexibleInt64(v json.RawMessage) (int64, error) {
 		return i, nil
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return int64(f), nil
+		return floatToSeconds(f)
 	}
 	return 0, fmt.Errorf("expected numeric string, got %q", s)
+}
+
+// floatToSeconds truncates a fractional lifetime to whole seconds, rejecting
+// values that cannot be represented as an int64 (overflow, Inf, NaN) so that a
+// crafted or malformed expires_in cannot silently wrap to a garbage time.
+func floatToSeconds(f float64) (int64, error) {
+	if math.IsInf(f, 0) || math.IsNaN(f) || f >= math.MaxInt64 || f < math.MinInt64 {
+		return 0, fmt.Errorf("expires_in out of range: %v", f)
+	}
+	return int64(f), nil
 }
