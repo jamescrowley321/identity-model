@@ -3,7 +3,7 @@
 Rust implementation of the [identity-model](../README.md) OIDC/OAuth2 client library.
 
 - **Crate:** `identity-model` (crates.io)
-- **Edition:** 2024 · **MSRV:** 1.85
+- **Edition:** 2024 · **MSRV:** 1.91
 - **Add:** `cargo add identity-model`
 
 ## Module Layout

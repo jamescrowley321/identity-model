@@ -21,8 +21,8 @@ Each language must keep its toolchain check green:
 
 | Language | Local check |
 |----------|-------------|
-| Go (1.22+) | `cd go && go build ./... && go vet ./... && go test ./...` |
-| Rust (MSRV 1.75) | `cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test` |
+| Go (1.26+) | `cd go && go build ./... && go vet ./... && go test ./...` |
+| Rust (MSRV 1.91) | `cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test` |
 
 ## Conformance
 

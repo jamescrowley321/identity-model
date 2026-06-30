@@ -3,7 +3,7 @@
 Go implementation of the [identity-model](../README.md) OIDC/OAuth2 client library.
 
 - **Module:** `github.com/jamescrowley321/identity-model/go`
-- **Minimum Go:** 1.22
+- **Minimum Go:** 1.26
 - **Install:** `go get github.com/jamescrowley321/identity-model/go`
 
 ## Package Layout

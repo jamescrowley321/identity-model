@@ -6,8 +6,8 @@ identity-model is a family of OIDC/OAuth2 client libraries that share one cross-
 
 | Tool | Version | For |
 |------|---------|-----|
-| Go | 1.22+ | `go/` implementation |
-| Rust | 1.85+ (edition 2024) | `rust/` implementation |
+| Go | 1.26+ | `go/` implementation |
+| Rust | 1.91+ (edition 2024) | `rust/` implementation |
 | Docker + Compose | recent | shared OIDC provider in `infra/` |
 
 ## Layout at a Glance

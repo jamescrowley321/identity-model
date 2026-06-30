@@ -2,7 +2,7 @@
 name = "identity-model"
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.91"
 description = "Production-grade, RFC-compliant OIDC/OAuth2 client library for Rust"
 license = "Apache-2.0"
 repository = "https://github.com/jamescrowley321/identity-model"
