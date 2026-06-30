@@ -168,6 +168,47 @@ func TestParseKey_PreservesExtra(t *testing.T) {
 	}
 }
 
+// Defensive copy: mutating a key resolved from one handle (or its Extra map)
+// must not corrupt the shared cached set seen by a second handle for the same
+// URI. Guards against the cache aliasing fixed in the review.
+func TestResolveKey_ReturnsIsolatedCopy(t *testing.T) {
+	freshCache(t)
+	srv, _ := newServer(t, http.StatusOK, keySetJSON(
+		`{"kty":"RSA","kid":"k1","n":"AQAB","e":"AQAB","x5t":"orig"}`))
+
+	first, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet (first): %v", err)
+	}
+	k, ok := first.ResolveKey("k1")
+	if !ok {
+		t.Fatal("k1 not resolved")
+	}
+	// Mutate the returned key's fields and Extra map.
+	k.Kty = "TAMPERED"
+	k.Extra["x5t"] = []byte(`"hacked"`)
+	first.Keys[0].Alg = "TAMPERED"
+
+	// A second cache-hit handle must see the original, untouched values.
+	second, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet (second): %v", err)
+	}
+	k2, ok := second.ResolveKey("k1")
+	if !ok {
+		t.Fatal("k1 not resolved on second handle")
+	}
+	if k2.Kty != "RSA" {
+		t.Errorf("cached kty corrupted: got %q, want RSA", k2.Kty)
+	}
+	if k2.Alg != "" {
+		t.Errorf("cached alg corrupted: got %q, want empty", k2.Alg)
+	}
+	if got := string(k2.Extra["x5t"]); got != `"orig"` {
+		t.Errorf("cached Extra corrupted: got %s, want \"orig\"", got)
+	}
+}
+
 // JWKS-003: resolve a key by kid; an absent kid reports not found.
 func TestResolveKey_ByKid(t *testing.T) {
 	freshCache(t)

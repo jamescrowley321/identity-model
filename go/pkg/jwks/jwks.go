@@ -116,7 +116,7 @@ func (s *JSONWebKeySet) ResolveKey(kid string) (*JSONWebKey, bool) {
 	defer s.mu.RUnlock()
 	for i := range s.Keys {
 		if s.Keys[i].Kid == kid {
-			k := s.Keys[i]
+			k := cloneKey(s.Keys[i])
 			return &k, true
 		}
 	}
@@ -241,6 +241,35 @@ func parseKeySet(body []byte, uri string) ([]JSONWebKey, error) {
 		return nil, &EmptyKeySetError{URI: uri}
 	}
 	return keys, nil
+}
+
+// cloneKey returns a deep copy of k, duplicating the Extra map so a caller that
+// mutates the returned key cannot reach into a key set shared by the cache or by
+// another handle. The json.RawMessage values are treated as read-only and are
+// not themselves copied.
+func cloneKey(k JSONWebKey) JSONWebKey {
+	if k.Extra != nil {
+		extra := make(map[string]json.RawMessage, len(k.Extra))
+		for name, raw := range k.Extra {
+			extra[name] = raw
+		}
+		k.Extra = extra
+	}
+	return k
+}
+
+// cloneKeys returns a deep copy of keys so every handle owns an isolated slice;
+// mutating one handle's Keys never affects the cached master copy or another
+// handle that resolved the same URI.
+func cloneKeys(keys []JSONWebKey) []JSONWebKey {
+	if keys == nil {
+		return nil
+	}
+	out := make([]JSONWebKey, len(keys))
+	for i := range keys {
+		out[i] = cloneKey(keys[i])
+	}
+	return out
 }
 
 // parseKey decodes and validates a single JWK, preserving unmodelled parameters

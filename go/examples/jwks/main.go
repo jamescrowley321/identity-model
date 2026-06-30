@@ -43,14 +43,23 @@ func main() {
 		fmt.Printf("  kid=%-24q kty=%-4s use=%-3s alg=%s\n", k.Kid, k.Kty, k.Use, k.Alg)
 	}
 
-	target := *kid
-	if target == "" && len(set.Keys) > 0 {
-		target = set.Keys[0].Kid
-	}
-
-	key, ok := set.ResolveKey(target)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "\nno key found for kid %q\n", target)
+	var key *jwks.JSONWebKey
+	switch {
+	case *kid != "":
+		k, ok := set.ResolveKey(*kid)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "\nno key found for kid %q\n", *kid)
+			os.Exit(1)
+		}
+		key = k
+	case len(set.Keys) > 0:
+		// No -kid given: demonstrate against the first key directly rather than
+		// resolving by an empty kid, which is ambiguous when several keys omit
+		// the kid parameter.
+		first := set.Keys[0]
+		key = &first
+	default:
+		fmt.Fprintln(os.Stderr, "\nkey set is empty")
 		os.Exit(1)
 	}
 	fmt.Printf("\nResolved key by kid %q: kty=%s alg=%s\n", key.Kid, key.Kty, key.Alg)

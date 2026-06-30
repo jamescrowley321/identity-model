@@ -79,9 +79,10 @@ func (c *cache) invalidate(key string) {
 // timeout and cache TTL applied to the shared fetch are those of the caller
 // that wins the flight (first-wins).
 func (c *cache) fetch(ctx context.Context, jwksURI string, cfg *config) ([]JSONWebKey, error) {
-	// JWKS-005: serve a fresh cache entry without any HTTP request.
+	// JWKS-005: serve a fresh cache entry without any HTTP request. Return a
+	// deep copy so the caller's handle cannot mutate the cached master copy.
 	if keys, ok := c.lookup(jwksURI); ok {
-		return keys, nil
+		return cloneKeys(keys), nil
 	}
 
 	// Singleflight collapses concurrent misses into one in-flight request.
@@ -111,6 +112,9 @@ func (c *cache) fetch(ctx context.Context, jwksURI string, cfg *config) ([]JSONW
 		if res.Err != nil {
 			return nil, res.Err
 		}
-		return res.Val.([]JSONWebKey), nil
+		// Each waiter receives the same shared result value; hand back a deep
+		// copy so concurrent callers never alias one another's (or the cache's)
+		// key set.
+		return cloneKeys(res.Val.([]JSONWebKey)), nil
 	}
 }
