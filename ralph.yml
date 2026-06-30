@@ -1,0 +1,13 @@
+# Ralph Orchestrator Configuration
+# Docs: https://github.com/mikeyobrien/ralph-orchestrator
+# Run:  cp <prompt> PROMPT.md && ralph run   (see CONTRIBUTING / planning ralph-prompts)
+
+cli:
+  backend: "claude"
+  timeout: 900
+
+event_loop:
+  prompt_file: "PROMPT.md"
+  completion_promise: "LOOP_COMPLETE"
+  max_iterations: 100
+  max_consecutive_failures: 5
