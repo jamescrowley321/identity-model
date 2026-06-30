@@ -1,0 +1,67 @@
+{
+  "capability": "jwks",
+  "spec": "RFC 7517 (JWK), RFC 7518 (JWA)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc7517",
+  "tests": [
+    {
+      "id": "JWKS-001",
+      "title": "Fetch and parse a JWK Set",
+      "given": "A reachable jwks_uri returning a valid JWK Set",
+      "when": "The key set is fetched",
+      "then": "A typed key set is returned containing all keys",
+      "fixture": "jwks/valid.json",
+      "references": ["RFC 7517 §5"]
+    },
+    {
+      "id": "JWKS-002",
+      "title": "Parse required key parameters",
+      "given": "A JWK Set containing an RSA and an EC signing key",
+      "when": "Keys are deserialized",
+      "then": "Each key exposes kty/kid/use/alg; RSA exposes n/e; EC exposes crv/x/y",
+      "fixture": "jwks/valid.json",
+      "references": ["RFC 7517 §4"]
+    },
+    {
+      "id": "JWKS-003",
+      "title": "Resolve key by kid",
+      "given": "A cached JWK Set",
+      "when": "resolve_key(kid) is called with a present kid",
+      "then": "The matching key is returned",
+      "fixture": "jwks/valid.json",
+      "references": ["RFC 7517 §4.5"]
+    },
+    {
+      "id": "JWKS-004",
+      "title": "Key-not-found triggers forced refresh then retry",
+      "given": "A kid not present in the cached set",
+      "when": "Key resolution is attempted",
+      "then": "A forced refresh is performed and resolution retried before a key-not-found error",
+      "references": ["RFC 7517 §5"]
+    },
+    {
+      "id": "JWKS-005",
+      "title": "Cache hit within TTL",
+      "given": "A successful JWKS fetch",
+      "when": "The key set is requested again within the TTL",
+      "then": "No HTTP request is made and the cached set is returned",
+      "references": ["RFC 7517 §5"]
+    },
+    {
+      "id": "JWKS-006",
+      "title": "Force refresh on signature failure",
+      "given": "A signature verification failure",
+      "when": "force_refresh() is invoked",
+      "then": "The cached set is invalidated and re-fetched from the provider",
+      "references": ["RFC 7517 §5"]
+    },
+    {
+      "id": "JWKS-007",
+      "title": "Handle malformed or empty JWKS",
+      "given": "A jwks_uri returning invalid JSON or an empty key set",
+      "when": "The key set is fetched",
+      "then": "A descriptive deserialization/validation error is raised",
+      "fixture": "jwks/empty.json",
+      "references": ["RFC 7517 §5"]
+    }
+  ]
+}

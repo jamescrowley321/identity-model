@@ -1,0 +1,15 @@
+{
+  "name": "node-oidc-provider-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OIDC provider test fixture for identity-model cross-language integration tests",
+  "main": "provider.js",
+  "scripts": {
+    "start": "node provider.js"
+  },
+  "dependencies": {
+    "jose": "^6.0.11",
+    "oidc-provider": "^9.7.1"
+  }
+}

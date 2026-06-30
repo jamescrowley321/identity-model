@@ -52,6 +52,14 @@ Each capability has a language-agnostic definition in `spec/conformance/*.json`.
 | Rust | `cd rust && cargo check && cargo test` |
 | Infra | `cd infra && docker compose up -d` (shared OIDC provider on `:9000`) |
 
+## Versioning
+
+While the libraries are pre-stable, each language publishes **`0.0.x`** releases. Per [SemVer](https://semver.org/), `0.0.x` carries **no API-stability guarantees** — any release may contain breaking changes. We stay on `0.0.x` deliberately until the Core tier is implemented and conformance-passing in a language, then graduate that language toward `0.x`/`1.0`.
+
+- **Versioning is independent per language** — Go and Rust advance their own `0.0.x` lines; they are not lock-stepped.
+- **Rust** (`identity-model` on crates.io): the `version` in `rust/Cargo.toml`.
+- **Go** (`github.com/jamescrowley321/identity-model/go`): released via git tags. Because the module lives in a subdirectory, tags are prefixed — `go/v0.0.x`.
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
