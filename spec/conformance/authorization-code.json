@@ -1,0 +1,56 @@
+{
+  "capability": "authorization-code",
+  "spec": "RFC 6749 §4.1 (Authorization Code Grant), RFC 7636 (PKCE)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc6749#section-4.1",
+  "tests": [
+    {
+      "id": "ACG-001",
+      "title": "Authorization code grant returns a typed token response",
+      "given": "An authorization code, client ID and redirect URI",
+      "when": "AuthorizationCode is called",
+      "then": "A grant_type=authorization_code form POST carrying code and redirect_uri is sent and a typed TokenResponse is returned",
+      "references": ["RFC 6749 §4.1.3"]
+    },
+    {
+      "id": "ACG-002",
+      "title": "GenerateCodeVerifier produces a 43-128 char unreserved string",
+      "given": "A request for a PKCE code verifier",
+      "when": "GenerateCodeVerifier is called",
+      "then": "A cryptographically random verifier of 43-128 characters drawn only from the unreserved set [A-Za-z0-9-._~] is returned",
+      "references": ["RFC 7636 §4.1"]
+    },
+    {
+      "id": "ACG-003",
+      "title": "S256Challenge equals BASE64URL(SHA256(verifier))",
+      "given": "The RFC 7636 Appendix B code verifier",
+      "when": "S256Challenge is called",
+      "then": "The result exactly matches the Appendix B expected challenge E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      "fixture": "token/pkce-appendix-b.json",
+      "references": ["RFC 7636 §4.2", "RFC 7636 Appendix B"]
+    },
+    {
+      "id": "ACG-004",
+      "title": "WithCodeVerifier sends the code_verifier parameter",
+      "given": "WithCodeVerifier(verifier) on an authorization code exchange",
+      "when": "AuthorizationCode is called",
+      "then": "The request body carries the code_verifier form parameter",
+      "references": ["RFC 7636 §4.5"]
+    },
+    {
+      "id": "ACG-005",
+      "title": "Authorization code error response is parsed into a typed TokenError",
+      "given": "A token endpoint that rejects the code with an OAuth error body",
+      "when": "AuthorizationCode is called",
+      "then": "A typed TokenError carrying error/error_description/error_uri is returned (shared error path)",
+      "references": ["RFC 6749 §5.2"]
+    },
+    {
+      "id": "ACG-006",
+      "title": "PKCE round-trip against a live provider",
+      "given": "A live provider and an S256 challenge derived from a generated verifier",
+      "when": "An authorization code obtained for that challenge is exchanged with WithCodeVerifier",
+      "then": "The provider accepts the verifier and issues tokens (integration)",
+      "references": ["RFC 7636 §4.6"]
+    }
+  ]
+}
