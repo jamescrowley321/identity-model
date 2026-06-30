@@ -95,6 +95,10 @@ func TestFetch_UpdatedAt_FractionalAndExponent(t *testing.T) {
 		{"exponent", `1.7e9`, 1700000000},
 		{"fractional", `1700000000.9`, 1700000000},
 		{"integer", `1700000000`, 1700000000},
+		{"numeric_string", `"1700000000"`, 1700000000},
+		{"null", `null`, 0},
+		{"empty_string", `""`, 0},
+		{"negative", `-100`, -100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp, err := serve(`{"sub":"abc","updated_at":` + tc.raw + `}`)
@@ -110,9 +114,12 @@ func TestFetch_UpdatedAt_FractionalAndExponent(t *testing.T) {
 		})
 	}
 
-	// An out-of-range exponent (parses to +Inf) is rejected rather than wrapping.
-	if _, err := serve(`{"sub":"abc","updated_at":1e400}`); err == nil {
-		t.Error("expected error for out-of-range updated_at, got nil")
+	// Out-of-range values must be rejected rather than silently wrapping: an
+	// exponent that overflows to +Inf, and a finite integer just past MaxInt64.
+	for _, bad := range []string{`1e400`, `9223372036854775808`} {
+		if _, err := serve(`{"sub":"abc","updated_at":` + bad + `}`); err == nil {
+			t.Errorf("updated_at %s: expected out-of-range error, got nil", bad)
+		}
 	}
 }
 

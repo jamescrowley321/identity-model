@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 )
 
 // Address is the OIDC "address" claim, a structured postal address
@@ -153,20 +154,41 @@ func (r *UserInfoResponse) UnmarshalJSON(data []byte) error {
 }
 
 // parseUpdatedAt decodes the optional "updated_at" claim, defined by OIDC as a
-// JSON number of seconds since the Unix epoch (§5.1). Some providers serialize
-// it with a fractional or exponent part (e.g. 1.7e9); such a value is truncated
-// to whole seconds rather than sinking the entire response decode and dropping
-// every claim. An absent or null claim maps to 0. Values that cannot be
-// represented as an int64 (overflow, Inf, NaN) are rejected so a crafted number
-// cannot silently wrap to a garbage time.
+// JSON number of seconds since the Unix epoch (§5.1). Because it is optional, a
+// bad-but-present value must not sink the whole response decode and drop every
+// claim. Tolerated forms (mirroring the token package's expires_in handling):
+// absent/null/empty-string map to 0; a fractional or exponent number (e.g.
+// 1.7e9) is truncated to whole seconds; a numeric string ("1700000000") is
+// accepted. Values that cannot be represented as an int64 (overflow, Inf, NaN)
+// are rejected so a crafted number cannot silently wrap to a garbage time; a
+// genuinely non-numeric value (bool/object/array) is also rejected.
 func parseUpdatedAt(v json.RawMessage) (int64, error) {
 	if len(v) == 0 || string(v) == "null" {
 		return 0, nil
 	}
-	var n json.Number
-	if err := json.Unmarshal(v, &n); err != nil {
+	if n, err := unmarshalNumber(v); err == nil {
+		return numericToSeconds(n)
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err != nil {
 		return 0, fmt.Errorf("expected number, got %s", v)
 	}
+	if s = strings.TrimSpace(s); s == "" {
+		return 0, nil
+	}
+	return numericToSeconds(json.Number(s))
+}
+
+// unmarshalNumber decodes v into a json.Number, rejecting non-number JSON.
+func unmarshalNumber(v json.RawMessage) (json.Number, error) {
+	var n json.Number
+	err := json.Unmarshal(v, &n)
+	return n, err
+}
+
+// numericToSeconds converts a decimal numeric token to whole seconds, truncating
+// a fractional/exponent value and rejecting any value outside the int64 range.
+func numericToSeconds(n json.Number) (int64, error) {
 	if i, err := n.Int64(); err == nil {
 		return i, nil
 	}
