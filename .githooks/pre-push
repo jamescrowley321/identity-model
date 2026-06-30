@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Blocks direct pushes to main — changes must go through a pull request.
+# Enabled via: git config core.hooksPath .githooks
+# (See CONTRIBUTING.md. This is a local guardrail; it is not server-enforced.)
+
+protected="main"
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [ "$remote_ref" = "refs/heads/$protected" ]; then
+    echo "✗ Direct push to '$protected' is blocked. Open a pull request instead:" >&2
+    echo "    git switch -c feat/your-change && git push -u origin feat/your-change" >&2
+    exit 1
+  fi
+done
+exit 0
