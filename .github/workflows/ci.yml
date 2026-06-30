@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # paths-filter lists a PR's changed files via the GitHub API on pull_request.
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
