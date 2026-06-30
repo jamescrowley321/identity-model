@@ -472,6 +472,16 @@ func TestAudience_Null(t *testing.T) {
 	if a != nil {
 		t.Errorf("null aud = %#v, want nil", a)
 	}
+	// A null array element is not a string and must be rejected, not coerced to "".
+	var b Audience
+	if err := json.Unmarshal([]byte(`["ok",null]`), &b); err == nil {
+		t.Errorf("aud with null element should error, got %#v", b)
+	}
+	// An empty array is a valid (empty) audience.
+	var c Audience
+	if err := json.Unmarshal([]byte(`[]`), &c); err != nil || len(c) != 0 {
+		t.Errorf("empty aud array: %v %#v", err, c)
+	}
 }
 
 // An out-of-range numeric date (e.g. exp = 1e30) must be rejected rather than

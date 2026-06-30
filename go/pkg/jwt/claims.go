@@ -57,11 +57,20 @@ func (a *Audience) UnmarshalJSON(b []byte) error {
 		*a = Audience{single}
 		return nil
 	}
-	var many []string
+	// Decode into pointers so a null array element (not a string per RFC 7519
+	// §4.1.3) is rejected rather than silently coerced to an empty string.
+	var many []*string
 	if err := json.Unmarshal(b, &many); err != nil {
 		return fmt.Errorf("audience: must be a string or array of strings: %w", err)
 	}
-	*a = many
+	out := make(Audience, 0, len(many))
+	for _, s := range many {
+		if s == nil {
+			return fmt.Errorf("audience: array contains a null element")
+		}
+		out = append(out, *s)
+	}
+	*a = out
 	return nil
 }
 
