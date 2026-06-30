@@ -1,0 +1,113 @@
+{
+  "capability": "validation",
+  "spec": "RFC 7519 (JWT), RFC 7515 (JWS), OIDC Core 1.0 §3.1.3.7",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc7519",
+  "tests": [
+    {
+      "id": "JWT-001",
+      "title": "Verify signature with kid-resolved key",
+      "given": "A signed JWT whose header kid matches a key in the key set",
+      "when": "The token is validated",
+      "then": "The JWS signature is verified against the resolved key and a typed claims set is returned",
+      "fixture": "validation/jwks.json",
+      "references": ["RFC 7515 §4.1"]
+    },
+    {
+      "id": "JWT-002",
+      "title": "Check registered claims",
+      "given": "A signed JWT carrying iss/aud/exp/nbf/iat",
+      "when": "The token is validated with the expected issuer and audience",
+      "then": "iss matches exactly, aud contains the expected value, exp/nbf bound the validity window and iat is present",
+      "references": ["RFC 7519 §4.1"]
+    },
+    {
+      "id": "JWT-003",
+      "title": "Reject alg:none unconditionally",
+      "given": "An unsigned JWT with header alg \"none\"",
+      "when": "The token is validated",
+      "then": "Validation is rejected before any signature step with an explicit alg-none error",
+      "fixture": "validation/alg-none-token.txt",
+      "references": ["RFC 7519 §7.2"]
+    },
+    {
+      "id": "JWT-004",
+      "title": "Validate nonce when expected",
+      "given": "A signed JWT carrying a nonce claim",
+      "when": "The token is validated with WithExpectedNonce set",
+      "then": "A nonce mismatch is rejected and a matching nonce passes",
+      "references": ["OIDC Core 1.0 §3.1.3.7"]
+    },
+    {
+      "id": "JWT-005",
+      "title": "Reject expired token",
+      "given": "A signed JWT whose exp is in the past beyond the clock skew",
+      "when": "The token is validated",
+      "then": "Validation fails with an expiry error",
+      "references": ["RFC 7519 §4.1.4"]
+    },
+    {
+      "id": "JWT-006",
+      "title": "Reject not-yet-valid token",
+      "given": "A signed JWT whose nbf is in the future beyond the clock skew",
+      "when": "The token is validated",
+      "then": "Validation fails with a not-before error",
+      "references": ["RFC 7519 §4.1.5"]
+    },
+    {
+      "id": "JWT-007",
+      "title": "Reject wrong issuer",
+      "given": "A signed JWT whose iss differs from the expected issuer",
+      "when": "The token is validated with WithExpectedIssuer set",
+      "then": "Validation fails with an issuer-mismatch error",
+      "references": ["RFC 7519 §4.1.1"]
+    },
+    {
+      "id": "JWT-008",
+      "title": "Reject wrong or absent audience",
+      "given": "A signed JWT whose aud does not contain the expected audience",
+      "when": "The token is validated with WithExpectedAudience set",
+      "then": "Validation fails with an audience error",
+      "references": ["RFC 7519 §4.1.3"]
+    },
+    {
+      "id": "JWT-009",
+      "title": "Reject bad signature",
+      "given": "A signed JWT whose signature does not verify against the resolved key",
+      "when": "The token is validated",
+      "then": "Validation fails with a signature error",
+      "references": ["RFC 7515 §5.2"]
+    },
+    {
+      "id": "JWT-010",
+      "title": "kid not in cached JWKS triggers forced refresh",
+      "given": "A signed JWT whose kid is absent from the cached key set",
+      "when": "The token is validated",
+      "then": "A JWKS forced refresh is performed and key resolution retried before failing",
+      "references": ["RFC 7517 §4.5"]
+    },
+    {
+      "id": "JWT-011",
+      "title": "Tolerate clock skew",
+      "given": "A signed JWT whose exp is marginally in the past within the configured skew",
+      "when": "The token is validated with WithClockSkew set",
+      "then": "Validation succeeds because the skew tolerance covers the difference",
+      "references": ["RFC 7519 §4.1.4"]
+    },
+    {
+      "id": "JWT-012",
+      "title": "Enforce custom required claims",
+      "given": "A signed JWT missing a claim named in WithRequiredClaims",
+      "when": "The token is validated",
+      "then": "Validation fails identifying the missing required claim",
+      "references": ["RFC 7519 §4.1"]
+    },
+    {
+      "id": "JWT-013",
+      "title": "Reject token missing iat",
+      "given": "A signed JWT without an iat claim",
+      "when": "The token is validated",
+      "then": "Validation fails because iat is required",
+      "references": ["RFC 7519 §4.1.6"]
+    }
+  ]
+}
