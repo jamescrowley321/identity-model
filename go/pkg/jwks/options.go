@@ -11,12 +11,20 @@ import (
 // (JWKS-004).
 const defaultCacheTTL = 24 * time.Hour
 
+// defaultRefreshCooldown is the minimum interval between automatic forced
+// refreshes for a given jwks_uri (see [WithRefreshCooldown]). It bounds the rate
+// at which an unknown kid can trigger a network re-fetch, so an attacker
+// presenting tokens with random kid values cannot amplify traffic against the
+// provider. Explicit [JSONWebKeySet.ForceRefresh] is not throttled.
+const defaultRefreshCooldown = 5 * time.Second
+
 // config holds the resolved settings for a FetchKeySet call.
 type config struct {
-	httpClient *http.Client
-	cacheTTL   time.Duration
-	timeout    time.Duration
-	allowHTTP  bool
+	httpClient      *http.Client
+	cacheTTL        time.Duration
+	timeout         time.Duration
+	allowHTTP       bool
+	refreshCooldown time.Duration
 }
 
 // Option customises FetchKeySet via the functional-options pattern. The option
@@ -26,8 +34,9 @@ type Option func(*config)
 // newConfig applies opts on top of the defaults.
 func newConfig(opts ...Option) *config {
 	cfg := &config{
-		httpClient: http.DefaultClient,
-		cacheTTL:   defaultCacheTTL,
+		httpClient:      http.DefaultClient,
+		cacheTTL:        defaultCacheTTL,
+		refreshCooldown: defaultRefreshCooldown,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -37,6 +46,9 @@ func newConfig(opts ...Option) *config {
 	}
 	if cfg.cacheTTL <= 0 {
 		cfg.cacheTTL = defaultCacheTTL
+	}
+	if cfg.refreshCooldown < 0 {
+		cfg.refreshCooldown = defaultRefreshCooldown
 	}
 	return cfg
 }
@@ -58,6 +70,17 @@ func WithHTTPClient(client *http.Client) Option {
 // with the caller's context; the earlier deadline wins.
 func WithTimeout(d time.Duration) Option {
 	return func(c *config) { c.timeout = d }
+}
+
+// WithRefreshCooldown sets the minimum interval between automatic forced
+// refreshes triggered by [JSONWebKeySet.ResolveKeyWithRefresh] for the same
+// jwks_uri. Within the cooldown a kid miss returns a key-not-found error without
+// re-fetching, bounding attacker-driven re-fetches when token kid values are
+// untrusted. The default is 5 seconds. A zero value disables throttling; a
+// negative value is ignored and the default is retained. Explicit
+// [JSONWebKeySet.ForceRefresh] is never throttled.
+func WithRefreshCooldown(d time.Duration) Option {
+	return func(c *config) { c.refreshCooldown = d }
 }
 
 // WithInsecureAllowHTTP permits http:// jwks_uri values, which are otherwise

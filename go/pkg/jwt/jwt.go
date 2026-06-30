@@ -70,7 +70,10 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 	}
 
 	// JWT-001/009: parse and verify the signature. ParseSigned re-enforces the
-	// algorithm allowlist as a second line of defence against alg confusion.
+	// algorithm allowlist as a second line of defence against alg confusion, and
+	// jws.Verify cross-checks the header alg against the resolved key's type — a
+	// token claiming RS256 while resolving to an EC key (or vice versa) is
+	// rejected — so an alg/key-type mismatch cannot slip through.
 	jws, err := jose.ParseSigned(token, toSignatureAlgorithms(cfg.allowedAlgs))
 	if err != nil {
 		return nil, &MalformedTokenError{Reason: fmt.Sprintf("parse compact JWS: %v", err)}
@@ -116,10 +119,19 @@ func parseHeader(token string) (*joseHeader, error) {
 // parser, reusing its base64url and curve handling.
 func toPublicKey(k *jwks.JSONWebKey) (crypto.PublicKey, error) {
 	fields := map[string]string{"kty": k.Kty}
+	// Copy only the key material that belongs to the declared key type, so a
+	// malformed JWKS entry carrying both RSA (n,e) and EC (crv,x,y) parameters
+	// cannot present an ambiguous blob to the parser.
+	switch k.Kty {
+	case "RSA":
+		fields["n"], fields["e"] = k.N, k.E
+	case "EC":
+		fields["crv"], fields["x"], fields["y"] = k.Crv, k.X, k.Y
+	default:
+		return nil, fmt.Errorf("unsupported key type %q", k.Kty)
+	}
 	for name, val := range map[string]string{
 		"kid": k.Kid, "use": k.Use, "alg": k.Alg,
-		"n": k.N, "e": k.E,
-		"crv": k.Crv, "x": k.X, "y": k.Y,
 	} {
 		if val != "" {
 			fields[name] = val

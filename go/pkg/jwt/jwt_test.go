@@ -461,3 +461,57 @@ func TestAudience_Unmarshal(t *testing.T) {
 		t.Fatalf("numeric aud should error")
 	}
 }
+
+// A JSON null audience must yield an empty audience, not a slice holding one
+// empty string (which would spuriously "contain" an expected "" audience).
+func TestAudience_Null(t *testing.T) {
+	a := Audience{"stale"}
+	if err := json.Unmarshal([]byte(`null`), &a); err != nil {
+		t.Fatalf("null aud: %v", err)
+	}
+	if a != nil {
+		t.Errorf("null aud = %#v, want nil", a)
+	}
+}
+
+// An out-of-range numeric date (e.g. exp = 1e30) must be rejected rather than
+// silently overflowing int64 into a garbage time that defeats the expiry check.
+func TestNumericDate_OutOfRange(t *testing.T) {
+	for _, in := range []string{`1e30`, `-1e30`, `9.3e18`} {
+		var n NumericDate
+		if err := json.Unmarshal([]byte(in), &n); err == nil {
+			t.Errorf("numeric date %s: expected out-of-range error, got %v", in, n.Time)
+		}
+	}
+	// A normal timestamp still decodes, preserving sub-second precision.
+	var n NumericDate
+	if err := json.Unmarshal([]byte(`1700000000.5`), &n); err != nil {
+		t.Fatalf("valid numeric date: %v", err)
+	}
+	if got := n.UnixNano(); got != 1_700_000_000_500_000_000 {
+		t.Errorf("decoded ns = %d, want 1700000000500000000", got)
+	}
+}
+
+// A payload with a duplicate top-level claim must be rejected: encoding/json
+// would otherwise resolve it last-wins, letting an attacker smuggle a second
+// iss/aud past the modelled fields.
+func TestParseClaims_DuplicateKey(t *testing.T) {
+	_, err := parseClaims([]byte(`{"iss":"good","aud":"x","iss":"evil"}`))
+	var mErr *MalformedTokenError
+	if !errors.As(err, &mErr) {
+		t.Fatalf("duplicate claim: err = %v, want *MalformedTokenError", err)
+	}
+	// A nested object may legitimately repeat a key name at its own level.
+	if _, err := parseClaims([]byte(`{"iss":"good","ctx":{"k":1},"sub":"s","iat":1700000000}`)); err != nil {
+		t.Errorf("nested object wrongly rejected: %v", err)
+	}
+}
+
+// toPublicKey rejects an unsupported key type rather than emitting a key with no
+// material.
+func TestToPublicKey_UnsupportedKty(t *testing.T) {
+	if _, err := toPublicKey(&jwks.JSONWebKey{Kty: "oct"}); err == nil {
+		t.Error("expected error for unsupported kty")
+	}
+}

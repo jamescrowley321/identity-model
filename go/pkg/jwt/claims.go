@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -13,14 +14,24 @@ type NumericDate struct {
 	time.Time
 }
 
+// maxNumericDate bounds an acceptable timestamp magnitude in seconds. Beyond
+// 2^53 a float64 can no longer hold an integer second exactly, and the int64
+// conversion below would overflow for very large inputs — wrapping a crafted
+// far-future exp into a garbage time that defeats the expiry check. Real epoch
+// timestamps are many orders of magnitude inside this bound.
+const maxNumericDate = 1 << 53
+
 // UnmarshalJSON decodes a JSON number of seconds since the epoch.
 func (n *NumericDate) UnmarshalJSON(b []byte) error {
 	var f float64
 	if err := json.Unmarshal(b, &f); err != nil {
 		return fmt.Errorf("numeric date: %w", err)
 	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f > maxNumericDate || f < -maxNumericDate {
+		return fmt.Errorf("numeric date %v is out of range", f)
+	}
 	sec, frac := math.Modf(f)
-	n.Time = time.Unix(int64(sec), int64(frac*float64(time.Second))).UTC()
+	n.Time = time.Unix(int64(sec), int64(math.Round(frac*float64(time.Second)))).UTC()
 	return nil
 }
 
@@ -33,8 +44,14 @@ func (n NumericDate) MarshalJSON() ([]byte, error) {
 // strings (RFC 7519 §4.1.3). It always unmarshals into a slice.
 type Audience []string
 
-// UnmarshalJSON accepts either a JSON string or an array of strings.
+// UnmarshalJSON accepts either a JSON string or an array of strings. A JSON
+// null yields an empty (nil) audience rather than a slice holding one empty
+// string.
 func (a *Audience) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		*a = nil
+		return nil
+	}
 	var single string
 	if err := json.Unmarshal(b, &single); err == nil {
 		*a = Audience{single}
@@ -88,9 +105,50 @@ var modelledClaimFields = map[string]struct{}{
 	"jti": {}, "nonce": {},
 }
 
+// duplicateTopLevelKey reports the first claim name that appears more than once
+// at the top level of a JSON object payload. encoding/json silently resolves
+// duplicate keys last-wins, which would let an attacker smuggle a second iss or
+// aud that the modelled fields and the Extra view disagree about; a security
+// validator must reject such tokens. A payload that is not a JSON object yields
+// "" — the struct decode in parseClaims reports the shape error instead.
+func duplicateTopLevelKey(payload []byte) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	tok, err := dec.Token()
+	if err != nil {
+		return "", err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return "", nil
+	}
+	seen := make(map[string]struct{})
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return "", err
+		}
+		key := keyTok.(string)
+		if _, dup := seen[key]; dup {
+			return key, nil
+		}
+		seen[key] = struct{}{}
+		// Consume the value (including any nested object/array) so the next
+		// token read is the following key.
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
 // parseClaims decodes a JWT payload into typed [Claims], preserving unmodelled
 // claims in Extra (mirrors the jwks key-parsing contract).
 func parseClaims(payload []byte) (*Claims, error) {
+	if dup, err := duplicateTopLevelKey(payload); err != nil {
+		return nil, &MalformedTokenError{Reason: fmt.Sprintf("scan claims: %v", err)}
+	} else if dup != "" {
+		return nil, &MalformedTokenError{Reason: fmt.Sprintf("duplicate claim %q", dup)}
+	}
 	var c Claims
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return nil, &MalformedTokenError{Reason: fmt.Sprintf("decode claims: %v", err)}
