@@ -1,0 +1,101 @@
+{
+  "capability": "discovery",
+  "spec": "OpenID Connect Discovery 1.0",
+  "spec_url": "https://openid.net/specs/openid-connect-discovery-1_0.html",
+  "required_fields": [
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "response_types_supported",
+    "subject_types_supported",
+    "id_token_signing_alg_values_supported"
+  ],
+  "tests": [
+    {
+      "id": "DISC-001",
+      "title": "Fetch and parse valid discovery document",
+      "given": "A reachable issuer with a valid .well-known/openid-configuration",
+      "when": "Discovery is invoked",
+      "then": "Returned metadata contains all required fields with correct types",
+      "fixture": "discovery/valid.json",
+      "references": ["§3", "§4.1", "§4.2"]
+    },
+    {
+      "id": "DISC-002",
+      "title": "Validate all required fields present",
+      "given": "A discovery document missing zero required fields",
+      "when": "Field validation runs",
+      "then": "Validation passes and all seven required fields are accessible",
+      "fixture": "discovery/valid.json",
+      "references": ["§3"]
+    },
+    {
+      "id": "DISC-003",
+      "title": "Detect issuer mismatch",
+      "given": "A discovery document whose issuer differs from the requested issuer",
+      "when": "Discovery is invoked",
+      "then": "An issuer-mismatch error is raised",
+      "fixture": "discovery/issuer-mismatch.json",
+      "references": ["§4.3"]
+    },
+    {
+      "id": "DISC-004",
+      "title": "Cache hit on second fetch within TTL",
+      "given": "A successful discovery fetch",
+      "when": "Discovery is invoked again before the TTL expires",
+      "then": "No HTTP request is made and the cached document is returned",
+      "references": ["§4"]
+    },
+    {
+      "id": "DISC-005",
+      "title": "Cache miss after TTL expiry",
+      "given": "A cached discovery document whose TTL has expired",
+      "when": "Discovery is invoked",
+      "then": "A new HTTP request is made and the cache is refreshed",
+      "references": ["§4"]
+    },
+    {
+      "id": "DISC-006",
+      "title": "Handle HTTP error (404, 500)",
+      "given": "An issuer whose discovery endpoint returns HTTP 404 or 500",
+      "when": "Discovery is invoked",
+      "then": "A transport/HTTP error is raised with the status code",
+      "references": ["§4.2"]
+    },
+    {
+      "id": "DISC-007",
+      "title": "Handle invalid JSON response",
+      "given": "An issuer whose discovery endpoint returns a non-JSON body",
+      "when": "Discovery is invoked",
+      "then": "A parse/deserialization error is raised",
+      "references": ["§4.2"]
+    },
+    {
+      "id": "DISC-008",
+      "title": "Handle missing required field",
+      "given": "A discovery document that omits one or more required fields",
+      "when": "Field validation runs",
+      "then": "A validation error is raised identifying the missing field(s)",
+      "fixture": "discovery/missing-jwks-uri.json",
+      "references": ["§3"]
+    },
+    {
+      "id": "DISC-009",
+      "title": "Ignore unknown fields in discovery document",
+      "given": "A discovery document containing extra fields not defined in the spec",
+      "when": "Discovery is invoked",
+      "then": "Extra fields are ignored (not rejected) and required fields remain accessible",
+      "fixture": "discovery/valid.json",
+      "references": ["§3"]
+    },
+    {
+      "id": "DISC-010",
+      "title": "Require HTTPS issuer URL",
+      "given": "An issuer URL using http:// (not HTTPS)",
+      "when": "Discovery is invoked in production mode",
+      "then": "An error is raised indicating HTTPS is required (configurable for development)",
+      "references": ["§3"]
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  # paths-filter lists a PR's changed files via the GitHub API on pull_request.
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which language/shared directories changed so per-language jobs run
+  # only when relevant. Shared spec/ and infra/ changes fan out to all languages.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            shared:
+              - 'spec/**'
+              - 'infra/**'
+              - '.github/workflows/ci.yml'
+            go:
+              - 'go/**'
+            rust:
+              - 'rust/**'
+
+  go:
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          # No external deps yet, so there is no go.sum to key the cache on.
+          # Flip to true (or add cache-dependency-path) once deps are added.
+          cache: false
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: go
+
+  rust:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  # Cross-language gate: succeeds only if every language job that ran also
+  # passed. Skipped language jobs do not block (path-filtered changes).
+  conformance:
+    needs: [changes, go, rust]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no language job failed
+        run: |
+          echo "go=${{ needs.go.result }} rust=${{ needs.rust.result }}"
+          for r in "${{ needs.go.result }}" "${{ needs.rust.result }}"; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "A language job did not pass."
+              exit 1
+            fi
+          done
+          echo "All executed language jobs passed."

@@ -22,3 +22,8 @@ npm-debug.log*
 .env
 .env.local
 *.local
+
+# Ralph orchestrator runtime state
+.ralph/
+.claude/task-state.md
+PROMPT.md.bak

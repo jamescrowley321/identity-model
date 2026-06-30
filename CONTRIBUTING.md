@@ -3,6 +3,15 @@
 ## Workflow
 
 - **Never commit directly to `main`.** All changes go through a feature branch and a pull request.
+
+  > This repo is **private on a free plan**, where GitHub's server-side branch protection and rulesets are unavailable. As a local guardrail, a tracked `pre-push` hook blocks direct pushes to `main`. Enable it once after cloning:
+  >
+  > ```bash
+  > git config core.hooksPath .githooks
+  > ```
+  >
+  > This is local-only (not server-enforced). For real server-side enforcement, upgrade to GitHub Pro or make the repo public, then add a ruleset requiring PRs + the `conformance` status check.
+
 - Branch naming: `<type>/<short-description>` (e.g. `feat/go-discovery-client`, `docs/spec-jwks`).
 - Conventional commits (Angular convention): `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `ci:`, `build:`, `test:`, `style:`, `perf:`.
 - At least one approving review and green CI before merge.
@@ -21,8 +30,8 @@ Each language must keep its toolchain check green:
 
 | Language | Local check |
 |----------|-------------|
-| Go (1.22+) | `cd go && go build ./... && go vet ./... && go test ./...` |
-| Rust (MSRV 1.75) | `cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test` |
+| Go (1.24+) | `cd go && go build ./... && go vet ./... && go test ./...` |
+| Rust (MSRV 1.91) | `cd rust && cargo fmt --check && cargo clippy -- -D warnings && cargo test` |
 
 ## Conformance
 
