@@ -426,6 +426,37 @@ func TestFetchConfiguration_ErrorsNotCached(t *testing.T) {
 	}
 }
 
+// An empty or whitespace-only issuer is a parse error, not a misleading
+// HTTPS-required error.
+func TestFetchConfiguration_BlankIssuer(t *testing.T) {
+	freshCache(t)
+	for _, issuer := range []string{"", "   ", "/"} {
+		_, err := FetchConfiguration(context.Background(), issuer)
+		if !errors.Is(err, ErrParse) {
+			t.Errorf("issuer %q: err = %v, want ErrParse", issuer, err)
+		}
+	}
+}
+
+// A non-2xx response must surface as an HTTPError carrying the status even when
+// the error body is large: the status check precedes the size check.
+func TestFetchConfiguration_LargeErrorBody(t *testing.T) {
+	freshCache(t)
+	big := make([]byte, maxBodyBytes+100)
+	for i := range big {
+		big[i] = 'x'
+	}
+	srv, _ := newServer(t, http.StatusInternalServerError, big)
+	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	var hErr *HTTPError
+	if !errors.As(err, &hErr) {
+		t.Fatalf("err = %v, want *HTTPError", err)
+	}
+	if hErr.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", hErr.StatusCode)
+	}
+}
+
 // --- helpers ---
 
 // reset clears all cached entries and restores the wall clock. Test-only helper

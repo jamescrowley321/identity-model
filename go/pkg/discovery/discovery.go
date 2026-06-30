@@ -115,7 +115,7 @@ func FetchConfiguration(ctx context.Context, issuerURL string, opts ...Option) (
 // document. It contains no caching logic so it can be invoked once per
 // singleflight group.
 func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
-	issuer := strings.TrimRight(issuerURL, "/")
+	issuer := strings.TrimRight(strings.TrimSpace(issuerURL), "/")
 	if issuer == "" {
 		return nil, &ParseError{Err: fmt.Errorf("issuer URL is empty")}
 	}
@@ -152,18 +152,22 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	defer resp.Body.Close()
 
 	// Cap the body to guard against an unbounded response (memory-exhaustion
-	// DoS). Read one extra byte to detect overflow.
+	// DoS). The LimitReader bounds memory regardless of status; read one extra
+	// byte so an oversized body can be detected below.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("discovery: read body: %w", err)
 	}
-	if len(body) > maxBodyBytes {
-		return nil, &ParseError{Err: fmt.Errorf("discovery document exceeds %d bytes", maxBodyBytes)}
-	}
 
-	// DISC-006: non-2xx is a transport error carrying the status code.
+	// DISC-006: non-2xx is a transport error carrying the status code. Check
+	// this before the size check so a large error page still surfaces as an
+	// HTTPError (with its status) rather than a misleading parse error.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, &HTTPError{StatusCode: resp.StatusCode, URL: endpoint}
+	}
+
+	if len(body) > maxBodyBytes {
+		return nil, &ParseError{Err: fmt.Errorf("discovery document exceeds %d bytes", maxBodyBytes)}
 	}
 
 	// DISC-007: a non-JSON body (or a JSON value that is not an object) is a

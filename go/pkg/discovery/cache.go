@@ -64,10 +64,13 @@ func (c *cache) store(key string, cfg *ProviderConfiguration, ttl time.Duration)
 // The shared fetch runs on a context detached from any single caller (via
 // [context.WithoutCancel]), so one caller cancelling or timing out cannot
 // poison the request other callers depend on; each caller still observes its
-// own context cancellation through the select below. The timeout and cache TTL
-// applied to the shared fetch are those of the caller that wins the flight
-// (first-wins) — callers needing distinct timeouts should not rely on the
-// shared cache for that guarantee.
+// own context cancellation through the select below. Because the shared fetch
+// is detached, a deadline carried only on a caller's context does not bound the
+// underlying request (the caller still unblocks at its deadline, but the fetch
+// runs to the configured [WithTimeout] or the default request timeout). The
+// timeout and cache TTL applied to the shared fetch are those of the caller
+// that wins the flight (first-wins) — callers needing distinct timeouts should
+// not rely on the shared cache for that guarantee.
 func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
 	// DISC-004: serve a fresh cache entry without any HTTP request.
 	if doc, ok := c.lookup(issuerURL); ok {
