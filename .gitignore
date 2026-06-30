@@ -1,0 +1,24 @@
+# Go
+/go/bin/
+*.test
+*.out
+
+# Rust
+/rust/target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Node / infra
+node_modules/
+npm-debug.log*
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env / secrets
+.env
+.env.local
+*.local
