@@ -42,7 +42,7 @@ func Fetch(ctx context.Context, userInfoEndpoint, accessToken string, opts ...Op
 		return nil, &RequestError{Op: "userinfo request", Err: fmt.Errorf("access token is required")}
 	}
 
-	reqCtx := ctx
+	var reqCtx context.Context
 	if cfg.timeout > 0 {
 		var cancel context.CancelFunc
 		reqCtx, cancel = context.WithTimeout(ctx, cfg.timeout)
