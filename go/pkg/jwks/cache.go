@@ -25,6 +25,11 @@ type cache struct {
 	entries map[string]cacheEntry
 	group   singleflight.Group
 
+	// lastRefresh records when each jwks_uri was last refreshed, throttling
+	// automatic refreshes so an unknown kid cannot drive unbounded re-fetches
+	// (see [cache.refreshThrottled]).
+	lastRefresh map[string]time.Time
+
 	// now returns the current time; overridable in tests to drive TTL expiry
 	// deterministically (JWKS-005).
 	now func() time.Time
@@ -36,9 +41,33 @@ var globalCache = newCache()
 // newCache returns an empty cache using the wall clock.
 func newCache() *cache {
 	return &cache{
-		entries: make(map[string]cacheEntry),
-		now:     time.Now,
+		entries:     make(map[string]cacheEntry),
+		lastRefresh: make(map[string]time.Time),
+		now:         time.Now,
 	}
+}
+
+// markRefresh records that key was just refreshed, starting its cooldown window.
+func (c *cache) markRefresh(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastRefresh[key] = c.now()
+}
+
+// refreshThrottled reports whether key was refreshed less than cooldown ago, so
+// another automatic refresh should be suppressed. A non-positive cooldown
+// disables throttling.
+func (c *cache) refreshThrottled(key string, cooldown time.Duration) bool {
+	if cooldown <= 0 {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	last, ok := c.lastRefresh[key]
+	if !ok {
+		return false
+	}
+	return c.now().Sub(last) < cooldown
 }
 
 // lookup returns the cached keys for key if present and unexpired.

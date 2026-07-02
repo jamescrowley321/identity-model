@@ -284,6 +284,54 @@ func TestResolveKeyWithRefresh_StillMissing(t *testing.T) {
 	}
 }
 
+// JWKS-004 hardening: an unknown kid is taken from an untrusted token header, so
+// repeated misses must not drive unbounded outbound fetches. Automatic refreshes
+// are rate-limited per URI by the refresh cooldown; within the window a miss
+// returns key-not-found with no network request, and refreshing resumes once the
+// cooldown elapses.
+func TestResolveKeyWithRefresh_Throttled(t *testing.T) {
+	freshCache(t)
+	srv, hits := newServer(t, http.StatusOK, keySetJSON(rsaKeyJSON("only-key")))
+
+	base := time.Unix(1_700_000_000, 0)
+	var clock atomic.Int64
+	clock.Store(base.UnixNano())
+	globalCache.mu.Lock()
+	globalCache.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	globalCache.mu.Unlock()
+
+	cooldown := WithRefreshCooldown(time.Minute)
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP(), cooldown)
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+
+	// First miss: allowed, triggers one forced refresh (hits == 2).
+	if _, err := set.ResolveKeyWithRefresh(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected key-not-found for ghost-1")
+	}
+	if got := atomic.LoadInt32(hits); got != 2 {
+		t.Fatalf("after first miss, requests = %d, want 2 (initial + refresh)", got)
+	}
+
+	// Second miss within the cooldown: throttled, no network request.
+	if _, err := set.ResolveKeyWithRefresh(context.Background(), "ghost-2"); err == nil {
+		t.Fatal("expected key-not-found for ghost-2")
+	}
+	if got := atomic.LoadInt32(hits); got != 2 {
+		t.Errorf("within cooldown, requests = %d, want 2 (no extra fetch)", got)
+	}
+
+	// After the cooldown elapses, an automatic refresh is allowed again.
+	clock.Store(base.Add(2 * time.Minute).UnixNano())
+	if _, err := set.ResolveKeyWithRefresh(context.Background(), "ghost-3"); err == nil {
+		t.Fatal("expected key-not-found for ghost-3")
+	}
+	if got := atomic.LoadInt32(hits); got != 3 {
+		t.Errorf("after cooldown, requests = %d, want 3 (one more refresh)", got)
+	}
+}
+
 // JWKS-005: a second call within the TTL is served from cache (no HTTP request).
 func TestFetchKeySet_CacheHit(t *testing.T) {
 	freshCache(t)
@@ -571,6 +619,7 @@ func (c *cache) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = make(map[string]cacheEntry)
+	c.lastRefresh = make(map[string]time.Time)
 	c.now = time.Now
 }
 

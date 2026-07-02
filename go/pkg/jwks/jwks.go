@@ -127,9 +127,18 @@ func (s *JSONWebKeySet) ResolveKey(kid string) (*JSONWebKey, bool) {
 // and retries before returning a [KeyNotFoundError] (JWKS-004). This handles
 // key rotation: a token signed with a freshly published key whose kid is not
 // yet cached triggers a re-fetch.
+//
+// The automatic refresh is rate-limited per jwks_uri by the refresh cooldown
+// (see [WithRefreshCooldown]): because kid is taken from an untrusted token
+// header, an attacker presenting tokens with random kid values would otherwise
+// drive an unbounded number of outbound JWKS fetches. Within the cooldown a miss
+// returns [KeyNotFoundError] without re-fetching.
 func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (*JSONWebKey, error) {
 	if k, ok := s.ResolveKey(kid); ok {
 		return k, nil
+	}
+	if s.cache.refreshThrottled(s.uri, s.cfg.refreshCooldown) {
+		return nil, &KeyNotFoundError{Kid: kid}
 	}
 	if err := s.ForceRefresh(ctx); err != nil {
 		return nil, err
@@ -143,13 +152,16 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 // ForceRefresh invalidates the cached set for this URI and re-fetches it,
 // replacing Keys with the fresh set (JWKS-006). Callers invoke it after a
 // signature verification failure that may indicate the provider has rotated its
-// keys.
+// keys. Unlike the automatic refresh in [JSONWebKeySet.ResolveKeyWithRefresh],
+// an explicit ForceRefresh is never throttled, but it does start the cooldown
+// window that gates subsequent automatic refreshes.
 func (s *JSONWebKeySet) ForceRefresh(ctx context.Context) error {
 	s.cache.invalidate(s.uri)
 	keys, err := s.cache.fetch(ctx, s.uri, s.cfg)
 	if err != nil {
 		return err
 	}
+	s.cache.markRefresh(s.uri)
 	s.mu.Lock()
 	s.Keys = keys
 	s.mu.Unlock()
