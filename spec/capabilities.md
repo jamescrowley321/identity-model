@@ -20,7 +20,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | planned | planned |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | planned | planned |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | planned | planned | planned |
-| Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | planned | planned |
+| Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | planned | planned |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | planned | planned | planned |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | planned | planned |
