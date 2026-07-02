@@ -40,7 +40,7 @@ Behavioral parity across languages is enforced by the shared specification in [`
 1. Update or add the test definition in `spec/conformance/<capability>.json`.
 2. Implement the capability in your language against those definitions.
 3. Update the capability's per-language status in `spec/capabilities.md`.
-4. Run the integration suite against the shared provider in `infra/`.
+4. Run the integration suite against the local provider matrix: `make test-integration-local` (and the cloud profiles when credentials are available: `make test-integration-ory`, `make test-integration-descope`).
 
 ## Adding a New Language
 

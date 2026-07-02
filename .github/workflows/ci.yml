@@ -62,6 +62,76 @@ jobs:
           version: latest
           working-directory: go
 
+  # Integration gate: every PR runs the full suite against both local
+  # providers (node-oidc-provider and Duende IdentityServer) via docker
+  # compose. Unit tests alone do not gate a merge.
+  go-integration:
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: Start local provider stack
+        run: docker compose -f infra/docker-compose.yml up -d --build --wait
+      - name: Integration tests (node-oidc-provider)
+        run: make test-integration-node-oidc
+      - name: Integration tests (IdentityServer)
+        run: make test-integration-identityserver
+      - name: Provider logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs
+      - name: Tear down provider stack
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down
+
+  # Cloud providers: same suite against Ory and Descope. Each job passes
+  # trivially when its secrets are not configured (forks, fresh clones);
+  # once secrets exist, failures block the gate like any other job.
+  go-integration-ory:
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: Integration tests (Ory)
+        env:
+          TEST_DISCO_ADDRESS: ${{ secrets.TEST_DISCO_ADDRESS }}
+          TEST_JWKS_ADDRESS: ${{ secrets.TEST_JWKS_ADDRESS }}
+          TEST_CLIENT_ID: ${{ secrets.TEST_CLIENT_ID }}
+          TEST_CLIENT_SECRET: ${{ secrets.TEST_CLIENT_SECRET }}
+          TEST_SCOPE: ${{ secrets.TEST_SCOPE }}
+        run: make test-integration-ory
+
+  go-integration-descope:
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: Integration tests (Descope)
+        env:
+          TEST_DISCO_ADDRESS: ${{ secrets.DESCOPE_DISCO_ADDRESS }}
+          TEST_JWKS_ADDRESS: ${{ secrets.DESCOPE_JWKS_ADDRESS }}
+          TEST_CLIENT_ID: ${{ secrets.DESCOPE_CLIENT_ID }}
+          TEST_CLIENT_SECRET: ${{ secrets.DESCOPE_CLIENT_SECRET }}
+          TEST_SCOPE: ${{ secrets.DESCOPE_SCOPE }}
+        run: make test-integration-descope
+
   rust:
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
@@ -84,17 +154,17 @@ jobs:
   # Cross-language gate: succeeds only if every language job that ran also
   # passed. Skipped language jobs do not block (path-filtered changes).
   conformance:
-    needs: [changes, go, rust]
+    needs: [changes, go, go-integration, go-integration-ory, go-integration-descope, rust]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Verify no language job failed
+      - name: Verify no language or integration job failed
         run: |
-          echo "go=${{ needs.go.result }} rust=${{ needs.rust.result }}"
-          for r in "${{ needs.go.result }}" "${{ needs.rust.result }}"; do
+          echo "go=${{ needs.go.result }} go-integration=${{ needs.go-integration.result }} ory=${{ needs.go-integration-ory.result }} descope=${{ needs.go-integration-descope.result }} rust=${{ needs.rust.result }}"
+          for r in "${{ needs.go.result }}" "${{ needs.go-integration.result }}" "${{ needs.go-integration-ory.result }}" "${{ needs.go-integration-descope.result }}" "${{ needs.rust.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
-              echo "A language job did not pass."
+              echo "A required job did not pass."
               exit 1
             fi
           done
-          echo "All executed language jobs passed."
+          echo "All executed jobs passed."

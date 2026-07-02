@@ -1,9 +1,8 @@
 services:
   node-oidc-provider:
     build:
-      context: .
+      context: ./node-oidc-provider
       dockerfile: Dockerfile
-    container_name: node-oidc-provider
     ports:
       - "127.0.0.1:9000:9000"
     environment:
@@ -15,3 +14,20 @@ services:
       timeout: 5s
       retries: 10
       start_period: 3s
+
+  identityserver:
+    build:
+      context: ./identityserver
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:9001:9001"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:9001
+      - ISSUER=http://localhost:9001
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9001/.well-known/openid-configuration"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+      start_period: 10s

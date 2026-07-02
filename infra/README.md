@@ -1,53 +1,78 @@
 # Shared Test Infrastructure
 
-A single [`node-oidc-provider`](https://github.com/panva/node-oidc-provider) instance, run via Docker Compose, that **all** language bindings run their integration and conformance tests against. This guarantees every language is tested against the same RFC-compliant provider.
+A local, multi-provider OIDC stack, run via Docker Compose, that **all**
+language bindings run their integration and conformance tests against — plus
+cloud provider profiles (Ory, Descope) that reuse the same test suites.
+Testing every change against heterogeneous providers catches
+provider-specific behavior a single fixture cannot.
 
-> Adapted from the `py-identity-model` provider fixture and standardized on port **9000**.
+| Provider | Where | Issuer | Fixture |
+|----------|-------|--------|---------|
+| [`node-oidc-provider`](https://github.com/panva/node-oidc-provider) | local compose | `http://localhost:9000` | [`node-oidc-provider/`](node-oidc-provider/) |
+| [Duende IdentityServer](https://duendesoftware.com/products/identityserver) | local compose | `http://localhost:9001` | [`identityserver/`](identityserver/) |
+| Ory Network | cloud | per project | `.env.ory` (repo root, from `.env.ory.example`) |
+| Descope | cloud | per project | `.env.descope` (repo root, from `.env.descope.example`) |
+
+> Adapted from the `py-identity-model` provider fixtures. The local providers
+> are the required per-PR CI gate; the cloud jobs run when their secrets are
+> configured.
 
 ## Run
 
 ```bash
-docker compose up -d            # starts provider on http://localhost:9000
+docker compose up -d --wait     # node-oidc-provider :9000 + IdentityServer :9001
 curl http://localhost:9000/.well-known/openid-configuration
+curl http://localhost:9001/.well-known/openid-configuration
 docker compose down
 ```
 
-The provider is healthy once `/.well-known/openid-configuration` responds (a Compose `healthcheck` gates this for CI).
+Each provider is healthy once its `/.well-known/openid-configuration`
+responds (Compose `healthcheck`s gate this for CI). From the repo root,
+`make infra-up` / `make infra-down` wrap the same commands, and
+`make test-integration-local` runs the full up → test both → down cycle.
 
-## Endpoints
+## Test selection
 
-| Endpoint | URL |
-|----------|-----|
-| Discovery | `http://localhost:9000/.well-known/openid-configuration` |
-| JWKS | `http://localhost:9000/jwks` |
-| Token | `http://localhost:9000/token` |
-| Authorization | `http://localhost:9000/auth` |
-| UserInfo | `http://localhost:9000/me` |
+Integration tests read the `TEST_*` environment convention shared with
+py-identity-model (see `go/internal/integrationtest`). Per-provider profiles
+live at the repo root: `.env.node-oidc`, `.env.identityserver`, and the
+`.env.ory.example` / `.env.descope.example` templates. With no `TEST_*`
+environment at all, tests default to the node-oidc-provider profile.
 
-Signing keys: one RSA (`kid=rsa-sig-key`, RS256) and one EC (`kid=ec-sig-key`, ES256).
+## Pre-configured Clients (both local providers)
 
-## Pre-configured Clients
+The IdentityServer fixture seeds the subset of clients below that its flows
+need (`test-client-credentials`, `test-auth-code`, `test-pkce-public`), with
+the same IDs and secrets as node-oidc-provider, so the `.env.*` profiles
+differ only by issuer.
 
 | `client_id` | Secret | Grants | Auth method |
 |-------------|--------|--------|-------------|
-| `test-client-credentials` | `test-client-credentials-secret` | client_credentials, device_code, token-exchange | client_secret_basic |
+| `test-client-credentials` | `test-client-credentials-secret` | client_credentials (+ device_code, token-exchange on node-oidc) | client_secret_basic |
 | `test-auth-code` | `test-auth-code-secret` | authorization_code, refresh_token | client_secret_basic |
 | `test-pkce-public` | _(none)_ | authorization_code, refresh_token | none (PKCE) |
-| `test-device` | `test-device-secret` | device_code, refresh_token | client_secret_basic |
-| `test-token-exchange` | `test-token-exchange-secret` | token-exchange | client_secret_basic |
-| `test-opaque` | see `provider.js` | — | — |
+| `test-device` (node-oidc only) | `test-device-secret` | device_code, refresh_token | client_secret_basic |
+| `test-token-exchange` (node-oidc only) | `test-token-exchange-secret` | token-exchange | client_secret_basic |
+| `test-opaque` (node-oidc only) | see `provider.js` | — | — |
 
 Redirect URI for code/PKCE clients: `http://localhost:8080/callback`.
 
-## Test User & Claims
+## node-oidc-provider details
 
-A static account `test-user` is configured with `email`, `email_verified`, `name`, `given_name`, `family_name`. Edit `provider.js` (`ACCOUNTS`) to add accounts or custom claims.
+Endpoints: discovery `/.well-known/openid-configuration`, JWKS `/jwks`,
+token `/token`, authorization `/auth`, UserInfo `/me` — all on `:9000`.
+Signing keys: one RSA (`kid=rsa-sig-key`, RS256) and one EC
+(`kid=ec-sig-key`, ES256). A static account `test-user` carries `email`,
+`email_verified`, `name`, `given_name`, `family_name`, plus Descope-style
+`dct`/`tenants` claims. Edit
+[`node-oidc-provider/provider.js`](node-oidc-provider/provider.js) to change
+clients, claims, or keys, then rebuild (`docker compose up -d --build`).
 
-## Configuration
+## IdentityServer details
 
-| Env var | Default | Purpose |
-|---------|---------|---------|
-| `PORT` | `9000` | Listen port |
-| `ISSUER` | `http://localhost:9000` | Issuer / base URL |
-
-See [`.env.example`](.env.example). To change clients, claims, or keys, edit [`provider.js`](provider.js) and rebuild (`docker compose up -d --build`).
+Duende IdentityServer 7 on .NET 8, in-memory configuration, developer
+signing credential, plain HTTP on `:9001` (test fixture only — Duende's
+license permits development/testing use). Scope `api` is backed by an
+`ApiResource` so client-credentials tokens carry `aud=api`. Edit
+[`identityserver/Program.cs`](identityserver/Program.cs) to change clients
+or scopes, then rebuild.
