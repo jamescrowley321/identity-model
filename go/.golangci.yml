@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  settings:
+    staticcheck:
+      # QF* are gopls quickfix suggestions (style refactorings), not
+      # correctness checks; staticcheck itself ships them disabled.
+      checks:
+        - all
+        - "-QF*"
+  exclusions:
+    presets:
+      # Restores the v1 default exclusions, e.g. errcheck on deferred
+      # resp.Body.Close(), which is idiomatic Go.
+      - std-error-handling
