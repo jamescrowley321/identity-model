@@ -13,15 +13,14 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 
+	"github.com/jamescrowley321/identity-model/go/internal/integrationtest"
 	"github.com/jamescrowley321/identity-model/go/pkg/discovery"
 	"github.com/jamescrowley321/identity-model/go/pkg/jwks"
 	"github.com/jamescrowley321/identity-model/go/pkg/jwt"
 )
 
-// infraIssuer is the local node-oidc-provider from infra/ (docker compose up).
-const infraIssuer = "http://localhost:9000"
-
-// TestIntegration_Validate_AgainstLiveJWKS discovers the live provider, fetches
+// TestIntegration_Validate_AgainstLiveJWKS discovers the live provider
+// (selected by the TEST_* environment, default the infra/ fixture), fetches
 // its real JWKS, then validates a token signed by our own (non-provider) key.
 // Because that key's kid is absent from the provider's set, validation must
 // drive a JWKS forced refresh (ResolveKeyWithRefresh) and ultimately surface
@@ -30,15 +29,25 @@ const infraIssuer = "http://localhost:9000"
 // Full validation of a provider-issued id_token (where the signature verifies)
 // requires the authorization-code flow and is deferred to stories 3.5/3.6.
 func TestIntegration_Validate_AgainstLiveJWKS(t *testing.T) {
+	tc := integrationtest.Load()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cfg, err := discovery.FetchConfiguration(ctx, infraIssuer, discovery.WithInsecureAllowHTTP())
+	var dopts []discovery.Option
+	if tc.AllowHTTP {
+		dopts = append(dopts, discovery.WithInsecureAllowHTTP())
+	}
+	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
 	if err != nil {
-		t.Skipf("infra provider not reachable at %s (run `cd infra && docker compose up -d`): %v", infraIssuer, err)
+		t.Skipf("provider not reachable at %s (local: run `cd infra && docker compose up -d`): %v", tc.Issuer, err)
 	}
 
-	set, err := jwks.FetchKeySet(ctx, cfg.JWKSURI, jwks.WithInsecureAllowHTTP())
+	var jopts []jwks.Option
+	if tc.AllowHTTP {
+		jopts = append(jopts, jwks.WithInsecureAllowHTTP())
+	}
+	set, err := jwks.FetchKeySet(ctx, cfg.JWKSURI, jopts...)
 	if err != nil {
 		t.Fatalf("fetch live jwks: %v", err)
 	}
@@ -58,7 +67,7 @@ func TestIntegration_Validate_AgainstLiveJWKS(t *testing.T) {
 	}
 	now := time.Now()
 	payload, _ := json.Marshal(map[string]any{
-		"iss": infraIssuer,
+		"iss": tc.Issuer,
 		"sub": "integration-subject",
 		"aud": "integration-client",
 		"exp": now.Add(time.Hour).Unix(),

@@ -8,20 +8,20 @@ identity-model is a family of OIDC/OAuth2 client libraries that share one cross-
 |------|---------|-----|
 | Go | 1.24+ | `go/` implementation |
 | Rust | 1.91+ (edition 2024) | `rust/` implementation |
-| Docker + Compose | recent | shared OIDC provider in `infra/` |
+| Docker + Compose | recent | shared OIDC providers in `infra/` |
 
 ## Layout at a Glance
 
 - [`go/`](../go) — Go module, scaffolded (`go build ./... && go test ./...`).
 - [`rust/`](../rust) — Rust crate, scaffolded (`cargo test`).
 - [`spec/`](../spec) — the cross-language contract: capability matrix, conformance test definitions, fixtures.
-- [`infra/`](../infra) — one `node-oidc-provider` all languages test against (`docker compose up -d`, port 9000).
+- [`infra/`](../infra) — local providers all languages test against: `node-oidc-provider` (`:9000`) and Duende IdentityServer (`:9001`), plus Ory/Descope cloud profiles (`make infra-up`).
 
 ## Typical Loop
 
 ```bash
-# 1. Start the shared provider
-cd infra && docker compose up -d && cd ..
+# 1. Start the shared providers
+make infra-up
 
 # 2. Work in a language
 cd go   && go test ./...   && cd ..

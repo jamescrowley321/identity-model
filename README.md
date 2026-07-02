@@ -35,7 +35,7 @@ identity-model/
 │   ├── capabilities.md # Canonical capability matrix
 │   ├── conformance/    # Machine-readable, language-agnostic test definitions
 │   └── test-fixtures/  # Shared fixtures (discovery docs, JWKs, tokens)
-├── infra/              # Shared test infrastructure (node-oidc-provider)
+├── infra/              # Shared test infra (node-oidc-provider + IdentityServer)
 ├── docs/               # Cross-language documentation
 └── .github/workflows/  # Path-filtered CI matrix
 ```
@@ -50,7 +50,8 @@ Each capability has a language-agnostic definition in `spec/conformance/*.json`.
 |----------|----------|
 | Go | `cd go && go build ./... && go test ./...` |
 | Rust | `cd rust && cargo check && cargo test` |
-| Infra | `cd infra && docker compose up -d` (shared OIDC provider on `:9000`) |
+| Infra | `make infra-up` (node-oidc-provider `:9000`, IdentityServer `:9001`) |
+| Integration | `make test-integration-local` (full local provider matrix) |
 
 ## Versioning
 

@@ -4,41 +4,42 @@ package discovery_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/jamescrowley321/identity-model/go/internal/integrationtest"
 	"github.com/jamescrowley321/identity-model/go/pkg/discovery"
 )
 
 // TestIntegration_FetchConfiguration exercises a real discovery fetch against
-// the infra/ node-oidc-provider (OIDC Discovery 1.0). Bring it up first:
+// the provider selected by the TEST_* environment (OIDC Discovery 1.0). The
+// default profile is the infra/ node-oidc-provider:
 //
 //	cd infra && docker compose up -d
 //	cd go && go test -tags=integration ./pkg/discovery/...
 //
-// The issuer defaults to the infra provider but can be overridden with
-// DISCOVERY_ISSUER. node-oidc-provider serves plain HTTP locally, so
-// WithInsecureAllowHTTP is required.
+// Point TEST_DISCO_ADDRESS at another provider (IdentityServer, Ory, Descope)
+// to run the same test there; the Makefile targets load per-provider .env.*
+// profiles. Local fixtures serve plain HTTP, which enables
+// WithInsecureAllowHTTP via the profile's AllowHTTP.
 func TestIntegration_FetchConfiguration(t *testing.T) {
-	issuer := os.Getenv("DISCOVERY_ISSUER")
-	if issuer == "" {
-		issuer = "http://localhost:9000"
-	}
+	tc := integrationtest.Load()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cfg, err := discovery.FetchConfiguration(ctx, issuer,
-		discovery.WithInsecureAllowHTTP(),
-		discovery.WithTimeout(5*time.Second),
-	)
-	if err != nil {
-		t.Fatalf("FetchConfiguration(%s): %v", issuer, err)
+	opts := []discovery.Option{discovery.WithTimeout(5 * time.Second)}
+	if tc.AllowHTTP {
+		opts = append(opts, discovery.WithInsecureAllowHTTP())
 	}
 
-	if cfg.Issuer != issuer {
-		t.Errorf("issuer = %q, want %q", cfg.Issuer, issuer)
+	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, opts...)
+	if err != nil {
+		t.Fatalf("FetchConfiguration(%s): %v", tc.Issuer, err)
+	}
+
+	if cfg.Issuer != tc.Issuer {
+		t.Errorf("issuer = %q, want %q", cfg.Issuer, tc.Issuer)
 	}
 	for name, val := range map[string]string{
 		"authorization_endpoint": cfg.AuthorizationEndpoint,
@@ -54,7 +55,7 @@ func TestIntegration_FetchConfiguration(t *testing.T) {
 	}
 
 	// A second call within the TTL must be served from cache.
-	if _, err := discovery.FetchConfiguration(ctx, issuer, discovery.WithInsecureAllowHTTP()); err != nil {
+	if _, err := discovery.FetchConfiguration(ctx, tc.Issuer, opts...); err != nil {
 		t.Errorf("cached re-fetch: %v", err)
 	}
 }
