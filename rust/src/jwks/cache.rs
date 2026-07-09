@@ -23,6 +23,10 @@ struct CacheEntry {
 /// A TTL cache mapping a `jwks_uri` to its parsed [`JsonWebKeySet`].
 pub(crate) struct Cache {
     entries: RwLock<HashMap<String, CacheEntry>>,
+    /// Records when each `jwks_uri` was last refreshed, throttling automatic
+    /// refreshes so an unknown `kid` cannot drive unbounded re-fetches (see
+    /// [`Cache::refresh_throttled`]).
+    last_refresh: RwLock<HashMap<String, Instant>>,
 }
 
 impl Cache {
@@ -30,6 +34,7 @@ impl Cache {
     pub(crate) fn new() -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
+            last_refresh: RwLock::new(HashMap::new()),
         }
     }
 
@@ -65,5 +70,27 @@ impl Cache {
     /// provider (JWKS-006).
     pub(crate) async fn invalidate(&self, key: &str) {
         self.entries.write().await.remove(key);
+    }
+
+    /// Records that `key` was just refreshed, starting its cooldown window.
+    pub(crate) async fn mark_refresh(&self, key: &str) {
+        self.last_refresh
+            .write()
+            .await
+            .insert(key.to_string(), Instant::now());
+    }
+
+    /// Reports whether `key` was refreshed less than `cooldown` ago, so another
+    /// automatic refresh should be suppressed. A zero cooldown disables
+    /// throttling. Mirrors `go/pkg/jwks` `cache.refreshThrottled`.
+    pub(crate) async fn refresh_throttled(&self, key: &str, cooldown: Duration) -> bool {
+        if cooldown.is_zero() {
+            return false;
+        }
+        let last_refresh = self.last_refresh.read().await;
+        match last_refresh.get(key) {
+            Some(&last) => last.elapsed() < cooldown,
+            None => false,
+        }
     }
 }

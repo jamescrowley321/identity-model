@@ -16,6 +16,14 @@ const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Default per-request timeout so a hung server cannot block indefinitely.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Default minimum interval between automatic forced refreshes for a given
+/// `jwks_uri`. Because `kid` is taken from an untrusted token header, an
+/// attacker presenting tokens with random `kid` values would otherwise drive an
+/// unbounded number of outbound JWKS fetches (request amplification / DoS).
+/// Within the cooldown a `kid` miss returns [`IdentityError::KeyNotFound`]
+/// without re-fetching. Mirrors `go/pkg/jwks` `defaultRefreshCooldown`.
+const DEFAULT_REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
+
 /// Caps the JWKS response read into memory. A key set is a small JSON object;
 /// this guards against a provider streaming an unbounded body
 /// (memory-exhaustion DoS).
@@ -45,6 +53,7 @@ pub struct JwksClient {
     cache_ttl: Duration,
     timeout: Duration,
     allow_http: bool,
+    refresh_cooldown: Duration,
 }
 
 impl JwksClient {
@@ -104,13 +113,19 @@ impl JwksClient {
     /// provider (JWKS-006), returning the fresh set. Callers invoke it after a
     /// signature verification failure that may indicate key rotation.
     ///
+    /// An explicit `force_refresh` is never throttled, but it starts the
+    /// cooldown window that gates subsequent automatic refreshes in
+    /// [`JwksClient::resolve_key`].
+    ///
     /// # Errors
     ///
     /// Propagates the errors of [`JwksClient::fetch`].
     pub async fn force_refresh(&self, jwks_uri: &str) -> Result<JsonWebKeySet> {
         let uri = jwks_uri.trim().to_string();
         self.cache.invalidate(&uri).await;
-        self.fetch(&uri).await
+        let key_set = self.fetch(&uri).await?;
+        self.cache.mark_refresh(&uri).await;
+        Ok(key_set)
     }
 
     /// Resolves the key with `kid` at `jwks_uri`, forcing one refresh and
@@ -121,6 +136,13 @@ impl JwksClient {
     /// already-fetched set without a network round-trip, use
     /// [`JsonWebKeySet::resolve_key`].
     ///
+    /// The automatic refresh is rate-limited per `jwks_uri` by the refresh
+    /// cooldown (see [`JwksClientBuilder::refresh_cooldown`]): because `kid`
+    /// comes from an untrusted token header, an attacker presenting tokens with
+    /// random `kid` values would otherwise drive unbounded outbound fetches.
+    /// Within the cooldown a miss returns [`IdentityError::KeyNotFound`] without
+    /// re-fetching.
+    ///
     /// # Errors
     ///
     /// - [`IdentityError::KeyNotFound`] — no key with `kid` even after a refresh.
@@ -130,9 +152,19 @@ impl JwksClient {
         if let Some(key) = key_set.find(kid) {
             return Ok(key.clone());
         }
-        // JWKS-004: the kid may belong to a freshly rotated key; force one
-        // refresh and retry before giving up.
-        let refreshed = self.force_refresh(jwks_uri).await?;
+        // JWKS-004: the kid may belong to a freshly rotated key, so force one
+        // refresh and retry. Throttle the automatic refresh per jwks_uri
+        // (keyed on the trimmed URI, matching the cache key) so random unknown
+        // kids cannot amplify traffic against the provider.
+        let uri = jwks_uri.trim();
+        if self
+            .cache
+            .refresh_throttled(uri, self.refresh_cooldown)
+            .await
+        {
+            return Err(IdentityError::KeyNotFound(kid.to_string()));
+        }
+        let refreshed = self.force_refresh(uri).await?;
         refreshed.resolve_key(kid).cloned()
     }
 
@@ -188,6 +220,7 @@ pub struct JwksClientBuilder {
     cache_ttl: Duration,
     timeout: Duration,
     allow_http: bool,
+    refresh_cooldown: Duration,
 }
 
 impl JwksClientBuilder {
@@ -198,6 +231,7 @@ impl JwksClientBuilder {
             cache_ttl: DEFAULT_CACHE_TTL,
             timeout: DEFAULT_TIMEOUT,
             allow_http: false,
+            refresh_cooldown: DEFAULT_REFRESH_COOLDOWN,
         }
     }
 
@@ -227,6 +261,17 @@ impl JwksClientBuilder {
         self
     }
 
+    /// Sets the minimum interval between automatic forced refreshes for a given
+    /// `jwks_uri` in [`JwksClient::resolve_key`]. Within this window a `kid`
+    /// miss returns [`IdentityError::KeyNotFound`] without a network re-fetch,
+    /// bounding the rate at which an untrusted `kid` can trigger outbound
+    /// traffic. A zero duration disables throttling (every miss refreshes);
+    /// explicit [`JwksClient::force_refresh`] is never throttled.
+    pub fn refresh_cooldown(mut self, cooldown: Duration) -> Self {
+        self.refresh_cooldown = cooldown;
+        self
+    }
+
     /// Uses `client` for JWKS requests instead of a default [`reqwest::Client`],
     /// letting callers share a connection pool or supply custom transport
     /// configuration.
@@ -243,6 +288,7 @@ impl JwksClientBuilder {
             cache_ttl: self.cache_ttl,
             timeout: self.timeout,
             allow_http: self.allow_http,
+            refresh_cooldown: self.refresh_cooldown,
         }
     }
 }
@@ -373,6 +419,77 @@ mod tests {
             matches!(&err, IdentityError::KeyNotFound(kid) if kid == "never"),
             "expected KeyNotFound(never), got {err:?}"
         );
+    }
+
+    // JWKS-004 (security): repeated unknown-kid resolutions are rate-limited by
+    // the refresh cooldown, so a random kid cannot amplify traffic. The first
+    // miss refreshes once (request 2); a second miss within the cooldown is
+    // throttled and makes no further request. Mirrors go/pkg/jwks
+    // TestResolveKeyWithRefresh_Throttled.
+    #[tokio::test]
+    async fn refresh_cooldown_throttles_repeated_misses() {
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(VALID_SET),
+        )
+        .await;
+
+        let client = JwksClient::builder()
+            .allow_http(true)
+            .refresh_cooldown(Duration::from_secs(60))
+            .build();
+        let uri = jwks_uri(&server);
+
+        // First unknown-kid resolution: cold fetch (req 1) + one forced refresh
+        // (req 2), then KeyNotFound.
+        client
+            .resolve_key(&uri, "never")
+            .await
+            .expect_err("first miss errors");
+        // Second unknown-kid resolution within the cooldown: throttled, no fetch.
+        client
+            .resolve_key(&uri, "never")
+            .await
+            .expect_err("second miss errors");
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(
+            received.len(),
+            2,
+            "second miss throttled within cooldown; no extra refresh"
+        );
+    }
+
+    // A zero refresh_cooldown disables throttling: every unknown-kid miss forces
+    // a refresh, so two misses issue two extra fetches.
+    #[tokio::test]
+    async fn zero_refresh_cooldown_refreshes_every_miss() {
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(VALID_SET),
+        )
+        .await;
+
+        let client = JwksClient::builder()
+            .allow_http(true)
+            .refresh_cooldown(Duration::ZERO)
+            .build();
+        let uri = jwks_uri(&server);
+
+        client
+            .resolve_key(&uri, "never")
+            .await
+            .expect_err("first miss errors");
+        client
+            .resolve_key(&uri, "never")
+            .await
+            .expect_err("second miss errors");
+
+        // req 1 = cold fetch; req 2 + req 3 = a forced refresh per miss.
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 3, "no throttling: each miss refreshes");
     }
 
     // JWKS-005: a second fetch() within the TTL makes no HTTP request.
