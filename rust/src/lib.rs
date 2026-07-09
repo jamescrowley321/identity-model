@@ -26,6 +26,7 @@ pub mod jwt;
 pub mod token;
 pub mod userinfo;
 
+pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, ProviderMetadata};
 pub use error::IdentityError;
 
 /// Convenience alias for results returned across the crate.
