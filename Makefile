@@ -21,18 +21,26 @@ infra-down: ## Stop local providers
 test-go: ## Go unit tests
 	cd go && go test ./...
 
+.PHONY: test-rust
+test-rust: ## Rust unit tests
+	cd rust && cargo test
+
 .PHONY: test-integration-node-oidc
 test-integration-node-oidc: ## Go integration tests vs local node-oidc-provider (stack must be up)
 	set -a && . ./.env.node-oidc && set +a && cd go && $(GO_INTEGRATION) ./...
+
+.PHONY: test-integration-rust
+test-integration-rust: ## Rust integration tests (#[ignore]-gated) vs local node-oidc-provider (stack must be up)
+	set -a && . ./.env.node-oidc && set +a && cd rust && cargo test -- --ignored
 
 .PHONY: test-integration-identityserver
 test-integration-identityserver: ## Go integration tests vs local IdentityServer (stack must be up)
 	set -a && . ./.env.identityserver && set +a && cd go && $(GO_INTEGRATION) ./...
 
 .PHONY: test-integration-local
-test-integration-local: ## Full local matrix: compose up, test both providers, compose down
+test-integration-local: ## Full local matrix: compose up, test Go + Rust vs local providers, compose down
 	$(COMPOSE) up -d --build --wait
-	$(MAKE) test-integration-node-oidc test-integration-identityserver || ($(COMPOSE) down && exit 1)
+	$(MAKE) test-integration-node-oidc test-integration-identityserver test-integration-rust || ($(COMPOSE) down && exit 1)
 	$(COMPOSE) down
 
 # Cloud providers are rate-limited; -p 1 serializes the per-package test
@@ -50,4 +58,4 @@ test-integration-descope: ## Go integration tests vs Descope cloud (.env.descope
 	cd go && $(GO_INTEGRATION) -p 1 ./...
 
 .PHONY: pre-push
-pre-push: test-go test-integration-local ## Full local validation before pushing
+pre-push: test-go test-rust test-integration-local ## Full local validation before pushing

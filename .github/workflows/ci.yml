@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # No base-branch filter on pull_request: stacked PRs (base = a feature branch,
+  # e.g. the identity-model core loops) must still get CI. dorny/paths-filter
+  # diffs against each PR's own base ref, so path filtering stays correct.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -151,17 +153,44 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  # Integration gate for Rust: bring up the local provider stack and run the
+  # #[ignore]-gated integration tests, which the unit `rust` job's bare
+  # `cargo test` skips. node-oidc-provider only for now; IdentityServer and
+  # cloud (Ory/Descope) parity is a follow-up, mirroring how Go added
+  # providers incrementally. Passes trivially until the loop lands tests.
+  rust-integration:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Start local provider stack
+        run: docker compose -f infra/docker-compose.yml up -d --build --wait
+      - name: Integration tests (node-oidc-provider)
+        run: make test-integration-rust
+      - name: Provider logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs
+      - name: Tear down provider stack
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down
+
   # Cross-language gate: succeeds only if every language job that ran also
   # passed. Skipped language jobs do not block (path-filtered changes).
   conformance:
-    needs: [changes, go, go-integration, go-integration-ory, go-integration-descope, rust]
+    needs: [changes, go, go-integration, go-integration-ory, go-integration-descope, rust, rust-integration]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verify no language or integration job failed
         run: |
-          echo "go=${{ needs.go.result }} go-integration=${{ needs.go-integration.result }} ory=${{ needs.go-integration-ory.result }} descope=${{ needs.go-integration-descope.result }} rust=${{ needs.rust.result }}"
-          for r in "${{ needs.go.result }}" "${{ needs.go-integration.result }}" "${{ needs.go-integration-ory.result }}" "${{ needs.go-integration-descope.result }}" "${{ needs.rust.result }}"; do
+          echo "go=${{ needs.go.result }} go-integration=${{ needs.go-integration.result }} ory=${{ needs.go-integration-ory.result }} descope=${{ needs.go-integration-descope.result }} rust=${{ needs.rust.result }} rust-integration=${{ needs.rust-integration.result }}"
+          for r in "${{ needs.go.result }}" "${{ needs.go-integration.result }}" "${{ needs.go-integration-ory.result }}" "${{ needs.go-integration-descope.result }}" "${{ needs.rust.result }}" "${{ needs.rust-integration.result }}"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
               echo "A required job did not pass."
               exit 1
