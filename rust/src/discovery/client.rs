@@ -91,9 +91,13 @@ impl DiscoveryClient {
         }
 
         // DISC-010: require an https issuer unless http was explicitly allowed
-        // (for local development / integration against non-TLS providers).
-        let is_https = issuer.starts_with("https://");
-        let scheme_ok = is_https || (self.allow_http && issuer.starts_with("http://"));
+        // (for local development / integration against non-TLS providers). URL
+        // schemes are case-insensitive (RFC 3986 §3.1), so compare on a
+        // lowercased copy while keeping the original-case issuer for the
+        // exact-match check and cache key.
+        let scheme = issuer.to_ascii_lowercase();
+        let is_https = scheme.starts_with("https://");
+        let scheme_ok = is_https || (self.allow_http && scheme.starts_with("http://"));
         if !scheme_ok {
             return Err(IdentityError::Validation(format!(
                 "issuer {issuer:?} must use https (enable allow_http for development)"
@@ -495,5 +499,78 @@ mod tests {
             IdentityError::Validation(msg) => assert!(msg.contains("https"), "{msg}"),
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    // DISC-003: a trailing-slash-only difference between the requested issuer
+    // and the document issuer is normalised on both sides and is NOT a
+    // mismatch. This matches the merged Go reference
+    // (go/pkg/discovery/discovery.go:204 + TestFetchConfiguration_TrailingSlash);
+    // see decisions.md DEC-001 for the conflict with the epic's "no trailing
+    // slash normalization" prose.
+    #[tokio::test]
+    async fn accepts_trailing_slash_only_difference() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        // Document declares the issuer WITH a trailing slash...
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(valid_doc(&format!("{issuer}/"))),
+        )
+        .await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        // ...requested WITHOUT one: still accepted.
+        let meta = client
+            .discover(&issuer)
+            .await
+            .expect("trailing-slash-only difference is accepted");
+
+        assert_eq!(meta.issuer, format!("{issuer}/"));
+    }
+
+    // DISC-010: URL schemes are case-insensitive (RFC 3986 §3.1), so a
+    // mixed-case `HTTP://` / `HTTPS://` scheme passes the scheme gate. The
+    // issuer itself stays case-sensitive for the exact-match check.
+    #[tokio::test]
+    async fn accepts_case_insensitive_scheme() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let mixed_case = issuer.replacen("http://", "HTTP://", 1);
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(valid_doc(&mixed_case)),
+        )
+        .await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let meta = client
+            .discover(&mixed_case)
+            .await
+            .expect("mixed-case scheme is accepted");
+
+        assert_eq!(meta.issuer, mixed_case);
+    }
+
+    // A very large TTL (`Duration::MAX`) must not overflow `Instant` and panic
+    // when computing the expiry; the entry is stored and served from cache.
+    #[tokio::test]
+    async fn handles_max_ttl_without_panicking() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(valid_doc(&issuer)),
+        )
+        .await;
+
+        let client = DiscoveryClient::builder()
+            .allow_http(true)
+            .cache_ttl(Duration::MAX)
+            .build();
+        client.discover(&issuer).await.expect("first fetch");
+        client.discover(&issuer).await.expect("cache hit");
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "max-ttl entry stays cached");
     }
 }
