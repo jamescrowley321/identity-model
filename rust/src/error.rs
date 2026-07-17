@@ -40,6 +40,19 @@ pub enum IdentityError {
         /// The HTTP status of the error response.
         status: u16,
     },
+
+    /// The UserInfo endpoint replied with a non-2xx status (OIDC Core 1.0
+    /// §5.3.3). Carries the HTTP status and any `WWW-Authenticate` challenge a
+    /// Bearer-protected resource returns to describe the failure (RFC 6750 §3).
+    #[error("userinfo endpoint error: HTTP {status}{}", .www_authenticate.as_deref().map(|w| format!(": {w}")).unwrap_or_default())]
+    UserInfo {
+        /// The HTTP status of the error response.
+        status: u16,
+        /// The `WWW-Authenticate` challenge header, if present.
+        www_authenticate: Option<String>,
+        /// A short snippet of the response body for diagnostics.
+        body: String,
+    },
 }
 
 #[cfg(test)]
