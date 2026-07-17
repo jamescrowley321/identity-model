@@ -35,6 +35,13 @@ pub struct ValidationOptions {
     pub(crate) clock_skew: Duration,
     pub(crate) required_claims: Vec<String>,
     pub(crate) allowed_algorithms: Vec<String>,
+    /// When `true` (the default), `exp` must be present and not expired. When
+    /// `false`, an absent `exp` is tolerated, though a present `exp` is still
+    /// enforced (JWT-005).
+    pub(crate) require_exp: bool,
+    /// When `true`, `nbf` must be present (and in the past within skew). When
+    /// `false` (the default), `nbf` is checked only if present (JWT-006).
+    pub(crate) require_nbf: bool,
 }
 
 impl ValidationOptions {
@@ -67,6 +74,8 @@ pub struct ValidationOptionsBuilder {
     clock_skew: Duration,
     required_claims: Vec<String>,
     allowed_algorithms: Vec<String>,
+    require_exp: bool,
+    require_nbf: bool,
 }
 
 impl ValidationOptionsBuilder {
@@ -82,6 +91,8 @@ impl ValidationOptionsBuilder {
                 .iter()
                 .map(|a| (*a).to_string())
                 .collect(),
+            require_exp: true,
+            require_nbf: false,
         }
     }
 
@@ -146,6 +157,22 @@ impl ValidationOptionsBuilder {
         self
     }
 
+    /// Requires the token to carry an `exp` claim (default `true`). When set to
+    /// `false`, a token without `exp` is accepted; a present `exp` is still
+    /// checked for expiry (AC-3, JWT-005, RFC 7519 §4.1.4).
+    pub fn require_exp(mut self, require: bool) -> Self {
+        self.require_exp = require;
+        self
+    }
+
+    /// Requires the token to carry an `nbf` claim (default `false`). When left
+    /// `false`, `nbf` is validated only if present; when `true`, an absent `nbf`
+    /// is rejected (AC-3, JWT-006, RFC 7519 §4.1.5).
+    pub fn require_nbf(mut self, require: bool) -> Self {
+        self.require_nbf = require;
+        self
+    }
+
     /// Builds the [`ValidationOptions`].
     pub fn build(self) -> ValidationOptions {
         ValidationOptions {
@@ -155,6 +182,8 @@ impl ValidationOptionsBuilder {
             clock_skew: self.clock_skew,
             required_claims: self.required_claims,
             allowed_algorithms: self.allowed_algorithms,
+            require_exp: self.require_exp,
+            require_nbf: self.require_nbf,
         }
     }
 }
@@ -179,6 +208,9 @@ mod tests {
         assert!(opts.expected_nonce.is_none());
         assert_eq!(opts.clock_skew, Duration::ZERO);
         assert!(opts.required_claims.is_empty());
+        // AC3: exp is required by default; nbf is not.
+        assert!(opts.require_exp);
+        assert!(!opts.require_nbf);
         assert_eq!(opts.allowed_algorithms, DEFAULT_ALLOWED_ALGORITHMS);
         // The default allowlist never contains a symmetric or unsecured alg.
         assert!(!opts.allowed_algorithms.iter().any(|a| a.starts_with("HS")));
@@ -203,6 +235,17 @@ mod tests {
         assert_eq!(opts.expected_nonce.as_deref(), Some("n-123"));
         assert_eq!(opts.clock_skew, Duration::from_secs(60));
         assert_eq!(opts.required_claims, vec!["scope", "email"]);
+    }
+
+    // AC3: the require_exp/require_nbf toggles named in the AC flip the defaults.
+    #[test]
+    fn builder_toggles_exp_and_nbf_requirements() {
+        let opts = ValidationOptions::builder()
+            .require_exp(false)
+            .require_nbf(true)
+            .build();
+        assert!(!opts.require_exp);
+        assert!(opts.require_nbf);
     }
 
     // JWT-004: an empty expected nonce is still "set" (presence tracked apart

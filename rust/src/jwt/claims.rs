@@ -92,6 +92,12 @@ pub struct Claims {
     /// Every top-level claim name present in the payload, so [`Claims::has`]
     /// can report presence for modelled and unmodelled claims alike.
     present: HashSet<String>,
+
+    /// The subset of `present` whose value is meaningful — not JSON `null`, an
+    /// empty string, or an empty array/object. `required_claims` enforcement
+    /// consults this set so a claim carrying `null`/`""`/`[]`/`{}` does not
+    /// silently satisfy a "required" check.
+    meaningful: HashSet<String>,
 }
 
 /// The registered claim names decoded into named [`Claims`] fields; everything
@@ -117,6 +123,11 @@ impl Claims {
 
     fn from_map(map: Map<String, Value>) -> Result<Self> {
         let present: HashSet<String> = map.keys().cloned().collect();
+        let meaningful: HashSet<String> = map
+            .iter()
+            .filter(|(_, v)| is_meaningful_value(v))
+            .map(|(k, _)| k.clone())
+            .collect();
 
         let issuer = string_claim(&map, "iss")?;
         let subject = string_claim(&map, "sub")?;
@@ -147,6 +158,7 @@ impl Claims {
             nonce,
             extra,
             present,
+            meaningful,
         })
     }
 
@@ -187,23 +199,37 @@ impl Claims {
             return Err(claim_err("iat", "required claim is missing"));
         }
 
-        // exp MUST be present and not expired, allowing for clock skew
-        // (JWT-005/JWT-011, RFC 7519 §4.1.4).
+        // exp is required by default and, when present, must not be expired
+        // allowing for clock skew (JWT-005/JWT-011, AC-3/AC-6, RFC 7519 §4.1.4).
         match self.expiry {
-            None => return Err(claim_err("exp", "required claim is missing")),
+            None if opts.require_exp => {
+                return Err(claim_err("exp", "required claim is missing"));
+            }
+            None => {}
             Some(exp) => {
                 if now_unix.saturating_sub(skew) >= exp {
-                    return Err(claim_err("exp", "token has expired"));
+                    // AC-6: surface the exp value (and the reference now) so the
+                    // caller can see how far past expiry the token is.
+                    return Err(claim_err(
+                        "exp",
+                        &format!("token expired at {exp} (now {now_unix}, skew {skew}s)"),
+                    ));
                 }
             }
         }
 
-        // nbf, when present, must not be in the future beyond the skew (JWT-006,
-        // RFC 7519 §4.1.5).
-        if let Some(nbf) = self.not_before
-            && now_unix.saturating_add(skew) < nbf
-        {
-            return Err(claim_err("nbf", "token is not yet valid"));
+        // nbf is validated when present; with require_nbf it must also be
+        // present (JWT-006, AC-3, RFC 7519 §4.1.5).
+        match self.not_before {
+            None if opts.require_nbf => {
+                return Err(claim_err("nbf", "required claim is missing"));
+            }
+            None => {}
+            Some(nbf) => {
+                if now_unix.saturating_add(skew) < nbf {
+                    return Err(claim_err("nbf", "token is not yet valid"));
+                }
+            }
         }
 
         // iss exact match when expected (JWT-007, RFC 7519 §4.1.1).
@@ -218,28 +244,39 @@ impl Claims {
         }
 
         // aud must contain the expected audience when expected (JWT-008,
-        // RFC 7519 §4.1.3).
+        // AC-7, RFC 7519 §4.1.3).
         if let Some(expected) = &opts.expected_audience
             && !self.audience.contains(expected)
         {
+            // AC-7: list both the expected value and the token's actual
+            // audience(s) so the mismatch is diagnosable.
             return Err(claim_err(
                 "aud",
-                &format!("does not contain expected audience {expected:?}"),
+                &format!(
+                    "does not contain expected audience {expected:?} (token audiences: {:?})",
+                    self.audience.values()
+                ),
             ));
         }
 
-        // nonce match when expected (JWT-004, OIDC Core 1.0 §3.1.3.7).
+        // nonce match when expected (JWT-004, OIDC Core 1.0 §3.1.3.7). An
+        // expected nonce (even the empty string) requires the claim to be
+        // present — an absent nonce must not satisfy the expectation.
         if let Some(expected) = &opts.expected_nonce {
-            let actual = self.nonce.as_deref().unwrap_or_default();
-            if actual != expected {
-                return Err(claim_err("nonce", "nonce does not match expected value"));
+            match &self.nonce {
+                None => return Err(claim_err("nonce", "required nonce claim is missing")),
+                Some(actual) if actual != expected => {
+                    return Err(claim_err("nonce", "nonce does not match expected value"));
+                }
+                Some(_) => {}
             }
         }
 
-        // Custom required claims must be present (JWT-012, RFC 7519 §4.1).
+        // Custom required claims must be present with a meaningful (non-null,
+        // non-empty) value (JWT-012, RFC 7519 §4.1).
         for claim in &opts.required_claims {
-            if !self.has(claim) {
-                return Err(claim_err(claim, "required claim is missing"));
+            if !self.meaningful.contains(claim) {
+                return Err(claim_err(claim, "required claim is missing or empty"));
             }
         }
 
@@ -264,10 +301,21 @@ fn string_claim(map: &Map<String, Value>, name: &str) -> Result<Option<String>> 
 
 /// Extracts a numeric-date registered claim (seconds since the epoch), erroring
 /// on a wrong type or an out-of-range magnitude (RFC 7519 §2).
+///
+/// A JSON integer is read losslessly via [`Value::as_i64`] first, so a value
+/// just above `2^53` is bounded on its exact magnitude rather than after an
+/// f64 rounding step that could pull it back under the guard. Fractional
+/// NumericDate values (RFC 7519 §2 permits them) fall back to the f64 path.
 fn numeric_date_claim(map: &Map<String, Value>, name: &str) -> Result<Option<i64>> {
     let Some(value) = map.get(name) else {
         return Ok(None);
     };
+    if let Some(secs) = value.as_i64() {
+        if secs.unsigned_abs() > MAX_NUMERIC_DATE as u64 {
+            return Err(claim_err(name, "numeric date is out of range"));
+        }
+        return Ok(Some(secs));
+    }
     let Some(secs) = value.as_f64() else {
         return Err(claim_err(name, "must be a numeric date"));
     };
@@ -275,6 +323,19 @@ fn numeric_date_claim(map: &Map<String, Value>, name: &str) -> Result<Option<i64
         return Err(claim_err(name, "numeric date is out of range"));
     }
     Ok(Some(secs.trunc() as i64))
+}
+
+/// Reports whether a claim value is meaningful for a `required_claims` check —
+/// i.e. not JSON `null`, an empty string, or an empty array/object. Numbers and
+/// booleans are always meaningful.
+fn is_meaningful_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -469,5 +530,110 @@ mod tests {
         let err = Claims::from_value(serde_json::json!({ "exp": huge, "iat": NOW }))
             .expect_err("out-of-range exp");
         assert!(err.to_string().contains("exp"), "{err}");
+    }
+
+    // An integer exp just above 2^53 is bounded on its exact value, not after a
+    // lossy f64 round that would pull it back under the guard.
+    #[test]
+    fn rejects_large_integer_numeric_date_precisely() {
+        let just_over = MAX_NUMERIC_DATE + 1;
+        let err = Claims::from_value(serde_json::json!({ "exp": just_over, "iat": NOW }))
+            .expect_err("out-of-range integer exp");
+        assert!(err.to_string().contains("exp"), "{err}");
+    }
+
+    // AC-3: with require_exp(false), a token lacking exp validates; a present but
+    // expired exp is still rejected.
+    #[test]
+    fn require_exp_false_allows_missing_exp() {
+        let opts = ValidationOptions::builder().require_exp(false).build();
+
+        let no_exp = claims(serde_json::json!({ "iat": NOW }));
+        no_exp.validate(&opts, NOW).expect("missing exp tolerated");
+
+        let expired = claims(serde_json::json!({ "exp": NOW - 3600, "iat": NOW - 7200 }));
+        expired
+            .validate(&opts, NOW)
+            .expect_err("present-but-expired exp still rejected");
+    }
+
+    // AC-3: with require_nbf(true), a token lacking nbf is rejected.
+    #[test]
+    fn require_nbf_true_rejects_missing_nbf() {
+        let opts = ValidationOptions::builder().require_nbf(true).build();
+        let c = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
+        let err = c.validate(&opts, NOW).expect_err("missing nbf rejected");
+        assert!(err.to_string().contains("nbf"), "{err}");
+    }
+
+    // AC-6: the expiry error carries the exp value in its context.
+    #[test]
+    fn expired_error_includes_exp_value() {
+        let exp = NOW - 3600;
+        let c = claims(serde_json::json!({ "exp": exp, "iat": NOW - 7200 }));
+        let err = c
+            .validate(&ValidationOptions::new(), NOW)
+            .expect_err("expired rejected");
+        assert!(err.to_string().contains(&exp.to_string()), "{err}");
+    }
+
+    // AC-7: the audience-mismatch error lists the token's actual audience(s).
+    #[test]
+    fn audience_error_lists_actual_values() {
+        let opts = ValidationOptions::builder().audience("test-client").build();
+        let c = claims(serde_json::json!({
+            "aud": ["other-a", "other-b"],
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        let err = c.validate(&opts, NOW).expect_err("aud mismatch rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("test-client"), "expected value missing: {msg}");
+        assert!(msg.contains("other-a"), "actual value missing: {msg}");
+    }
+
+    // Blind: a required claim carrying null or an empty value does not satisfy
+    // the presence check.
+    #[test]
+    fn required_claim_rejects_null_or_empty_value() {
+        let opts = ValidationOptions::builder()
+            .required_claims(["scope"])
+            .build();
+
+        for empty in [
+            serde_json::json!(null),
+            serde_json::json!(""),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let c = claims(serde_json::json!({
+                "exp": NOW + 3600,
+                "iat": NOW,
+                "scope": empty,
+            }));
+            c.validate(&opts, NOW)
+                .expect_err("null/empty required claim rejected");
+        }
+    }
+
+    // Blind: an expected nonce (even the empty string) is not satisfied by a
+    // token that omits the nonce claim.
+    #[test]
+    fn expected_empty_nonce_requires_presence() {
+        let opts = ValidationOptions::builder().expected_nonce("").build();
+
+        let absent = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
+        absent
+            .validate(&opts, NOW)
+            .expect_err("absent nonce rejected when expected");
+
+        let present = claims(serde_json::json!({
+            "nonce": "",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        present
+            .validate(&opts, NOW)
+            .expect("present empty nonce matches expected empty nonce");
     }
 }

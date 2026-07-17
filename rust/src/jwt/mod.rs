@@ -333,6 +333,43 @@ mod tests {
         assert!(claims.audience.contains(TEST_AUDIENCE));
     }
 
+    // JWT-001 / AC-1: an ES256 token verifies through the EC key path
+    // (`DecodingKey::from_ec_components`), exercising the asymmetric algorithm
+    // family that the RSA-only fixtures cannot reach.
+    #[test]
+    fn accepts_valid_ec_token() {
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        use p256::pkcs8::{EncodePrivateKey, LineEnding as P256LineEnding};
+
+        // A fixed non-zero P-256 secret scalar keeps the test deterministic.
+        let secret = p256::SecretKey::from_slice(&[1u8; 32]).expect("valid P-256 scalar");
+        let pkcs8 = secret.to_pkcs8_pem(P256LineEnding::LF).expect("pkcs8 pem");
+        let encoding = EncodingKey::from_ec_pem(pkcs8.as_bytes()).expect("EC encoding key");
+
+        let point = secret.public_key().to_sec1_point(false);
+        let x = URL_SAFE_NO_PAD.encode(point.x().expect("x coordinate"));
+        let y = URL_SAFE_NO_PAD.encode(point.y().expect("y coordinate"));
+        let jwk: JsonWebKey = serde_json::from_value(json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "x": x,
+            "y": y,
+            "kid": "ec-test",
+            "alg": "ES256",
+        }))
+        .expect("EC jwk");
+
+        let n = now();
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some("ec-test".to_string());
+        let claims = json!({ "iss": TEST_ISSUER, "sub": "ec-user", "exp": n + 3600, "iat": n });
+        let token = jsonwebtoken::encode(&header, &claims, &encoding).expect("sign ES256");
+
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+        let validated = validate_token(&token, &jwk, &opts).expect("valid ES256 token");
+        assert_eq!(validated.subject.as_deref(), Some("ec-user"));
+    }
+
     // JWT-003: the static alg:none fixture is rejected before any signature work.
     #[test]
     fn rejects_alg_none_fixture() {
