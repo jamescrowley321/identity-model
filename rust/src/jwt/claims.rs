@@ -207,17 +207,15 @@ impl Claims {
             None if opts.require_exp => {
                 return Err(claim_err("exp", "required claim is missing"));
             }
-            None => {}
-            Some(exp) => {
-                if now_unix.saturating_sub(skew) >= exp {
-                    // AC-6: surface the exp value (and the reference now) so the
-                    // caller can see how far past expiry the token is.
-                    return Err(claim_err(
-                        "exp",
-                        &format!("token expired at {exp} (now {now_unix}, skew {skew}s)"),
-                    ));
-                }
+            // AC-6: surface the exp value (and the reference now) so the
+            // caller can see how far past expiry the token is.
+            Some(exp) if now_unix.saturating_sub(skew) >= exp => {
+                return Err(claim_err(
+                    "exp",
+                    &format!("token expired at {exp} (now {now_unix}, skew {skew}s)"),
+                ));
             }
+            _ => {}
         }
 
         // nbf is validated when present; with require_nbf it must also be
@@ -226,12 +224,10 @@ impl Claims {
             None if opts.require_nbf => {
                 return Err(claim_err("nbf", "required claim is missing"));
             }
-            None => {}
-            Some(nbf) => {
-                if now_unix.saturating_add(skew) < nbf {
-                    return Err(claim_err("nbf", "token is not yet valid"));
-                }
+            Some(nbf) if now_unix.saturating_add(skew) < nbf => {
+                return Err(claim_err("nbf", "token is not yet valid"));
             }
+            _ => {}
         }
 
         // iss exact match when expected (JWT-007, RFC 7519 §4.1.1).
