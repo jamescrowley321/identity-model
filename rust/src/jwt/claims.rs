@@ -183,9 +183,11 @@ impl Claims {
     /// Enforces the registered and configured claim rules against `now_unix`
     /// (seconds since the Unix epoch).
     ///
-    /// `iat` must always be present (JWT-013) and `exp` must be present and not
-    /// expired (JWT-005); the remaining checks apply only when the matching
-    /// option is configured.
+    /// `iat` must always be present (JWT-013). `exp` must be present and
+    /// unexpired by default (JWT-005), but its presence requirement can be
+    /// relaxed with [`ValidationOptions`] `require_exp(false)` — a present `exp`
+    /// is still checked for expiry. The remaining checks apply only when the
+    /// matching option is configured.
     ///
     /// # Errors
     ///
