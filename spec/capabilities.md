@@ -17,7 +17,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 |------|-----------|------|-------------|--------|----|----|
 | Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json` | implemented | planned | implemented |
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | planned | implemented |
-| Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | planned | planned |
+| Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | planned | implemented |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | planned | planned |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | planned | planned | planned |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | planned |
