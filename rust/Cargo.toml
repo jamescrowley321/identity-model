@@ -17,9 +17,12 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+sha2 = "0.11.0"
+getrandom = "0.4.3"
 
 [dev-dependencies]
 p256 = { version = "0.14.0", features = ["pkcs8", "ecdsa"] }
 rsa = "0.9"
 tokio = { version = "1", features = ["full"] }
+url = "2.5.8"
 wiremock = "0.6.5"
