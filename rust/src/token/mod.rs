@@ -387,8 +387,9 @@ impl TokenClientBuilder {
         self
     }
 
-    /// Sets the client secret. Omit for a public client (authorization code
-    /// grant), which is then identified by `client_id` in the request body.
+    /// Sets the client secret. Omit (or pass an empty string) for a public
+    /// client (authorization code grant), which is then identified by
+    /// `client_id` in the request body.
     pub fn client_secret(mut self, client_secret: impl Into<String>) -> Self {
         self.client_secret = Some(client_secret.into());
         self
@@ -471,7 +472,11 @@ impl TokenClientBuilder {
             http: self.http.unwrap_or_default(),
             token_endpoint,
             client_id,
-            client_secret: self.client_secret,
+            // An empty secret is a public client, not a confidential client
+            // with an empty password: matching the Go reference, it is
+            // identified by client_id in the body rather than a Basic header
+            // carrying `id:` (RFC 6749 §2.3.1).
+            client_secret: self.client_secret.filter(|s| !s.is_empty()),
             auth_method: self.auth_method,
             extra_params: self.extra_params,
             timeout: if self.timeout.is_zero() {
@@ -767,6 +772,47 @@ mod tests {
         assert_eq!(
             form.get("client_id").map(String::as_str),
             Some("public-client")
+        );
+    }
+
+    // CC-002: an empty client_secret is a public client, not a confidential
+    // client with an empty password — no Basic header, client_id in the body
+    // (parity with the Go reference).
+    #[tokio::test]
+    async fn empty_client_secret_is_public_client() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        TokenClient::builder()
+            .client_id("public-client")
+            .client_secret("")
+            .token_endpoint(format!("{}/token", server.uri()))
+            .allow_http(true)
+            .build()
+            .unwrap()
+            .client_credentials(None)
+            .await
+            .expect("grant succeeds");
+
+        let requests = server.received_requests().await.unwrap();
+        let req = requests.last().unwrap();
+        assert!(
+            req.headers.get("authorization").is_none(),
+            "empty secret must not send a Basic header"
+        );
+        let form = form_of(req);
+        assert_eq!(
+            form.get("client_id").map(String::as_str),
+            Some("public-client"),
+            "public client is identified by client_id in the body"
+        );
+        assert!(
+            !form.contains_key("client_secret"),
+            "no empty client_secret in body"
         );
     }
 
