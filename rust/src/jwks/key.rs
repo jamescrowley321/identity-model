@@ -71,25 +71,20 @@ impl JsonWebKey {
             ));
         }
         match self.kty.as_str() {
-            "RSA" => {
-                if self.n.is_empty() || self.e.is_empty() {
-                    return Err(IdentityError::Validation(format!(
-                        "RSA key {:?} is missing modulus \"n\" or exponent \"e\"",
-                        self.kid
-                    )));
-                }
+            "RSA" if self.n.is_empty() || self.e.is_empty() => {
+                Err(IdentityError::Validation(format!(
+                    "RSA key {:?} is missing modulus \"n\" or exponent \"e\"",
+                    self.kid
+                )))
             }
-            "EC" => {
-                if self.crv.is_empty() || self.x.is_empty() || self.y.is_empty() {
-                    return Err(IdentityError::Validation(format!(
-                        "EC key {:?} is missing curve \"crv\", \"x\", or \"y\"",
-                        self.kid
-                    )));
-                }
+            "EC" if self.crv.is_empty() || self.x.is_empty() || self.y.is_empty() => {
+                Err(IdentityError::Validation(format!(
+                    "EC key {:?} is missing curve \"crv\", \"x\", or \"y\"",
+                    self.kid
+                )))
             }
-            _ => {}
+            _ => Ok(()),
         }
-        Ok(())
     }
 }
 
