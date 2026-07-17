@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The OIDC `address` claim: a structured postal address (OIDC Core 1.0
 /// §5.1.1). Every component is optional.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Address {
     /// The full mailing address, formatted for display.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,7 +36,7 @@ pub struct Address {
 /// unknown fields are ignored, not rejected (UI-007). `updated_at` is tolerated
 /// as a JSON number, a numeric string, or `null`, since providers deviate from
 /// the RFC's number type.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct UserInfoResponse {
     /// The subject identifier — always present (§5.3.2). An absent or empty
     /// `sub` is rejected by the client before this value is returned.
@@ -286,5 +286,42 @@ mod tests {
     fn rejects_non_numeric_updated_at() {
         let err = serde_json::from_str::<UserInfoResponse>(r#"{"sub":"a","updated_at":"soon"}"#);
         assert!(err.is_err());
+    }
+
+    // The response serializes with omit-empty semantics (parity with the Go
+    // `omitempty` tags): absent optional claims are dropped, custom claims in
+    // the overflow map are flattened back out, and a round-trip is lossless.
+    #[test]
+    fn serializes_with_omit_empty_and_round_trips() {
+        let resp: UserInfoResponse = serde_json::from_str(
+            r#"{"sub":"abc","email":"a@b.co","email_verified":true,"department":"eng"}"#,
+        )
+        .expect("parse");
+
+        let value = serde_json::to_value(&resp).expect("serialize");
+        let obj = value.as_object().expect("object");
+        // Present claims are emitted, absent ones are skipped (omit-empty).
+        assert_eq!(obj.get("sub").and_then(|v| v.as_str()), Some("abc"));
+        assert_eq!(obj.get("email").and_then(|v| v.as_str()), Some("a@b.co"));
+        assert_eq!(
+            obj.get("email_verified").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(!obj.contains_key("name"), "absent name must be omitted");
+        assert!(
+            !obj.contains_key("address"),
+            "absent address must be omitted"
+        );
+        // The custom claim flattens back out at the top level.
+        assert_eq!(obj.get("department").and_then(|v| v.as_str()), Some("eng"));
+
+        // Round-trip is lossless.
+        let again: UserInfoResponse = serde_json::from_value(value).expect("re-parse");
+        assert_eq!(again.sub, "abc");
+        assert_eq!(again.email.as_deref(), Some("a@b.co"));
+        assert_eq!(
+            again.claims().get("department").and_then(|v| v.as_str()),
+            Some("eng")
+        );
     }
 }

@@ -25,12 +25,15 @@ const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let issuer = std::env::var("ISSUER")
         .ok()
+        .filter(|s| !s.trim().is_empty())
         .or_else(|| {
-            std::env::var("TEST_DISCO_ADDRESS").ok().map(|d| {
-                d.trim_end_matches(WELL_KNOWN_SUFFIX)
-                    .trim_end_matches('/')
-                    .to_string()
-            })
+            std::env::var("TEST_DISCO_ADDRESS")
+                .ok()
+                .filter(|d| !d.trim().is_empty())
+                .map(|d| {
+                    let base = d.strip_suffix(WELL_KNOWN_SUFFIX).unwrap_or(&d);
+                    base.trim_end_matches('/').to_string()
+                })
         })
         .unwrap_or_else(|| "https://accounts.example.com".to_string());
 
@@ -88,15 +91,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 claims.claims().keys().collect::<Vec<_>>()
             );
 
-            // Subject consistency (OIDC Core 1.0 §5.3.2): confirm the UserInfo
-            // sub matches the sub carried by the ID token the access token was
-            // issued alongside. Here we re-check against the fetched sub itself.
+            // Subject consistency (OIDC Core 1.0 §5.3.2): in a real flow the
+            // expected `sub` comes from the *validated ID token*, and a UserInfo
+            // response carrying a different `sub` must be rejected as a subject
+            // substitution. Demonstrate the guard actually firing by asking for a
+            // `sub` that cannot match — a genuine match check would be tautological
+            // against the value we just fetched.
+            let wrong_expected = format!("{}-tampered", claims.sub);
             match userinfo_client
-                .fetch_with_subject(&token.access_token, &claims.sub)
+                .fetch_with_subject(&token.access_token, &wrong_expected)
                 .await
             {
-                Ok(_) => println!("sub consistency   = OK"),
-                Err(e) => println!("sub consistency   = {e}"),
+                Ok(_) => println!("sub mismatch guard= UNEXPECTED match (guard did not fire)"),
+                Err(e) => println!("sub mismatch guard= rejected as expected ({e})"),
             }
         }
         Err(e) => {
