@@ -733,14 +733,17 @@ name = "identity-model"
 version = "0.0.1"
 dependencies = [
  "base64",
+ "getrandom 0.4.3",
  "jsonwebtoken",
  "p256",
  "reqwest",
  "rsa",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
+ "url",
  "wiremock",
 ]
 

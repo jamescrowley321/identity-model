@@ -26,6 +26,20 @@ pub enum IdentityError {
     /// A signing key with the requested `kid` was not found in the JWKS.
     #[error("key not found: {0}")]
     KeyNotFound(String),
+
+    /// The token endpoint replied with a non-2xx OAuth 2.0 error response
+    /// (RFC 6749 §5.2).
+    #[error("token endpoint error {error:?}{}: HTTP {status}", .description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]
+    TokenEndpoint {
+        /// The RFC 6749 §5.2 `error` code, e.g. `invalid_client`.
+        error: String,
+        /// The human-readable `error_description`, if present.
+        description: Option<String>,
+        /// The `error_uri` pointing at documentation, if present.
+        error_uri: Option<String>,
+        /// The HTTP status of the error response.
+        status: u16,
+    },
 }
 
 #[cfg(test)]
