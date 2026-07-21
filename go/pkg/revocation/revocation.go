@@ -56,6 +56,14 @@ func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, tok
 		return &RequestError{Op: "revocation endpoint", Err: fmt.Errorf("endpoint has no host: %q", revocationEndpoint)}
 	}
 
+	// token is REQUIRED (RFC 7009 §2.1). An empty token would be sent as-is and
+	// the server's anti-scanning HTTP 200 (§2.1) would make Revoke return nil,
+	// misleading the caller into believing something was revoked. Reject it
+	// locally like the half-credential guard below.
+	if token == "" {
+		return &RequestError{Op: "token", Err: fmt.Errorf("token is required (RFC 7009 §2.1)")}
+	}
+
 	form := url.Values{}
 	form.Set("token", token)
 	if cfg.tokenTypeHint != "" {
@@ -88,6 +96,12 @@ func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, tok
 		form.Set(k, v)
 	}
 
+	if ctx == nil {
+		// context.WithTimeout(nil, …) panics; treat a nil context as background so
+		// a caller mistake degrades to a bounded request rather than a crash.
+		ctx = context.Background()
+	}
+
 	timeout := cfg.timeout
 	if timeout <= 0 {
 		timeout = defaultRequestTimeout
@@ -107,7 +121,24 @@ func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, tok
 		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
 	}
 
-	resp, err := cfg.httpClient.Do(req)
+	// The initial-URL scheme check above is defeated if the server 307/308-
+	// redirects this token-bearing POST to an http:// (or foreign) host: the body
+	// (token, and on the post path the client_secret) would be resent in
+	// cleartext. Copy the client and enforce the same scheme rule on every
+	// redirect hop so TLS enforcement can't be silently downgraded. The copy
+	// leaves the caller's client (and http.DefaultClient) untouched.
+	client := *cfg.httpClient
+	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if r.URL.Scheme != "https" && !(cfg.allowHTTP && r.URL.Scheme == "http") {
+			return fmt.Errorf("refusing redirect to non-https endpoint %q (use WithInsecureAllowHTTP for http)", r.URL.Redacted())
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return &RequestError{Op: fmt.Sprintf("post %s", revocationEndpoint), Err: err}
 	}

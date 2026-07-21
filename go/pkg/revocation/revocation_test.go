@@ -437,6 +437,73 @@ func TestRevoke_MalformedEndpoint(t *testing.T) {
 	}
 }
 
+// Adversarial: token is REQUIRED (RFC 7009 §2.1). An empty token is rejected
+// locally rather than sent, so the server's anti-scanning HTTP 200 cannot make
+// Revoke wrongly report success for a token that was never provided.
+func TestRevoke_RejectsEmptyToken(t *testing.T) {
+	var got capturedRequest
+	srv := newServer(t, http.StatusOK, nil, &got)
+
+	err := Revoke(context.Background(), srv.URL, "cid", "sec", "", WithInsecureAllowHTTP())
+	if err == nil {
+		t.Fatal("expected error for empty token, got nil")
+	}
+	if !strings.Contains(err.Error(), "token is required") {
+		t.Errorf("error = %v, want token-required", err)
+	}
+	if got.method != "" {
+		t.Error("empty-token request must be rejected before the network, but the server was called")
+	}
+}
+
+// Adversarial: a nil context must not panic (context.WithTimeout(nil, …)
+// panics); it degrades to a bounded background request.
+func TestRevoke_NilContext(t *testing.T) {
+	var got capturedRequest
+	srv := newServer(t, http.StatusOK, nil, &got)
+
+	//nolint:staticcheck // SA1012: deliberately passing a nil context to assert it doesn't panic.
+	if err := Revoke(nil, srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP()); err != nil {
+		t.Fatalf("Revoke with nil context: %v", err)
+	}
+	if got.method != http.MethodPost {
+		t.Errorf("server method = %q, want POST", got.method)
+	}
+}
+
+// Security: a redirect from the revocation endpoint to a non-https host must be
+// refused so the token-bearing POST is never resent over cleartext. The initial
+// https check is worthless without enforcing the scheme on redirect targets too.
+func TestRevoke_RefusesInsecureRedirect(t *testing.T) {
+	// downstream is a plaintext http server the redirect points at; it must never
+	// be reached.
+	var reached bool
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(downstream.Close)
+
+	redirector := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, downstream.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+
+	// Trust the TLS test server's cert but keep the default redirect-following
+	// behaviour otherwise; the package's CheckRedirect guard must still fire.
+	client := redirector.Client()
+	err := Revoke(context.Background(), redirector.URL, "cid", "sec", "tok", WithHTTPClient(client))
+	if err == nil {
+		t.Fatal("expected redirect to be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-https") {
+		t.Errorf("error = %v, want non-https redirect refusal", err)
+	}
+	if reached {
+		t.Error("token-bearing POST was resent to the plaintext redirect target")
+	}
+}
+
 // parseBasic decodes a "Basic <base64>" header into its username and password.
 func parseBasic(t *testing.T, header string) (user, pass string, ok bool) {
 	t.Helper()
