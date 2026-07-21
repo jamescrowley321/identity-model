@@ -1,0 +1,4 @@
+{
+  "error": "unsupported_token_type",
+  "error_description": "The authorization server does not support revocation of the presented token type"
+}

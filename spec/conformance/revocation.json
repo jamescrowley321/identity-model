@@ -1,0 +1,52 @@
+{
+  "capability": "revocation",
+  "spec": "RFC 7009 (OAuth 2.0 Token Revocation)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc7009",
+  "required_fields": [],
+  "tests": [
+    {
+      "id": "REV-001",
+      "title": "Successful token revocation returns HTTP 200 regardless of token validity",
+      "given": "Authenticated client credentials for the revocation endpoint and either a valid token or an already-expired/revoked/unknown token",
+      "when": "Revoke is called with the token parameter",
+      "then": "A POST application/x-www-form-urlencoded request carrying token is sent and any HTTP 200 response (empty body or empty JSON object) yields a success result; the response MUST NOT differ between valid and invalid/expired/unknown tokens, preventing token scanning",
+      "fixture": "revocation/revoke-success-empty.json",
+      "references": ["RFC 7009 §2.1", "RFC 7009 §2.2"]
+    },
+    {
+      "id": "REV-002",
+      "title": "token_type_hint is included in the request",
+      "given": "A token and a token_type_hint of access_token or refresh_token",
+      "when": "Revoke is called with the hint configured",
+      "then": "The hint is sent as the token_type_hint form parameter; the token parameter is always present and the request succeeds regardless of hint correctness (the server MAY use the hint to optimize lookup but MUST accept the request even if it is incorrect)",
+      "references": ["RFC 7009 §2.1"]
+    },
+    {
+      "id": "REV-003",
+      "title": "unsupported_token_type error is surfaced",
+      "given": "A revocation request for a token type the server does not support revoking",
+      "when": "Revoke is called and the endpoint replies HTTP 400 with an OAuth error body",
+      "then": "A typed revocation error carrying error=unsupported_token_type (plus optional error_description, error_uri, and the HTTP status) is surfaced",
+      "fixture": "revocation/error-unsupported-token-type.json",
+      "references": ["RFC 7009 §2.2.1", "RFC 6749 §5.2"]
+    },
+    {
+      "id": "REV-004",
+      "title": "invalid_client error is surfaced",
+      "given": "Invalid client credentials",
+      "when": "Revoke is called and the endpoint replies HTTP 401 with an OAuth error body",
+      "then": "A typed revocation error carrying error=invalid_client (plus optional error_description, error_uri, and the HTTP status) is surfaced",
+      "fixture": "revocation/error-invalid-client.json",
+      "references": ["RFC 7009 §2.2.1", "RFC 6749 §5.2"]
+    },
+    {
+      "id": "REV-005",
+      "title": "Discovery-based endpoint resolution",
+      "given": "A valid OIDC Discovery / Authorization Server Metadata document containing revocation_endpoint",
+      "when": "The revocation endpoint is resolved from discovery and passed to Revoke",
+      "then": "The revocation_endpoint URL from the discovery document is used rather than requiring manual configuration",
+      "fixture": "revocation/discovery-with-revocation.json",
+      "references": ["RFC 8414 §2"]
+    }
+  ]
+}
