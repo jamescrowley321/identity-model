@@ -134,6 +134,77 @@ Content-Type: application/json
 }
 ```
 
+### Token Revocation
+
+- Implementations MUST POST to the revocation endpoint as
+  `application/x-www-form-urlencoded` with the `token` parameter (REQUIRED) and
+  MAY include an optional `token_type_hint` (`access_token` or `refresh_token`)
+  ([RFC 7009 §2.1](https://www.rfc-editor.org/rfc/rfc7009#section-2.1)). The
+  server MAY use the hint to optimize lookup but MUST accept the request even if
+  the hint is incorrect.
+- The revocation endpoint is protected; implementations MUST authenticate the
+  revoking client and MUST support both `client_secret_basic`
+  (HTTP Basic with URL-encoded `client_id:client_secret`) and
+  `client_secret_post` (`client_id`/`client_secret` in the body)
+  ([RFC 7009 §2.1](https://www.rfc-editor.org/rfc/rfc7009#section-2.1),
+  [RFC 6749 §2.3.1](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1)).
+  `client_secret_basic` MUST be the default.
+- The server returns HTTP 200 regardless of whether the token was valid,
+  expired, already revoked, or unknown, and MUST NOT differentiate between these
+  cases; a client therefore cannot use revocation to probe token state (token
+  scanning)
+  ([RFC 7009 §2.1](https://www.rfc-editor.org/rfc/rfc7009#section-2.1),
+  [RFC 7009 §2.2](https://www.rfc-editor.org/rfc/rfc7009#section-2.2)). A
+  revocation success carries no response body, so implementations MUST treat any
+  2xx response as success without requiring a body to parse.
+- When the revoking client fails authentication the endpoint returns HTTP 401
+  with `error=invalid_client`, and when it does not support revoking the
+  presented token type it returns HTTP 400 with `error=unsupported_token_type`;
+  implementations MUST surface a typed error carrying the OAuth `error`,
+  `error_description`, and `error_uri` when present
+  ([RFC 7009 §2.2.1](https://www.rfc-editor.org/rfc/rfc7009#section-2.2.1),
+  [RFC 6749 §5.2](https://www.rfc-editor.org/rfc/rfc6749#section-5.2)).
+- The revocation endpoint URL SHOULD be obtained from the `revocation_endpoint`
+  field of the Authorization Server Metadata / OIDC Discovery document rather
+  than requiring manual configuration
+  ([RFC 8414 §2](https://www.rfc-editor.org/rfc/rfc8414#section-2)).
+
+**Worked example** — revoking a refresh token during logout with
+`client_secret_basic` (`Authorization` is
+`Basic BASE64("s6BhdRkqt3" + ":" + "gX1fBat3bV")`):
+
+```http
+POST /revoke HTTP/1.1
+Host: server.example.com
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW
+
+token=45ghiukldjahdnhzdauz&token_type_hint=refresh_token
+```
+
+```http
+HTTP/1.1 200 OK
+```
+
+Revoking an access token uses the same request with
+`token_type_hint=access_token`:
+
+```http
+POST /revoke HTTP/1.1
+Host: server.example.com
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW
+
+token=mF_9.B5f-4.1JqM&token_type_hint=access_token
+```
+
+```http
+HTTP/1.1 200 OK
+```
+
+The same HTTP 200 is returned whether the presented token was still valid,
+already expired, or previously revoked (RFC 7009 §2.1).
+
 ## Machine-Readable Schema
 
 The status table above is also expressed per-capability for tooling (status generators, CI gates, docs site):
