@@ -61,8 +61,11 @@ func Introspect(ctx context.Context, introspectionEndpoint, clientID, clientSecr
 	// set on the request after it is built; post credentials go in the body.
 	useBasic := false
 	switch {
-	case clientSecret == "" && clientID == "":
-		return nil, &RequestError{Op: "client authentication", Err: fmt.Errorf("introspection endpoint requires client authentication (RFC 7662 §2.1)")}
+	case clientID == "" || clientSecret == "":
+		// Both client_secret_basic and client_secret_post require a full
+		// credential pair; a half-credential would emit a malformed auth request
+		// that only fails server-side, so reject it before hitting the network.
+		return nil, &RequestError{Op: "client authentication", Err: fmt.Errorf("introspection endpoint requires client authentication with both client_id and client_secret (RFC 7662 §2.1)")}
 	case cfg.authMethod == ClientSecretPost:
 		form.Set("client_id", clientID)
 		form.Set("client_secret", clientSecret)

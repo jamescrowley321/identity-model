@@ -434,3 +434,40 @@ func parseBasic(t *testing.T, header string) (user, pass string, ok bool) {
 	req := &http.Request{Header: http.Header{"Authorization": {header}}}
 	return req.BasicAuth()
 }
+
+// Adversarial: a half-credential pair (only one of client_id/client_secret) is
+// rejected before the network, since both auth methods need the full pair.
+func TestIntrospect_RejectsHalfCredentials(t *testing.T) {
+	cases := []struct{ id, secret string }{
+		{"cid", ""}, // missing secret
+		{"", "sec"}, // missing id
+	}
+	for _, c := range cases {
+		_, err := Introspect(context.Background(), "https://as.example.com/introspect", c.id, c.secret, "tok")
+		if err == nil {
+			t.Fatalf("id=%q secret=%q: expected client-auth error, got nil", c.id, c.secret)
+		}
+		if !strings.Contains(err.Error(), "client authentication") {
+			t.Errorf("id=%q secret=%q: error = %v, want client authentication required", c.id, c.secret, err)
+		}
+	}
+}
+
+// Adversarial: a 2xx body omitting the REQUIRED "active" member (RFC 7662 §2.2)
+// is rejected as malformed rather than decoding to a silent Active=false.
+func TestIntrospect_RejectsBodyMissingActive(t *testing.T) {
+	for _, body := range []string{`{}`, `{"scope":"read"}`, `null`} {
+		var got capturedRequest
+		srv := newServer(t, http.StatusOK, []byte(body), &got)
+		_, err := Introspect(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP())
+		if err == nil {
+			t.Fatalf("body=%s: expected missing-active error, got nil", body)
+		}
+		if !strings.Contains(err.Error(), "active") {
+			t.Errorf("body=%s: error = %v, want missing-active", body, err)
+		}
+		if !errors.Is(err, ErrRequest) {
+			t.Errorf("body=%s: error = %v, want ErrRequest", body, err)
+		}
+	}
+}
