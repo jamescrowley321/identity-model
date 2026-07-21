@@ -456,7 +456,7 @@ func TestIntrospect_RejectsHalfCredentials(t *testing.T) {
 // Adversarial: a 2xx body omitting the REQUIRED "active" member (RFC 7662 §2.2)
 // is rejected as malformed rather than decoding to a silent Active=false.
 func TestIntrospect_RejectsBodyMissingActive(t *testing.T) {
-	for _, body := range []string{`{}`, `{"scope":"read"}`, `null`} {
+	for _, body := range []string{`{}`, `{"scope":"read"}`, `null`, `{"active":null}`} {
 		var got capturedRequest
 		srv := newServer(t, http.StatusOK, []byte(body), &got)
 		_, err := Introspect(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP())

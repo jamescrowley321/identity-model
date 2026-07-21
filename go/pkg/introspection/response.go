@@ -108,9 +108,11 @@ func (r *Introspection) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	// active is REQUIRED (RFC 7662 §2.2). A 2xx body that omits it (e.g. `{}` or
-	// `null`) would silently decode to Active=false, indistinguishable from a
-	// legitimately inactive token; reject it as malformed instead.
-	if _, ok := raw["active"]; !ok {
+	// `null`) or sets it to JSON null would silently decode to Active=false,
+	// indistinguishable from a legitimately inactive token; reject it as
+	// malformed instead. A wrong-typed active (e.g. a string) is already caught
+	// by the alias decode above.
+	if av, ok := raw["active"]; !ok || bytes.Equal(bytes.TrimSpace(av), []byte("null")) {
 		return fmt.Errorf("introspection: response missing required \"active\" member (RFC 7662 §2.2)")
 	}
 	for k := range raw {
