@@ -1,0 +1,21 @@
+{
+  "algorithm": "ES256",
+  "public": {
+    "kty": "EC",
+    "crv": "P-256",
+    "alg": "ES256",
+    "use": "sig",
+    "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+    "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+  },
+  "private": {
+    "kty": "EC",
+    "crv": "P-256",
+    "alg": "ES256",
+    "use": "sig",
+    "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+    "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI",
+    "d": "gOyNSPMCSgKYfSJOVyQE3sJrr4AZ2eaY7Gr6IvYVNYM"
+  },
+  "thumbprint": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac"
+}

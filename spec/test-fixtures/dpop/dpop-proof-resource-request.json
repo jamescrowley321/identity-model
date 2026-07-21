@@ -1,0 +1,20 @@
+{
+  "description": "Decoded DPoP proof JWT for a protected-resource request (RFC 9449 Section 7). Includes ath = BASE64URL(SHA-256(access_token)) binding the proof to the presented access token. The ath value is the hash of \"example-dpop-bound-access-token-value\" (see dpop-ath-pairs.json).",
+  "header": {
+    "typ": "dpop+jwt",
+    "alg": "ES256",
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+      "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+    }
+  },
+  "payload": {
+    "jti": "-BwC3ESc6acc2lTc",
+    "htm": "GET",
+    "htu": "https://resource.example.com/protectedresource",
+    "iat": 1732200100,
+    "ath": "yRhCjMZbSgJuej6MpSmViNnUiiuiK_CT3FHQXkjq7vk"
+  }
+}

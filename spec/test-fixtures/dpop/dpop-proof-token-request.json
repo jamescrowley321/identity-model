@@ -1,0 +1,19 @@
+{
+  "description": "Decoded DPoP proof JWT for a token request (RFC 9449 Section 5). No ath claim: token-request proofs do not bind to an access token.",
+  "header": {
+    "typ": "dpop+jwt",
+    "alg": "ES256",
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+      "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+    }
+  },
+  "payload": {
+    "jti": "e1j3V_bKic8-LAEB",
+    "htm": "POST",
+    "htu": "https://server.example.com/token",
+    "iat": 1732200000
+  }
+}

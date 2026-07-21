@@ -1,0 +1,79 @@
+{
+  "capability": "dpop",
+  "spec": "RFC 9449 (OAuth 2.0 Demonstrating Proof of Possession) + RFC 7638 (JWK Thumbprint)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc9449",
+  "required_fields": ["typ", "htm", "htu", "jti", "iat"],
+  "tests": [
+    {
+      "id": "DPOP-001",
+      "title": "Generate a valid DPoP proof JWT",
+      "given": "A DPoP key pair (ES256 or RS256), the HTTP method POST, and the request URI https://server.example.com/token",
+      "when": "A DPoP proof JWT is generated for the request",
+      "then": "The compact JWS has a protected header with typ=dpop+jwt, alg equal to the key pair's asymmetric algorithm (never a symmetric algorithm such as HS256), and a jwk member containing ONLY the public key (no private key material such as d, p, q); and a payload with a non-empty unique jti, htm=POST, htu=https://server.example.com/token, and a recent iat timestamp",
+      "fixture": "dpop/dpop-proof-token-request.json",
+      "references": ["RFC 9449 §4.2", "RFC 7515 §4.1"]
+    },
+    {
+      "id": "DPOP-002",
+      "title": "Include the DPoP proof in the token request header without an ath claim",
+      "given": "A DPoP proof JWT generated for a token request",
+      "when": "The token request is constructed",
+      "then": "The proof is carried in the DPoP HTTP request header (not in Authorization), and its payload contains no ath claim because token-request proofs do not bind to an access token",
+      "fixture": "dpop/dpop-proof-token-request.json",
+      "references": ["RFC 9449 §5", "RFC 9449 §4.2"]
+    },
+    {
+      "id": "DPOP-003",
+      "title": "Generate a resource-request proof carrying the ath claim",
+      "given": "A DPoP key pair and a DPoP-bound access token",
+      "when": "A DPoP proof JWT is generated for a protected-resource request",
+      "then": "The proof payload contains an ath claim whose value equals BASE64URL(SHA-256(access_token)) with no base64 padding, matching the deterministic access_token/ath pairs in dpop-ath-pairs.json",
+      "fixture": "dpop/dpop-ath-pairs.json",
+      "references": ["RFC 9449 §7", "RFC 9449 §4.2"]
+    },
+    {
+      "id": "DPOP-004",
+      "title": "Handle a use_dpop_nonce error and retry with the server nonce",
+      "given": "A token or resource request that receives HTTP 401 with error=use_dpop_nonce and a DPoP-Nonce response header",
+      "when": "The client automatically retries the request",
+      "then": "The retried DPoP proof includes the server-provided nonce in its nonce claim, and the nonce is cached and pre-included in subsequent proofs sent to the same server",
+      "fixture": "dpop/dpop-nonce-error-response.json",
+      "references": ["RFC 9449 §8"]
+    },
+    {
+      "id": "DPOP-005",
+      "title": "Verify cnf.jkt in a bound token matches the DPoP key thumbprint",
+      "given": "A DPoP-bound access token whose cnf claim carries a jkt field, and the DPoP key pair the token was bound to",
+      "when": "The RFC 7638 SHA-256 JWK thumbprint of the DPoP public key is computed",
+      "then": "The computed thumbprint equals the token's cnf.jkt value; each JWK in dpop-thumbprint-pairs.json (including the RFC 7638 §3.1 canonical RSA vector) reproduces its expected thumbprint",
+      "fixture": "dpop/dpop-bound-token.json",
+      "references": ["RFC 9449 §6", "RFC 7638 §3"]
+    },
+    {
+      "id": "DPOP-006",
+      "title": "Reject a DPoP proof with a wrong htm or htu",
+      "given": "A DPoP proof whose htm does not match the actual HTTP method, or whose htu does not match the actual request URI",
+      "when": "A resource server validates the proof against the expected method and URI",
+      "then": "The proof is rejected with a validation error that identifies the mismatched field (htm or htu); proofs signed with a symmetric algorithm or the none algorithm, or missing the embedded jwk, are likewise rejected",
+      "references": ["RFC 9449 §4.3", "RFC 9449 §7"]
+    },
+    {
+      "id": "DPOP-007",
+      "title": "Generate ES256 and RS256 key pairs",
+      "given": "A request to generate a DPoP key pair",
+      "when": "The algorithm is ES256, and separately when it is RS256",
+      "then": "ES256 yields a valid EC P-256 key pair and RS256 yields a valid RSA key pair with a modulus of at least 2048 bits; an unsupported algorithm is rejected with an error",
+      "fixture": "dpop/dpop-keypair-es256.json",
+      "references": ["RFC 9449 §4.1", "RFC 7518 §3.1"]
+    },
+    {
+      "id": "DPOP-008",
+      "title": "DPoP-bound token uses the Authorization: DPoP scheme",
+      "given": "A DPoP-bound access token (token_type DPoP)",
+      "when": "A protected-resource request is constructed",
+      "then": "The Authorization header uses the DPoP scheme (Authorization: DPoP <access_token>) rather than the Bearer scheme, and the accompanying DPoP proof header carries the ath claim",
+      "fixture": "dpop/dpop-bound-token.json",
+      "references": ["RFC 9449 §7"]
+    }
+  ]
+}

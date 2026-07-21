@@ -24,7 +24,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | implemented | planned |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | planned | implemented | planned |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | implemented | planned |
-| Extended | DPoP | RFC 9449 | `dpop.json` | planned | planned | planned |
+| Extended | DPoP | RFC 9449 | `dpop.json` | planned | implemented | planned |
 | Advanced | PAR | RFC 9126 | — | planned | planned | planned |
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
@@ -319,6 +319,121 @@ Content-Type: application/json
   "expires_in": 60
 }
 ```
+
+### DPoP
+
+DPoP (Demonstrating Proof of Possession) binds an access token to a client-held
+key pair so a stolen token cannot be replayed without the private key
+(sender-constrained tokens).
+
+- A DPoP proof is a compact-serialized JWS whose protected header MUST set
+  `typ=dpop+jwt`, MUST use an asymmetric `alg` (symmetric algorithms such as
+  `HS256` and the unsecured `none` MUST NOT be used), and MUST carry a `jwk`
+  member holding the **public** key only — no private key material and no `x5c`
+  or `x5t`
+  ([RFC 9449 §4.2](https://www.rfc-editor.org/rfc/rfc9449#section-4.2)).
+- The proof payload MUST include `jti` (a unique value to prevent replay), `htm`
+  (the request's HTTP method), `htu` (the request URI as scheme + authority +
+  path, with any query and fragment removed), and `iat` (issued-at)
+  ([RFC 9449 §4.2](https://www.rfc-editor.org/rfc/rfc9449#section-4.2)).
+- For a token request the proof is sent in the `DPoP` HTTP header and the `ath`
+  claim is NOT included, because a token-request proof does not bind to an access
+  token ([RFC 9449 §5](https://www.rfc-editor.org/rfc/rfc9449#section-5)).
+- The authorization server binds the issued access token to the client key by
+  returning `token_type=DPoP` and embedding a `cnf` claim whose `jkt` member is
+  the RFC 7638 SHA-256 JWK Thumbprint of the client's public key
+  ([RFC 9449 §6](https://www.rfc-editor.org/rfc/rfc9449#section-6),
+  [RFC 7638 §3](https://www.rfc-editor.org/rfc/rfc7638#section-3)).
+- For a protected-resource request the client MUST present the token with the
+  `DPoP` authorization scheme (`Authorization: DPoP <access_token>`, NOT
+  `Bearer`) and MUST include a fresh proof in the `DPoP` header carrying an `ath`
+  claim equal to `BASE64URL(SHA-256(access_token))`
+  ([RFC 9449 §7](https://www.rfc-editor.org/rfc/rfc9449#section-7),
+  [RFC 9449 §4.2](https://www.rfc-editor.org/rfc/rfc9449#section-4.2)).
+- When the server replies with HTTP 401, `error=use_dpop_nonce`, and a
+  `DPoP-Nonce` response header, the client MUST retry with that nonce echoed in
+  the proof's `nonce` claim, and SHOULD cache the nonce for subsequent requests
+  to the same server
+  ([RFC 9449 §8](https://www.rfc-editor.org/rfc/rfc9449#section-8)).
+- Implementations MUST support generating DPoP key pairs for at least ES256
+  (EC P-256) and RS256 (RSA ≥ 2048-bit)
+  ([RFC 9449 §4.1](https://www.rfc-editor.org/rfc/rfc9449#section-4.1),
+  [RFC 7518 §3.1](https://www.rfc-editor.org/rfc/rfc7518#section-3.1)), and
+  SHOULD support loading and persisting keys as JWK or PEM so a key pair survives
+  process restarts and can be rotated without invalidating already-issued bound
+  tokens.
+- A resource server validating a proof MUST check `typ`, `alg`, the embedded
+  `jwk` (and verify the signature against it), `jti`, `htm`, `htu`, and `iat`
+  (within an acceptance window), and optionally `ath` and `nonce`; a proof whose
+  `htm` or `htu` does not match the actual request MUST be rejected
+  ([RFC 9449 §4.3](https://www.rfc-editor.org/rfc/rfc9449#section-4.3)).
+
+**Worked example** — a complete DPoP flow: key generation, a token request
+carrying a proof, receipt of a DPoP-bound token, then a resource request with the
+bound token.
+
+A client generates an ES256 key pair and sends a token request. The proof is a
+JWS whose decoded header and payload are (note `Authorization: DPoP` is absent on
+the token request; the proof itself proves possession):
+
+```http
+POST /token HTTP/1.1
+Host: server.example.com
+Content-Type: application/x-www-form-urlencoded
+DPoP: eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2Iiwiandr...<signature>
+
+grant_type=client_credentials
+```
+
+```jsonc
+// decoded DPoP proof header (RFC 9449 §4.2)
+{ "typ": "dpop+jwt", "alg": "ES256", "jwk": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." } }
+// decoded DPoP proof payload (RFC 9449 §5) — no ath on a token request
+{ "jti": "e1j3V_bKic8-LAEB", "htm": "POST", "htu": "https://server.example.com/token", "iat": 1732200000 }
+```
+
+The server issues a DPoP-bound token, marked by `token_type=DPoP` and a
+`cnf.jkt` equal to the RFC 7638 thumbprint of the client's public key
+(RFC 9449 §6):
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9...",
+  "token_type": "DPoP",
+  "expires_in": 3600
+}
+```
+
+```jsonc
+// decoded access token payload — cnf.jkt binds the token to the key (RFC 9449 §6, RFC 7638)
+{ "sub": "user-123", "cnf": { "jkt": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac" } }
+```
+
+To call a protected resource the client presents the token with the `DPoP`
+scheme (NOT `Bearer`) and a fresh proof whose `ath` binds it to that token
+(RFC 9449 §7):
+
+```http
+GET /protectedresource HTTP/1.1
+Host: resource.example.com
+Authorization: DPoP eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9...
+DPoP: eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6IkVTMjU2Iiwiandr...<signature>
+```
+
+```jsonc
+// decoded resource-request proof payload (RFC 9449 §7) — ath = BASE64URL(SHA-256(access_token))
+{ "jti": "-BwC3ESc6acc2lTc", "htm": "GET", "htu": "https://resource.example.com/protectedresource",
+  "iat": 1732200100, "ath": "yRhCjMZbSgJuej6MpSmViNnUiiuiK_CT3FHQXkjq7vk" }
+```
+
+The key difference from Bearer usage (RFC 6750): a Bearer token is presented
+alone with `Authorization: Bearer <token>` and anyone holding the token can use
+it, whereas a DPoP-bound token requires `Authorization: DPoP <token>` *plus* a
+signed proof of the bound private key on every request, so a leaked token is
+useless without the key.
 
 ## Machine-Readable Schema
 

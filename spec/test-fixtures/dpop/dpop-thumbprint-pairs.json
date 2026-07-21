@@ -1,0 +1,33 @@
+{
+  "algorithm": "RFC 7638 (SHA-256 JWK Thumbprint)",
+  "pairs": [
+    {
+      "description": "RFC 7638 Section 3.1 canonical RSA example vector",
+      "jwk": {
+        "kty": "RSA",
+        "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+        "e": "AQAB"
+      },
+      "thumbprint": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "description": "EC P-256 (ES256) DPoP public key from dpop-keypair-es256.json",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+        "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+      },
+      "thumbprint": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac"
+    },
+    {
+      "description": "RSA 2048 (RS256) DPoP public key from dpop-keypair-rs256.json",
+      "jwk": {
+        "kty": "RSA",
+        "n": "qlDNavxW9K2dDzQ7v4dLrQ3DO1-A3KKA7OHUliGxi0pN86k0CDDzKkAIpu_sXuouMOhHrywBr3P2S4NJlznKdXHg1DZSNl5b6rXhikNgsTXQX0tYp1SVgZDIJ5_3lCg-pRuJuW8LRd1mlJITRfa8yyACRjFBohYPJ6h_WRvprugQaMXZmFlID9bYayorqnDpUtGPcDORLTzS7rSTfK0khmQ9R-FaVtcaMjM4bRAWknf-RPbv5rqTLkZRf8HnWtQ4JmK7LFMzHNG_0TP0nSgHEjrdtZo-nkirCfThlGGrlfbikJ1DR6e3FEz60eUCwYrsj-E5CgUYOMzL3WLvcIBdWw",
+        "e": "AQAB"
+      },
+      "thumbprint": "q-4W0RMOUTB77nG0mw9uiYg4LGsPBeQKdAuZVc9SGeM"
+    }
+  ]
+}
