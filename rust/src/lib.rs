@@ -37,6 +37,7 @@ pub use token::{
     ClientAuthMethod, PkceChallenge, TokenClient, TokenClientBuilder, TokenResponse,
     authorization_url,
 };
+pub use userinfo::{Address, UserInfoClient, UserInfoClientBuilder, UserInfoResponse};
 
 /// Convenience alias for results returned across the crate.
 pub type Result<T> = std::result::Result<T, IdentityError>;
