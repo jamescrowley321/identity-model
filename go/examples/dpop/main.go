@@ -35,7 +35,7 @@ func main() {
 	}
 	fmt.Printf("1. Generated an ES256 DPoP key pair.\n   RFC 7638 thumbprint (jkt): %s\n\n", thumbprint)
 
-	srv := newServer(key)
+	srv := newServer()
 	defer srv.Close()
 
 	// --- Token request (RFC 9449 §5) -------------------------------------------
@@ -92,7 +92,7 @@ type server struct {
 	counter int
 }
 
-func newServer(_ *dpop.Key) *httptest.Server {
+func newServer() *httptest.Server {
 	s := &server{bound: map[string]string{}, nonces: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", s.token)

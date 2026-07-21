@@ -11,15 +11,15 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 )
 
-// asymmetricSigAlgs is the DPoP proof-verification allowlist: asymmetric JWS
-// algorithms only. Symmetric algorithms (HS*) and the unsecured "none" are
-// absent, so [jose.ParseSigned] rejects a proof that claims one before any other
-// check (RFC 9449 §4.2 forbids symmetric algorithms).
+// asymmetricSigAlgs is the DPoP proof-verification allowlist: the EC and RSA JWS
+// algorithms whose keys the embedded-jwk check below accepts. Symmetric
+// algorithms (HS*) and the unsecured "none" are absent, so [jose.ParseSigned]
+// rejects a proof that claims one before any other check (RFC 9449 §4.2 forbids
+// symmetric algorithms).
 var asymmetricSigAlgs = []jose.SignatureAlgorithm{
 	jose.ES256, jose.ES384, jose.ES512,
 	jose.RS256, jose.RS384, jose.RS512,
 	jose.PS256, jose.PS384, jose.PS512,
-	jose.EdDSA,
 }
 
 // defaultMaxIATAge bounds how far a proof's iat may be from now during
@@ -92,6 +92,11 @@ func WithExpectedNonce(nonce string) VerifyOption {
 // typ=dpop+jwt, one missing a required claim, and one whose htm or htu does not
 // match the request. On success it returns the parsed [Proof]; on failure a
 // [VerificationError] naming the offending field.
+//
+// VerifyProof does not perform replay detection: RFC 9449 §4.3 expects the
+// server to reject a proof whose jti has already been seen within the iat
+// window. That is the caller's responsibility — dedupe on the returned
+// [Proof.JTI] against a short-lived store.
 func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (*Proof, error) {
 	cfg := &verifyConfig{maxIATAge: defaultMaxIATAge, now: time.Now}
 	for _, opt := range opts {

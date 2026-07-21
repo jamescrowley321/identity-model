@@ -49,8 +49,12 @@ func WithBaseTransport(rt http.RoundTripper) TransportOption {
 	return func(t *Transport) { t.base = rt }
 }
 
-// NewTransport returns a [Transport] signing proofs with key.
+// NewTransport returns a [Transport] signing proofs with key. It panics if key
+// is nil, since a nil key cannot sign proofs and would fail every request.
 func NewTransport(key *Key, opts ...TransportOption) *Transport {
+	if key == nil {
+		panic("dpop: NewTransport called with a nil key")
+	}
 	t := &Transport{key: key, nonces: make(map[string]string)}
 	for _, opt := range opts {
 		opt(t)
@@ -64,13 +68,13 @@ func NewTransport(key *Key, opts ...TransportOption) *Transport {
 // RoundTrip attaches a DPoP proof to req and, on a use_dpop_nonce challenge,
 // retries once with the server-supplied nonce (RFC 9449 §8).
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	body, err := snapshotBody(req)
+	getBody, err := bodyReplay(req)
 	if err != nil {
 		return nil, err
 	}
 
 	host := req.URL.Host
-	resp, err := t.do(req, body, t.getNonce(host))
+	resp, err := t.do(req, getBody, t.getNonce(host))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +89,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxChallengeBody))
 	_ = resp.Body.Close()
 
-	resp2, err := t.do(req, body, nonce)
+	resp2, err := t.do(req, getBody, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -94,16 +98,18 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // do clones req, builds a proof (carrying nonce when non-empty), sets the DPoP
-// and — in resource mode — Authorization headers, and sends it. The original
-// request is never mutated (RoundTripper contract).
-func (t *Transport) do(req *http.Request, body []byte, nonce string) (*http.Response, error) {
+// and — in resource mode — Authorization headers, and sends it. getBody yields a
+// fresh body for the attempt (nil for a bodyless request). The original request
+// is never mutated (RoundTripper contract).
+func (t *Transport) do(req *http.Request, getBody func() (io.ReadCloser, error), nonce string) (*http.Response, error) {
 	clone := req.Clone(req.Context())
-	if req.Body != nil {
-		clone.Body = io.NopCloser(bytes.NewReader(body))
-		clone.ContentLength = int64(len(body))
-		clone.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(body)), nil
+	if getBody != nil {
+		rc, err := getBody()
+		if err != nil {
+			return nil, err
 		}
+		clone.Body = rc
+		clone.GetBody = getBody
 	}
 
 	opts := make([]ProofOption, 0, 2)
@@ -139,13 +145,13 @@ func (t *Transport) nonceChallenge(resp *http.Response) (string, bool) {
 	}
 	// A resource server signals the error via WWW-Authenticate (§7.1); the token
 	// endpoint signals it in the JSON error body (§8). Check the header first,
-	// then peek the body (restoring it so a non-match leaves resp usable).
+	// then peek the body. The peeked prefix is prepended back onto resp.Body so a
+	// non-match leaves the caller with the full, untruncated response body.
 	if strings.Contains(resp.Header.Get("WWW-Authenticate"), "use_dpop_nonce") {
 		return nonce, true
 	}
 	buf, _ := io.ReadAll(io.LimitReader(resp.Body, maxChallengeBody))
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(buf))
+	resp.Body = &prefixedBody{Reader: io.MultiReader(bytes.NewReader(buf), resp.Body), body: resp.Body}
 	var oauthErr struct {
 		Error string `json:"error"`
 	}
@@ -154,6 +160,15 @@ func (t *Transport) nonceChallenge(resp *http.Response) (string, bool) {
 	}
 	return "", false
 }
+
+// prefixedBody serves an already-read prefix of a response body followed by its
+// remainder, while closing the original underlying body.
+type prefixedBody struct {
+	io.Reader
+	body io.ReadCloser
+}
+
+func (p *prefixedBody) Close() error { return p.body.Close() }
 
 func (t *Transport) getNonce(host string) string {
 	t.mu.Lock()
@@ -169,17 +184,25 @@ func (t *Transport) cacheNonce(host string, resp *http.Response) {
 	}
 }
 
-// snapshotBody reads req.Body into memory so the request can be replayed on a
-// nonce retry, closing the original body. DPoP requests (token/resource) carry
-// small form or empty bodies.
-func snapshotBody(req *http.Request) ([]byte, error) {
-	if req.Body == nil {
+// bodyReplay returns a factory that yields a fresh copy of req's body for each
+// send, so the request can be replayed on a nonce retry (RFC 9449 §8). It prefers
+// req.GetBody — which net/http populates for standard bodies — so the body is not
+// buffered; it only reads the body into memory when the body is present but not
+// rewindable. The original req.Body is always closed (RoundTripper contract).
+func bodyReplay(req *http.Request) (func() (io.ReadCloser, error), error) {
+	if req.Body == nil || req.Body == http.NoBody {
 		return nil, nil
+	}
+	if req.GetBody != nil {
+		_ = req.Body.Close()
+		return req.GetBody, nil
 	}
 	b, err := io.ReadAll(req.Body)
 	_ = req.Body.Close()
 	if err != nil {
 		return nil, err
 	}
-	return b, nil
+	return func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(b)), nil
+	}, nil
 }
