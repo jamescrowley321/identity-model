@@ -1,0 +1,24 @@
+{
+  "algorithm": "RS256",
+  "public": {
+    "kty": "RSA",
+    "alg": "RS256",
+    "use": "sig",
+    "e": "AQAB",
+    "n": "qlDNavxW9K2dDzQ7v4dLrQ3DO1-A3KKA7OHUliGxi0pN86k0CDDzKkAIpu_sXuouMOhHrywBr3P2S4NJlznKdXHg1DZSNl5b6rXhikNgsTXQX0tYp1SVgZDIJ5_3lCg-pRuJuW8LRd1mlJITRfa8yyACRjFBohYPJ6h_WRvprugQaMXZmFlID9bYayorqnDpUtGPcDORLTzS7rSTfK0khmQ9R-FaVtcaMjM4bRAWknf-RPbv5rqTLkZRf8HnWtQ4JmK7LFMzHNG_0TP0nSgHEjrdtZo-nkirCfThlGGrlfbikJ1DR6e3FEz60eUCwYrsj-E5CgUYOMzL3WLvcIBdWw"
+  },
+  "private": {
+    "kty": "RSA",
+    "alg": "RS256",
+    "use": "sig",
+    "e": "AQAB",
+    "n": "qlDNavxW9K2dDzQ7v4dLrQ3DO1-A3KKA7OHUliGxi0pN86k0CDDzKkAIpu_sXuouMOhHrywBr3P2S4NJlznKdXHg1DZSNl5b6rXhikNgsTXQX0tYp1SVgZDIJ5_3lCg-pRuJuW8LRd1mlJITRfa8yyACRjFBohYPJ6h_WRvprugQaMXZmFlID9bYayorqnDpUtGPcDORLTzS7rSTfK0khmQ9R-FaVtcaMjM4bRAWknf-RPbv5rqTLkZRf8HnWtQ4JmK7LFMzHNG_0TP0nSgHEjrdtZo-nkirCfThlGGrlfbikJ1DR6e3FEz60eUCwYrsj-E5CgUYOMzL3WLvcIBdWw",
+    "d": "AeykzYspXl1h02ynKixYrg1kQdT760JIy6RnlwStcWH3DIRCar9G2BjeICjA1ne16uaM_M01_aoFQ-gpWjSUdYxCWpN8jVG2nynL8Rh-zLHLd3AuAcICaHLe2BfGH93ui0YK4dX_3hu4z3_xCM7XZkIn1Gw1DiRKqouMWNDobIn9ATswggYQhyggNf4pg9AJ3tXtkDKhsZBbjD5K_4Mr6Bl3h_9pKSPbzOcEpx_n62bNfSN7KT-WHaUs-_qDgLeSPV6bLf_WyyYAwomEfZh0ZdofcSWIt6WjtWTx1oARD24-6Hg_NDJrqaUyY4iNugeT5s16O_5JPUJo0doTlRM-oQ",
+    "p": "1Sv1EtKhroSD5dNIBKHVPyMXihefhAHcWIW-xOd3NKjha8bQKO2xwOXy-xcfQI-zKAgB_4FSGdgz8uyQEEcGr_u0korKu2xlxGCHBphn0apVvAIb21u-Z92wmP5RdsBdJabYKkElyxRJ9-a8c0HdmZ2lcVq0aa6IY7IB3rD4IiE",
+    "q": "zIih2Yo6x57NuKU8ufhXUsPC3xnv4CjELXRAOXmq_RTeYw-xjH0Ehtd2f1FA2mYVmT18WsvThNZnMnF9Cf16k2w-_sNoCstI7I-FVgn0lhlpQ9VhvZnhxwztQbDjlqwCXyaPzEvz4fOdXDSkaJPLxT7Zwf2cqHly4LuTvCtIB_s",
+    "dp": "bbhGV_3aAj1qtixdcSTq4ahqQUWPcR6UD2wnmKmajZwvCo42LhrJ1wOEYQCxsUVFbWFRxfUGEQ9bDbn9HKOyKXpgotyVJIrShpU4aoifRydpIW_kbq91_Xf5oYWk4H56cxrBQF5v2WsD93jnnltUd_DQatvI6GxQ_x9sHvbvgIE",
+    "dq": "iXNAoTq9qazUv0N7_dYgiOQ5r0h05YU_4PQAvR9Ag3dkw9mmDa1uP1fIsGLgXGTCGwsw6KuVZ-3VyBZwWyhXGX9jDj4vSyG1zhPdHSbvkXdeQFHDr3EcQ3IydzTynSzXIy588GQSb0QR-gb-fbDk_ZbxK-bNQoLrao9kBs5nR8U",
+    "qi": "vV0FWlsRqZ1Z1skoHHCLI_wTsTbiBXWus585ZDAo7PqE1cwGMXjABieVcYffSGsDkkOGklLpZslGCE616L3t0Ut7cHlU9lxBs6ruQecTdONuV5mpMnOI7FDZeIsxZQbwsUSEzwAPWQ_-b8yBJljrn2nfhwXOQIRCpy4LuynTL1s"
+  },
+  "thumbprint": "q-4W0RMOUTB77nG0mw9uiYg4LGsPBeQKdAuZVc9SGeM"
+}

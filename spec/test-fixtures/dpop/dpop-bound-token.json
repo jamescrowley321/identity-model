@@ -1,0 +1,20 @@
+{
+  "description": "Decoded DPoP-bound access token (RFC 9449 Section 6). The cnf.jkt claim is the RFC 7638 SHA-256 thumbprint of the DPoP public key in dpop-keypair-es256.json, binding the token to that key pair. token_type on the token endpoint response for this token is \"DPoP\".",
+  "token_type": "DPoP",
+  "header": {
+    "typ": "at+jwt",
+    "alg": "ES256",
+    "kid": "server-signing-key-1"
+  },
+  "payload": {
+    "iss": "https://server.example.com",
+    "sub": "user-123",
+    "aud": "https://resource.example.com",
+    "iat": 1732200000,
+    "exp": 1732203600,
+    "jti": "dpop-bound-at-0001",
+    "cnf": {
+      "jkt": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "algorithm": "ath = BASE64URL(SHA-256(access_token))",
+  "reference": "RFC 9449 Section 4.2",
+  "pairs": [
+    {
+      "description": "RFC 9449 Section 4.2 canonical example access token and its ath",
+      "access_token": "Kz~8mXK1EalYznwH-LC-1fBAo.4Ljp~zsPE_NeO.gxU",
+      "ath": "fUHyO2r2Z3DZ53EsNrWBb0xWXoaNy59IiKCAqksmQEo"
+    },
+    {
+      "description": "Sample DPoP-bound access token value (matches dpop-bound-token.json subject)",
+      "access_token": "example-dpop-bound-access-token-value",
+      "ath": "yRhCjMZbSgJuej6MpSmViNnUiiuiK_CT3FHQXkjq7vk"
+    }
+  ]
+}
