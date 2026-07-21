@@ -1,0 +1,62 @@
+{
+  "capability": "introspection",
+  "spec": "RFC 7662 (OAuth 2.0 Token Introspection)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc7662",
+  "required_fields": [
+    "active"
+  ],
+  "tests": [
+    {
+      "id": "INTR-001",
+      "title": "Successful introspection of an active token",
+      "given": "A valid, non-expired token and authenticated client credentials for the introspection endpoint",
+      "when": "Introspect is called with the token parameter",
+      "then": "A POST application/x-www-form-urlencoded request carrying token is sent and a typed response with active=true plus standard metadata (scope, client_id, username, token_type, exp, iat, nbf, sub, aud, iss, jti) is returned; unknown members remain reachable",
+      "fixture": "introspection/active-response.json",
+      "references": ["RFC 7662 §2.1", "RFC 7662 §2.2"]
+    },
+    {
+      "id": "INTR-002",
+      "title": "Introspection of an inactive or expired token",
+      "given": "An expired or revoked token and authenticated client credentials",
+      "when": "Introspect is called with the token parameter",
+      "then": "A typed response with active=false is returned and no other member is required to be present",
+      "fixture": "introspection/inactive-response.json",
+      "references": ["RFC 7662 §2.2"]
+    },
+    {
+      "id": "INTR-003",
+      "title": "Client authentication on the introspection request",
+      "given": "Valid client credentials",
+      "when": "Introspect is called using client_secret_basic (default) and, separately, client_secret_post",
+      "then": "With client_secret_basic the request carries an HTTP Basic Authorization header whose username and password are the form-urlencoded client_id and client_secret and no credentials appear in the body; with client_secret_post client_id and client_secret appear as form parameters and no Basic header is set",
+      "references": ["RFC 7662 §2.1", "RFC 6749 §2.3.1"]
+    },
+    {
+      "id": "INTR-004",
+      "title": "token_type_hint is included in the request",
+      "given": "A token and a token_type_hint of access_token or refresh_token",
+      "when": "Introspect is called with the hint configured",
+      "then": "The hint is sent as the token_type_hint form parameter; the token parameter is always present and the request succeeds regardless of hint correctness",
+      "references": ["RFC 7662 §2.1"]
+    },
+    {
+      "id": "INTR-005",
+      "title": "Error response from the introspection endpoint",
+      "given": "Invalid client credentials",
+      "when": "Introspect is called and the endpoint replies HTTP 401 with an OAuth error body",
+      "then": "A typed introspection error carrying error=invalid_client (plus optional error_description, error_uri, and the HTTP status) is surfaced",
+      "fixture": "introspection/error-invalid-client.json",
+      "references": ["RFC 7662 §2.3", "RFC 6749 §5.2"]
+    },
+    {
+      "id": "INTR-006",
+      "title": "Discovery-based endpoint resolution",
+      "given": "A valid OIDC Discovery / Authorization Server Metadata document containing introspection_endpoint",
+      "when": "The introspection endpoint is resolved from discovery and passed to Introspect",
+      "then": "The introspection_endpoint URL from the discovery document is used rather than requiring manual configuration",
+      "fixture": "introspection/discovery-with-introspection.json",
+      "references": ["RFC 8414 §2"]
+    }
+  ]
+}

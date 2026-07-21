@@ -15,13 +15,13 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 | Tier | Capability | Spec | Conformance | Python | Go | Rust |
 |------|-----------|------|-------------|--------|----|----|
-| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json` | implemented | planned | implemented |
-| Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | planned | implemented |
-| Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | planned | implemented |
-| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | planned | implemented |
-| Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | planned | planned | implemented |
+| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json` | implemented | implemented | implemented |
+| Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | implemented | implemented |
+| Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | implemented | implemented |
+| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | implemented | implemented |
+| Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | planned | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
-| Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | planned | planned |
+| Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | implemented | planned |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | planned | planned | planned |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | planned | planned | planned |
@@ -67,6 +67,73 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 - Implementations MUST GET the `userinfo_endpoint` with `Authorization: Bearer {token}` and return typed standard claims plus an overflow map ([OIDC Core 1.0 §5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
 - When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)).
 
+## Capability Definitions (Extended Tier)
+
+### Token Introspection
+
+- Implementations MUST POST to the introspection endpoint as
+  `application/x-www-form-urlencoded` with the `token` parameter (REQUIRED) and
+  MAY include an optional `token_type_hint` (`access_token` or `refresh_token`)
+  ([RFC 7662 §2.1](https://www.rfc-editor.org/rfc/rfc7662#section-2.1)). The
+  server MAY use the hint to optimize lookup but MUST NOT fail if it is
+  incorrect, so the request MUST still be sent (and accepted) with a wrong hint.
+- The introspection endpoint is protected; implementations MUST authenticate the
+  introspecting client and MUST support both `client_secret_basic`
+  (HTTP Basic with URL-encoded `client_id:client_secret`) and
+  `client_secret_post` (`client_id`/`client_secret` in the body)
+  ([RFC 7662 §2.1](https://www.rfc-editor.org/rfc/rfc7662#section-2.1),
+  [RFC 6749 §2.3.1](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1)).
+  `client_secret_basic` MUST be the default.
+- The introspection response is a JSON object whose only REQUIRED member is
+  `active` (boolean). When `active` is `true` the response SHOULD, when
+  applicable, carry `scope`, `client_id`, `username`, `token_type`, `exp`, `iat`,
+  `nbf`, `sub`, `aud`, `iss`, and `jti`; when `active` is `false` no other member
+  is guaranteed present. Implementations MUST model `active` and the standard
+  members as typed fields and MUST preserve any additional members in an overflow
+  map ([RFC 7662 §2.2](https://www.rfc-editor.org/rfc/rfc7662#section-2.2)). `aud`
+  MAY be a single string or an array of strings.
+- When the introspecting client fails authentication the endpoint returns HTTP
+  401; implementations MUST surface a typed error carrying the OAuth `error`
+  (e.g. `invalid_client`), `error_description`, and `error_uri` when present
+  ([RFC 7662 §2.3](https://www.rfc-editor.org/rfc/rfc7662#section-2.3),
+  [RFC 6749 §5.2](https://www.rfc-editor.org/rfc/rfc6749#section-5.2)).
+- The introspection endpoint URL SHOULD be obtained from the
+  `introspection_endpoint` field of the Authorization Server Metadata / OIDC
+  Discovery document rather than requiring manual configuration
+  ([RFC 8414 §2](https://www.rfc-editor.org/rfc/rfc8414#section-2)).
+
+**Worked example** — introspecting an active token with `client_secret_basic`
+(`Authorization` is `Basic BASE64("s6BhdRkqt3" + ":" + "gX1fBat3bV")`):
+
+```http
+POST /introspect HTTP/1.1
+Host: server.example.com
+Accept: application/json
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW
+
+token=mF_9.B5f-4.1JqM&token_type_hint=access_token
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "active": true,
+  "scope": "read write dolphin",
+  "client_id": "l238j323ds-23ij4",
+  "username": "jdoe",
+  "token_type": "Bearer",
+  "exp": 1419356238,
+  "iat": 1419350238,
+  "sub": "Z5O3upPC88QrAjx00dis",
+  "aud": "https://protected.example.net/resource",
+  "iss": "https://server.example.com/",
+  "jti": "d3f5c9a1-2b7e-4c1a-9e8f-0a1b2c3d4e5f"
+}
+```
+
 ## Machine-Readable Schema
 
 The status table above is also expressed per-capability for tooling (status generators, CI gates, docs site):
@@ -79,6 +146,6 @@ capabilities:
     conformance_file: "spec/conformance/discovery.json"
     languages:
       python: { status: implemented }
-      go: { status: planned }
-      rust: { status: planned }
+      go: { status: implemented }
+      rust: { status: implemented }
 ```
