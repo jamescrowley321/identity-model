@@ -13,23 +13,20 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/token"
 )
 
-// Local node-oidc-provider opaque-token client. Introspection is only
-// meaningful for opaque (reference) tokens, so these tests use the dedicated
-// test-opaque client (infra/node-oidc-provider/provider.js) rather than the
-// default JWT-issuing client_credentials client. These credentials only exist
-// on the local fixture provider; against any cloud profile the test skips.
-const (
-	opaqueClientID     = "test-opaque"
-	opaqueClientSecret = "test-opaque-secret"
-)
+// Introspection is only meaningful for opaque (reference) tokens, so these
+// tests use the dedicated opaque-token client_credentials client rather than
+// the default JWT-issuing one. Only the node-oidc-provider fixture provisions
+// such a client (infra/node-oidc-provider/provider.js, surfaced via
+// TEST_OPAQUE_CLIENT_ID); every other profile — IdentityServer, Ory, Descope —
+// leaves it unset, so those runs skip.
 
-// introspectionEndpoint discovers the local provider's introspection_endpoint
-// or skips. It also skips against non-local (cloud) profiles, which do not
-// provision the opaque-token client these tests require.
+// introspectionEndpoint discovers the provider's introspection_endpoint or
+// skips. It also skips against any profile that does not provision an
+// opaque-token client, which these tests require.
 func introspectionEndpoint(t *testing.T, ctx context.Context, tc integrationtest.Config) string {
 	t.Helper()
-	if !tc.AllowHTTP {
-		t.Skip("introspection integration tests require the local opaque-token client; skipping cloud profile")
+	if tc.OpaqueClientID == "" {
+		t.Skip("no opaque-token client for this profile (TEST_OPAQUE_CLIENT_ID unset); introspection integration requires opaque tokens")
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, discovery.WithInsecureAllowHTTP())
 	if err != nil {
@@ -65,7 +62,7 @@ func TestIntegration_Introspect_ActiveOpaqueToken(t *testing.T) {
 
 	tokenEP, introspectEP := endpoints(t, ctx, tc)
 
-	resp, err := token.ClientCredentials(ctx, tokenEP, opaqueClientID, opaqueClientSecret,
+	resp, err := token.ClientCredentials(ctx, tokenEP, tc.OpaqueClientID, tc.OpaqueClientSecret,
 		token.WithInsecureAllowHTTP())
 	if err != nil {
 		t.Fatalf("mint opaque token: %v", err)
@@ -74,7 +71,7 @@ func TestIntegration_Introspect_ActiveOpaqueToken(t *testing.T) {
 		t.Fatal("empty access_token")
 	}
 
-	ir, err := introspection.Introspect(ctx, introspectEP, opaqueClientID, opaqueClientSecret,
+	ir, err := introspection.Introspect(ctx, introspectEP, tc.OpaqueClientID, tc.OpaqueClientSecret,
 		resp.AccessToken, introspection.WithInsecureAllowHTTP())
 	if err != nil {
 		t.Fatalf("Introspect active token: %v", err)
@@ -82,8 +79,8 @@ func TestIntegration_Introspect_ActiveOpaqueToken(t *testing.T) {
 	if !ir.Active {
 		t.Fatalf("Active = false for a freshly issued token: %+v", ir)
 	}
-	if ir.ClientID != "" && ir.ClientID != opaqueClientID {
-		t.Errorf("client_id = %q, want %q", ir.ClientID, opaqueClientID)
+	if ir.ClientID != "" && ir.ClientID != tc.OpaqueClientID {
+		t.Errorf("client_id = %q, want %q", ir.ClientID, tc.OpaqueClientID)
 	}
 }
 
@@ -95,7 +92,7 @@ func TestIntegration_Introspect_InactiveToken(t *testing.T) {
 
 	introspectEP := introspectionEndpoint(t, ctx, tc)
 
-	ir, err := introspection.Introspect(ctx, introspectEP, opaqueClientID, opaqueClientSecret,
+	ir, err := introspection.Introspect(ctx, introspectEP, tc.OpaqueClientID, tc.OpaqueClientSecret,
 		"definitely-not-a-real-token", introspection.WithInsecureAllowHTTP())
 	if err != nil {
 		t.Fatalf("Introspect garbage token: %v", err)
@@ -114,7 +111,7 @@ func TestIntegration_Introspect_BadClientAuth(t *testing.T) {
 
 	introspectEP := introspectionEndpoint(t, ctx, tc)
 
-	_, err := introspection.Introspect(ctx, introspectEP, opaqueClientID, "wrong-secret",
+	_, err := introspection.Introspect(ctx, introspectEP, tc.OpaqueClientID, "wrong-secret",
 		"any-token", introspection.WithInsecureAllowHTTP())
 	if err == nil {
 		t.Fatal("expected client-authentication failure, got nil")
