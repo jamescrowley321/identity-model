@@ -29,6 +29,10 @@ pub mod userinfo;
 pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, ProviderMetadata};
 pub use error::IdentityError;
 pub use jwks::{JsonWebKey, JsonWebKeySet, JwksClient, JwksClientBuilder};
+pub use jwt::{
+    Audience, Claims, DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder,
+    validate_token, validate_token_with_jwks,
+};
 
 /// Convenience alias for results returned across the crate.
 pub type Result<T> = std::result::Result<T, IdentityError>;
