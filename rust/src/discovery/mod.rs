@@ -1,15 +1,27 @@
-//! OIDC Discovery client: fetch and cache provider metadata.
+//! OIDC Discovery client: fetch, validate, and cache provider metadata.
 //!
-//! RFC / spec references: OIDC Discovery 1.0 §3, §4
+//! [`DiscoveryClient`] requests `{issuer}/.well-known/openid-configuration`,
+//! validates the required metadata fields and the issuer match, and caches the
+//! result with a configurable TTL backed by a [`tokio::sync::RwLock`]. Behaviour
+//! is proven against the cross-language conformance IDs `DISC-001`..`DISC-010`
+//! in `spec/conformance/discovery.json`.
 //!
-//! Foundation scaffold — implementation lands in a follow-up. The behavioral
-//! contract lives in the cross-language `spec/` directory.
+//! RFC / spec references: OpenID Connect Discovery 1.0 §3, §4.
+//!
+//! ```no_run
+//! # async fn run() -> identity_model::Result<()> {
+//! use identity_model::DiscoveryClient;
+//!
+//! let client = DiscoveryClient::new();
+//! let metadata = client.discover("https://accounts.example.com").await?;
+//! assert!(!metadata.jwks_uri.is_empty());
+//! # Ok(())
+//! # }
+//! ```
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn module_scaffolded() {
-        // Placeholder proving the module compiles and the test runner is wired.
-        // Replaced with real tests as the capability is implemented.
-    }
-}
+mod cache;
+mod client;
+mod metadata;
+
+pub use client::{DiscoveryClient, DiscoveryClientBuilder};
+pub use metadata::ProviderMetadata;
