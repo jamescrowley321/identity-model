@@ -25,6 +25,9 @@ type TokenResponse struct {
 	// IDToken is the OIDC ID token, present for the authorization code grant
 	// when the openid scope was requested.
 	IDToken string `json:"id_token,omitempty"`
+	// IssuedTokenType is the URI of the issued token's type, returned by the
+	// RFC 8693 token exchange grant (RFC 8693 §2.2).
+	IssuedTokenType string `json:"issued_token_type,omitempty"`
 	// Extra holds any non-standard parameters returned by the provider.
 	Extra map[string]any `json:"-"`
 }
@@ -40,11 +43,12 @@ func (r *TokenResponse) UnmarshalJSON(data []byte) error {
 	}
 
 	strFields := map[string]*string{
-		"access_token":  &r.AccessToken,
-		"token_type":    &r.TokenType,
-		"scope":         &r.Scope,
-		"refresh_token": &r.RefreshToken,
-		"id_token":      &r.IDToken,
+		"access_token":      &r.AccessToken,
+		"token_type":        &r.TokenType,
+		"scope":             &r.Scope,
+		"refresh_token":     &r.RefreshToken,
+		"id_token":          &r.IDToken,
+		"issued_token_type": &r.IssuedTokenType,
 	}
 	for key, dst := range strFields {
 		if v, ok := raw[key]; ok {

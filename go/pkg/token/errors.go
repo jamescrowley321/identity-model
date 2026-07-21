@@ -53,6 +53,10 @@ var (
 	// ErrInvalidCodeVerifier reports a PKCE code_verifier outside the
 	// 43-128 unreserved-character range required by RFC 7636 §4.1.
 	ErrInvalidCodeVerifier = errors.New("token: invalid code verifier")
+	// ErrInvalidTokenExchange reports a token exchange request that is missing a
+	// required parameter (RFC 8693 §2.1), e.g. an empty subject_token or an
+	// actor_token without its actor_token_type.
+	ErrInvalidTokenExchange = errors.New("token: invalid token exchange request")
 )
 
 func (e *TokenError) Is(target error) bool   { return target == ErrTokenResponse }

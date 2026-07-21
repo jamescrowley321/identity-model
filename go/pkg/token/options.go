@@ -31,6 +31,13 @@ type config struct {
 	httpClient   *http.Client
 	timeout      time.Duration
 	allowHTTP    bool
+
+	// Token exchange (RFC 8693) parameters.
+	actorToken         string
+	actorTokenType     string
+	resources          []string
+	audiences          []string
+	requestedTokenType string
 }
 
 // Option customises a token request via the functional-options pattern. The
@@ -76,6 +83,39 @@ func WithCodeVerifier(verifier string) Option {
 // parameters set by the grant itself take precedence.
 func WithExtraParams(params map[string]string) Option {
 	return func(c *config) { c.extraParams = params }
+}
+
+// WithActorToken attaches the actor token and its type URI to a token exchange
+// request, turning it into a delegation exchange (RFC 8693 §1.1, §2.1). The
+// tokenType is one of the TokenType* URIs (RFC 8693 §3) and is REQUIRED whenever
+// an actor token is present. It is ignored by grants other than token exchange.
+func WithActorToken(token, tokenType string) Option {
+	return func(c *config) {
+		c.actorToken = token
+		c.actorTokenType = tokenType
+	}
+}
+
+// WithResource sets one or more target resource URIs for a token exchange
+// request (RFC 8693 §2.1). Each resource is sent as a separate repeated
+// resource form parameter. It is ignored by grants other than token exchange.
+func WithResource(resources ...string) Option {
+	return func(c *config) { c.resources = resources }
+}
+
+// WithAudience sets one or more target audiences for a token exchange request
+// (RFC 8693 §2.1). Each audience is sent as a separate repeated audience form
+// parameter. It is ignored by grants other than token exchange.
+func WithAudience(audiences ...string) Option {
+	return func(c *config) { c.audiences = audiences }
+}
+
+// WithRequestedTokenType sets the requested_token_type for a token exchange
+// request, naming the desired type of the issued token (RFC 8693 §2.1). The uri
+// is one of the TokenType* URIs (RFC 8693 §3); the server MAY issue a different
+// type. It is ignored by grants other than token exchange.
+func WithRequestedTokenType(uri string) Option {
+	return func(c *config) { c.requestedTokenType = uri }
 }
 
 // WithHTTPClient uses client for the token request instead of
