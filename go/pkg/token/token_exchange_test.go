@@ -364,6 +364,21 @@ func TestTokenExchange_MissingAccessToken(t *testing.T) {
 	}
 }
 
+// A 200 that omits issued_token_type is non-conformant (RFC 8693 §2.2 REQUIRES
+// it); the exchange rejects it rather than returning an empty IssuedTokenType.
+func TestTokenExchange_MissingIssuedTokenType(t *testing.T) {
+	var got capturedRequest
+	body := `{"access_token":"issued-tok","token_type":"Bearer"}`
+	srv := newTokenServer(t, http.StatusOK, body, &got)
+
+	_, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+		"subject-tok", TokenTypeAccessToken, WithInsecureAllowHTTP())
+	var re *RequestError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %v, want *RequestError for missing issued_token_type", err)
+	}
+}
+
 // An oversized response body is rejected rather than buffered without bound
 // (memory-exhaustion guard, maxBodyBytes).
 func TestTokenExchange_OversizedBody(t *testing.T) {

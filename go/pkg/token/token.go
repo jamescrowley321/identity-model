@@ -163,7 +163,16 @@ func TokenExchange(ctx context.Context, tokenEndpoint, clientID, clientSecret, s
 		form.Add("audience", a)
 	}
 
-	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form)
+	resp, err := doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form)
+	if err != nil {
+		return nil, err
+	}
+	// issued_token_type is REQUIRED in a successful token exchange response
+	// (RFC 8693 §2.2); a 200 that omits it is non-conformant.
+	if resp.IssuedTokenType == "" {
+		return nil, &RequestError{Op: "token exchange response", Err: fmt.Errorf("missing issued_token_type")}
+	}
+	return resp, nil
 }
 
 // doTokenRequest applies client authentication and extra parameters, POSTs the

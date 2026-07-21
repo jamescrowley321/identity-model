@@ -96,18 +96,20 @@ func WithActorToken(token, tokenType string) Option {
 	}
 }
 
-// WithResource sets one or more target resource URIs for a token exchange
+// WithResource adds one or more target resource URIs to a token exchange
 // request (RFC 8693 §2.1). Each resource is sent as a separate repeated
-// resource form parameter. It is ignored by grants other than token exchange.
+// resource form parameter; repeated calls accumulate. It is ignored by grants
+// other than token exchange.
 func WithResource(resources ...string) Option {
-	return func(c *config) { c.resources = resources }
+	return func(c *config) { c.resources = append(c.resources, resources...) }
 }
 
-// WithAudience sets one or more target audiences for a token exchange request
+// WithAudience adds one or more target audiences to a token exchange request
 // (RFC 8693 §2.1). Each audience is sent as a separate repeated audience form
-// parameter. It is ignored by grants other than token exchange.
+// parameter; repeated calls accumulate. It is ignored by grants other than
+// token exchange.
 func WithAudience(audiences ...string) Option {
-	return func(c *config) { c.audiences = audiences }
+	return func(c *config) { c.audiences = append(c.audiences, audiences...) }
 }
 
 // WithRequestedTokenType sets the requested_token_type for a token exchange

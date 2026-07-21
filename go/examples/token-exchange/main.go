@@ -3,19 +3,20 @@
 // performs to obtain a scoped-down token for a downstream call (impersonation)
 // or a token that records who is acting on whose behalf (delegation).
 //
-// Against a real provider (the token endpoint discovered from the issuer):
+// Against a real provider (the token endpoint discovered from the issuer). The
+// secret and tokens are read from the environment rather than flags, so they are
+// not exposed via ps(1)/proc or persisted in shell history:
 //
+//	export CLIENT_SECRET=... SUBJECT_TOKEN=...
 //	go run ./examples/token-exchange \
 //	  -issuer https://accounts.example.com \
-//	  -client-id "$CLIENT_ID" \
-//	  -client-secret "$CLIENT_SECRET" \
-//	  -subject-token "$SUBJECT_ACCESS_TOKEN" \
+//	  -client-id my-client \
 //	  -audience https://api.example.com
 //
-// Add -actor-token "$ACTOR_TOKEN" to run a delegation exchange instead of an
+// Set ACTOR_TOKEN in the environment to run a delegation exchange instead of an
 // impersonation exchange.
 //
-// With no -subject-token, the example runs a self-contained demo: it serves a
+// With no SUBJECT_TOKEN set, the example runs a self-contained demo: it serves a
 // tiny RFC 8693 token endpoint locally and performs both an impersonation and a
 // delegation exchange against it.
 package main
@@ -39,11 +40,8 @@ func main() {
 	issuer := flag.String("issuer", "", "OIDC issuer to discover the token endpoint")
 	endpoint := flag.String("token-endpoint", "", "token endpoint (overrides discovery)")
 	clientID := flag.String("client-id", "", "client id")
-	clientSecret := flag.String("client-secret", "", "client secret")
-	subjectToken := flag.String("subject-token", "", "the subject token to exchange (empty runs the self-contained demo)")
 	subjectTokenType := flag.String("subject-token-type", token.TokenTypeAccessToken, "subject_token_type URI")
-	actorToken := flag.String("actor-token", "", "optional actor token — its presence makes this a delegation exchange")
-	actorTokenType := flag.String("actor-token-type", token.TokenTypeJWT, "actor_token_type URI (required when -actor-token is set)")
+	actorTokenType := flag.String("actor-token-type", token.TokenTypeJWT, "actor_token_type URI (required when ACTOR_TOKEN is set)")
 	audience := flag.String("audience", "", "optional target audience")
 	resource := flag.String("resource", "", "optional target resource URI")
 	post := flag.Bool("post", false, "use client_secret_post instead of client_secret_basic")
@@ -51,13 +49,19 @@ func main() {
 	timeout := flag.Duration("timeout", 15*time.Second, "request timeout")
 	flag.Parse()
 
-	if *subjectToken == "" {
+	// Secrets and tokens come from the environment, never flags, so they are not
+	// visible via ps(1)/proc or persisted in shell history.
+	clientSecret := os.Getenv("CLIENT_SECRET")
+	subjectToken := os.Getenv("SUBJECT_TOKEN")
+	actorToken := os.Getenv("ACTOR_TOKEN")
+
+	if subjectToken == "" {
 		runDemo()
 		return
 	}
 
-	if *clientID == "" || *clientSecret == "" {
-		fmt.Fprintln(os.Stderr, "-client-id and -client-secret are required")
+	if *clientID == "" || clientSecret == "" {
+		fmt.Fprintln(os.Stderr, "-client-id (flag) and CLIENT_SECRET (env) are required")
 		os.Exit(2)
 	}
 
@@ -72,8 +76,8 @@ func main() {
 	if *post {
 		opts = append(opts, token.WithClientAuth(token.ClientSecretPost))
 	}
-	if *actorToken != "" {
-		opts = append(opts, token.WithActorToken(*actorToken, *actorTokenType))
+	if actorToken != "" {
+		opts = append(opts, token.WithActorToken(actorToken, *actorTokenType))
 	}
 	if *audience != "" {
 		opts = append(opts, token.WithAudience(*audience))
@@ -100,7 +104,7 @@ func main() {
 		target = cfg.TokenEndpoint
 	}
 
-	resp, err := token.TokenExchange(ctx, target, *clientID, *clientSecret, *subjectToken, *subjectTokenType, opts...)
+	resp, err := token.TokenExchange(ctx, target, *clientID, clientSecret, subjectToken, *subjectTokenType, opts...)
 	if err != nil {
 		var te *token.TokenError
 		if errors.As(err, &te) {
@@ -114,7 +118,9 @@ func main() {
 }
 
 func printResult(resp *token.TokenResponse) {
-	fmt.Printf("  access_token:      %s\n", resp.AccessToken)
+	// The issued access token is a live bearer credential; redact it so it does
+	// not leak into logs, terminal scrollback, or captured CI output.
+	fmt.Printf("  access_token:      %s\n", redact(resp.AccessToken))
 	fmt.Printf("  issued_token_type: %s\n", resp.IssuedTokenType)
 	fmt.Printf("  token_type:        %s\n", resp.TokenType)
 	if resp.ExpiresIn > 0 {
@@ -123,6 +129,19 @@ func printResult(resp *token.TokenResponse) {
 	if resp.Scope != "" {
 		fmt.Printf("  scope:             %s\n", resp.Scope)
 	}
+}
+
+// redact masks a bearer credential, keeping only a short prefix so the output
+// stays useful for debugging without exposing the usable token.
+func redact(tok string) string {
+	if tok == "" {
+		return "(empty)"
+	}
+	const keep = 6
+	if len(tok) <= keep {
+		return "***"
+	}
+	return tok[:keep] + fmt.Sprintf("…(redacted, %d chars)", len(tok))
 }
 
 // runDemo serves a tiny RFC 8693 token endpoint locally and performs both an
