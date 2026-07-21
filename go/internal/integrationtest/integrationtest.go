@@ -23,6 +23,12 @@ const (
 	defaultScope            = "api"
 	defaultPublicClientID   = "test-pkce-public"
 	defaultRedirectURI      = "http://localhost:8080/callback"
+	// The node-oidc-provider fixture provisions a dedicated opaque
+	// (reference) token client so introspection/revocation can be exercised
+	// against non-JWT tokens (infra/node-oidc-provider/provider.js). No other
+	// provider profile provisions it; those profiles skip.
+	defaultOpaqueClientID     = "test-opaque"
+	defaultOpaqueClientSecret = "test-opaque-secret"
 )
 
 // Config selects the provider under test. With TEST_DISCO_ADDRESS unset the
@@ -39,7 +45,13 @@ type Config struct {
 	Scope            string // TEST_SCOPE: space-separated scopes for token requests
 	PublicClientID   string // TEST_PKCE_PUBLIC_CLIENT_ID: public PKCE client
 	RedirectURI      string // TEST_REDIRECT_URI: registered redirect for code flows
-	AllowHTTP        bool   // derived: issuer is plain HTTP (local fixtures only)
+	// OpaqueClientID/Secret: TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET,
+	// a client_credentials client that issues opaque (reference) tokens.
+	// Only the node-oidc-provider fixture provisions one; empty on every other
+	// profile, so tests requiring opaque tokens skip when it is unset.
+	OpaqueClientID     string
+	OpaqueClientSecret string
+	AllowHTTP          bool // derived: issuer is plain HTTP (local fixtures only)
 }
 
 // Load reads the provider profile from the environment.
@@ -47,27 +59,31 @@ func Load() Config {
 	disco := os.Getenv("TEST_DISCO_ADDRESS")
 	if disco == "" {
 		return Config{
-			DiscoveryAddress: defaultDiscoveryAddress,
-			Issuer:           issuerFrom(defaultDiscoveryAddress),
-			ClientID:         defaultClientID,
-			ClientSecret:     defaultClientSecret,
-			Scope:            defaultScope,
-			PublicClientID:   defaultPublicClientID,
-			RedirectURI:      defaultRedirectURI,
-			AllowHTTP:        true,
+			DiscoveryAddress:   defaultDiscoveryAddress,
+			Issuer:             issuerFrom(defaultDiscoveryAddress),
+			ClientID:           defaultClientID,
+			ClientSecret:       defaultClientSecret,
+			Scope:              defaultScope,
+			PublicClientID:     defaultPublicClientID,
+			RedirectURI:        defaultRedirectURI,
+			OpaqueClientID:     defaultOpaqueClientID,
+			OpaqueClientSecret: defaultOpaqueClientSecret,
+			AllowHTTP:          true,
 		}
 	}
 	issuer := issuerFrom(disco)
 	return Config{
-		DiscoveryAddress: disco,
-		Issuer:           issuer,
-		JWKSURI:          os.Getenv("TEST_JWKS_ADDRESS"),
-		ClientID:         os.Getenv("TEST_CLIENT_ID"),
-		ClientSecret:     os.Getenv("TEST_CLIENT_SECRET"),
-		Scope:            os.Getenv("TEST_SCOPE"),
-		PublicClientID:   os.Getenv("TEST_PKCE_PUBLIC_CLIENT_ID"),
-		RedirectURI:      os.Getenv("TEST_REDIRECT_URI"),
-		AllowHTTP:        strings.HasPrefix(issuer, "http://"),
+		DiscoveryAddress:   disco,
+		Issuer:             issuer,
+		JWKSURI:            os.Getenv("TEST_JWKS_ADDRESS"),
+		ClientID:           os.Getenv("TEST_CLIENT_ID"),
+		ClientSecret:       os.Getenv("TEST_CLIENT_SECRET"),
+		Scope:              os.Getenv("TEST_SCOPE"),
+		PublicClientID:     os.Getenv("TEST_PKCE_PUBLIC_CLIENT_ID"),
+		RedirectURI:        os.Getenv("TEST_REDIRECT_URI"),
+		OpaqueClientID:     os.Getenv("TEST_OPAQUE_CLIENT_ID"),
+		OpaqueClientSecret: os.Getenv("TEST_OPAQUE_CLIENT_SECRET"),
+		AllowHTTP:          strings.HasPrefix(issuer, "http://"),
 	}
 }
 

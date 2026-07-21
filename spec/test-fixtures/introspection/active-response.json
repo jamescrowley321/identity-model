@@ -1,0 +1,15 @@
+{
+  "active": true,
+  "scope": "read write dolphin",
+  "client_id": "l238j323ds-23ij4",
+  "username": "jdoe",
+  "token_type": "Bearer",
+  "exp": 1419356238,
+  "iat": 1419350238,
+  "nbf": 1419350238,
+  "sub": "Z5O3upPC88QrAjx00dis",
+  "aud": "https://protected.example.net/resource",
+  "iss": "https://server.example.com/",
+  "jti": "d3f5c9a1-2b7e-4c1a-9e8f-0a1b2c3d4e5f",
+  "extension_field": "twenty-seven"
+}
