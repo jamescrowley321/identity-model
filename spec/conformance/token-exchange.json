@@ -1,0 +1,62 @@
+{
+  "capability": "token-exchange",
+  "spec": "RFC 8693 (OAuth 2.0 Token Exchange)",
+  "spec_url": "https://www.rfc-editor.org/rfc/rfc8693",
+  "required_fields": ["access_token", "issued_token_type", "token_type"],
+  "tests": [
+    {
+      "id": "EXCH-001",
+      "title": "Basic token exchange (impersonation) returns the issued token trio",
+      "given": "A valid subject_token and subject_token_type=urn:ietf:params:oauth:token-type:access_token with client credentials for the token endpoint",
+      "when": "TokenExchange is called with only the subject token (impersonation) and the request is POSTed as application/x-www-form-urlencoded",
+      "then": "The request body carries grant_type=urn:ietf:params:oauth:grant-type:token-exchange plus subject_token and subject_token_type, and the HTTP 200 response is parsed into access_token, issued_token_type, token_type, and expires_in",
+      "fixture": "token-exchange/exchange-impersonation-success.json",
+      "references": ["RFC 8693 §1.1", "RFC 8693 §2.1", "RFC 8693 §2.2"]
+    },
+    {
+      "id": "EXCH-002",
+      "title": "Delegation exchange sends subject and actor tokens",
+      "given": "A valid subject_token with subject_token_type and a valid actor_token with actor_token_type",
+      "when": "TokenExchange is called for a delegation flow (subject plus actor)",
+      "then": "The request body includes subject_token, subject_token_type, actor_token, and actor_token_type; the issued token represents the delegation relationship and MAY contain an act claim (RFC 8693 §4.1)",
+      "fixture": "token-exchange/exchange-delegation-success.json",
+      "references": ["RFC 8693 §1.1", "RFC 8693 §2.1", "RFC 8693 §4.1"]
+    },
+    {
+      "id": "EXCH-003",
+      "title": "All six token type URIs are serialized verbatim",
+      "given": "Each of the six RFC 8693 §3 token type URIs (access_token, refresh_token, id_token, saml1, saml2, jwt)",
+      "when": "Each URI is used as subject_token_type in a token exchange request",
+      "then": "The library serializes the full URI string in the request body without modification or abbreviation",
+      "fixture": "token-exchange/token-type-uris.json",
+      "references": ["RFC 8693 §3"]
+    },
+    {
+      "id": "EXCH-004",
+      "title": "requested_token_type and audience parameters are included",
+      "given": "requested_token_type=urn:ietf:params:oauth:token-type:access_token and audience=https://api.example.com alongside the subject token",
+      "when": "TokenExchange is called with the requested token type and audience configured",
+      "then": "Both parameters are sent in the request body; the issued_token_type in the response MAY differ from the requested_token_type",
+      "fixture": "token-exchange/exchange-request-impersonation.json",
+      "references": ["RFC 8693 §2.1", "RFC 8693 §2.2"]
+    },
+    {
+      "id": "EXCH-005",
+      "title": "Successful exchange response fields are parsed, including token_type N_A",
+      "given": "A successful token exchange HTTP 200 response, including responses whose token_type is N_A for non-bearer issued tokens",
+      "when": "The response body is parsed",
+      "then": "access_token (string), issued_token_type (URI string), token_type (string, e.g. Bearer or N_A), and the optional expires_in (integer), scope (string), and refresh_token (string) are extracted; token_type=N_A is accepted without error",
+      "fixture": "token-exchange/exchange-n_a-token-type.json",
+      "references": ["RFC 8693 §2.2", "RFC 8693 §2.2.1"]
+    },
+    {
+      "id": "EXCH-006",
+      "title": "Error response is surfaced as a typed OAuth error",
+      "given": "An exchange request the server rejects (invalid subject_token, unauthorized client, or unsupported grant type)",
+      "when": "The endpoint replies HTTP 400 with a standard OAuth error body (error=invalid_grant or error=invalid_request)",
+      "then": "A typed token error carrying the error code plus optional error_description and error_uri (and the HTTP status) is surfaced",
+      "fixture": "token-exchange/exchange-error-invalid-grant.json",
+      "references": ["RFC 8693 §2.2.2", "RFC 6749 §5.2"]
+    }
+  ]
+}

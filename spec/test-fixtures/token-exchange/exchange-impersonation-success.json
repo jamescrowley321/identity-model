@@ -1,0 +1,7 @@
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.impersonation.tok",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "https://api.example.com/read"
+}
