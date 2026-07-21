@@ -1,0 +1,4 @@
+{
+  "error": "invalid_request",
+  "error_description": "actor_token_type is required when actor_token is present"
+}

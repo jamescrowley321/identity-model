@@ -1,0 +1,4 @@
+{
+  "error": "invalid_grant",
+  "error_description": "subject_token is expired or otherwise invalid"
+}

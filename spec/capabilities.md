@@ -23,7 +23,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | implemented | planned |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | planned | implemented | planned |
-| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | planned | planned |
+| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | implemented | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | planned | planned | planned |
 | Advanced | PAR | RFC 9126 | — | planned | planned | planned |
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
@@ -204,6 +204,121 @@ HTTP/1.1 200 OK
 
 The same HTTP 200 is returned whether the presented token was still valid,
 already expired, or previously revoked (RFC 7009 §2.1).
+
+### Token Exchange
+
+- Implementations MUST POST to the token endpoint as
+  `application/x-www-form-urlencoded` with
+  `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` and the token
+  exchange parameters
+  ([RFC 8693 §2.1](https://www.rfc-editor.org/rfc/rfc8693#section-2.1)):
+  `subject_token` (REQUIRED) and `subject_token_type` (REQUIRED); the optional
+  `actor_token` and its `actor_token_type` (REQUIRED when `actor_token` is
+  present); and the optional `resource`, `audience`, `scope`, and
+  `requested_token_type`. `resource` and `audience` MAY each appear more than
+  once to name multiple targets.
+- Impersonation vs. delegation semantics
+  ([RFC 8693 §1.1](https://www.rfc-editor.org/rfc/rfc8693#section-1.1)):
+  supplying only `subject_token` requests an **impersonation** token that
+  represents the subject directly; supplying both `subject_token` and
+  `actor_token` requests a **delegation** token that MAY carry an `act` claim
+  identifying the acting party
+  ([RFC 8693 §4.1](https://www.rfc-editor.org/rfc/rfc8693#section-4.1)).
+- The type parameters carry one of the six token type identifier URIs
+  ([RFC 8693 §3](https://www.rfc-editor.org/rfc/rfc8693#section-3)), which
+  implementations MUST serialize verbatim:
+  `urn:ietf:params:oauth:token-type:access_token`,
+  `urn:ietf:params:oauth:token-type:refresh_token`,
+  `urn:ietf:params:oauth:token-type:id_token`,
+  `urn:ietf:params:oauth:token-type:saml1`,
+  `urn:ietf:params:oauth:token-type:saml2`, and
+  `urn:ietf:params:oauth:token-type:jwt`.
+- The token endpoint is protected; implementations MUST authenticate the client
+  and MUST support both `client_secret_basic` (the default) and
+  `client_secret_post`
+  ([RFC 6749 §2.3.1](https://www.rfc-editor.org/rfc/rfc6749#section-2.3.1)).
+- A success response is an HTTP 200 JSON body
+  ([RFC 8693 §2.2](https://www.rfc-editor.org/rfc/rfc8693#section-2.2)) carrying
+  `access_token` (REQUIRED — the issued security token, regardless of its
+  actual type), `issued_token_type` (REQUIRED — the URI of the issued token's
+  type), and `token_type` (REQUIRED), plus the RECOMMENDED `expires_in` and the
+  optional `scope` and `refresh_token`. `token_type` is `Bearer` for a bearer
+  token or `N_A` when the issued token is not usable as a bearer token (e.g. a
+  SAML assertion)
+  ([RFC 8693 §2.2.1](https://www.rfc-editor.org/rfc/rfc8693#section-2.2.1)); the
+  `issued_token_type` MAY differ from any `requested_token_type`.
+- An error response is the standard OAuth token error
+  ([RFC 8693 §2.2.2](https://www.rfc-editor.org/rfc/rfc8693#section-2.2.2),
+  [RFC 6749 §5.2](https://www.rfc-editor.org/rfc/rfc6749#section-5.2)): the
+  server returns HTTP 400 with `error` (e.g. `invalid_grant` for an expired
+  `subject_token`, or `invalid_request` for a malformed request) plus optional
+  `error_description` and `error_uri`; implementations MUST surface a typed
+  error carrying these fields.
+
+**Worked example** — an **impersonation** exchange trading a user access token
+for a scoped-down access token targeting a downstream API, using
+`client_secret_basic`:
+
+```http
+POST /token HTTP/1.1
+Host: server.example.com
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJhbGciOiJFUzI1NiJ9.subject.tok
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&audience=https%3A%2F%2Fapi.example.com
+&scope=https%3A%2F%2Fapi.example.com%2Fread
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "access_token": "eyJhbGciOiJFUzI1NiJ9.impersonation.tok",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "https://api.example.com/read"
+}
+```
+
+The `token_type=Bearer` marks the issued `access_token` as usable as a bearer
+token (RFC 8693 §2.2.1).
+
+A **delegation** exchange adds `actor_token` and its REQUIRED `actor_token_type`,
+so the issued token can represent the actor acting on behalf of the subject
+(RFC 8693 §1.1, §4.1):
+
+```http
+POST /token HTTP/1.1
+Host: server.example.com
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic czZCaGRSa3F0MzpnWDFmQmF0M2JW
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJhbGciOiJFUzI1NiJ9.subject.tok
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&actor_token=eyJhbGciOiJFUzI1NiJ9.actor.tok
+&actor_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+```
+
+When the issued token is not a bearer token, the response instead carries
+`token_type=N_A` (RFC 8693 §2.2.1):
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "access_token": "PHNhbWxwOlJlc3BvbnNl...",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:saml2",
+  "token_type": "N_A",
+  "expires_in": 60
+}
+```
 
 ## Machine-Readable Schema
 

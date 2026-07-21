@@ -1,0 +1,9 @@
+{
+  "_comment": "Annotated sample of the application/x-www-form-urlencoded request body an impersonation exchange emits (EXCH-001, EXCH-004). Shown here as JSON key/value pairs; on the wire each key is form-urlencoded and joined with '&'.",
+  "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+  "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "audience": "https://api.example.com",
+  "scope": "https://api.example.com/read"
+}
