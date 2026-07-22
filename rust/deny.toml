@@ -25,6 +25,8 @@ allow = [
   "Zlib",
   "MPL-2.0",
   "CC0-1.0",
+  # CA-certificate data (webpki-roots) ships under CDLA-Permissive-2.0.
+  "CDLA-Permissive-2.0",
 ]
 
 [bans]
