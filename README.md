@@ -2,7 +2,7 @@
 
 Production-grade, RFC-compliant OIDC/OAuth2 **client** libraries across multiple languages, sharing one cross-language conformance specification.
 
-Inspired by the design philosophy of [Duende Software's IdentityModel](https://github.com/IdentityModel/IdentityModel) (.NET) — clean abstractions, comprehensive RFC coverage, and a developer experience that makes complex protocols accessible — adapted idiomatically for each target language. This is an "inspired by," not an affiliation; full credit to Duende for establishing the patterns.
+Inspired by the design philosophy of [Duende Software's IdentityModel](https://github.com/DuendeSoftware/foss/tree/main/identity-model) (.NET) — clean abstractions, comprehensive RFC coverage, and a developer experience that makes complex protocols accessible — adapted idiomatically for each target language. This is an "inspired by," not an affiliation; full credit to Duende for establishing the patterns.
 
 > **Status:** Foundation / scaffolding. This repository currently stands up the monorepo structure, shared conformance spec, and shared test infrastructure. Core-tier implementations land per-language next. The production Python reference implementation, [`py-identity-model`](https://github.com/jamescrowley321/py-identity-model), will be merged into `python/` at a later date.
 

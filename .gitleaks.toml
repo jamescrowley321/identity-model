@@ -1,0 +1,12 @@
+title = "identity-model gitleaks config"
+
+# Start from gitleaks' built-in rule set, then allowlist known-benign paths.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "OIDC/OAuth conformance test vectors and spec examples — placeholder JWTs (e.g. header.delegation.tok, alg:none tokens with iss=example.com), not real secrets."
+paths = [
+  '''spec/test-fixtures/.*''',
+  '''spec/.*\.md''',
+]
