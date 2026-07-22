@@ -1,5 +1,8 @@
 [package]
-name = "identity-model"
+# Published to crates.io as `identity-model-rs` to keep a distinct, namespaced
+# registry identity (crates.io has no vendor scoping). The library import name
+# stays `identity_model` via [lib] below, so `use identity_model::...` is unchanged.
+name = "identity-model-rs"
 version = "0.0.1"
 edition = "2024"
 rust-version = "1.91"
@@ -8,6 +11,10 @@ license = "Apache-2.0"
 repository = "https://github.com/jamescrowley321/identity-model"
 keywords = ["oidc", "oauth2", "jwt", "openid", "authentication"]
 categories = ["authentication", "web-programming"]
+
+[lib]
+name = "identity_model"
+path = "src/lib.rs"
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

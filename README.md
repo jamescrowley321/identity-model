@@ -12,7 +12,7 @@ Inspired by the design philosophy of [Duende Software's IdentityModel](https://g
 |----------|---------|----------|--------|--------|
 | Python | `py-identity-model` | PyPI | `from py_identity_model import ...` | Reference impl (separate repo, merges later) |
 | Go | `github.com/jamescrowley321/identity-model/go` | Go modules | `import ".../identity-model/go/pkg/discovery"` | Scaffolded |
-| Rust | `identity-model` | crates.io | `use identity_model::discovery::...` | Scaffolded |
+| Rust | `identity-model-rs` | crates.io | `use identity_model::discovery::...` | Scaffolded |
 | Node/TS | `@identity-model/node` | npm | `import { ... } from '@identity-model/node'` | Planned |
 
 ## Capability Tiers
@@ -58,7 +58,7 @@ Each capability has a language-agnostic definition in `spec/conformance/*.json`.
 While the libraries are pre-stable, each language publishes **`0.0.x`** releases. Per [SemVer](https://semver.org/), `0.0.x` carries **no API-stability guarantees** — any release may contain breaking changes. We stay on `0.0.x` deliberately until the Core tier is implemented and conformance-passing in a language, then graduate that language toward `0.x`/`1.0`.
 
 - **Versioning is independent per language** — Go and Rust advance their own `0.0.x` lines; they are not lock-stepped.
-- **Rust** (`identity-model` on crates.io): the `version` in `rust/Cargo.toml`.
+- **Rust** (`identity-model-rs` on crates.io; imported as `identity_model`): the `version` in `rust/Cargo.toml`.
 - **Go** (`github.com/jamescrowley321/identity-model/go`): released via git tags. Because the module lives in a subdirectory, tags are prefixed — `go/v0.0.x`.
 
 ## License

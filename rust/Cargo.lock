@@ -729,7 +729,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "identity-model"
+name = "identity-model-rs"
 version = "0.0.1"
 dependencies = [
  "base64",
