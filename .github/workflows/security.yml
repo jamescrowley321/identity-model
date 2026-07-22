@@ -24,8 +24,9 @@ jobs:
         with:
           go-version-file: go/go.mod
 
+      # v1.1.4 supports the repo's Go 1.24 toolchain; newer govulncheck requires Go >= 1.25.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -49,8 +50,11 @@ jobs:
         with:
           tool: cargo-audit,cargo-deny
 
+      # RUSTSEC-2023-0071 (Marvin timing sidechannel in `rsa`) has no fixed
+      # release and `rsa` is a dev-dependency only (test key generation, not
+      # shipped). Tracked/ignored here and in deny.toml; revisit when rsa ships a fix.
       - name: cargo audit (RustSec advisory DB)
-        run: cargo audit
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
       - name: cargo deny (advisories, licenses, bans, sources)
         run: cargo deny check
@@ -75,5 +79,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Scope to shippable library code: exclude the spec/ OIDC test vectors and
+      # examples/ demos. The mutable-action-tag rule is excluded because this repo
+      # pins actions by tag and relies on Dependabot (see .github/dependabot.yml)
+      # to keep them current — a deliberate convention, not an oversight.
       - name: Run Semgrep
-        run: semgrep scan --config=auto --error --exclude="target" --exclude="vendor"
+        run: >-
+          semgrep scan --config=auto --error
+          --exclude="target" --exclude="vendor"
+          --exclude="spec" --exclude="examples"
+          --exclude-rule="yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag"

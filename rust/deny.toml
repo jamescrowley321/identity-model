@@ -4,9 +4,11 @@
 [advisories]
 version = 2
 yanked = "deny"
-# Add RustSec advisory IDs here (with a comment + rationale) only to
-# consciously accept an unfixable advisory, e.g. ignore = ["RUSTSEC-YYYY-NNNN"].
-ignore = []
+ignore = [
+  # Marvin timing sidechannel in `rsa`; no fixed release exists and `rsa` is a
+  # dev-dependency only (test key generation, not shipped). Revisit when fixed.
+  "RUSTSEC-2023-0071",
+]
 
 [licenses]
 version = 2
