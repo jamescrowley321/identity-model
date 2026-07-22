@@ -4,6 +4,9 @@ updates:
     directory: "/go"
     schedule:
       interval: "weekly"
+    # Wait before adopting brand-new releases (supply-chain: avoid day-0 bad/compromised versions).
+    cooldown:
+      default-days: 7
     groups:
       go-modules:
         patterns: ["*"]
@@ -12,6 +15,8 @@ updates:
     directory: "/rust"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       cargo:
         patterns: ["*"]
@@ -20,6 +25,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
