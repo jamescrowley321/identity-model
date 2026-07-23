@@ -1,0 +1,38 @@
+# cargo-deny configuration — supply-chain policy for the Rust crate.
+# Checked in CI by `cargo deny check` (see .github/workflows/security.yml).
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # Marvin timing sidechannel in `rsa`; no fixed release exists and `rsa` is a
+  # dev-dependency only (test key generation, not shipped). Revisit when fixed.
+  "RUSTSEC-2023-0071",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  # CA-certificate data (webpki-roots) ships under CDLA-Permissive-2.0.
+  "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
