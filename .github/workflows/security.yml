@@ -23,7 +23,7 @@ jobs:
       # Scan with the current stable Go toolchain so the standard-library
       # advisory picture reflects the latest patches (stdlib patching is the
       # consumer's responsibility for a library); focuses findings on our code.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: "stable"
 
@@ -48,7 +48,7 @@ jobs:
         with:
           workspaces: rust
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.83.3
         with:
           tool: cargo-audit,cargo-deny
 
@@ -69,7 +69,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
