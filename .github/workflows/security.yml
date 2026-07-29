@@ -48,7 +48,7 @@ jobs:
         with:
           workspaces: rust
 
-      - uses: taiki-e/install-action@v2.83.3
+      - uses: taiki-e/install-action@v2.84.1
         with:
           tool: cargo-audit,cargo-deny
 
