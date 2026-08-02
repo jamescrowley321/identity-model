@@ -493,3 +493,15 @@ func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	atomic.AddInt32(&t.calls, 1)
 	return t.next.RoundTrip(req)
 }
+
+// TestClearCache drops all cached provider configurations.
+func TestClearCache(t *testing.T) {
+	globalCache.store("https://issuer.example", &ProviderConfiguration{Issuer: "https://issuer.example"}, time.Hour)
+	if _, ok := globalCache.lookup("https://issuer.example"); !ok {
+		t.Fatal("precondition: entry should be cached")
+	}
+	ClearCache()
+	if _, ok := globalCache.lookup("https://issuer.example"); ok {
+		t.Error("ClearCache did not drop the cached entry")
+	}
+}

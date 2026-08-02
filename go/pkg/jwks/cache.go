@@ -96,6 +96,14 @@ func (c *cache) invalidate(key string) {
 	delete(c.entries, key)
 }
 
+// clear drops every cached entry and refresh-cooldown record.
+func (c *cache) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]cacheEntry)
+	c.lastRefresh = make(map[string]time.Time)
+}
+
 // fetch returns the cached keys for jwksURI or fetches them, caching the
 // result. Concurrent misses for the same URI collapse to one fetch.
 //

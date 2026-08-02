@@ -256,6 +256,49 @@ func TestAuthorizationCode_CodeVerifier(t *testing.T) {
 	}
 }
 
+// A confidential authorization-code client (WithClientSecret) authenticates
+// with client_secret_basic by default: a Basic header is sent and no secret
+// appears in the body (RFC 6749 §2.3.1). Required for OIDF basic-RP conformance.
+func TestAuthorizationCode_ConfidentialBasic(t *testing.T) {
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, successBody, &got)
+
+	_, err := AuthorizationCode(context.Background(), srv.URL, "conf-cid", "code",
+		"http://localhost:8080/callback", WithClientSecret("s3cr3t"), WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("AuthorizationCode: %v", err)
+	}
+	if got.authHeader == "" {
+		t.Error("confidential client_secret_basic must send a Basic auth header")
+	}
+	if got.form.Has("client_secret") {
+		t.Errorf("client_secret must not appear in the body for client_secret_basic")
+	}
+	if got.form.Has("client_id") {
+		t.Errorf("client_id must not appear in the body for client_secret_basic")
+	}
+}
+
+// WithClientSecret + WithClientAuth(ClientSecretPost) sends the credentials in
+// the body and no Basic header.
+func TestAuthorizationCode_ConfidentialPost(t *testing.T) {
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, successBody, &got)
+
+	_, err := AuthorizationCode(context.Background(), srv.URL, "conf-cid", "code",
+		"http://localhost:8080/callback",
+		WithClientSecret("s3cr3t"), WithClientAuth(ClientSecretPost), WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("AuthorizationCode: %v", err)
+	}
+	if got.authHeader != "" {
+		t.Errorf("client_secret_post must not send a Basic header: %q", got.authHeader)
+	}
+	if got.form.Get("client_id") != "conf-cid" || got.form.Get("client_secret") != "s3cr3t" {
+		t.Errorf("client_secret_post must carry client_id+client_secret in body: %v", got.form)
+	}
+}
+
 // An invalid PKCE verifier is rejected before any request is made.
 func TestAuthorizationCode_InvalidCodeVerifier(t *testing.T) {
 	var got capturedRequest
