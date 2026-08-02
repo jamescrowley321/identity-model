@@ -53,8 +53,10 @@ jobs:
           tool: cargo-audit,cargo-deny
 
       # RUSTSEC-2023-0071 (Marvin timing sidechannel in `rsa`) has no fixed
-      # release and `rsa` is a dev-dependency only (test key generation, not
-      # shipped). Tracked/ignored here and in deny.toml; revisit when rsa ships a fix.
+      # release. `rsa` is now a runtime dep via jsonwebtoken 10's rust_crypto
+      # backend, but this client only does RSA *public-key* signature
+      # verification, never the *private-key* op the sidechannel targets — so it
+      # does not apply. Tracked/ignored here and in deny.toml; revisit on a fix.
       - name: cargo audit (RustSec advisory DB)
         run: cargo audit --ignore RUSTSEC-2023-0071
 

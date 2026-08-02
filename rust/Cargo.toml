@@ -11,7 +11,10 @@ categories = ["authentication", "web-programming"]
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-jsonwebtoken = "9"
+# jsonwebtoken 10 unbundled its crypto backend; `rust_crypto` selects the
+# pure-Rust provider (RustCrypto: rsa/p256/p384/sha2) so no C toolchain
+# (aws-lc/cmake) is needed, matching the crate's rustls-only posture.
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
