@@ -1,0 +1,80 @@
+# OpenID Foundation conformance suite stack for identity-model.
+#
+# This file (K1) stands up the language-neutral suite infrastructure only:
+#   cert-init  — generates the self-signed cert the suite requires
+#   mongodb    — the suite's datastore
+#   server     — the official OIDF conformance suite
+#   nginx      — TLS front for the suite at https://localhost.emobix.co.uk:8443
+#
+# The per-language Relying-Party harnesses are added later and driven through
+# this same suite by conformance/run_tests.py over --rp-url:
+#   rp-go   (K2) — conformance/rp-go,   built from conformance/rp-go/Dockerfile
+#   rp-rust (K3) — conformance/rp-rust, built from conformance/rp-rust/Dockerfile
+# Each will mount the shared `certs` volume (SSL_CERT_FILE) so it trusts the
+# suite's self-signed cert, and set CONFORMANCE_SUITE_BASE_URL.
+#
+# NOTE: the suite binds host port 8443 and the hostname localhost.emobix.co.uk
+# (an OIDF convention that resolves to 127.0.0.1). Only one OIDF suite can run
+# on this host at a time — stop any other conformance stack (e.g.
+# py-identity-model's) before `docker compose up` here.
+
+services:
+  cert-init:
+    image: alpine:3.20
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        [ -f /certs/nginx-selfsigned.crt ] && exit 0
+        apk add --no-cache openssl &&
+        openssl req -x509 -nodes -days 30 -newkey rsa:2048 \
+          -keyout /certs/nginx-selfsigned.key \
+          -out /certs/nginx-selfsigned.crt \
+          -subj "/CN=localhost.emobix.co.uk" \
+          -addext "subjectAltName=DNS:localhost.emobix.co.uk"
+    volumes:
+      - certs:/certs
+
+  mongodb:
+    image: mongo:6.0.13
+    volumes:
+      - mongodb-data:/data/db
+
+  server:
+    image: registry.gitlab.com/openid/conformance-suite:latest
+    environment:
+      - BASE_URL=https://localhost.emobix.co.uk:8443
+      - MONGODB_HOST=mongodb
+      - SPRING_PROFILES_ACTIVE=dev
+      - OIDC_GOOGLE_CLIENTID=dummy
+      - OIDC_GOOGLE_SECRET=dummy
+      - OIDC_GITLAB_CLIENTID=dummy
+      - OIDC_GITLAB_SECRET=dummy
+    depends_on:
+      - mongodb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:8080/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  nginx:
+    build:
+      context: ./nginx
+    ports:
+      - "8443:8443"
+    networks:
+      default:
+        aliases:
+          - localhost.emobix.co.uk
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+      server:
+        condition: service_healthy
+
+volumes:
+  mongodb-data:
+  certs:

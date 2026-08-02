@@ -85,12 +85,17 @@ jobs:
 
       # Scope to shippable library code and let each tool own its lane:
       # - exclude spec/ OIDC test vectors and examples/ demos
+      # - exclude conformance/ — the OIDF certification test harness (Docker
+      #   suite front + Python orchestration runner), not shipped library code;
+      #   its intentional test-only patterns (self-signed-suite TLS front,
+      #   CONFORMANCE_TOKEN help text) are SAST false-positives. Library code in
+      #   go/pkg and rust/src stays fully scanned.
       # - detected-jwt-token: gitleaks owns secret scanning (with its own allowlist)
       # - mutable-action-tag: repo pins actions by tag + Dependabot keeps them current
       - name: Run Semgrep
         run: >-
           semgrep scan --config=auto --error
           --exclude="target" --exclude="vendor"
-          --exclude="spec" --exclude="examples"
+          --exclude="spec" --exclude="examples" --exclude="conformance"
           --exclude-rule="yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag"
           --exclude-rule="generic.secrets.security.detected-jwt-token.detected-jwt-token"

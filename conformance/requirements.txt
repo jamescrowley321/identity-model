@@ -1,0 +1,6 @@
+# Dependencies for the conformance orchestration runner (run_tests.py).
+# The runner is a thin, language-neutral OIDF-suite REST client — it drives
+# whichever RP harness is running (Go or Rust) over --rp-url and needs only an
+# HTTP client. The RP harnesses themselves are built in their own languages
+# (conformance/rp-go, conformance/rp-rust) and have no Python dependency.
+httpx>=0.28.0
