@@ -2,6 +2,7 @@
   "capability": "validation",
   "spec": "RFC 7519 (JWT), RFC 7515 (JWS), OIDC Core 1.0 §3.1.3.7",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc7519",
+  "notes": "Vectors are language-neutral: `error` values are canonical codes (malformed, alg_none, unsupported_alg, signature, key_conversion, claim_validation) that each language executor maps to its own error type. Time claims (exp/nbf/iat) are duration strings relative to options.now so minted tokens stay fresh. Expected outcomes follow the behaviour of the OIDF-certified py-identity-model reference.",
   "tests": [
     {
       "id": "JWT-001",
@@ -9,8 +10,18 @@
       "given": "A signed JWT whose header kid matches a key in the key set",
       "when": "The token is validated",
       "then": "The JWS signature is verified against the resolved key and a typed claims set is returned",
-      "fixture": "validation/jwks.json",
-      "references": ["RFC 7515 §4.1"]
+      "references": ["RFC 7515 §4.1"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
+        }
+      ]
     },
     {
       "id": "JWT-002",
@@ -18,7 +29,18 @@
       "given": "A signed JWT carrying iss/aud/exp/nbf/iat",
       "when": "The token is validated with the expected issuer and audience",
       "then": "iss matches exactly, aud contains the expected value, exp/nbf bound the validity window and iat is present",
-      "references": ["RFC 7519 §4.1"]
+      "references": ["RFC 7519 §4.1"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
+        }
+      ]
     },
     {
       "id": "JWT-003",
@@ -26,16 +48,44 @@
       "given": "An unsigned JWT with header alg \"none\"",
       "when": "The token is validated",
       "then": "Validation is rejected before any signature step with an explicit alg-none error",
-      "fixture": "validation/alg-none-token.txt",
-      "references": ["RFC 7519 §7.2"]
+      "references": ["RFC 7519 §7.2"],
+      "vectors": [
+        {
+          "token": {"static": "validation/alg-none-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "alg_none"}
+        }
+      ]
     },
     {
       "id": "JWT-004",
       "title": "Validate nonce when expected",
       "given": "A signed JWT carrying a nonce claim",
-      "when": "The token is validated with WithExpectedNonce set",
+      "when": "The token is validated with the expected nonce set",
       "then": "A nonce mismatch is rejected and a matching nonce passes",
-      "references": ["OIDC Core 1.0 §3.1.3.7"]
+      "references": ["OIDC Core 1.0 §3.1.3.7"],
+      "vectors": [
+        {
+          "name": "matching nonce passes",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "nonce": "n-abc123", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_nonce": "n-abc123"},
+          "expect": {"outcome": "accept", "claims": {"nonce": "n-abc123"}}
+        },
+        {
+          "name": "nonce mismatch is rejected",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "nonce": "n-abc123", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_nonce": "n-different"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "nonce"}
+        }
+      ]
     },
     {
       "id": "JWT-005",
@@ -43,7 +93,18 @@
       "given": "A signed JWT whose exp is in the past beyond the clock skew",
       "when": "The token is validated",
       "then": "Validation fails with an expiry error",
-      "references": ["RFC 7519 §4.1.4"]
+      "references": ["RFC 7519 §4.1.4"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "-1h", "nbf": "-2h", "iat": "-2h"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "exp"}
+        }
+      ]
     },
     {
       "id": "JWT-006",
@@ -51,23 +112,56 @@
       "given": "A signed JWT whose nbf is in the future beyond the clock skew",
       "when": "The token is validated",
       "then": "Validation fails with a not-before error",
-      "references": ["RFC 7519 §4.1.5"]
+      "references": ["RFC 7519 §4.1.5"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "2h", "nbf": "1h", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "nbf"}
+        }
+      ]
     },
     {
       "id": "JWT-007",
       "title": "Reject wrong issuer",
       "given": "A signed JWT whose iss differs from the expected issuer",
-      "when": "The token is validated with WithExpectedIssuer set",
+      "when": "The token is validated with the expected issuer set",
       "then": "Validation fails with an issuer-mismatch error",
-      "references": ["RFC 7519 §4.1.1"]
+      "references": ["RFC 7519 §4.1.1"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://attacker.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "iss"}
+        }
+      ]
     },
     {
       "id": "JWT-008",
       "title": "Reject wrong or absent audience",
       "given": "A signed JWT whose aud does not contain the expected audience",
-      "when": "The token is validated with WithExpectedAudience set",
+      "when": "The token is validated with the expected audience set",
       "then": "Validation fails with an audience error",
-      "references": ["RFC 7519 §4.1.3"]
+      "references": ["RFC 7519 §4.1.3"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "some-other-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_audience": "test-client"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "aud"}
+        }
+      ]
     },
     {
       "id": "JWT-009",
@@ -75,7 +169,19 @@
       "given": "A signed JWT whose signature does not verify against the resolved key",
       "when": "The token is validated",
       "then": "Validation fails with a signature error",
-      "references": ["RFC 7515 §5.2"]
+      "references": ["RFC 7515 §5.2"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "ephemeral",
+            "header_kid": "test-key-1",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "signature"}
+        }
+      ]
     },
     {
       "id": "JWT-010",
@@ -83,23 +189,48 @@
       "given": "A signed JWT whose kid is absent from the cached key set",
       "when": "The token is validated",
       "then": "A JWKS forced refresh is performed and key resolution retried before failing",
-      "references": ["RFC 7517 §4.5"]
+      "references": ["RFC 7517 §4.5"],
+      "execution": "native",
+      "native_test": "TestValidate_KidNotFound_ForcesRefresh",
+      "reason": "Requires a JWKS endpoint whose served key set changes between the initial cached fetch and a forced refresh — a live HTTP interaction that a static token/fixture vector cannot express. Exercised by the package test against an httptest server."
     },
     {
       "id": "JWT-011",
       "title": "Tolerate clock skew",
       "given": "A signed JWT whose exp is marginally in the past within the configured skew",
-      "when": "The token is validated with WithClockSkew set",
+      "when": "The token is validated with a clock skew set",
       "then": "Validation succeeds because the skew tolerance covers the difference",
-      "references": ["RFC 7519 §4.1.4"]
+      "references": ["RFC 7519 §4.1.4"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "-30s", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "clock_skew": "60s"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123"}}
+        }
+      ]
     },
     {
       "id": "JWT-012",
       "title": "Enforce custom required claims",
-      "given": "A signed JWT missing a claim named in WithRequiredClaims",
+      "given": "A signed JWT missing a claim named in the required-claims option",
       "when": "The token is validated",
       "then": "Validation fails identifying the missing required claim",
-      "references": ["RFC 7519 §4.1"]
+      "references": ["RFC 7519 §4.1"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "required_claims": ["email"]},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "email"}
+        }
+      ]
     },
     {
       "id": "JWT-013",
@@ -107,7 +238,18 @@
       "given": "A signed JWT without an iat claim",
       "when": "The token is validated",
       "then": "Validation fails because iat is required",
-      "references": ["RFC 7519 §4.1.6"]
+      "references": ["RFC 7519 §4.1.6"],
+      "vectors": [
+        {
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "claim_validation", "claim": "iat"}
+        }
+      ]
     }
   ]
 }
