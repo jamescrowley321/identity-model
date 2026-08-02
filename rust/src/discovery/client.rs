@@ -241,7 +241,7 @@ impl DiscoveryClientBuilder {
     /// Builds the [`DiscoveryClient`].
     pub fn build(self) -> DiscoveryClient {
         DiscoveryClient {
-            http: self.http.unwrap_or_default(),
+            http: self.http.unwrap_or_else(crate::http::secure_client),
             cache: Cache::new(),
             cache_ttl: self.cache_ttl,
             timeout: self.timeout,

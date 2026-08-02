@@ -437,4 +437,35 @@ mod tests {
             .build();
         validate_token(&token, &public_key(), &opts).expect("within skew passes");
     }
+
+    // OIDC Core §3.1.3.7 end-to-end: a multi-audience token missing azp is
+    // rejected after a successful signature verification, and the same token
+    // with the correct azp validates.
+    #[test]
+    fn enforces_azp_for_multi_audience_end_to_end() {
+        let n = now();
+        let opts = ValidationOptions::builder()
+            .issuer(TEST_ISSUER)
+            .audience(TEST_AUDIENCE)
+            .build();
+
+        let no_azp = mint(json!({
+            "iss": TEST_ISSUER,
+            "aud": [TEST_AUDIENCE, "other-rp"],
+            "exp": n + 3600,
+            "iat": n - 5,
+        }));
+        let err = validate_token(&no_azp, &public_key(), &opts)
+            .expect_err("multi-aud without azp rejected");
+        assert!(err.to_string().contains("azp"), "{err}");
+
+        let with_azp = mint(json!({
+            "iss": TEST_ISSUER,
+            "aud": [TEST_AUDIENCE, "other-rp"],
+            "azp": TEST_AUDIENCE,
+            "exp": n + 3600,
+            "iat": n - 5,
+        }));
+        validate_token(&with_azp, &public_key(), &opts).expect("multi-aud with correct azp passes");
+    }
 }

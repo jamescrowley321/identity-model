@@ -85,6 +85,9 @@ pub struct Claims {
     pub id: Option<String>,
     /// `nonce` — the OIDC nonce (OIDC Core 1.0 §3.1.3.7).
     pub nonce: Option<String>,
+    /// `azp` — the authorized party the ID token was issued to
+    /// (OIDC Core 1.0 §3.1.3.7).
+    pub authorized_party: Option<String>,
 
     /// Claims not modelled above (e.g. `email`, `scope`, `groups`).
     pub extra: HashMap<String, Value>,
@@ -102,7 +105,9 @@ pub struct Claims {
 
 /// The registered claim names decoded into named [`Claims`] fields; everything
 /// else lands in [`Claims::extra`].
-const MODELLED_CLAIMS: &[&str] = &["iss", "sub", "aud", "exp", "nbf", "iat", "jti", "nonce"];
+const MODELLED_CLAIMS: &[&str] = &[
+    "iss", "sub", "aud", "exp", "nbf", "iat", "jti", "nonce", "azp",
+];
 
 impl Claims {
     /// Builds a typed claim set from a decoded JWS payload object.
@@ -140,6 +145,7 @@ impl Claims {
         let issued_at = numeric_date_claim(&map, "iat")?;
         let id = string_claim(&map, "jti")?;
         let nonce = string_claim(&map, "nonce")?;
+        let authorized_party = string_claim(&map, "azp")?;
 
         let modelled: HashSet<&str> = MODELLED_CLAIMS.iter().copied().collect();
         let extra: HashMap<String, Value> = map
@@ -156,6 +162,7 @@ impl Claims {
             issued_at,
             id,
             nonce,
+            authorized_party,
             extra,
             present,
             meaningful,
@@ -255,6 +262,32 @@ impl Claims {
                     self.audience.values()
                 ),
             ));
+        }
+
+        // azp — authorized party (OIDC Core 1.0 §3.1.3.7). The claim can only be
+        // checked against the caller's own client_id, which is the expected
+        // audience, so these rules apply only when an audience is configured:
+        //  - a present `azp` MUST equal the client_id: a token authorized for a
+        //    different party must not validate for this client;
+        //  - a token carrying more than one audience MUST name the authorized
+        //    party in `azp`, so the client can confirm it is the intended party.
+        // Single-audience tokens without `azp` are unaffected.
+        if let Some(client_id) = &opts.expected_audience {
+            match &self.authorized_party {
+                Some(azp) if azp != client_id => {
+                    return Err(claim_err(
+                        "azp",
+                        &format!("authorized party {azp:?} does not match client {client_id:?}"),
+                    ));
+                }
+                None if self.audience.values().len() > 1 => {
+                    return Err(claim_err(
+                        "azp",
+                        "token with multiple audiences must carry an azp claim",
+                    ));
+                }
+                _ => {}
+            }
         }
 
         // nonce match when expected (JWT-004, OIDC Core 1.0 §3.1.3.7). An
@@ -469,6 +502,94 @@ mod tests {
         matching
             .validate(&opts, NOW)
             .expect("matching nonce passes");
+    }
+
+    // OIDC Core §3.1.3.7: a multi-audience token must carry an azp naming the
+    // authorized party; with the correct azp it passes, without it or with the
+    // wrong value it is rejected.
+    #[test]
+    fn multi_audience_requires_matching_azp() {
+        let opts = ValidationOptions::builder().audience("test-client").build();
+
+        let ok = claims(serde_json::json!({
+            "aud": ["test-client", "other-rp"],
+            "azp": "test-client",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        ok.validate(&opts, NOW)
+            .expect("multi-aud with correct azp passes");
+
+        let no_azp = claims(serde_json::json!({
+            "aud": ["test-client", "other-rp"],
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        let err = no_azp
+            .validate(&opts, NOW)
+            .expect_err("multi-aud without azp rejected");
+        assert!(err.to_string().contains("azp"), "{err}");
+
+        let wrong_azp = claims(serde_json::json!({
+            "aud": ["test-client", "other-rp"],
+            "azp": "other-rp",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        let err = wrong_azp
+            .validate(&opts, NOW)
+            .expect_err("multi-aud with wrong azp rejected");
+        assert!(err.to_string().contains("azp"), "{err}");
+    }
+
+    // OIDC Core §3.1.3.7: a present azp must equal the client_id even for a
+    // single-audience token; a matching azp (or none) passes.
+    #[test]
+    fn present_azp_must_match_client() {
+        let opts = ValidationOptions::builder().audience("test-client").build();
+
+        let wrong = claims(serde_json::json!({
+            "aud": "test-client",
+            "azp": "attacker",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        let err = wrong
+            .validate(&opts, NOW)
+            .expect_err("single-aud wrong azp rejected");
+        assert!(err.to_string().contains("azp"), "{err}");
+
+        let right = claims(serde_json::json!({
+            "aud": "test-client",
+            "azp": "test-client",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        right
+            .validate(&opts, NOW)
+            .expect("single-aud matching azp passes");
+
+        let none = claims(serde_json::json!({
+            "aud": "test-client",
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        none.validate(&opts, NOW)
+            .expect("single-aud without azp passes");
+    }
+
+    // Without an expected audience the caller's client_id is unknown, so the
+    // azp rules cannot be evaluated and a multi-aud token is not rejected on
+    // azp grounds.
+    #[test]
+    fn azp_not_enforced_without_expected_audience() {
+        let c = claims(serde_json::json!({
+            "aud": ["a", "b"],
+            "exp": NOW + 3600,
+            "iat": NOW,
+        }));
+        c.validate(&ValidationOptions::new(), NOW)
+            .expect("no expected audience -> azp not enforced");
     }
 
     // JWT-012: a token missing a claim named in required_claims is rejected,

@@ -1,8 +1,12 @@
 //! Typed OAuth 2.0 token endpoint response (RFC 6749 §5.1).
 
 use std::collections::HashMap;
+use std::fmt;
 
 use serde::{Deserialize, Deserializer};
+
+/// Placeholder printed in place of token material in `Debug` output (#24).
+const REDACTED: &str = "<redacted>";
 
 /// A successful OAuth 2.0 token endpoint response (RFC 6749 §5.1).
 ///
@@ -11,7 +15,11 @@ use serde::{Deserialize, Deserializer};
 /// unknown fields are ignored, not rejected. `expires_in` is tolerated as a
 /// JSON number, a numeric string, or `null`, since some providers deviate from
 /// the RFC's number type (CC-001).
-#[derive(Clone, Debug, Deserialize)]
+///
+/// `Debug` is hand-written to redact the `access_token`, `refresh_token`, and
+/// `id_token` values so bearer tokens do not leak into logs (#24); the presence
+/// of the optional tokens is still shown.
+#[derive(Clone, Deserialize)]
 pub struct TokenResponse {
     /// The issued access token (required).
     pub access_token: String,
@@ -35,6 +43,23 @@ pub struct TokenResponse {
     /// Any non-standard parameters returned by the provider.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+impl fmt::Debug for TokenResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenResponse")
+            .field("access_token", &REDACTED)
+            .field("token_type", &self.token_type)
+            .field("expires_in", &self.expires_in)
+            .field("scope", &self.scope)
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| REDACTED),
+            )
+            .field("id_token", &self.id_token.as_ref().map(|_| REDACTED))
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 /// Deserializes `expires_in` from a JSON number, numeric string, or `null`.
@@ -196,5 +221,42 @@ mod tests {
         let err =
             serde_json::from_str::<TokenResponse>(r#"{"access_token":"a","expires_in":"soon"}"#);
         assert!(err.is_err());
+    }
+
+    // #24: Debug output redacts bearer tokens and never prints their values,
+    // while still revealing that the optional tokens are present.
+    #[test]
+    fn debug_redacts_bearer_tokens() {
+        let resp: TokenResponse = serde_json::from_str(
+            r#"{
+                "access_token": "at-SECRET",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "rt-SECRET",
+                "id_token": "id-SECRET"
+            }"#,
+        )
+        .expect("parse");
+
+        let dbg = format!("{resp:?}");
+        assert!(!dbg.contains("at-SECRET"), "access_token leaked: {dbg}");
+        assert!(!dbg.contains("rt-SECRET"), "refresh_token leaked: {dbg}");
+        assert!(!dbg.contains("id-SECRET"), "id_token leaked: {dbg}");
+        assert!(dbg.contains(REDACTED), "no redaction marker: {dbg}");
+        // Presence of the optional tokens is still visible.
+        assert!(
+            dbg.contains("refresh_token: Some") && dbg.contains("id_token: Some"),
+            "token presence should be visible: {dbg}"
+        );
+    }
+
+    // An absent optional token shows as None, not a redaction marker.
+    #[test]
+    fn debug_shows_absent_optional_tokens_as_none() {
+        let resp: TokenResponse =
+            serde_json::from_str(r#"{"access_token":"a","token_type":"Bearer"}"#).expect("parse");
+        let dbg = format!("{resp:?}");
+        assert!(dbg.contains("refresh_token: None"), "{dbg}");
+        assert!(dbg.contains("id_token: None"), "{dbg}");
     }
 }
