@@ -5,8 +5,12 @@
 version = 2
 yanked = "deny"
 ignore = [
-  # Marvin timing sidechannel in `rsa`; no fixed release exists and `rsa` is a
-  # dev-dependency only (test key generation, not shipped). Revisit when fixed.
+  # Marvin timing sidechannel in `rsa`; no fixed release exists. `rsa` is now a
+  # runtime dependency via jsonwebtoken 10's `rust_crypto` backend, but this is
+  # a verification-only JWT client: it performs RSA *public-key* signature
+  # verification and never the *private-key* decryption/signing operation the
+  # Marvin sidechannel targets, so the advisory does not apply to our usage.
+  # Revisit if `rsa` ships a fix or if the crate ever performs private-key ops.
   "RUSTSEC-2023-0071",
 ]
 
