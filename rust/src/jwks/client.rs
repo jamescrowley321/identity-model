@@ -283,7 +283,7 @@ impl JwksClientBuilder {
     /// Builds the [`JwksClient`].
     pub fn build(self) -> JwksClient {
         JwksClient {
-            http: self.http.unwrap_or_default(),
+            http: self.http.unwrap_or_else(crate::http::secure_client),
             cache: Cache::new(),
             cache_ttl: self.cache_ttl,
             timeout: self.timeout,

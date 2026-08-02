@@ -55,6 +55,9 @@ const GRANT_AUTHORIZATION_CODE: &str = "authorization_code";
 /// Default per-request timeout so a hung endpoint cannot block indefinitely.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Placeholder printed in place of secret material in `Debug` output (#24).
+const REDACTED: &str = "<redacted>";
+
 /// Caps the token response read into memory (memory-exhaustion DoS guard).
 /// Token responses are small.
 const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
@@ -98,6 +101,26 @@ pub struct TokenClient {
     extra_params: HashMap<String, String>,
     timeout: Duration,
     allow_http: bool,
+}
+
+// A hand-written Debug that never prints the client secret (#24). Presence of
+// the secret is shown as `Some("<redacted>")` / `None` so a confidential vs.
+// public client is still distinguishable in logs.
+impl std::fmt::Debug for TokenClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenClient")
+            .field("token_endpoint", &self.token_endpoint)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| REDACTED),
+            )
+            .field("auth_method", &self.auth_method)
+            .field("extra_params", &self.extra_params)
+            .field("timeout", &self.timeout)
+            .field("allow_http", &self.allow_http)
+            .finish_non_exhaustive()
+    }
 }
 
 impl TokenClient {
@@ -376,6 +399,25 @@ pub struct TokenClientBuilder {
     allow_http: bool,
 }
 
+// Redacting Debug: the builder holds the client secret before the client is
+// built, so it must not print it either (#24).
+impl std::fmt::Debug for TokenClientBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenClientBuilder")
+            .field("token_endpoint", &self.token_endpoint)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| REDACTED),
+            )
+            .field("auth_method", &self.auth_method)
+            .field("extra_params", &self.extra_params)
+            .field("timeout", &self.timeout)
+            .field("allow_http", &self.allow_http)
+            .finish_non_exhaustive()
+    }
+}
+
 impl TokenClientBuilder {
     fn new() -> Self {
         Self::default()
@@ -469,7 +511,7 @@ impl TokenClientBuilder {
             ));
         }
         Ok(TokenClient {
-            http: self.http.unwrap_or_default(),
+            http: self.http.unwrap_or_else(crate::http::secure_client),
             token_endpoint,
             client_id,
             // An empty secret is a public client, not a confidential client
@@ -878,5 +920,42 @@ mod tests {
             BASE64_STANDARD.encode("id+with+space:p%40ss%3Aword")
         );
         assert_eq!(header, expected);
+    }
+
+    // #24: neither the client nor its builder prints the client secret in Debug
+    // output; the secret's presence is shown without its value.
+    #[test]
+    fn debug_redacts_client_secret() {
+        let builder = TokenClient::builder()
+            .client_id("client-1")
+            .client_secret("s3cr3t-value")
+            .token_endpoint("https://issuer.example/token");
+        let builder_dbg = format!("{builder:?}");
+        assert!(
+            !builder_dbg.contains("s3cr3t-value"),
+            "builder leaked secret: {builder_dbg}"
+        );
+        assert!(builder_dbg.contains(REDACTED), "no marker: {builder_dbg}");
+
+        let client = builder.build().unwrap();
+        let client_dbg = format!("{client:?}");
+        assert!(
+            !client_dbg.contains("s3cr3t-value"),
+            "client leaked secret: {client_dbg}"
+        );
+        assert!(client_dbg.contains(REDACTED), "no marker: {client_dbg}");
+        // client_id is not secret and stays visible for diagnostics.
+        assert!(client_dbg.contains("client-1"), "{client_dbg}");
+    }
+
+    // A public client (no secret) shows client_secret: None, not a marker.
+    #[test]
+    fn debug_public_client_shows_no_secret() {
+        let client = TokenClient::builder()
+            .client_id("public")
+            .token_endpoint("https://issuer.example/token")
+            .build()
+            .unwrap();
+        assert!(format!("{client:?}").contains("client_secret: None"));
     }
 }

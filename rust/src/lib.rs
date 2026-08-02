@@ -26,6 +26,9 @@ pub mod jwt;
 pub mod token;
 pub mod userinfo;
 
+/// Shared HTTP client construction (redirect-downgrade defence). Internal.
+mod http;
+
 pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, ProviderMetadata};
 pub use error::IdentityError;
 pub use jwks::{JsonWebKey, JsonWebKeySet, JwksClient, JwksClientBuilder};

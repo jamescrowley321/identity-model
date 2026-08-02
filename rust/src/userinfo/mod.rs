@@ -290,7 +290,7 @@ impl UserInfoClientBuilder {
             ));
         }
         Ok(UserInfoClient {
-            http: self.http.unwrap_or_default(),
+            http: self.http.unwrap_or_else(crate::http::secure_client),
             userinfo_endpoint,
             timeout: if self.timeout.is_zero() {
                 DEFAULT_TIMEOUT
