@@ -4,15 +4,15 @@ Production-grade, RFC-compliant OIDC/OAuth2 **client** libraries across multiple
 
 Inspired by the design philosophy of [Duende Software's IdentityModel](https://github.com/DuendeSoftware/foss/tree/main/identity-model) (.NET) — clean abstractions, comprehensive RFC coverage, and a developer experience that makes complex protocols accessible — adapted idiomatically for each target language. This is an "inspired by," not an affiliation; full credit to Duende for establishing the patterns.
 
-> **Status:** Foundation / scaffolding. This repository currently stands up the monorepo structure, shared conformance spec, and shared test infrastructure. Core-tier implementations land per-language next. The production Python reference implementation, [`py-identity-model`](https://github.com/jamescrowley321/py-identity-model), will be merged into `python/` at a later date.
+> **Status:** Active. **Go** ships the Core **and** Extended tiers — Discovery, JWKS, JWT validation, Client Credentials, Authorization Code + PKCE, UserInfo, Introspection, Revocation, Token Exchange, and DPoP. **Rust** ships the Core tier — Discovery, JWKS, JWT validation, Client Credentials, Authorization Code + PKCE, UserInfo — hardened for secret redaction, `azp`/clock-skew validation, and redirect-downgrade defence. The shared conformance `spec/` and test `infra/` (node-oidc-provider + Duende IdentityServer) are live, with a multi-provider integration matrix (local + Ory + Descope) gating CI. Node/TS is planned; the production Python reference implementation, [`py-identity-model`](https://github.com/jamescrowley321/py-identity-model), will be merged into `python/` at a later date.
 
 ## Language Matrix
 
 | Language | Package | Registry | Import | Status |
 |----------|---------|----------|--------|--------|
 | Python | `py-identity-model` | PyPI | `from py_identity_model import ...` | Reference impl (separate repo, merges later) |
-| Go | `github.com/jamescrowley321/identity-model/go` | Go modules | `import ".../identity-model/go/pkg/discovery"` | Scaffolded |
-| Rust | `identity-model` | crates.io | `use identity_model::discovery::...` | Scaffolded |
+| Go | `github.com/jamescrowley321/identity-model/go` | Go modules | `import ".../identity-model/go/pkg/discovery"` | **Core + Extended** (implemented) |
+| Rust | `identity-model` | crates.io | `use identity_model::discovery::...` | **Core** (implemented) |
 | Node/TS | `@identity-model/node` | npm | `import { ... } from '@identity-model/node'` | Planned |
 
 ## Capability Tiers
