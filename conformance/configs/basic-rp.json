@@ -1,0 +1,12 @@
+{
+  "plan_name": "oidcc-client-basic-certification-test-plan",
+  "variant": {
+    "client_registration": "static_client",
+    "request_type": "plain_http_request"
+  },
+  "alias": "identity-model-basic-rp",
+  "client": {
+    "client_id": "conformance-rp",
+    "client_secret": "conformance-rp-secret"
+  }
+}
