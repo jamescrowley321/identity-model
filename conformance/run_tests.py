@@ -301,7 +301,6 @@ def drive_rp_discover(
         "profile": profile,
     }
 
-    # nosemgrep: TLS verification is disabled only for the local self-signed OIDF suite (localhost.emobix.co.uk); this test-only runner never calls production endpoints.
     with httpx.Client(verify=False, timeout=30.0) as client:
         try:
             response = client.get(f"{rp_base_url}/discover", params=params)
@@ -380,7 +379,6 @@ def drive_rp_authorize(
     }
 
     # Follow all redirects through the full auth flow
-    # nosemgrep: TLS verification is disabled only for the local self-signed OIDF suite (localhost.emobix.co.uk); this test-only runner never calls production endpoints.
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/authorize", params=params)
@@ -443,7 +441,6 @@ def _clear_rp_cache(rp_base_url: str) -> None:
     30s-per-retry backoff timeouts.
     """
     try:
-        # nosemgrep: TLS verification is disabled only for the local self-signed OIDF suite (localhost.emobix.co.uk); this test-only runner never calls production endpoints.
         with httpx.Client(verify=False, timeout=5.0) as client:
             response = client.post(f"{rp_base_url}/clear-cache")
             response.raise_for_status()
