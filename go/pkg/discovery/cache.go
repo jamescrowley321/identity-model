@@ -56,6 +56,13 @@ func (c *cache) store(key string, cfg *ProviderConfiguration, ttl time.Duration)
 	c.entries[key] = cacheEntry{cfg: cfg, expiresAt: c.now().Add(ttl)}
 }
 
+// clear drops every cached configuration.
+func (c *cache) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]cacheEntry)
+}
+
 // fetch returns the cached configuration for issuerURL or fetches it, caching
 // the result. Concurrent misses for the same issuer collapse to one fetch.
 //

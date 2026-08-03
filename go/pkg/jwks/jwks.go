@@ -107,6 +107,14 @@ func FetchKeySet(ctx context.Context, jwksURI string, opts ...Option) (*JSONWebK
 	return &JSONWebKeySet{Keys: keys, uri: jwksURI, cfg: cfg, cache: globalCache}, nil
 }
 
+// ClearCache drops every cached JWK Set and refresh-cooldown record from the
+// package-level cache used by [FetchKeySet], forcing the next fetch for any URI
+// to re-request it. It is intended for tests and long-lived processes that need
+// to discard keys deterministically (e.g. a provider key rotation between
+// unrelated operations); normal callers rely on the TTL and
+// [JSONWebKeySet.ForceRefresh].
+func ClearCache() { globalCache.clear() }
+
 // ResolveKey returns the key whose kid matches and reports whether one was
 // found, scanning the in-memory set only (JWKS-003, RFC 7517 §4.5). It makes no
 // network request; use [JSONWebKeySet.ResolveKeyWithRefresh] to re-fetch on a

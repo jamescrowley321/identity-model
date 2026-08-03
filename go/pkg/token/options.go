@@ -25,6 +25,7 @@ const defaultRequestTimeout = 30 * time.Second
 // config holds the resolved settings for a token request.
 type config struct {
 	authMethod   ClientAuthMethod
+	clientSecret string
 	scopes       []string
 	codeVerifier string
 	extraParams  map[string]string
@@ -64,6 +65,16 @@ func newConfig(opts ...Option) *config {
 // default is [ClientSecretBasic].
 func WithClientAuth(method ClientAuthMethod) Option {
 	return func(c *config) { c.authMethod = method }
+}
+
+// WithClientSecret authenticates the [AuthorizationCode] exchange as a
+// confidential client (RFC 6749 §2.3.1). The secret is presented via the
+// configured [ClientAuthMethod] — client_secret_basic (default) or
+// client_secret_post. Omit it (or pass "") for a public client, which is
+// identified by client_id in the request body. It has no effect on
+// [ClientCredentials] / [TokenExchange], which take the secret positionally.
+func WithClientSecret(secret string) Option {
+	return func(c *config) { c.clientSecret = secret }
 }
 
 // WithScopes requests the named scopes, sent as a single space-delimited scope
