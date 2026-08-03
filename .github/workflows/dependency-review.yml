@@ -1,0 +1,27 @@
+name: Dependency Review
+
+# Blocks a PR that introduces a dependency with a known high-severity
+# vulnerability or a disallowed license — preventive, at review time, ahead of
+# Dependabot's reactive alerts. Diffs the PR's manifests/lockfiles (go.sum,
+# Cargo.lock, workflow actions). Actions pinned to SHA; Dependabot bumps them.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # post the summary comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
