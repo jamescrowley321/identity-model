@@ -75,6 +75,31 @@ services:
       server:
         condition: service_healthy
 
+  # Go Relying-Party harness (K2): drives go/pkg through the suite as an RP.
+  # Build context is the repo root so its module can reach ../../go.
+  # The Rust RP (rp-rust) is added in K3.
+  rp-go:
+    build:
+      context: ..
+      dockerfile: conformance/rp-go/Dockerfile
+    ports:
+      - "8888:8888"
+    environment:
+      - RP_HOST=0.0.0.0
+      - RP_PORT=8888
+      - RP_BASE_URL=http://localhost:8888
+      - CONFORMANCE_SUITE_BASE_URL=https://localhost.emobix.co.uk:8443
+      - SSL_CERT_FILE=/certs/nginx-selfsigned.crt
+    volumes:
+      - certs:/certs:ro
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+      server:
+        condition: service_healthy
+
 volumes:
   mongodb-data:
   certs:

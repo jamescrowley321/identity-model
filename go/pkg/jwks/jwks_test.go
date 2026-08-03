@@ -632,3 +632,15 @@ func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	atomic.AddInt32(&t.calls, 1)
 	return t.next.RoundTrip(req)
 }
+
+// TestClearCache drops all cached key sets so the next fetch re-requests.
+func TestClearCache(t *testing.T) {
+	globalCache.store("https://issuer.example/jwks", []JSONWebKey{{Kid: "k1"}}, time.Hour)
+	if _, ok := globalCache.lookup("https://issuer.example/jwks"); !ok {
+		t.Fatal("precondition: entry should be cached")
+	}
+	ClearCache()
+	if _, ok := globalCache.lookup("https://issuer.example/jwks"); ok {
+		t.Error("ClearCache did not drop the cached entry")
+	}
+}

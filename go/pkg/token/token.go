@@ -87,10 +87,13 @@ func ClientCredentials(ctx context.Context, tokenEndpoint, clientID, clientSecre
 // (RFC 6749 §4.1.3): it POSTs grant_type=authorization_code with code and
 // redirect_uri to tokenEndpoint and returns the typed [TokenResponse].
 //
-// This entry point targets public clients (no client secret); identify the
-// client with clientID, which is sent in the request body. Attach a PKCE
-// verifier with [WithCodeVerifier] (RFC 7636 §4.5). A non-2xx OAuth error
-// response is returned as a typed [TokenError].
+// By default this targets a public client (no client secret): identify the
+// client with clientID, which is sent in the request body, and attach a PKCE
+// verifier with [WithCodeVerifier] (RFC 7636 §4.5). For a confidential client,
+// supply the secret with [WithClientSecret]; it is presented via the configured
+// [ClientAuthMethod] (client_secret_basic by default, or client_secret_post via
+// [WithClientAuth]). A non-2xx OAuth error response is returned as a typed
+// [TokenError].
 func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redirectURI string, opts ...Option) (*TokenResponse, error) {
 	cfg := newConfig(opts...)
 
@@ -108,9 +111,10 @@ func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redir
 		form.Set("code_verifier", cfg.codeVerifier)
 	}
 
-	// A public client has no secret: pass an empty secret so doTokenRequest
-	// identifies it via client_id in the body rather than a Basic header.
-	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, "", form)
+	// cfg.clientSecret is "" for a public client (identified via client_id in
+	// the body) or the confidential secret from [WithClientSecret], which
+	// doTokenRequest presents per the configured ClientAuthMethod.
+	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, cfg.clientSecret, form)
 }
 
 // TokenExchange performs the OAuth 2.0 token exchange grant (RFC 8693 §2.1): it

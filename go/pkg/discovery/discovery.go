@@ -111,6 +111,12 @@ func FetchConfiguration(ctx context.Context, issuerURL string, opts ...Option) (
 	return globalCache.fetch(ctx, issuerURL, cfg)
 }
 
+// ClearCache drops every cached provider configuration from the package-level
+// cache used by [FetchConfiguration], forcing the next call for any issuer to
+// re-fetch. Intended for tests and long-lived processes that need to discard
+// cached metadata deterministically; normal callers rely on the TTL.
+func ClearCache() { globalCache.clear() }
+
 // fetchAndValidate performs the HTTP request, parses the body and validates the
 // document. It contains no caching logic so it can be invoked once per
 // singleflight group.
