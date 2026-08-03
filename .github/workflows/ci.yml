@@ -1,5 +1,10 @@
 name: CI
 
+# Third-party and first-party actions are pinned to a full commit SHA (with the
+# human-readable tag in a trailing comment). Mutable tags (@v7, @stable) can be
+# repointed at malicious commits (cf. tj-actions/changed-files, Mar 2025);
+# Dependabot's github-actions ecosystem bumps these pins and their comments.
+
 on:
   push:
     branches: [main]
@@ -27,8 +32,8 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       shared: ${{ steps.filter.outputs.shared }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4
         id: filter
         with:
           filters: |
@@ -49,8 +54,8 @@ jobs:
       run:
         working-directory: go
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: 'stable'
           # No external deps yet, so there is no go.sum to key the cache on.
@@ -59,7 +64,7 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: latest
           working-directory: go
@@ -73,8 +78,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: 'stable'
           cache: false
@@ -100,8 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: 'stable'
           cache: false
@@ -120,8 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: 'stable'
           cache: false
@@ -142,11 +147,14 @@ jobs:
       run:
         working-directory: rust
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # SHA-pinned: dtolnay/rust-toolchain selects the toolchain from the ref
+      # name (@stable), so when pinned we pass it explicitly via `toolchain`.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
+          toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: rust
       - run: cargo fmt --check
@@ -164,9 +172,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: rust
       - name: Start local provider stack

@@ -1,0 +1,52 @@
+name: Scorecard
+
+# OpenSSF Scorecard: automated supply-chain / repo-hardening health checks
+# (branch protection, pinned dependencies, token permissions, dangerous
+# workflows, SAST, signed releases, ...). Results upload to the Security tab and
+# publish to the OpenSSF API so the README badge stays current.
+# Runs on the default branch only — Scorecard needs default-branch context and
+# does not run from PRs/forks. Actions pinned to SHA; Dependabot bumps them.
+
+on:
+  branch_protection_rule:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "18 6 * * 1" # Weekly Monday 06:18 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to code scanning
+      id-token: write # publish results to the OpenSSF API (badge)
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Retain the SARIF as a workflow artifact for offline inspection.
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+        with:
+          sarif_file: results.sarif
