@@ -83,6 +83,9 @@ jobs:
   semgrep:
     name: Semgrep (SAST)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
     container:
       image: semgrep/semgrep
     steps:
@@ -101,6 +104,16 @@ jobs:
       - name: Run Semgrep
         run: >-
           semgrep scan --config=auto --error
+          --sarif --output=semgrep.sarif
           --exclude="target" --exclude="vendor"
           --exclude="spec" --exclude="examples" --exclude="conformance"
           --exclude-rule="generic.secrets.security.detected-jwt-token.detected-jwt-token"
+
+      # Upload regardless of the gate outcome so findings surface in the Security
+      # tab even when --error fails the job above.
+      - name: Upload Semgrep SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep

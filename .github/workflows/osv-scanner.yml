@@ -1,0 +1,35 @@
+name: OSV-Scanner
+
+# Uses the OSV-Scanner reusable workflows. NOTE: Google deprecated the original
+# google/osv-scanner reusable workflows (they now hard-fail with a deprecation
+# stub); the maintained replacements live in google/osv-scanner-action at the
+# same paths, so we pin those (v2.3.8). Behaviour/intent is unchanged.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 7 * * 1" # weekly Mon 07:41 UTC
+permissions: {}
+jobs:
+  # PR diff scan: gates only vulns NEWLY introduced by the PR (won't fail on pre-existing).
+  scan-pr:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+  # Full scan on push/schedule: uploads SARIF to the Security tab for visibility.
+  # fail-on-vuln: false so accepted/known advisories (e.g. RUSTSEC-2023-0071) don't red main.
+  scan-scheduled:
+    if: ${{ github.event_name != 'pull_request' }}
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    with:
+      fail-on-vuln: false
