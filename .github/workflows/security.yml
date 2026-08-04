@@ -1,5 +1,8 @@
 name: Security
 
+# Actions pinned to full commit SHA (tag in trailing comment); Dependabot's
+# github-actions ecosystem keeps the pins current. See ci.yml for rationale.
+
 on:
   push:
     branches: [main]
@@ -18,12 +21,12 @@ jobs:
       run:
         working-directory: go
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Scan with the current stable Go toolchain so the standard-library
       # advisory picture reflects the latest patches (stdlib patching is the
       # consumer's responsibility for a library); focuses findings on our code.
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "stable"
 
@@ -40,15 +43,17 @@ jobs:
       run:
         working-directory: rust
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: rust
 
-      - uses: taiki-e/install-action@v2.84.1
+      - uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd # v2.84.1
         with:
           tool: cargo-audit,cargo-deny
 
@@ -67,30 +72,48 @@ jobs:
     name: Gitleaks (Secret Scanning)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v3
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   semgrep:
     name: Semgrep (SAST)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Scope to shippable library code and let each tool own its lane:
       # - exclude spec/ OIDC test vectors and examples/ demos
+      # - exclude conformance/ — the OIDF certification test harness (Docker
+      #   suite front + Python orchestration runner), not shipped library code;
+      #   its intentional test-only patterns (self-signed-suite TLS front,
+      #   CONFORMANCE_TOKEN help text) are SAST false-positives. Library code in
+      #   go/pkg and rust/src stays fully scanned.
       # - detected-jwt-token: gitleaks owns secret scanning (with its own allowlist)
-      # - mutable-action-tag: repo pins actions by tag + Dependabot keeps them current
+      # Actions are now SHA-pinned, so the mutable-action-tag rule is enforced
+      # (no longer excluded) — it guards against reintroducing a mutable @tag ref.
       - name: Run Semgrep
         run: >-
           semgrep scan --config=auto --error
+          --sarif --output=semgrep.sarif
           --exclude="target" --exclude="vendor"
-          --exclude="spec" --exclude="examples"
-          --exclude-rule="yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag"
+          --exclude="spec" --exclude="examples" --exclude="conformance"
           --exclude-rule="generic.secrets.security.detected-jwt-token.detected-jwt-token"
+
+      # Upload regardless of the gate outcome so findings surface in the Security
+      # tab even when --error fails the job above.
+      - name: Upload Semgrep SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep

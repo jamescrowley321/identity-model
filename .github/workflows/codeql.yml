@@ -1,0 +1,67 @@
+name: CodeQL
+
+# GitHub's dataflow SAST. Complements Semgrep with deeper interprocedural
+# analysis; results land in the repository Security tab (code scanning).
+# Go uses build-mode: manual (build-mode: none is unsupported for Go) and builds
+# the module in go/ explicitly. Rust uses build-mode: none (source extraction).
+# Actions pinned to SHA (tag in comment); Dependabot bumps them. See ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "24 6 * * 1" # Weekly Monday 06:24 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload results to code scanning
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: manual
+          # Rust support in CodeQL is in public preview; scanned best-effort and
+          # kept independent (fail-fast: false) so it can't mask Go results.
+          - language: rust
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Go must be set up BEFORE codeql init: CodeQL's tracer wraps the `go` on
+      # PATH at init time, so a later toolchain swap leaves the build untraced
+      # ("no source code seen during build"). Rust needs no pre-init setup.
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Go manual build: the module lives in the go/ subdir; build it there so
+      # CodeQL's tracer observes the compilation.
+      - name: Build Go module
+        if: matrix.language == 'go'
+        working-directory: go
+        run: go build ./...
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4
+        with:
+          category: "/language:${{ matrix.language }}"

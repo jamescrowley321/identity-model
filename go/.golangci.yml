@@ -1,6 +1,11 @@
 version: "2"
 
 linters:
+  # gosec: Go security linter (weak crypto, hardcoded creds, unsafe file perms,
+  # TLS misconfig, etc.) — high value for an auth/JWT library. Added on top of
+  # the golangci v2 default set (errcheck, govet, ineffassign, staticcheck, unused).
+  enable:
+    - gosec
   settings:
     staticcheck:
       # QF* are gopls quickfix suggestions (style refactorings), not
@@ -13,3 +18,19 @@ linters:
       # Restores the v1 default exclusions, e.g. errcheck on deferred
       # resp.Body.Close(), which is idiomatic Go.
       - std-error-handling
+    rules:
+      # gosec on tests and internal test-support harnesses (integration runner,
+      # conformance vector loader): reading fixture/vector files by a variable
+      # path (G304), writing to test HTTP-server responses (G705), and test
+      # credential literals (G101) are intentional in test scaffolding, not risks.
+      # Shipped library code under pkg/ stays fully scanned.
+      - path: (_test\.go$|internal/(integrationtest|conformance)/)
+        linters:
+          - gosec
+      # token.go defines RFC 8693 grant-type / token-type URIs (e.g.
+      # urn:ietf:params:oauth:grant-type:token-exchange). gosec G101 reads these
+      # constant protocol identifiers as "hardcoded credentials"; they are not.
+      - path: pkg/token/token.go
+        text: "G101"
+        linters:
+          - gosec
