@@ -111,6 +111,37 @@ class TestFindKeyByKidAlgorithmEnforcement:
             find_key_by_kid(None, keys, jwt_alg="RS256")
 
 
+class TestFindKeyByKidAlgorithmResolution:
+    """The resolved algorithm for a kid-matched key.
+
+    Regression: a kid-matched JWKS key that omits the optional ``alg`` member
+    must fall back to the (consistency-checked) JWT header alg, not the RS256
+    default — otherwise a valid PS256/ES256/EdDSA token signed by an alg-less
+    key is wrongly rejected on the discovery path (common with Azure AD and
+    FAPI 2.0's mandated PS256).
+    """
+
+    def test_rsa_key_without_alg_falls_back_to_ps256_header(self):
+        keys = [JsonWebKey(kty="RSA", kid="k1", n="n", e="e")]
+        _key_dict, alg = find_key_by_kid("k1", keys, jwt_alg="PS256")
+        assert alg == "PS256"
+
+    def test_ec_key_without_alg_falls_back_to_es256_header(self):
+        keys = [JsonWebKey(kty="EC", kid="k1", crv="P-256", x="x", y="y")]
+        _key_dict, alg = find_key_by_kid("k1", keys, jwt_alg="ES256")
+        assert alg == "ES256"
+
+    def test_key_declared_alg_is_preferred(self):
+        keys = [JsonWebKey(kty="RSA", kid="k1", alg="PS256", n="n", e="e")]
+        _key_dict, alg = find_key_by_kid("k1", keys, jwt_alg="PS256")
+        assert alg == "PS256"
+
+    def test_defaults_to_rs256_when_neither_key_nor_header_has_alg(self):
+        keys = [JsonWebKey(kty="RSA", kid="k1", n="n", e="e")]
+        _key_dict, alg = find_key_by_kid("k1", keys, jwt_alg=None)
+        assert alg == "RS256"
+
+
 class TestGetPublicKeyFromJwkAlgorithmEnforcement:
     """Test that get_public_key_from_jwk enforces key/algorithm consistency."""
 
