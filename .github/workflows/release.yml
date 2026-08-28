@@ -220,5 +220,8 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           # Run from py/ so the package config, its commit parser
           # (tools/release_parsers.py) and version_toml resolve under py/ (CONS-2.1).
-          cd py && uvx --from python-semantic-release==10.6.1 semantic-release \
+          # Pin gitpython<3.1.60 (same as the core release job): PSR 10.6.1's
+          # loose gitpython~=3.0 otherwise pulls 3.1.60, which removed
+          # Actor.name_email_regex and crashes semantic-release.
+          cd py && uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
             -c packages/fastapi-identity-model/pyproject.toml version
