@@ -72,18 +72,34 @@ jobs:
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
           fi
 
+      # Run python-semantic-release via uvx (not the Docker action) so we can
+      # constrain GitPython. PSR 10.6.1 declares `gitpython~=3.0`, so a fresh
+      # install pulls GitPython 3.1.60, which removed `Actor.name_email_regex`
+      # and crashes the release (green at gitpython 3.1.59 on 2026-08-22; broke
+      # on 3.1.60 by 2026-08-28). Pinning `<3.1.60` restores the last-good line
+      # until PSR caps it upstream. Config (pyproject.toml, release_parsers.py,
+      # CHANGELOG.md, tag_format `py-v{version}`) resolves from working-dir py/.
       - name: Semantic Version Release
         id: release
-        uses: python-semantic-release/python-semantic-release@39dd2052f2ce8282a5d932c31d58a2ca06d2550e # v10.6.1
-        with:
-          github_token: ${{ secrets.RELEASE_TOKEN }}
-          git_committer_name: "github-actions"
-          git_committer_email: "actions@users.noreply.github.com"
-          # The Python package + its semantic-release config moved under py/
-          # (CONS-2.1); run the action there so pyproject.toml, the commit
-          # parser (tools/release_parsers.py), version_toml, and CHANGELOG.md
-          # all resolve relative to py/.
-          directory: py
+        working-directory: py
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }} # PSR uses this for the VCS release + push
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@users.noreply.github.com"
+          before="$(git tag -l 'py-v*' | sort -V | tail -1)"
+          uvx --from "python-semantic-release==10.6.1" --with "gitpython<3.1.60" \
+            semantic-release -v version
+          after="$(git tag -l 'py-v*' | sort -V | tail -1)"
+          if [ -n "$after" ] && [ "$before" != "$after" ]; then
+            {
+              echo "released=true"
+              echo "tag=$after"
+              echo "version=${after#py-v}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Sync uv.lock with released version
         if: steps.release.outputs.released == 'true'
@@ -112,12 +128,20 @@ jobs:
           sed -i -e "s/^version = \"0.0.0\"/version = \"${{ steps.release.outputs.version }}\"/" py/pyproject.toml
           make build-dist
 
+      # Replaces publish-action (also PSR-based, same GitPython break): attach the
+      # built dist to the VCS release that `semantic-release version` created. If
+      # for any reason the release object is absent, create it first so the upload
+      # never fails on the missing-release path.
       - name: Upload to GitHub Release Assets
-        uses: python-semantic-release/publish-action@5a5718ce47b892ef699f2972dae122297771d641 # v10.6.1
         if: steps.release.outputs.released == 'true'
-        with:
-          github_token: ${{ secrets.RELEASE_TOKEN }}
-          tag: ${{ steps.release.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          tag="${{ steps.release.outputs.tag }}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+          gh release upload "$tag" py/dist/* --clobber
           # Run in py/ (like the version action) so the config's
           # dist_glob_patterns ["dist/*"] resolves to py/dist where
           # `make build-dist` writes — otherwise the wheel+sdist are silently
