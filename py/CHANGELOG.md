@@ -2,6 +2,40 @@
 
 <!-- version list -->
 
+## v3.11.4 (2026-08-28)
+
+### Bug Fixes
+
+- **release**: Pin GitPython <3.1.60 to unblock semantic-release
+  ([#567](https://github.com/jamescrowley321/identity-model/pull/567),
+  [`748c09f`](https://github.com/jamescrowley321/identity-model/commit/748c09f29a7ddc44fc2acb8d3ad9dca0f3ae53cc))
+
+- **token-validation**: Use JWT header alg when a kid-matched JWKS key omits alg
+  ([#562](https://github.com/jamescrowley321/identity-model/pull/562),
+  [`d646628`](https://github.com/jamescrowley321/identity-model/commit/d646628c7d8eba4489a7ed9446887102cd853e1c))
+
+### Chores
+
+- Sync uv.lock with 3.11.3
+  ([`00a3f67`](https://github.com/jamescrowley321/identity-model/commit/00a3f67071dc1d2d97c0c51bb84637fc438caca3))
+
+- **deps)(deps**: Bump the python-dependencies group with 4 updates
+  ([#565](https://github.com/jamescrowley321/identity-model/pull/565),
+  [`9bf6d70`](https://github.com/jamescrowley321/identity-model/commit/9bf6d707576378bb8a725f70fadd7cf7a2954111))
+
+### Continuous Integration
+
+- **deps)(deps**: Bump the github-actions group with 6 updates
+  ([#566](https://github.com/jamescrowley321/identity-model/pull/566),
+  [`4831b26`](https://github.com/jamescrowley321/identity-model/commit/4831b26d56c18a8b3b913379ee6c1ae4eafe4fc9))
+
+### Testing
+
+- **security**: Pin find_key_by_kid mutants; fix spec-conformance sandbox path
+  ([#562](https://github.com/jamescrowley321/identity-model/pull/562),
+  [`d646628`](https://github.com/jamescrowley321/identity-model/commit/d646628c7d8eba4489a7ed9446887102cd853e1c))
+
+
 ## v3.11.3 (2026-08-22)
 
 ### Bug Fixes
