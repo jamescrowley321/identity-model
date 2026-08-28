@@ -142,11 +142,6 @@ jobs:
             gh release create "$tag" --title "$tag" --generate-notes
           fi
           gh release upload "$tag" py/dist/* --clobber
-          # Run in py/ (like the version action) so the config's
-          # dist_glob_patterns ["dist/*"] resolves to py/dist where
-          # `make build-dist` writes — otherwise the wheel+sdist are silently
-          # not attached to the GitHub Release (CONS-2.1).
-          directory: py
 
       # Publishing to PyPI is handled by publish-dist.yml, which is triggered by
       # the py-v{version} tag semantic-release pushes above (via RELEASE_TOKEN, a
