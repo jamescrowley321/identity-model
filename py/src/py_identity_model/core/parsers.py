@@ -231,7 +231,12 @@ def find_key_by_kid(
 
     public_key = filtered_keys[0]
     _validate_key_alg_consistency(public_key, jwt_alg)
-    alg = public_key.alg if public_key.alg else "RS256"
+    # Prefer the key's declared alg; otherwise fall back to the JWT header alg
+    # (already checked for key-type consistency above) so non-RS256 tokens
+    # (PS256, ES256, EdDSA, ...) signed by a JWKS key that omits ``alg`` are not
+    # forced onto the RS256 default and wrongly rejected. Mirrors the no-kid
+    # single-key branch above.
+    alg = public_key.alg if public_key.alg else (jwt_alg or "RS256")
     return public_key.as_dict(), alg
 
 

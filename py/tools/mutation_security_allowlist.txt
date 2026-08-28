@@ -61,3 +61,18 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_53
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_54
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_55
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56
+
+# ── #562 find_key_by_kid: no-kid signing-key kty pre-filter ───────────────────
+#
+# Equivalent (class 3). The guard is `if len(signing_keys) > 1 and jwt_alg:` and
+# the block only ever *narrows* `signing_keys` to the alg-matching kty. Both
+# mutants change *when* the block runs, never its effect:
+#   _13  `> 1 or jwt_alg`  — additionally enters when len == 1 (narrowing a
+#        single key to itself is a no-op) or when len > 1 & jwt_alg is None
+#        (`_ALG_TO_KTY.get(None)` is None, so the inner `if expected_kty:` skips).
+#   _14  `>= 1 and jwt_alg` — signing_keys is always >= 1 after the sig fallback,
+#        so `>= 1` is always True; identical to `> 1` for every len > 1 case, and
+#        the extra len == 1 case narrows a single key to itself (no-op).
+# No input can observe a different selected key or algorithm: unkillable.
+py_identity_model.core.parsers.x_find_key_by_kid__mutmut_13
+py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14
