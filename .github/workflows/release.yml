@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - main
-    # Second line of defence (the commit-parser scope routing is the first):
-    # a push that touches ONLY the sibling native libraries or the shared
-    # spec/infra never runs the Python release job. Mixed pushes that also
-    # touch py/ still release; the parser then drops any cross-track commits.
+    # The commit-parser scope routing (tools/release_parsers.py) is what keeps
+    # cross-track commits from bumping py-identity-model — the core `release`
+    # job's parser drops every (fastapi)/(go)/(rust)/(node)/(spec)/(infra)
+    # commit. go/** and rust/** are deliberately NOT ignored here: their own
+    # version jobs (release-go-version / release-rust-version) live in this
+    # workflow and MUST run on native-only pushes to auto-tag their releases.
+    # Pushes touching ONLY the shared spec/infra or the inert node scaffold have
+    # no versioner, so they skip the workflow entirely.
     paths-ignore:
-      - 'go/**'
-      - 'rust/**'
       - 'node/**'
       - 'spec/**'
       - 'infra/**'
@@ -225,3 +227,140 @@ jobs:
           # Actor.name_email_regex and crashes semantic-release.
           cd py && uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
             -c packages/fastapi-identity-model/pyproject.toml version
+
+  # Version the Go library (identity-model/go) from "(go)"-scoped commits. A Go
+  # library has no version file — the version IS the go/v{version} tag — so
+  # semantic-release reads the current version from the latest go/v* tag and
+  # pushes a new one (config: py/tools/semantic-release-go.toml; scope routing:
+  # py/tools/release_parsers.py:GoCommitParser). The pushed tag then triggers
+  # release-go.yml (build/verify + GitHub Release). Chained AFTER the fastapi
+  # job so the release pipelines never push to main concurrently.
+  # `--no-vcs-release`: release-go.yml owns the GitHub Release, so PSR here only
+  # commits the changelog and pushes the tag. Main-only.
+  release-go-version:
+    needs: release-fastapi-version
+    if: ${{ (github.event.inputs.branch || github.ref_name) == 'main' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-release-go-${{ github.ref_name }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Sync with commits pushed by earlier release jobs
+        run: git pull --ff-only origin main
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Version the Go library
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GIT_COMMIT_AUTHOR: "github-actions <actions@users.noreply.github.com>"
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          # Run from the repo ROOT (not py/) so the go/ and py/tools/ paths in
+          # the config resolve directly. Pin gitpython<3.1.60 (same reason as the
+          # core job): PSR 10.6.1's loose gitpython~=3.0 otherwise pulls 3.1.60,
+          # which removed Actor.name_email_regex and crashes semantic-release.
+          uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
+            -c py/tools/semantic-release-go.toml version --no-vcs-release
+
+  # Version the Rust crate (rs-identity-model) from "(rust)"-scoped commits:
+  # bump rust/Cargo.toml and push a rust-v{version} tag (config:
+  # py/tools/semantic-release-rust.toml; scope routing:
+  # py/tools/release_parsers.py:RustCommitParser). The pushed tag triggers
+  # release-rust.yml, which publishes the crate to crates.io. Chained AFTER the
+  # go job (last writer in the serial release chain). `--no-vcs-release`:
+  # release-rust.yml owns the GitHub Release. Main-only.
+  release-rust-version:
+    needs: release-go-version
+    if: ${{ (github.event.inputs.branch || github.ref_name) == 'main' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-release-rust-${{ github.ref_name }}
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Sync with commits pushed by earlier release jobs
+        run: git pull --ff-only origin main
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Version the Rust crate
+        id: rust
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GIT_COMMIT_AUTHOR: "github-actions <actions@users.noreply.github.com>"
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          before="$(git tag -l 'rust-v*' | sort -V | tail -1)"
+          # Run from the repo ROOT so the rust/ and py/tools/ paths resolve.
+          # Pin gitpython<3.1.60 (see the core job for the rationale).
+          uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
+            -c py/tools/semantic-release-rust.toml version --no-vcs-release
+          after="$(git tag -l 'rust-v*' | sort -V | tail -1)"
+          if [ -n "$after" ] && [ "$before" != "$after" ]; then
+            {
+              echo "released=true"
+              echo "version=${after#rust-v}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # PSR bumps rust/Cargo.toml but not the lockfile. Keep the local crate's
+      # own version entry in rust/Cargo.lock in sync so main stays clean (a
+      # local `cargo build` won't show a dirty tree). The rust-v* tag itself
+      # points at the version-bump commit whose lock still lags by one version;
+      # that is harmless because release-rust.yml's `cargo build`/`cargo publish`
+      # regenerate the lock in-tree before publishing. This mirrors the core
+      # job's uv.lock sync. The sed relies on cargo always emitting `version`
+      # immediately after `name` within a [[package]] entry.
+      - name: Sync Cargo.lock with released version
+        if: steps.rust.outputs.released == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git pull --ff-only origin main
+          ver="${{ steps.rust.outputs.version }}"
+          sed -i '/^name = "rs-identity-model"$/{n;s/^version = ".*"$/version = "'"$ver"'"/}' rust/Cargo.lock
+          if git diff --quiet rust/Cargo.lock; then
+            echo "Cargo.lock already up to date"
+          else
+            git add rust/Cargo.lock
+            git commit -m "chore(rust): sync Cargo.lock with $ver"
+            git push
+          fi

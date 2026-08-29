@@ -1,12 +1,17 @@
-"""Scope-filtered commit parsers for the monorepo's two release pipelines.
+"""Scope-filtered commit parsers for the monorepo's release pipelines.
 
-The repo hosts two independently versioned distributions:
+The repo hosts several independently versioned distributions, each released by
+its own python-semantic-release config on its own tag cadence:
 
-- the core ``py-identity-model`` library, released by the root
-  python-semantic-release config (``py-v{version}`` tags), and
-- the ``fastapi-identity-model`` package, released by the config in
-  ``packages/fastapi-identity-model/pyproject.toml``
-  (``fastapi-identity-model-v{version}`` tags).
+- the core ``py-identity-model`` library — root config, ``py-v{version}`` tags;
+- the ``fastapi-identity-model`` package —
+  ``packages/fastapi-identity-model/pyproject.toml``,
+  ``fastapi-identity-model-v{version}`` tags;
+- the Go library — ``tools/semantic-release-go.toml``, ``go/v{version}`` tags
+  (the subdir-module format ``go get`` requires; version comes from the tag,
+  there is no version file); and
+- the Rust crate ``rs-identity-model`` — ``tools/semantic-release-rust.toml``,
+  ``rust-v{version}`` tags, versioning ``rust/Cargo.toml``.
 
 python-semantic-release has no native per-package commit routing — every
 parsed ``feat``/``fix``/``perf`` commit drives whichever pipeline parses it.
@@ -18,8 +23,10 @@ pipeline only sees its own history:
   the sibling native libraries ``go`` / ``rust`` / ``node`` and the shared
   ``spec`` / ``infra`` — so e.g. ``feat(go): ...`` or ``feat(fastapi): ...``
   never bumps the Python library.
-- :class:`FastapiCommitParser` (the ``fastapi-identity-model`` pipeline) keeps
-  ONLY ``(fastapi)``-scoped commits.
+- :class:`FastapiCommitParser`, :class:`GoCommitParser` and
+  :class:`RustCommitParser` (the fastapi / Go / Rust pipelines) each keep ONLY
+  their own ``(fastapi)`` / ``(go)`` / ``(rust)`` scope and drop everything
+  else, including the core history.
 
 The split is scope-based, not path-based: an unscoped ``fix:`` that touches
 only ``go/`` still bumps the core. Scoping cross-track commits (``(fastapi)``,
@@ -46,9 +53,9 @@ PACKAGE_SCOPE = "fastapi"
 NON_CORE_SCOPES = frozenset({PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra"})
 
 
-def _is_package_commit(result: ParseResult) -> bool:
-    """Whether a parse result is scoped to the fastapi-identity-model package."""
-    return isinstance(result, ParsedCommit) and result.scope == PACKAGE_SCOPE
+def _is_scope_commit(result: ParseResult, scope: str) -> bool:
+    """Whether a parse result is scoped to ``scope``."""
+    return isinstance(result, ParsedCommit) and result.scope == scope
 
 
 def _is_non_core_commit(result: ParseResult) -> bool:
@@ -87,8 +94,34 @@ class CoreCommitParser(_ScopeRoutedParser):
         return not _is_non_core_commit(result)
 
 
-class FastapiCommitParser(_ScopeRoutedParser):
-    """``fastapi-identity-model`` pipeline: keeps ONLY ``(fastapi)`` commits."""
+class _SingleScopeParser(_ScopeRoutedParser):
+    """Pipeline that keeps ONLY commits carrying its own ``SCOPE``.
+
+    Each sibling release track (the fastapi package, the Go library, the Rust
+    crate) versions off its own conventional-commit scope, so every other
+    commit — including the core ``py-identity-model`` history — is dropped.
+    """
+
+    #: The single conventional-commit scope this pipeline versions from.
+    SCOPE: str = ""
 
     def _keep(self, result: ParseResult) -> bool:
-        return _is_package_commit(result)
+        return _is_scope_commit(result, self.SCOPE)
+
+
+class FastapiCommitParser(_SingleScopeParser):
+    """``fastapi-identity-model`` pipeline: keeps ONLY ``(fastapi)`` commits."""
+
+    SCOPE = PACKAGE_SCOPE
+
+
+class GoCommitParser(_SingleScopeParser):
+    """Go ``identity-model/go`` pipeline: keeps ONLY ``(go)`` commits."""
+
+    SCOPE = "go"
+
+
+class RustCommitParser(_SingleScopeParser):
+    """Rust ``rs-identity-model`` pipeline: keeps ONLY ``(rust)`` commits."""
+
+    SCOPE = "rust"

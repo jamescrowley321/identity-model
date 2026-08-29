@@ -283,9 +283,33 @@ This repo is a `uv` workspace. Besides the core `py-identity-model` library
     never bumps the Python library. Python releases use the `py-v{version}`
     tag format; Go/Rust use `go/vX.Y.Z` / `rust-vX.Y.Z`. The routing is
     scope-based, not path-based: an **unscoped** `feat:` touching only `go/`
-    would still bump the core, so the scope is load-bearing (the release
-    workflow path-guards `go/**` `rust/**` `spec/**` `infra/**` `node/**` as a
-    second line of defence).
+    would still bump the core, so the scope is load-bearing. The release
+    workflow path-guards `node/**` `spec/**` `infra/**` (no versioner ⇒ skip)
+    as a second line of defence, but **not** `go/**` / `rust/**`, whose version
+    jobs must run on native-only pushes — for those, the scope is the *only*
+    guard.
+
+The Go and Rust libraries are **also released automatically**, mirroring the
+fastapi package — merging a `feat(go)`/`feat(rust)` (or `fix(...)`) commit to
+`main` auto-tags and publishes, no manual tagging:
+
+- **`go/`** (Go library `github.com/jamescrowley321/identity-model/go`) — the
+  `release-go-version` job (`release.yml`, after the fastapi job) runs
+  semantic-release with `tools/semantic-release-go.toml` on `(go)`-scoped
+  commits. A Go library has no version file, so the version *is* the
+  `go/v{version}` tag (subdir-module format); the pushed tag triggers
+  `release-go.yml` (build/verify + GitHub Release; a Go module ships as source
+  via the proxy, nothing to publish).
+- **`rust/`** (crate `rs-identity-model`) — the `release-rust-version` job
+  (after the go job) runs semantic-release with `tools/semantic-release-rust.toml`
+  on `(rust)`-scoped commits, bumping `rust/Cargo.toml`; the pushed
+  `rust-v{version}` tag triggers `release-rust.yml`, which publishes to
+  crates.io (needs the `CARGO_REGISTRY_TOKEN` secret). The version job also
+  syncs the crate's own entry in `rust/Cargo.lock`.
+
+The four version jobs run as a **serial chain** (`release` → fastapi → go →
+rust), each pulling `main` before it versions, so the release pipelines never
+push to `main` concurrently.
 
 ## Version Management
 
