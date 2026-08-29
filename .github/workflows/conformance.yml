@@ -6,9 +6,14 @@ permissions:
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
+  # Runs as a required pre-release gate too: release.yml calls this workflow
+  # (workflow_call) and its release job `needs` it, so no tag/publish happens
+  # unless conformance passes. That call also covers every push to main, so a
+  # standalone push trigger here would just double-run the ~30-min suite.
+  schedule:
+    - cron: '0 6 * * *' # daily conformance run off main (06:00 UTC)
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   conformance:
