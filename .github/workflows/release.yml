@@ -37,8 +37,16 @@ jobs:
       run-build: true
     secrets: inherit
 
+  # OIDF RP conformance must pass before anything is tagged or published.
+  # The whole release chain (release → fastapi → go → rust) hangs off the
+  # `release` job below, so gating that one job on conformance gates them all.
+  # This reusable call also runs on every push to main (release.yml's trigger),
+  # which is why conformance.yml no longer needs its own push-to-main trigger.
+  conformance:
+    uses: ./.github/workflows/conformance.yml
+
   release:
-    needs: ci
+    needs: [ci, conformance]
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-release-${{ github.ref_name }}
