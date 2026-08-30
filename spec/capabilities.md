@@ -19,18 +19,29 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | implemented | implemented |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | implemented | implemented |
-| Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | planned | implemented | implemented |
+| Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | implemented | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
-| Extended | Token Introspection | RFC 7662 | `introspection.json` | planned | implemented | planned |
-| Extended | Token Revocation | RFC 7009 | `revocation.json` | planned | implemented | planned |
-| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | planned | implemented | planned |
-| Extended | DPoP | RFC 9449 | `dpop.json` | planned | implemented | planned |
-| Advanced | PAR | RFC 9126 | — | planned | planned | planned |
+| Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
+| Extended | Token Introspection | RFC 7662 | `introspection.json` | implemented | implemented | planned |
+| Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | planned |
+| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | implemented | implemented | planned |
+| Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
+| Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
+| Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
+| Advanced | mTLS + cert-bound tokens | RFC 8705 | — | implemented | planned | planned |
+| Advanced | private_key_jwt client auth | RFC 7523 | — | implemented | planned | planned |
+| Advanced | PAR | RFC 9126 | — | implemented | planned | planned |
+| Advanced | JAR (request objects) | RFC 9101 | — | implemented | planned | planned |
+| Advanced | JARM (signed) | OpenID JARM | — | implemented | planned | planned |
+| Advanced | Authz-response `iss` | RFC 9207 | — | implemented | planned | planned |
+| Advanced | Logout (RP-Initiated + Back-Channel) | OIDC RP-Init / BCL | — | implemented | planned | planned |
+| Advanced | FAPI 2.0 request/config validators | FAPI 2.0 Security Profile | — | implemented | planned | planned |
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
-| Advanced | JARM | OpenID JARM | — | planned | planned | planned |
 
-> Python status reflects the reference implementation [`py-identity-model`](https://github.com/jamescrowley321/identity-model), which merges into `python/` at a later date. Go and Rust are scaffolded in this repo with implementation tracked per the conformance definitions.
+> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/conformance` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-reconciliation-plan.md` (and the parity report beside it) for the full diff and roadmap.
+>
+> **Known cross-language divergences** the plan reconciles: Go and Rust support `client_secret_post`, id-token `nonce` validation, and the RFC 8414 issuer-identifier match, none of which Python does yet; Rust validates `azp`, which Python and Go do not.
 
 ## Capability Definitions (Core Tier)
 
