@@ -38,7 +38,14 @@ services:
         condition: service_healthy
 
   server:
-    image: registry.gitlab.com/openid/conformance-suite:latest
+    # Pinned to a released tag, NOT :latest. :latest is a rolling build off the
+    # suite's main branch; between the 2026-08-31 (green) and 2026-09-01 (red)
+    # daily runs it drifted to a build that never transitions RP happy-path
+    # client tests to FINISHED, so run_tests.py polls them to a 120s TIMEOUT
+    # (5 failures in basic-rp) even though the RP completes auth + UserInfo(200)
+    # correctly. Pinning makes this gate reproducible. Bump deliberately after
+    # verifying a newer release passes locally. Last-known-good: v5.2.4 (2026-08-27).
+    image: registry.gitlab.com/openid/conformance-suite:release-v5.2.4
     environment:
       - BASE_URL=https://localhost.emobix.co.uk:8443
       # mTLS endpoints live on a second port; advertise them on the nginx alias
