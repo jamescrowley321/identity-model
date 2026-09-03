@@ -115,8 +115,8 @@ impl RevocationClient {
     ///   typically HTTP 401 `invalid_client` (REV-004) or HTTP 400
     ///   `unsupported_token_type` (REV-003).
     /// - [`IdentityError::Http`] — a transport failure or non-OAuth error body.
-    /// - [`IdentityError::Configuration`] — an empty `token`, or a non-https
-    ///   endpoint without `allow_http`.
+    /// - [`IdentityError::Configuration`] — an empty or whitespace-only
+    ///   `token`, or a non-https endpoint without `allow_http`.
     pub async fn revoke(&self, token: &str, token_type_hint: Option<&str>) -> Result<()> {
         // Require an https endpoint unless http was explicitly allowed.
         let scheme = self.revocation_endpoint.to_ascii_lowercase();
@@ -129,11 +129,15 @@ impl RevocationClient {
             )));
         }
 
-        // token is REQUIRED (RFC 7009 §2.1). An empty token would be sent as-is
-        // and the server's anti-scanning HTTP 200 (§2.1) would make revoke
-        // return Ok, misleading the caller into believing something was revoked.
-        // Reject it locally like the half-credential guard in the builder.
-        if token.is_empty() {
+        // token is REQUIRED (RFC 7009 §2.1). An empty or whitespace-only token
+        // would be sent as-is and the server's anti-scanning HTTP 200 (§2.1)
+        // would make revoke return Ok, misleading the caller into believing
+        // something was revoked. Guard on the trimmed value so a degenerate
+        // whitespace token (" ", "\n") cannot slip past (a hardening superset
+        // of go/pkg/revocation's `token == ""`; no valid opaque/JWT token is
+        // whitespace-only, so nothing legitimate is rejected). Reject it locally
+        // like the half-credential guard in the builder.
+        if token.trim().is_empty() {
             return Err(IdentityError::Configuration(
                 "token is required (RFC 7009 §2.1)".to_string(),
             ));
@@ -188,17 +192,21 @@ impl RevocationClient {
             .map_err(|e| IdentityError::Http(format!("post {}: {e}", self.revocation_endpoint)))?;
 
         let status = response.status();
-        // Drain a bounded amount so the connection can be reused. A revocation
-        // success (§2.2) carries no meaningful body; the error path reuses the
-        // buffered body below.
-        let body = read_capped_body(response).await?;
 
         // Any 2xx is success regardless of token validity (§2.1/§2.2, REV-001).
+        // A revocation success (§2.2) carries no meaningful body, so drain it
+        // best-effort for connection reuse but never let a drain failure (or an
+        // oversized body) turn a server-side-successful revocation into an error
+        // — mirrors go/pkg/revocation, which does io.Copy(io.Discard, ...) and
+        // ignores its result on 2xx.
         if status.is_success() {
+            let _ = read_capped_body(response).await;
             return Ok(());
         }
 
         // Non-2xx is an OAuth error (RFC 7009 §2.2.1, RFC 6749 §5.2, REV-003/004).
+        // Only here do we read the body, propagating a read failure.
+        let body = read_capped_body(response).await?;
         if let Ok(err) = serde_json::from_slice::<OAuthErrorBody>(&body)
             && !err.error.is_empty()
         {
@@ -777,6 +785,33 @@ mod tests {
         // No request should have reached the server.
         let requests = server.received_requests().await.unwrap();
         assert!(requests.is_empty(), "empty token must not hit the network");
+    }
+
+    // REV-001 (anti-scanning): a whitespace-only token must be rejected locally
+    // like an empty one — otherwise the server's §2.1 anti-scanning 200 would
+    // make revoke() falsely report success. Hardening superset of Go's
+    // `token == ""`.
+    #[tokio::test]
+    async fn whitespace_only_token_is_rejected() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200)).await;
+
+        for token in [" ", "\t", "\n", "  \r\n "] {
+            let err = client(&format!("{}/revoke", server.uri()))
+                .build()
+                .unwrap()
+                .revoke(token, None)
+                .await
+                .expect_err("whitespace-only token must be rejected");
+            assert!(matches!(err, IdentityError::Configuration(_)), "{err:?}");
+        }
+
+        // No request should have reached the server for any whitespace token.
+        let requests = server.received_requests().await.unwrap();
+        assert!(
+            requests.is_empty(),
+            "whitespace-only token must not hit the network"
+        );
     }
 
     // RFC 7009 §2.1: the builder rejects a half-credential (missing secret) and
