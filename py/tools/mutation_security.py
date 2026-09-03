@@ -18,10 +18,15 @@ it is explicitly waived. This is robust to new mutmut statuses by construction.
 
 Guardrails
 ----------
-* **Changed-function scope, not full-file.** Full mutation of every security
-  module is a nightly concern; on a PR we prove the *functions this PR touched*
-  are pinned by fail-closed tests. Untouched functions in a touched file are
-  pre-existing debt, not this PR's regression surface, so their mutants do not
+* **Changed-line scope, not full-file or full-function.** Full mutation of every
+  security module is a nightly concern; on a PR we prove the *lines this PR
+  touched* are pinned by fail-closed tests. Mutants are first narrowed to the
+  functions the PR changed, then — via each surviving mutant's ``mutmut show``
+  diff — down to the changed **lines**, so a one-line edit to a large function
+  does not drag in that function's pre-existing mutation debt (issue #511). The
+  line filter is **fail-closed**: any mutant it cannot positively place on an
+  unchanged line stays in scope (see ``scope_to_changed_lines``). Pre-existing
+  debt on untouched lines is not this PR's regression surface, so it does not
   gate the PR. Empty intersection -> exit 0 (safe as a required check).
 * **>=1-mutant floor.** If mutmut produced **zero** mutants for the changed
   files, that is a config/scope/version-drift failure, not a pass — we exit 1.
@@ -45,6 +50,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 # ── The security-critical surface ────────────────────────────────────────────
@@ -208,6 +218,109 @@ def scope_to_changed_functions(
     }
 
 
+def _mutant_file(mutant_name: str) -> str:
+    """The source file a mutmut mutant belongs to.
+
+    ``py_identity_model.sync.token_validation.x_foo__mutmut_3`` ->
+    ``src/py_identity_model/sync/token_validation.py``. mutmut names a module by
+    its path relative to ``src`` with ``/`` -> ``.`` (see the ``src.`` guard in
+    mutmut's trampoline), so we invert that mapping.
+    """
+    dotted = mutant_name.rpartition("__mutmut_")[0].rpartition(".")[0]
+    return "src/" + dotted.replace(".", "/") + ".py"
+
+
+def _removed_source_line(show_output: str) -> str | None:
+    """The stripped text of the first *removed* (original) line in a
+    ``mutmut show`` unified diff — i.e. the exact source line the mutant altered.
+
+    Returns ``None`` when the diff has no removed line (an unexpected/empty
+    ``show`` output), which callers treat fail-closed. libcst preserves source
+    formatting, so the removed line matches the original file verbatim modulo
+    leading indentation (which ``strip`` discards).
+    """
+    in_hunk = False
+    for line in show_output.splitlines():
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        # ``---``/``+++`` are file headers, not hunk content.
+        if in_hunk and line.startswith("-") and not line.startswith("---"):
+            return line[1:].strip()
+    return None
+
+
+def _mutmut_show(mutant_name: str) -> str:
+    return _run([sys.executable, "-m", "mutmut", "show", mutant_name]).stdout
+
+
+def _mutant_on_changed_line(
+    mutant_name: str,
+    changed_lines: dict[str, set[int]],
+    source_lines: dict[str, list[str]],
+    spans: dict[str, list[tuple[str, int, int]]],
+    show: Callable[[str], str],
+) -> bool:
+    """Whether a mutant must stay in scope, gating on the **changed lines**.
+
+    Fail-closed: returns ``True`` (keep in scope) on *any* uncertainty — an
+    unknown file, a mutant we cannot map to a function span, an unparseable
+    ``show`` diff, or a mutated line whose text is not found in the function.
+    Returns ``False`` (drop as pre-existing debt) **only** when the mutated
+    source line's content is found within the mutant's function *and every*
+    occurrence sits on a line this PR did not change. Duplicate content that
+    touches any changed line keeps the mutant (conservative).
+    """
+    path = _mutant_file(mutant_name)
+    if path not in changed_lines:
+        return True
+    func = _mutant_function(mutant_name)
+    fn_spans = [(s, e) for (name, s, e) in spans[path] if name == func]
+    if not fn_spans:
+        return True
+    text = _removed_source_line(show(mutant_name))
+    if text is None:
+        return True
+    lines = source_lines[path]
+    candidates = {
+        ln
+        for (start, end) in fn_spans
+        for ln in range(start, end + 1)
+        if 1 <= ln <= len(lines) and lines[ln - 1].strip() == text
+    }
+    if not candidates:
+        return True
+    return bool(candidates & changed_lines[path])
+
+
+def scope_to_changed_lines(
+    scoped: dict[str, str],
+    changed_files: list[str],
+    base: str,
+    show: Callable[[str], str] = _mutmut_show,
+) -> dict[str, str]:
+    """Refine function-scoped mutants down to the **lines** this PR changed.
+
+    Function-scoping keeps every mutant in a touched function; a one-line edit to
+    a large function still drags in that function's pre-existing mutation debt
+    (issue #511). This narrows it: a *surviving* mutant is dropped only when it is
+    provably on a line the PR did not change (see ``_mutant_on_changed_line`` —
+    fail-closed on any doubt). ``killed`` mutants are passed through untouched
+    (they never gate and need no ``show`` call).
+    """
+    changed_lines = {p: _changed_line_numbers(base, p) for p in changed_files}
+    source_lines = {p: Path(p).read_text().splitlines() for p in changed_files}
+    spans = {p: _function_spans(p) for p in changed_files}
+    # ``killed`` short-circuits before ``_mutant_on_changed_line`` so no
+    # ``mutmut show`` subprocess runs for a mutant that never gates.
+    return {
+        name: status
+        for name, status in scoped.items()
+        if status == KILLED_STATUS
+        or _mutant_on_changed_line(name, changed_lines, source_lines, spans, show)
+    }
+
+
 def _write_setup_cfg(only_mutate: list[str]) -> str | None:
     """Write a temporary ``setup.cfg`` for the run; return backup text if any."""
     cfg = Path("setup.cfg")
@@ -326,11 +439,17 @@ def main() -> int:
         # surface, so their mutants do not gate the PR (the >=1 floor above still runs
         # against the full mutant set, so config/version drift is still caught).
         unchanged = unchanged_functions(base, changed)
-        scoped = scope_to_changed_functions(statuses, unchanged)
+        fn_scoped = scope_to_changed_functions(statuses, unchanged)
+        # Narrow further to the changed *lines*: a one-line edit to a large
+        # function must not inherit that function's pre-existing mutation debt
+        # (issue #511). Fail-closed — see scope_to_changed_lines.
+        scoped = scope_to_changed_lines(fn_scoped, changed, base)
         excluded = len(statuses) - len(scoped)
+        line_excluded = len(fn_scoped) - len(scoped)
         print(
-            f"mutation-security: {len(scoped)}/{len(statuses)} mutant(s) live in the "
-            f"changed function(s); {excluded} in untouched functions are out of scope."
+            f"mutation-security: {len(scoped)}/{len(statuses)} mutant(s) live on the "
+            f"changed line(s); {excluded} out of scope "
+            f"({line_excluded} on unchanged lines within changed functions)."
         )
 
         unwaived, waived = evaluate(scoped, load_allowlist(_read_allowlist()))
@@ -351,8 +470,8 @@ def main() -> int:
             return 1
 
         print(
-            f"mutation-security: PASSED — {len(scoped)} mutant(s) in the changed "
-            "function(s), all killed (or waived-equivalent)."
+            f"mutation-security: PASSED — {len(scoped)} mutant(s) on the changed "
+            "line(s), all killed (or waived-equivalent)."
         )
         return 0
     finally:
