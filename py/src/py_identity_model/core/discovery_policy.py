@@ -65,6 +65,29 @@ class DiscoveryPolicy:
     authority: str | None = None
     allow_loopback_endpoints: bool = False
 
+    def cache_key(self) -> tuple:
+        """A hashable, canonical identity of this policy for cache partitioning.
+
+        The discovery cache keys entries on ``(address, policy.cache_key())`` so a
+        response admitted under a lax policy is never served to a caller running a
+        stricter one — the policy-bypass guard that previously keyed on
+        ``require_https`` alone. Every field that influences how a discovery
+        document is validated (see ``validate_and_parse_discovery_response``) is
+        included, so two policies produce equal keys iff they would validate a
+        document identically. ``additional_endpoint_base_addresses`` is frozen to
+        a tuple so the whole result is hashable.
+        """
+        return (
+            self.require_https,
+            self.allow_http_on_loopback,
+            self.validate_issuer,
+            self.validate_endpoints,
+            self.require_key_set,
+            tuple(self.additional_endpoint_base_addresses),
+            self.authority,
+            self.allow_loopback_endpoints,
+        )
+
 
 @dataclass
 class DiscoveryEndpoint:
@@ -140,6 +163,24 @@ def parse_discovery_url(url: str) -> DiscoveryEndpoint:
     return DiscoveryEndpoint(url=full_url, authority=authority)
 
 
+def resolve_discovery_policy(
+    policy: DiscoveryPolicy | None,
+    require_https: bool,
+) -> DiscoveryPolicy:
+    """Resolve the effective discovery policy for a cached validation call.
+
+    Encodes the single precedence rule shared by the sync and async cached
+    ``validate_token`` paths: an explicit ``policy`` governs when provided;
+    otherwise fall back to a default policy carrying only the legacy
+    ``require_https`` toggle. In :class:`TokenValidationConfig` terms,
+    ``discovery_policy`` wins over ``require_https`` — the boolean is the
+    narrow, pre-existing knob and the full policy is the general one.
+    """
+    if policy is not None:
+        return policy
+    return DiscoveryPolicy(require_https=require_https)
+
+
 def validate_url_scheme(
     url: str | None,
     policy: DiscoveryPolicy,
@@ -190,5 +231,6 @@ __all__ = [
     "DiscoveryPolicy",
     "is_loopback",
     "parse_discovery_url",
+    "resolve_discovery_policy",
     "validate_url_scheme",
 ]

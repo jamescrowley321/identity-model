@@ -1338,6 +1338,19 @@ class TokenValidationConfig:
             Set it only for multi-tenant callers that resolve discovery from an
             untrusted token's ``iss`` — without it an attacker who stands up their
             own tenant and mints a validly-signed token would pass validation.
+        discovery_policy: Optional :class:`DiscoveryPolicy` applied to the
+            discovery document (and its advertised endpoints) on the cached
+            ``validate_token`` path. When ``None`` (the default) a policy is
+            derived from ``require_https`` alone — behaviour is unchanged. Set it
+            to reach any of the other policy knobs (``validate_issuer``,
+            ``validate_endpoints``, ``additional_endpoint_base_addresses``,
+            ``authority``, ``allow_loopback_endpoints``, ``allow_http_on_loopback``)
+            while still using the built-in discovery/JWKS TTL cache, instead of
+            calling ``get_discovery_document`` directly and re-implementing
+            caching. When provided, ``discovery_policy`` **takes precedence over**
+            ``require_https`` (the policy's own ``require_https`` governs). The
+            discovery cache is partitioned by the full policy, so a response
+            admitted under a lax policy is never served to a stricter caller.
 
     Examples:
         >>> # Multi-tenant with clock skew tolerance
@@ -1373,6 +1386,7 @@ class TokenValidationConfig:
     require_https: bool = True
     leeway: float | None = None
     allowed_issuers: list[str] | None = None
+    discovery_policy: DiscoveryPolicy | None = None
 
 
 __all__ = [

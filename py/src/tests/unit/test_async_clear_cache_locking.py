@@ -31,6 +31,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as async_clear_jwks_cache,
 )
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
 from py_identity_model.core.models import (
     DiscoveryDocumentResponse,
@@ -103,7 +104,10 @@ class TestAsyncClearActuallyClears:
 
     @pytest.mark.asyncio
     async def test_clear_discovery_cache_empties_cache(self):
-        cache_key = ("https://example.com/.well-known/openid-configuration", True)
+        cache_key = (
+            "https://example.com/.well-known/openid-configuration",
+            DiscoveryPolicy().cache_key(),
+        )
         aio_tv._disco_cache[cache_key] = DiscoCacheEntry(
             response=DiscoveryDocumentResponse(is_successful=True),
             cached_at=0.0,

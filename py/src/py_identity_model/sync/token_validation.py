@@ -12,7 +12,7 @@ from collections import OrderedDict
 import threading
 import time
 
-from ..core.discovery_policy import DiscoveryPolicy
+from ..core.discovery_policy import DiscoveryPolicy, resolve_discovery_policy
 from ..core.jwks_cache import (
     DiscoCacheEntry,
     JwksCacheEntry,
@@ -53,10 +53,13 @@ from .jwks import get_jwks
 from .managed_client import HTTPClient
 
 
-# Discovery TTL cache — keyed by (address, require_https) to prevent policy bypass.
+# Discovery TTL cache — keyed by (address, policy.cache_key()) to prevent policy
+# bypass: a response admitted under a lax policy must never be served to a caller
+# running a stricter one. (Formerly keyed on the require_https bool alone; the
+# full-policy key generalises that guard now that any policy knob is injectable.)
 # OrderedDict (not a plain dict) so read hits can refresh LRU recency via
 # ``touch_cache_entry``; eviction targets the least recently *used* entry (#397).
-_disco_cache: OrderedDict[tuple[str, bool], DiscoCacheEntry] = OrderedDict()
+_disco_cache: OrderedDict[tuple[str, tuple], DiscoCacheEntry] = OrderedDict()
 # Global lock used only for the brief cache write + eviction critical section.
 # It does NOT span the upstream HTTP fetch — see ``_get_disco_response`` for
 # the cache-aside pattern that lets fetches for distinct addresses proceed in
@@ -71,26 +74,32 @@ _disco_fetch_locks: list[threading.Lock] = [
 ]
 
 
-def _get_disco_fetch_lock(cache_key: tuple[str, bool]) -> threading.Lock:
+def _get_disco_fetch_lock(cache_key: tuple[str, tuple]) -> threading.Lock:
     return _disco_fetch_locks[hash(cache_key) % _DISCO_LOCK_STRIPES]
 
 
 def _get_disco_response(
     disco_doc_address: str | None,
-    require_https: bool = True,
+    policy: DiscoveryPolicy | None = None,
 ) -> DiscoveryDocumentResponse:
     """Cached discovery document fetching with TTL.
 
     Uses cache-aside with per-URI single-flight: a fresh cached entry is
     returned without any lock; only the upstream fetch on a cache miss is
     serialized, and only against other requests for the same address.
+
+    ``policy`` (default: strict :class:`DiscoveryPolicy`) both governs
+    validation of the fetched document and partitions the cache, so callers
+    with different policies never share an entry.
     """
     if disco_doc_address is None:
         raise ConfigurationException(
             "disco_doc_address is required when perform_disco is True"
         )
 
-    cache_key = (disco_doc_address, require_https)
+    if policy is None:
+        policy = DiscoveryPolicy()
+    cache_key = (disco_doc_address, policy.cache_key())
     # Cheap atomic dict read — no lock required for a single .get() in CPython.
     entry = _disco_cache.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
@@ -109,7 +118,6 @@ def _get_disco_response(
             touch_cache_entry(_disco_cache, cache_key)
             return entry.response
 
-        policy = DiscoveryPolicy(require_https=require_https)
         response = get_discovery_document(
             DiscoveryDocumentRequest(address=disco_doc_address, policy=policy)
         )
@@ -150,11 +158,15 @@ def _get_jwks_fetch_lock(jwks_uri: str) -> threading.Lock:
     return _jwks_fetch_locks[hash(jwks_uri) % _JWKS_LOCK_STRIPES]
 
 
-def _get_cached_jwks(jwks_uri: str, require_https: bool = True) -> JwksResponse:
+def _get_cached_jwks(
+    jwks_uri: str, policy: DiscoveryPolicy | None = None
+) -> JwksResponse:
     """Return cached JWKS response if fresh, otherwise fetch and cache.
 
     Cache-aside with per-URI single-flight (see ``_get_disco_response``).
     """
+    if policy is None:
+        policy = DiscoveryPolicy()
     entry = _jwks_cache.get(jwks_uri)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency (see _get_disco_response) — self-serializing, no
@@ -172,7 +184,6 @@ def _get_cached_jwks(jwks_uri: str, require_https: bool = True) -> JwksResponse:
         # The jwks_uri was already vetted against this policy when the
         # discovery document was processed; thread it through so the
         # pre-flight scheme check inside get_jwks() does not double-reject.
-        policy = DiscoveryPolicy(require_https=require_https)
         response = get_jwks(JwksRequest(address=jwks_uri, policy=policy))
         with _jwks_cache_write_lock:
             apply_jwks_cache_outcome(
@@ -186,7 +197,7 @@ def _get_cached_jwks(jwks_uri: str, require_https: bool = True) -> JwksResponse:
 
 
 def _refresh_jwks(
-    jwks_uri: str, require_https: bool = True
+    jwks_uri: str, policy: DiscoveryPolicy | None = None
 ) -> tuple[JwksResponse, bool]:
     """Force re-fetch JWKS and update cache (key rotation).
 
@@ -211,6 +222,8 @@ def _refresh_jwks(
         update the kid-miss cooldown, since the empty response isn't
         attacker-amplifiable.
     """
+    if policy is None:
+        policy = DiscoveryPolicy()
     fetch_lock = _get_jwks_fetch_lock(jwks_uri)
     with fetch_lock:
         request_time = time.monotonic()
@@ -219,7 +232,6 @@ def _refresh_jwks(
             return entry.response, False
 
         logger.info("Forcing JWKS refresh for %s (possible key rotation)", jwks_uri)
-        policy = DiscoveryPolicy(require_https=require_https)
         response = get_jwks(JwksRequest(address=jwks_uri, policy=policy))
         with _jwks_cache_write_lock:
             apply_jwks_cache_outcome(
@@ -302,9 +314,13 @@ def _discover_and_resolve_key(
     jwt: str,
     disco_doc_address: str | None,
     http_client: HTTPClient | None,
-    require_https: bool = True,
+    policy: DiscoveryPolicy,
 ) -> tuple[dict, str, DiscoveryDocumentResponse, bool]:
     """Fetch discovery + JWKS and resolve the signing key.
+
+    ``policy`` is the effective :class:`DiscoveryPolicy` resolved from the
+    caller's config; it governs validation on both the injected-client and
+    cached paths and partitions the discovery cache.
 
     Returns (key_dict, alg, disco_response, is_cached_path).
     """
@@ -314,7 +330,6 @@ def _discover_and_resolve_key(
             raise ConfigurationException(
                 "disco_doc_address is required when perform_disco is True"
             )
-        policy = DiscoveryPolicy(require_https=require_https)
         disco_doc_response = get_discovery_document(
             DiscoveryDocumentRequest(address=disco_doc_address, policy=policy),
             http_client=http_client,
@@ -331,10 +346,10 @@ def _discover_and_resolve_key(
         return key_dict, alg, disco_doc_response, False
 
     # Cached path with TTL
-    disco_doc_response = _get_disco_response(disco_doc_address, require_https)
+    disco_doc_response = _get_disco_response(disco_doc_address, policy)
     validate_disco_response(disco_doc_response)
     jwks_uri = validate_jwks_uri(disco_doc_response)
-    jwks_response = _get_cached_jwks(jwks_uri, require_https=require_https)
+    jwks_response = _get_cached_jwks(jwks_uri, policy)
     validate_jwks_response(jwks_response)
     kid, jwt_alg = extract_jwt_header_fields(jwt)
     # OP key rotation: if the JWT's kid is not in the cached JWKS, the cache
@@ -359,9 +374,7 @@ def _discover_and_resolve_key(
             # is_successful=False by get_jwks) must not wedge the cooldown,
             # so a single dropped packet does not stretch a rotation outage
             # by the cooldown window.
-            jwks_response, from_retained_cache = _refresh_jwks(
-                jwks_uri, require_https=require_https
-            )
+            jwks_response, from_retained_cache = _refresh_jwks(jwks_uri, policy)
             if jwks_response.is_successful:
                 refreshed_keys = jwks_response.keys or []
                 kid_found = any(k.kid == kid for k in refreshed_keys)
@@ -426,7 +439,10 @@ def _retry_with_refreshed_jwks(
     """
     logger.warning("Signature verification failed; retrying with refreshed keys")
     jwks_uri = validate_jwks_uri(disco_doc_response)
-    policy = DiscoveryPolicy(require_https=token_validation_config.require_https)
+    policy = resolve_discovery_policy(
+        token_validation_config.discovery_policy,
+        token_validation_config.require_https,
+    )
     if http_client is not None:
         jwks_response = get_jwks(
             JwksRequest(address=jwks_uri, policy=policy),
@@ -452,9 +468,7 @@ def _retry_with_refreshed_jwks(
             "Signature verification failed; refresh cooldown active"
         )
 
-    jwks_response, from_retained_cache = _refresh_jwks(
-        jwks_uri, require_https=token_validation_config.require_https
-    )
+    jwks_response, from_retained_cache = _refresh_jwks(jwks_uri, policy)
     # Transient upstream failures (wrapped as is_successful=False) must not
     # stamp the cooldown — let validate_jwks_response raise naturally so
     # the next attempt can retry once upstream recovers.
@@ -533,8 +547,12 @@ def validate_token(
     validate_token_config(token_validation_config)
 
     if token_validation_config.perform_disco:
+        policy = resolve_discovery_policy(
+            token_validation_config.discovery_policy,
+            token_validation_config.require_https,
+        )
         key_dict, alg, disco_doc_response, _is_cached = _discover_and_resolve_key(
-            jwt, disco_doc_address, http_client, token_validation_config.require_https
+            jwt, disco_doc_address, http_client, policy
         )
         resolved_config = build_resolved_config(token_validation_config, key_dict, alg)
 
