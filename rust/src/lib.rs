@@ -16,11 +16,13 @@
 //! - [`jwks`] — JWKS fetch + key resolution
 //! - [`jwt`] — JWT signature + claims validation
 //! - [`token`] — client credentials, authorization code, PKCE
+//! - [`introspection`] — token introspection (RFC 7662)
 //! - [`userinfo`] — UserInfo endpoint client
 //! - [`error`] — the crate error type, [`IdentityError`]
 
 pub mod discovery;
 pub mod error;
+pub mod introspection;
 pub mod jwks;
 pub mod jwt;
 pub mod token;
@@ -38,6 +40,9 @@ mod env;
 
 pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, ProviderMetadata};
 pub use error::IdentityError;
+pub use introspection::{
+    Introspection, IntrospectionAudience, IntrospectionClient, IntrospectionClientBuilder,
+};
 pub use jwks::{JsonWebKey, JsonWebKeySet, JwksClient, JwksClientBuilder};
 pub use jwt::{
     Audience, Claims, DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder,
