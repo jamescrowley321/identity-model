@@ -23,7 +23,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | implemented | implemented | implemented |
-| Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | planned |
+| Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | implemented |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | implemented | implemented | planned |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |

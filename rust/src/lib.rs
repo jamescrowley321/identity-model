@@ -17,6 +17,7 @@
 //! - [`jwt`] — JWT signature + claims validation
 //! - [`token`] — client credentials, authorization code, PKCE
 //! - [`introspection`] — token introspection (RFC 7662)
+//! - [`revocation`] — token revocation (RFC 7009)
 //! - [`userinfo`] — UserInfo endpoint client
 //! - [`error`] — the crate error type, [`IdentityError`]
 
@@ -25,6 +26,7 @@ pub mod error;
 pub mod introspection;
 pub mod jwks;
 pub mod jwt;
+pub mod revocation;
 pub mod token;
 pub mod userinfo;
 
@@ -48,6 +50,7 @@ pub use jwt::{
     Audience, Claims, DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder,
     validate_token, validate_token_with_jwks,
 };
+pub use revocation::{RevocationClient, RevocationClientBuilder};
 pub use token::{
     ClientAuthMethod, PkceChallenge, TokenClient, TokenClientBuilder, TokenResponse,
     authorization_url,
