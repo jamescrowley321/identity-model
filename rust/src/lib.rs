@@ -26,6 +26,10 @@ pub mod jwt;
 pub mod token;
 pub mod userinfo;
 
+/// Shared client-authentication and HTTP-form helpers (client_secret_basic /
+/// _post encoding, capped body reads, OAuth error bodies). Internal.
+mod client_auth;
+
 /// Shared HTTP client construction (redirect-downgrade defence). Internal.
 mod http;
 
