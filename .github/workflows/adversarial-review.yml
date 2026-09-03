@@ -73,7 +73,15 @@ jobs:
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          required_checks: "ci / lint, ci / unit-tests, ci / security-gate"
+          # Only the *fast* deterministic checks gate the review — their job is
+          # to avoid spending review compute on a PR that fails basic CI. The
+          # mutation gate (ci / security-gate) is deliberately excluded: on PRs
+          # that touch security-critical code it runs 40+ minutes, far past the
+          # action's 600s preflight timeout, so waiting on it here made the
+          # preflight time out and skip every lens (Merge Gate then failed
+          # closed). It stays enforced independently via the required
+          # ci / ci-complete check, which aggregates security-gate.
+          required_checks: "ci / lint, ci / unit-tests"
 
   review:
     name: ${{ matrix.name }}
