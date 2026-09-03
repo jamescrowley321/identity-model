@@ -336,4 +336,18 @@ mod tests {
             .expect_err("numeric aud element must fail");
         assert!(err.to_string().contains("aud"), "{err}");
     }
+
+    // A fractional numeric date (e.g. `exp`) is rejected, exactly as the Go
+    // reference does: `go/pkg/introspection` decodes exp/iat/nbf into `int64`
+    // fields, and Go's `encoding/json` rejects any number carrying a decimal
+    // point (including `1419356238.0`) into an integer, failing the whole
+    // response. `as_i64()` returns `None` for a serde_json float, so this path
+    // mirrors that behavior — keeping strict Go parity rather than silently
+    // truncating (which would diverge from the reference).
+    #[test]
+    fn rejects_fractional_numeric_date() {
+        let err = serde_json::from_str::<Introspection>(r#"{"active":true,"exp":1419356238.5}"#)
+            .expect_err("fractional exp must fail, matching Go's int64 decode");
+        assert!(err.to_string().contains("exp"), "{err}");
+    }
 }
