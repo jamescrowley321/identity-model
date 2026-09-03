@@ -401,6 +401,14 @@ class JsonWebKey:
         Keycloak emit ``x5t#S256`` in their JWKS; without this mapping the
         dictionary form used ``x5t_s256`` and silently dropped the thumbprint
         on re-parse.
+
+        **Absent members are omitted (contract):** only members with a non-``None``
+        value appear in the result. This makes the mapping safe to hand to
+        libraries — notably PyJWT's ``Algorithm.from_jwk`` — that classify a JWK
+        as public vs. private by key *name presence* rather than value: a public
+        key never carries a null ``d`` (or other private member) that would be
+        misread as a private key. Use :attr:`has_private_key` for the value-based
+        public/private test.
         """
         data = {}
         for key, value in self.__dict__.items():
@@ -1298,7 +1306,12 @@ class TokenValidationConfig:
 
     Attributes:
         perform_disco: Whether to perform discovery to fetch JWKS and issuer
-        key: Public key for JWT verification (dict with 'kty', 'n', 'e' for RSA)
+        key: Public key for JWT verification (manual mode, ``perform_disco=False``).
+            Accepts either a :class:`JsonWebKey` — exactly what ``get_jwks``
+            returns, so a key can round-trip straight back in — or a plain JWK
+            ``dict`` (``{"kty": "RSA", "n": ..., "e": ...}``). ``None``-valued
+            members are ignored during conversion, so a public key is never
+            misclassified as private.
         audience: Expected audience claim(s) in the token
         algorithms: List of allowed signing algorithms (e.g., ['RS256'])
         issuer: Expected issuer claim.  A single string or a list of
@@ -1350,7 +1363,7 @@ class TokenValidationConfig:
     """
 
     perform_disco: bool
-    key: dict | None = None
+    key: dict | JsonWebKey | None = None
     audience: str | None = None
     algorithms: list[str] | None = None
     issuer: str | list[str] | None = None
