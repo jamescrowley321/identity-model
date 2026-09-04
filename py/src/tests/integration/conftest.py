@@ -999,6 +999,12 @@ class AuthCodeFlowConfig:
     login_hint: str = "test-user"
     login_password: str = "test"
     private_key_jwt: PrivateKeyJwt | None = None
+    # When set, sent on the authorization request so the OP echoes them into
+    # the ID Token — letting live tests exercise the OIDC §3.1.3.7 nonce
+    # binding (step 11) and auth_time/max_age freshness (step 12) on a real
+    # minted token rather than only synthetic claim sets.
+    nonce: str | None = None
+    max_age: int | None = None
 
 
 def perform_auth_code_flow(
@@ -1037,8 +1043,17 @@ def perform_auth_code_flow(
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
-    if config.resource:
-        auth_params["resource"] = config.resource
+    # Optional authorization-request params. nonce/max_age are echoed by the OP
+    # into the ID Token (nonce claim, auth_time), letting live tests exercise
+    # the §3.1.3.7 nonce and max_age bindings on a real minted token.
+    optional_params = {
+        "resource": config.resource,
+        "nonce": config.nonce,
+        "max_age": config.max_age,
+    }
+    auth_params.update(
+        {key: str(value) for key, value in optional_params.items() if value is not None}
+    )
 
     auth_url = f"{discovery.authorization_endpoint}?{urlencode(auth_params)}"
 
