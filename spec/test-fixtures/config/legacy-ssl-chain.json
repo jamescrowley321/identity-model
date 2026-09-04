@@ -1,0 +1,27 @@
+{
+  "description": "CFG-204: legacy TLS chain — first set of SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE wins; none set falls back to system CAs",
+  "mode": "legacy",
+  "key": "tls.cert_file",
+  "cases": [
+    {
+      "env": { "SSL_CERT_FILE": "/a.pem", "CURL_CA_BUNDLE": "/b.pem", "REQUESTS_CA_BUNDLE": "/c.pem" },
+      "expect": { "resolved": { "tls.verify": "/a.pem" } }
+    },
+    {
+      "env": { "CURL_CA_BUNDLE": "/b.pem", "REQUESTS_CA_BUNDLE": "/c.pem" },
+      "expect": { "resolved": { "tls.verify": "/b.pem" } }
+    },
+    {
+      "env": { "REQUESTS_CA_BUNDLE": "/c.pem" },
+      "expect": {
+        "resolved": { "tls.verify": "/c.pem" },
+        "note": "Import-time shim copies REQUESTS_CA_BUNDLE into SSL_CERT_FILE when the first two are unset."
+      }
+    },
+    {
+      "env": {},
+      "expect": { "resolved": { "tls.verify": true } }
+    }
+  ],
+  "note": "Python behavior as of 2026-09-03 (get_ssl_verify, lru_cached). go/rust configure TLS per-client in code and do not read these keys (n/a)."
+}

@@ -1,0 +1,21 @@
+{
+  "description": "CFG-303: EnvSource is implicitly last but can be repositioned",
+  "mode": "strict",
+  "group": null,
+  "cases": [
+    {
+      "note": "default construction: custom source before implicit EnvSource",
+      "sources": [{ "name": "custom", "type": "map", "values": { "http.timeout": "20" } }],
+      "env": { "HTTP_TIMEOUT": "80" },
+      "expect": { "config": { "http.timeout": 20.0 } }
+    },
+    {
+      "note": "EnvSource explicitly listed first outranks the custom source",
+      "sources": [
+        { "name": "env", "type": "env", "values": { "HTTP_TIMEOUT": "80" } },
+        { "name": "custom", "type": "map", "values": { "http.timeout": "20" } }
+      ],
+      "expect": { "config": { "http.timeout": 80.0 } }
+    }
+  ]
+}

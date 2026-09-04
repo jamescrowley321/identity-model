@@ -1,0 +1,33 @@
+{
+  "description": "CFG-202: legacy jwks.cache.max_entries divergence — Python maps 0 to the default 64; Go/Rust honor 0 as unbounded",
+  "mode": "legacy",
+  "key": "jwks.cache.max_entries",
+  "cases": [
+    {
+      "raw": "0",
+      "resolved_by_language": { "python": 64, "go": 0, "rust": 0 }
+    },
+    {
+      "raw": "-5",
+      "resolved_by_language": { "python": 64, "go": 64, "rust": 64 }
+    },
+    {
+      "raw": "abc",
+      "resolved_by_language": { "python": 64, "go": 64, "rust": 64 }
+    },
+    {
+      "raw": "",
+      "resolved_by_language": { "python": 64, "go": 64, "rust": 64 }
+    },
+    {
+      "raw": null,
+      "resolved_by_language": { "python": 64, "go": 64, "rust": 64 },
+      "note": "unset"
+    },
+    {
+      "raw": "128",
+      "resolved_by_language": { "python": 128, "go": 128, "rust": 128 }
+    }
+  ],
+  "note": "The 0-case divergence is the canonical example of why legacy mode preserves per-language behavior bit-for-bit. Strict mode harmonizes 0 to unbounded everywhere (CFG-110)."
+}

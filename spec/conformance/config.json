@@ -1,0 +1,265 @@
+{
+  "capability": "configuration",
+  "spec": "identity-model Configuration Contract (spec/config.md)",
+  "spec_url": "https://github.com/jamescrowley321/identity-model/blob/main/spec/config.md",
+  "notes": "Prose contract: cases are proven by each language's own tests keyed to these ids. Promoting cases to executable vectors requires extending tools/spec_coverage_gate.py and every language runner to per-capability coverage reports in the same change. Id families: 1xx strict validation, 2xx legacy-mode equivalence, 3xx precedence/composition, 4xx redaction, 5xx source behavior. Error codes CFG-001..004 are defined in spec/config.md and are distinct from these test ids.",
+  "tests": [
+    {
+      "id": "CFG-101",
+      "title": "Missing required key fails closed",
+      "given": "Strict-mode construction with the client group requested and no source yielding client.discovery_url or client.id",
+      "when": "Config construction is attempted",
+      "then": "No Config value is produced and a CFG-001 error names each missing required logical key",
+      "fixture": "config/strict-missing-required.json",
+      "references": ["config.md §Modes", "config.md §Group Rules"]
+    },
+    {
+      "id": "CFG-102",
+      "title": "Incomplete client group fails closed",
+      "given": "Strict-mode construction where a client-group key (client.id) is supplied but client.discovery_url is absent",
+      "when": "Config construction is attempted",
+      "then": "No Config value is produced and a CFG-002 error names group 'client' and the missing key",
+      "fixture": "config/strict-partial-group.json",
+      "references": ["config.md §Group Rules"]
+    },
+    {
+      "id": "CFG-103",
+      "title": "Missing client secret for a secret-requiring auth method",
+      "given": "Strict-mode construction with a complete client group except client.secret, and a client-auth method selected that requires a secret",
+      "when": "Config construction is attempted",
+      "then": "No Config value is produced and a CFG-002 error names group 'client' and client.secret",
+      "fixture": "config/strict-missing-secret.json",
+      "references": ["config.md §Group Rules"]
+    },
+    {
+      "id": "CFG-104",
+      "title": "Invalid value fails closed, never silently defaults",
+      "given": "Strict-mode construction where a source yields a non-numeric http.timeout and an out-of-domain http.retry.max_attempts",
+      "when": "Config construction is attempted",
+      "then": "No Config value is produced and a CFG-003 error names each invalid logical key; the registry default is not substituted",
+      "fixture": "config/strict-invalid-value.json",
+      "references": ["config.md §Modes"]
+    },
+    {
+      "id": "CFG-105",
+      "title": "Empty or whitespace-only string is present-but-invalid",
+      "given": "Strict-mode construction where a source yields an empty string for a typed key and a whitespace-only string for another",
+      "when": "Config construction is attempted",
+      "then": "Each yields CFG-003 (present-but-invalid); emptiness is never treated as absence",
+      "fixture": "config/strict-empty-string.json",
+      "references": ["config.md §Modes"]
+    },
+    {
+      "id": "CFG-106",
+      "title": "All construction errors are collected and reported atomically",
+      "given": "Strict-mode construction with a missing required key, an invalid value, and an incomplete group simultaneously",
+      "when": "Config construction is attempted",
+      "then": "Exactly one failure is reported carrying all errors ordered by registry order, and no Config value exists",
+      "fixture": "config/strict-collected-errors.json",
+      "references": ["config.md §Modes", "config.md §Error Taxonomy"]
+    },
+    {
+      "id": "CFG-107",
+      "title": "Uniform boolean parsing",
+      "given": "Strict-mode construction with boolean-typed keys set to TRUE, false, 1, 0, and yes",
+      "when": "Config construction is attempted",
+      "then": "true/false/1/0 parse case-insensitively; 'yes' yields CFG-003",
+      "fixture": "config/strict-bool-parsing.json",
+      "references": ["config.md §Modes"]
+    },
+    {
+      "id": "CFG-108",
+      "title": "Absent optional keys take registry defaults",
+      "given": "Strict-mode construction with only the required client-group keys supplied",
+      "when": "Config construction succeeds",
+      "then": "client.scope is 'openid profile email', client.audience equals client.id, client.post_login_redirect and client.post_logout_redirect are '/', client.excluded_paths is ['/docs','/openapi.json','/health'], http.timeout is 30.0",
+      "fixture": "config/strict-defaults.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-109",
+      "title": "Constructed Config is immutable",
+      "given": "A successfully constructed strict-mode Config",
+      "when": "Mutation of any field is attempted through the language's public surface",
+      "then": "Mutation is impossible (compile-time or runtime per language idiom); changed configuration requires constructing a new value",
+      "references": ["config.md §Design Principles"]
+    },
+    {
+      "id": "CFG-110",
+      "title": "Strict mode harmonizes 0 cache entries as unbounded",
+      "given": "Strict-mode construction with jwks.cache.max_entries = 0",
+      "when": "Config construction succeeds",
+      "then": "The typed value records the documented unbounded semantics (0), identically in every language",
+      "fixture": "config/strict-zero-unbounded.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-111",
+      "title": "URL keys must be absolute with a scheme",
+      "given": "Strict-mode construction where client.discovery_url is a schemeless or relative string",
+      "when": "Config construction is attempted",
+      "then": "CFG-003 names client.discovery_url; scheme policy (https-only) follows the consuming component's existing rules and is not weakened by configuration",
+      "fixture": "config/strict-invalid-url.json",
+      "references": ["config.md §Modes", "config.md §Design Principles"]
+    },
+    {
+      "id": "CFG-201",
+      "title": "Legacy TTL resolution: invalid to default, out-of-range clamps",
+      "given": "Legacy-mode resolution of jwks.cache.ttl and discovery.cache.ttl with garbage, NaN, below-minimum, and above-maximum raw values",
+      "when": "The values are resolved",
+      "then": "Garbage/NaN yield the defaults (86400 / 3600); numeric values clamp to [60, 86400] — matching today's Python behavior bit-for-bit",
+      "fixture": "config/legacy-clamp-ttl.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-202",
+      "title": "Legacy cache-entry cap divergence is preserved per language",
+      "given": "Legacy-mode resolution of jwks.cache.max_entries with raw values '0', '-5', 'abc', '', and unset",
+      "when": "The values are resolved in each language",
+      "then": "Python yields 64 for all of them (0 is NOT unbounded); Go and Rust yield 64 for '-5'/'abc'/''/unset and 0 (unbounded) for '0' — each language reproduces its own current behavior exactly",
+      "fixture": "config/legacy-cache-entries-divergence.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-203",
+      "title": "Legacy retry alias precedence",
+      "given": "Legacy-mode resolution of http.retry.max_attempts with HTTP_RETRY_MAX_ATTEMPTS and HTTP_RETRY_COUNT set in combination",
+      "when": "The values are resolved",
+      "then": "The primary wins when both are set; the alias is honored when only it is set; '0' is honored as retries-disabled",
+      "fixture": "config/legacy-alias-retry.json",
+      "references": ["config.md §Precedence", "config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-204",
+      "title": "Legacy TLS chain order",
+      "given": "Legacy-mode resolution of the TLS verify source with combinations of SSL_CERT_FILE, CURL_CA_BUNDLE, and REQUESTS_CA_BUNDLE set",
+      "when": "The verify value is resolved",
+      "then": "The first set variable in the order SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE wins; none set falls back to system CAs — matching today's Python behavior including the REQUESTS_CA_BUNDLE compat shim",
+      "fixture": "config/legacy-ssl-chain.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-205",
+      "title": "Legacy kid-miss cooldown semantics",
+      "given": "Legacy-mode resolution of jwks.kid_miss_cooldown with garbage, negative, above-maximum, and '0' raw values",
+      "when": "The values are resolved",
+      "then": "Garbage yields the default 5.0; numeric values clamp to [0, 3600]; '0' is honored as the documented opt-out",
+      "fixture": "config/legacy-kid-miss-cooldown.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
+      "id": "CFG-206",
+      "title": "Legacy resolution preserves read timing",
+      "given": "A library code path whose environment read happens at call time today",
+      "when": "The read site is migrated to legacy-mode resolution",
+      "then": "Resolution still occurs at the same call site (no hoisting to construction), so a mid-process environment change behaves exactly as before; proven by the language's pre-existing test suites passing unmodified",
+      "references": ["config.md §Modes"]
+    },
+    {
+      "id": "CFG-301",
+      "title": "Explicit override wins over every source",
+      "given": "A key set via explicit override and different values for it in a custom source and the environment",
+      "when": "Strict-mode construction succeeds",
+      "then": "The override value is used; sources are not consulted for that key",
+      "fixture": "config/precedence-override-wins.json",
+      "references": ["config.md §Precedence"]
+    },
+    {
+      "id": "CFG-302",
+      "title": "Earlier source wins over later source",
+      "given": "Two consumer-supplied sources yielding different values for the same key",
+      "when": "Strict-mode construction succeeds",
+      "then": "The value from the source listed first is used",
+      "fixture": "config/precedence-source-order.json",
+      "references": ["config.md §Precedence"]
+    },
+    {
+      "id": "CFG-303",
+      "title": "EnvSource is implicitly last and can be repositioned",
+      "given": "A consumer-supplied source plus the environment both yielding a key, and separately an explicit source list placing EnvSource first",
+      "when": "Strict-mode construction succeeds",
+      "then": "By default the custom source beats the environment; with EnvSource explicitly listed first, the environment wins",
+      "fixture": "config/precedence-env-last.json",
+      "references": ["config.md §Precedence"]
+    },
+    {
+      "id": "CFG-304",
+      "title": "Registry default applies only when no source yields",
+      "given": "A key yielded by no source and another key yielded by a low-precedence source",
+      "when": "Strict-mode construction succeeds",
+      "then": "The unyielded key takes the registry default; the yielded key takes the source value, not the default",
+      "fixture": "config/precedence-default-fallback.json",
+      "references": ["config.md §Precedence"]
+    },
+    {
+      "id": "CFG-305",
+      "title": "Alias resolves within a source before falling through",
+      "given": "A higher-precedence source yielding only the alias env name and a lower-precedence source yielding the primary env name",
+      "when": "Strict-mode construction succeeds",
+      "then": "The higher-precedence source's alias value wins; within a single source the primary wins over the alias",
+      "fixture": "config/precedence-alias-within-source.json",
+      "references": ["config.md §Precedence"]
+    },
+    {
+      "id": "CFG-401",
+      "title": "Debug and display output redacts secrets",
+      "given": "A constructed Config containing a secret-classified value",
+      "when": "The Config is rendered via the language's native debug/display mechanisms",
+      "then": "Output contains the placeholder '<redacted>' for the secret and never the raw value",
+      "fixture": "config/redaction-debug.json",
+      "references": ["config.md §Secret Redaction"]
+    },
+    {
+      "id": "CFG-402",
+      "title": "Serialized output redacts secrets",
+      "given": "A constructed Config containing a secret-classified value",
+      "when": "Any serialization the Config type offers is produced",
+      "then": "Serialized output contains '<redacted>' for the secret and never the raw value",
+      "fixture": "config/redaction-serialized.json",
+      "references": ["config.md §Secret Redaction"]
+    },
+    {
+      "id": "CFG-403",
+      "title": "Errors name keys, never values",
+      "given": "A strict-mode construction failure involving keys whose supplied values are known sentinel strings (secret and non-secret)",
+      "when": "The failure is rendered",
+      "then": "The message contains logical key ids and error codes but none of the sentinel values",
+      "fixture": "config/redaction-error-message.json",
+      "references": ["config.md §Error Taxonomy", "config.md §Secret Redaction"]
+    },
+    {
+      "id": "CFG-404",
+      "title": "Raw secret access is explicit",
+      "given": "A constructed Config containing a secret-classified value",
+      "when": "Code accesses the secret",
+      "then": "The raw value is reachable only through an explicit accessor (expose/Value per language idiom), never via implicit string conversion",
+      "references": ["config.md §Secret Redaction"]
+    },
+    {
+      "id": "CFG-501",
+      "title": "Unknown keys from a source are discarded",
+      "given": "A source returning the requested keys plus keys not in the registry",
+      "when": "Strict-mode construction succeeds",
+      "then": "Unknown keys are silently ignored; requested keys resolve normally; no error is raised",
+      "fixture": "config/source-over-return.json",
+      "references": ["config.md §Sources"]
+    },
+    {
+      "id": "CFG-502",
+      "title": "A failing source fails construction closed",
+      "given": "A source whose resolve operation raises/errors",
+      "when": "Strict-mode construction is attempted",
+      "then": "No Config value is produced and a CFG-004 error identifies the failing source; the source is not silently skipped",
+      "fixture": "config/source-error-failclosed.json",
+      "references": ["config.md §Sources", "config.md §Error Taxonomy"]
+    },
+    {
+      "id": "CFG-503",
+      "title": "Sources are consulted exactly once per construction",
+      "given": "A counting source supplied to strict-mode construction",
+      "when": "Construction completes",
+      "then": "The source's resolve operation was invoked exactly once and received the registry key list (bulk snapshot; no per-key pulls)",
+      "references": ["config.md §Sources"]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "description": "CFG-203: legacy retry alias precedence — primary wins over alias; alias honored alone; 0 disables retries",
+  "mode": "legacy",
+  "key": "http.retry.max_attempts",
+  "cases": [
+    {
+      "env": { "HTTP_RETRY_MAX_ATTEMPTS": "5", "HTTP_RETRY_COUNT": "2" },
+      "expect": { "resolved": { "http.retry.max_attempts": 5 } }
+    },
+    {
+      "env": { "HTTP_RETRY_COUNT": "2" },
+      "expect": { "resolved": { "http.retry.max_attempts": 2 } }
+    },
+    {
+      "env": { "HTTP_RETRY_MAX_ATTEMPTS": "0" },
+      "expect": { "resolved": { "http.retry.max_attempts": 0 } }
+    },
+    {
+      "env": {},
+      "expect": { "resolved": { "http.retry.max_attempts": 3 } }
+    }
+  ],
+  "note": "Python behavior as of 2026-09-03 (int(getenv(primary) or getenv(alias) or '3'))."
+}
