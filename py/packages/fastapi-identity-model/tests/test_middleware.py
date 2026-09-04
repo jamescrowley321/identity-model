@@ -145,12 +145,13 @@ async def test_id_token_rejected_as_access_token(monkeypatch):
     assert "ID token" in resp.json()["detail"]
 
 
-async def test_excluded_subpath_skips_validation(monkeypatch):
-    # A subpath of an excluded entry is also excluded: it reaches routing
-    # (404, no such route) rather than being blocked with a 401.
+async def test_excluded_subpath_is_validated_by_default(monkeypatch):
+    # Issue #600: matching is exact by default, so a subpath of an excluded
+    # entry ("/health") is NOT excluded — it is validated and, with no token,
+    # rejected 401 (fail closed) rather than silently reaching routing.
     async with _client(_app(monkeypatch, AsyncMock())) as client:
         resp = await client.get("/health/live")
-    assert resp.status_code != 401
+    assert resp.status_code == 401
 
 
 async def test_options_preflight_passes_through(monkeypatch):
@@ -183,7 +184,62 @@ def test_root_excluded_path_is_not_a_catch_all():
     assert mw_obj._is_excluded("/") is True
     assert mw_obj._is_excluded("/api/me") is False
     assert mw_obj._is_excluded("/docs") is True
+
+
+def test_exact_match_default_does_not_exclude_subpaths():
+    # Issue #600: matching is exact by default. A plain "/health" entry must NOT
+    # exclude a nested route — fail closed so a sensitive nested path under an
+    # excluded prefix is not silently exposed.
+    mw_obj = TokenValidationMiddleware(
+        FastAPI(),
+        discovery_url=DISCOVERY_URL,
+        audience="cid",
+        excluded_paths=["/health", "/docs"],
+    )
+    assert mw_obj._is_excluded("/health") is True
+    assert mw_obj._is_excluded("/health/db-dump") is False
+    assert mw_obj._is_excluded("/docs/oauth2-redirect") is False
+
+
+def test_subtree_wildcard_opt_in_excludes_prefix_and_below():
+    # A trailing "/*" is the explicit opt-in for subtree exclusion.
+    mw_obj = TokenValidationMiddleware(
+        FastAPI(),
+        discovery_url=DISCOVERY_URL,
+        audience="cid",
+        excluded_paths=["/docs/*"],
+    )
+    assert mw_obj._is_excluded("/docs") is True
     assert mw_obj._is_excluded("/docs/oauth2-redirect") is True
+    assert mw_obj._is_excluded("/docs/anything/deep") is True
+    # A sibling that merely shares the string prefix is not under the subtree.
+    assert mw_obj._is_excluded("/docsx") is False
+
+
+def test_bare_star_is_not_a_catch_all():
+    # "/*" (root subtree) must not disable auth wholesale via a one-char typo.
+    mw_obj = TokenValidationMiddleware(
+        FastAPI(),
+        discovery_url=DISCOVERY_URL,
+        audience="cid",
+        excluded_paths=["/*"],
+    )
+    assert mw_obj._is_excluded("/anything") is False
+    assert mw_obj._is_excluded("/") is False
+
+
+def test_default_excluded_paths_cover_swagger_oauth2_redirect():
+    # Exact matching no longer implies the /docs subtree, so the Swagger OAuth2
+    # redirect must be listed explicitly in the defaults.
+    mw_obj = TokenValidationMiddleware(
+        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid"
+    )
+    assert mw_obj._is_excluded("/docs") is True
+    assert mw_obj._is_excluded("/docs/oauth2-redirect") is True
+    assert mw_obj._is_excluded("/openapi.json") is True
+    assert mw_obj._is_excluded("/health") is True
+    # But not an arbitrary nested route under the excluded docs path.
+    assert mw_obj._is_excluded("/docs/secret") is False
 
 
 def test_access_token_marker_defaults_off():

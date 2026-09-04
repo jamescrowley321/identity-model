@@ -7,7 +7,12 @@ import httpx
 import pytest
 from starlette.middleware.sessions import SessionMiddleware
 
-from fastapi_identity_model import OIDCSettings, build_oidc_router, rp
+from fastapi_identity_model import (
+    OIDCSettings,
+    build_oidc_router,
+    oidc_public_paths,
+    rp,
+)
 from py_identity_model import TokenValidationException
 
 
@@ -327,3 +332,22 @@ async def test_logout_clears_session(monkeypatch):
         resp = await client.post("/auth/logout")
         assert resp.status_code == 303
         assert (await client.get("/me")).json() == {}
+
+
+def test_oidc_public_paths_with_prefix():
+    # Issue #599: the RS middleware must be able to exclude the login routes.
+    assert oidc_public_paths("/auth") == [
+        "/auth/login",
+        "/auth/callback",
+        "/auth/logout",
+    ]
+
+
+def test_oidc_public_paths_root_and_trailing_slash():
+    assert oidc_public_paths() == ["/login", "/callback", "/logout"]
+    # A trailing slash on the prefix is normalized away (no doubled slash).
+    assert oidc_public_paths("/auth/") == [
+        "/auth/login",
+        "/auth/callback",
+        "/auth/logout",
+    ]

@@ -67,6 +67,44 @@ logger = logging.getLogger("fastapi_identity_model")
 
 _STATE_TOKEN_BYTES = 32
 
+# Paths registered by build_oidc_router, relative to the router's mount prefix.
+# /callback is shared by the GET and POST (form_post) handlers.
+_OIDC_ROUTER_PATHS = ("/login", "/callback", "/logout")
+
+
+def oidc_public_paths(prefix: str = "") -> list[str]:
+    """Return the paths ``build_oidc_router`` registers, for the RS middleware.
+
+    A globally-installed :class:`TokenValidationMiddleware` would otherwise
+    demand a Bearer token on ``/login`` and ``/callback`` — routes that by
+    definition have no token yet — making login impossible (issue #599). Feed
+    these into the middleware's ``excluded_paths`` so the login flow is
+    reachable::
+
+        router_prefix = "/auth"
+        app.include_router(build_oidc_router(settings), prefix=router_prefix)
+        app.add_middleware(
+            TokenValidationMiddleware,
+            discovery_url=settings.discovery_url,
+            audience=settings.audience,
+            excluded_paths=[
+                *settings.excluded_paths,
+                *oidc_public_paths(router_prefix),
+            ],
+        )
+
+    Args:
+        prefix: The same ``prefix`` passed to ``include_router`` (``""`` when
+            the router is mounted at the app root). A trailing slash is
+            normalized away.
+
+    Returns:
+        Absolute, exact paths (no ``/*`` subtree wildcard) — the login,
+        callback, and logout endpoints.
+    """
+    base = prefix.rstrip("/")
+    return [f"{base}{route}" for route in _OIDC_ROUTER_PATHS]
+
 
 def _flow_key(session_key: str) -> str:
     """Session key holding transient login-flow state (state/nonce/verifier).
