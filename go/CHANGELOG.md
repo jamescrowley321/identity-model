@@ -20,6 +20,14 @@ initial, unreleased development state.
 
 ### Added
 
+- `pkg/jwt`: an injectable, composable claims validator. `WithClaimsValidator`
+  installs a `ClaimsValidator` that runs after the signature and registered-claim
+  checks, so application policy (tenant, scope, role) sees only otherwise-valid
+  tokens. Ready-made validators `RequireClaims`, `RequireClaimValue`, and
+  `RequireScopes` compose with `CombineClaimsValidators` (`all` / `any`). A
+  rejection is a typed `ClaimsValidationError` (structured reason plus optional
+  claim) that also satisfies `errors.Is(err, ErrClaimValidation)`, and is logged
+  server-side when `WithLogger` is set.
 - Core OIDC/OAuth 2.0 client packages: `discovery`, `jwks`, `jwt`, `token`
   (client-credentials, authorization-code, PKCE), `introspection`, `revocation`,
   `dpop`, and `userinfo`.
