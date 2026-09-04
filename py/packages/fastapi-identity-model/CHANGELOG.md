@@ -8,6 +8,21 @@ inserted below the marker.
 
 <!-- psr: next release -->
 
+## v0.2.3 (2026-09-04)
+
+### Bug Fixes
+
+- **fastapi**: Don't reflect provider/library error internals from the RP callback
+  ([#622](https://github.com/jamescrowley321/identity-model/pull/622),
+  [`2480587`](https://github.com/jamescrowley321/identity-model/commit/2480587a1ef28837ce9b36f928dcd8cef26e07cd))
+
+### Testing
+
+- **fastapi**: Cover the two genericized error branches
+  ([#622](https://github.com/jamescrowley321/identity-model/pull/622),
+  [`2480587`](https://github.com/jamescrowley321/identity-model/commit/2480587a1ef28837ce9b36f928dcd8cef26e07cd))
+
+
 ## v0.2.2 (2026-08-22)
 
 ### Bug Fixes
