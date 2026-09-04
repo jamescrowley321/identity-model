@@ -1394,7 +1394,7 @@ wheels = [
 
 [[package]]
 name = "py-identity-model"
-version = "3.11.5"
+version = "3.12.0"
 source = { editable = "." }
 dependencies = [
     { name = "async-lru" },
