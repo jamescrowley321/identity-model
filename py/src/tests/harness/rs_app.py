@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import os
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, WebSocket
 
 from fastapi_identity_model import (
     Claims,
     CurrentUser,
     TokenValidationMiddleware,
+    build_ws_authenticator,
     require_scope,
 )
 from fastapi_identity_model.config import _default_excluded_paths
@@ -112,6 +113,43 @@ def create_app() -> FastAPI:
     def whoami(user: CurrentUser) -> dict:
         identity = user.identity
         return {"name": identity.name if identity is not None else None}
+
+    @app.get("/health/deep")
+    def health_deep(claims: Claims) -> dict:
+        # A nested route UNDER the excluded "/health" prefix. With exact-match
+        # exclusion (issue #600) "/health" no longer implies this subpath, so the
+        # middleware validates it — reachable only WITH a valid token. Proves the
+        # fail-closed default end-to-end: without a token the middleware 401s here
+        # before routing; with one, the handler runs.
+        return {"deep": True, "sub": claims.get("sub")}
+
+    # WebSocket route (issue #598). The middleware never sees WebSocket scopes,
+    # so this is guarded solely by the build_ws_authenticator dependency, which
+    # runs the same core validate_token path + F-07 guard. A rejected token
+    # closes the handshake before accept; a valid token reaches the body.
+    ws_authenticator = build_ws_authenticator(
+        discovery_url=discovery_url,
+        audience=audience,
+        require_access_token_marker=_truthy(
+            os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
+        ),
+    )
+
+    @app.websocket("/ws")
+    async def ws(websocket: WebSocket) -> None:
+        # Invoke the authenticator explicitly rather than via ``Depends(...)``:
+        # this module uses ``from __future__ import annotations`` (PEP 563), which
+        # stringizes the ``Annotated[dict, Depends(ws_authenticator)]`` form so
+        # FastAPI cannot resolve the closure-local ``ws_authenticator`` — the
+        # marker is lost and every request 403s. Real apps (no closure-local dep)
+        # use ``claims: dict = Depends(ws_auth)``; here the direct call is
+        # equivalent and raises WebSocketException on rejection just the same.
+        claims = await ws_authenticator(websocket)
+        await websocket.accept()
+        await websocket.send_json(
+            {"sub": claims.get("sub"), "scope": claims.get("scope")}
+        )
+        await websocket.close()
 
     return app
 

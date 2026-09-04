@@ -9,6 +9,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import (
     OIDCSettings,
+    TokenValidationMiddleware,
     build_oidc_router,
     oidc_public_paths,
     rp,
@@ -332,6 +333,48 @@ async def test_logout_clears_session(monkeypatch):
         resp = await client.post("/auth/logout")
         assert resp.status_code == 303
         assert (await client.get("/me")).json() == {}
+
+
+def _composed_app(excluded_paths) -> FastAPI:
+    """App with the login router AND the RS middleware installed together —
+    the combined RP+RS deployment from issue #599."""
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test-secret")
+    app.include_router(build_oidc_router(SETTINGS), prefix="/auth")
+    app.add_middleware(
+        TokenValidationMiddleware,
+        discovery_url=SETTINGS.discovery_url,
+        audience=SETTINGS.audience,
+        excluded_paths=excluded_paths,
+    )
+
+    @app.get("/protected")
+    async def protected():
+        return {"ok": True}
+
+    return app
+
+
+async def test_middleware_composition_excludes_login_routes(monkeypatch):
+    # Issue #599: with oidc_public_paths wired into excluded_paths, the login
+    # route is reachable THROUGH a globally-installed middleware (302), while a
+    # non-excluded route still requires a token.
+    _patch(monkeypatch)
+    app = _composed_app(oidc_public_paths("/auth"))
+    async with _client(app) as client:
+        login = await client.get("/auth/login")
+        assert login.status_code == 302
+        assert login.headers["location"].startswith("https://op/authorize")
+        assert (await client.get("/protected")).status_code == 401
+
+
+async def test_middleware_without_exclusion_blocks_login(monkeypatch):
+    # The bug #599 fixes: without the exclusion the middleware demands a bearer
+    # token on /auth/login itself, making login impossible.
+    _patch(monkeypatch)
+    app = _composed_app([])
+    async with _client(app) as client:
+        assert (await client.get("/auth/login")).status_code == 401
 
 
 def test_oidc_public_paths_with_prefix():
