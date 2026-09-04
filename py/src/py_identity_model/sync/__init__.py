@@ -73,6 +73,7 @@ from .discovery import (
     DiscoveryDocumentResponse,
     get_discovery_document,
 )
+from .id_token import validate_id_token
 from .introspection import (
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
@@ -253,6 +254,7 @@ __all__ = [
     "validate_fapi_authorization_request",
     "validate_fapi_client_config",
     "validate_fapi_discovery",
+    "validate_id_token",
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",
