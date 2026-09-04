@@ -278,10 +278,20 @@ pub fn validate_id_token_claims(
     }
 
     // §3.1.3.7 steps 4-6 — authorized-party (`azp`) rules.
+    //
+    // The trusted Python oracle (`core/id_token_logic.py`) gates the
+    // multi-audience "azp REQUIRED" rule on `not azp`, whose truthiness treats
+    // an EMPTY-STRING `azp` identically to an absent one — so a multi-aud token
+    // carrying `azp: ""` must be rejected, not accepted. Mirror that here (the
+    // previous `azp.is_none()` accepted `azp: ""`, a narrow fail-open). The
+    // subsequent mismatch check keeps the oracle's `azp is not None` guard, so a
+    // present-but-empty `azp` is still compared against `client_id`.
     let audiences = claims.audience.values();
     let azp = claims.authorized_party.as_deref();
-    if audiences.len() > 1 && azp.is_none() {
-        // Step 4: with multiple audiences an `azp` claim MUST be present.
+    let azp_present = azp.is_some_and(|value| !value.is_empty());
+    if audiences.len() > 1 && !azp_present {
+        // Step 4: with multiple audiences an `azp` claim MUST be present — an
+        // empty-string `azp` counts as absent, matching the oracle's `not azp`.
         return Err(IdentityError::IdTokenValidation(
             "ID token with multiple audiences must contain an 'azp' claim".to_string(),
         ));
@@ -289,7 +299,8 @@ pub fn validate_id_token_claims(
     if let (Some(azp), Some(client_id)) = (azp, options.client_id.as_deref())
         && azp != client_id
     {
-        // Step 6: when present, `azp` MUST identify this client.
+        // Step 6: a present `azp` (including an empty string, matching the
+        // oracle's `azp is not None`) MUST identify this client.
         return Err(IdentityError::IdTokenValidation(
             "ID token 'azp' claim does not match the configured client_id".to_string(),
         ));
@@ -476,6 +487,59 @@ mod tests {
         );
         validate_id_token_claims(&right_azp, Some("RS256"), &cid)
             .expect("multi-aud with matching azp validates");
+    }
+
+    // An empty-string `azp` must behave exactly like the Python oracle's
+    // `not azp` / `azp is not None` truthiness (F-1 parity), NOT like Rust's
+    // former `azp.is_none()`:
+    //   * multi-aud + azp=""            -> azp_required_multi_aud (was fail-open
+    //     accept when no client_id was configured);
+    //   * multi-aud + azp="" + client_id -> still azp_required_multi_aud, since
+    //     the required-multi-aud check precedes the mismatch check;
+    //   * single-aud + azp="" + client_id -> azp_mismatch (the oracle's mismatch
+    //     guard is `azp is not None`, so a present empty string is compared);
+    //   * single-aud + azp="" + no client_id -> accept (no client_id to compare).
+    #[test]
+    fn empty_string_azp_matches_oracle_truthiness() {
+        // multi-aud + azp="" with no configured client_id: the former
+        // `azp.is_none()` accepted this; the oracle rejects it.
+        let multi_empty =
+            claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": ""}));
+        assert_id_token_reject(
+            &validate_id_token_claims(
+                &multi_empty,
+                Some("RS256"),
+                &IdTokenValidationOptions::new(),
+            )
+            .unwrap_err(),
+            "multiple audiences must contain an 'azp'",
+        );
+
+        // multi-aud + azp="" WITH a client_id: the required-multi-aud check
+        // fires first (matching the oracle), not the mismatch check.
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        assert_id_token_reject(
+            &validate_id_token_claims(&multi_empty, Some("RS256"), &cid).unwrap_err(),
+            "multiple audiences must contain an 'azp'",
+        );
+
+        // single-aud + azp="" WITH a client_id: the oracle's `azp is not None`
+        // guard compares the empty string and rejects as a mismatch.
+        let single_empty_cid = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": ""}));
+        assert_id_token_reject(
+            &validate_id_token_claims(&single_empty_cid, Some("RS256"), &cid).unwrap_err(),
+            "'azp' claim does not match",
+        );
+
+        // single-aud + azp="" with NO client_id: nothing to compare, accept.
+        validate_id_token_claims(
+            &single_empty_cid,
+            Some("RS256"),
+            &IdTokenValidationOptions::new(),
+        )
+        .expect("empty azp on single audience with no client_id validates");
     }
 
     // IDT-004: a present azp is validated even for a single audience.
