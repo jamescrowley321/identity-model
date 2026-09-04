@@ -28,6 +28,16 @@ Guardrails
   unchanged line stays in scope (see ``scope_to_changed_lines``). Pre-existing
   debt on untouched lines is not this PR's regression surface, so it does not
   gate the PR. Empty intersection -> exit 0 (safe as a required check).
+* **Changed-line *pre-filter* (speed).** mutmut's ``only_mutate`` is file-glob
+  only, so it would mutate every construct in every changed file (~1500 mutants,
+  ~40 min for a multi-file PR) and the changed-line scoping above would then
+  discard almost all of them. Instead, ``_mutmut_prefilter_run.py`` restricts
+  mutmut to generating mutants **only on the changed lines** up front, so the run
+  is proportional to what the PR touched, not to the size of the files it touched.
+  Fail-safe: an unmatched file falls back to full mutation (see
+  :func:`covered_lines_for_file`), and a 0-mutant result is disambiguated from
+  drift by an unrestricted probe run (see ``main``), so neither speed path can
+  turn the gate silently green.
 * **>=1-mutant floor.** If mutmut produced **zero** mutants for the changed
   files, that is a config/scope/version-drift failure, not a pass — we exit 1.
   (This is the "silent green on output drift" hole the review flagged.)
@@ -45,6 +55,7 @@ tests live under ``src/tests`` (mutmut only auto-copies top-level ``tests/``).
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 import re
@@ -168,6 +179,39 @@ def _changed_line_numbers(base: str, path: str) -> set[int]:
         count = 1 if m.group(2) is None else int(m.group(2))
         lines.update(range(start, start + max(count, 1)))
     return lines
+
+
+def changed_lines_by_file(base: str, changed_files: list[str]) -> dict[str, list[int]]:
+    """``{relpath: sorted changed line numbers}`` for every changed file.
+
+    Serialized to JSON and handed to the mutmut pre-filter wrapper so mutmut
+    only mutates the lines this PR touched (see ``_mutmut_prefilter_run.py``).
+    """
+    return {p: sorted(_changed_line_numbers(base, p)) for p in changed_files}
+
+
+def covered_lines_for_file(
+    filename: str, changed_by_relpath: dict[str, set[int]]
+) -> set[int] | None:
+    """The changed lines to restrict mutation to for ``filename``, or ``None``.
+
+    Consumed by the pre-filter wrapper's monkeypatch of mutmut's
+    ``get_covered_lines_for_file``. mutmut passes a source path (relative,
+    possibly ``mutants/``-prefixed or absolute); we match it against the changed
+    files by suffix and return that file's changed lines so mutmut mutates **only
+    those lines**.
+
+    **Fail-safe:** returns ``None`` on any non-match, which tells mutmut to mutate
+    the *whole* file — slow but correct (the pre-#511 behaviour). So a path-keying
+    or mutmut-version drift degrades to full mutation, **never** to "mutate
+    nothing" (which would be fail-open). Returning an empty set is deliberately
+    never done here.
+    """
+    fn = str(filename).replace(os.sep, "/")
+    for rel, lines in changed_by_relpath.items():
+        if fn == rel or fn.endswith("/" + rel):
+            return set(lines)
+    return None
 
 
 def _function_spans(path: str) -> list[tuple[str, int, int]]:
@@ -395,6 +439,74 @@ def _mutmut_results_text() -> str:
     return _run([sys.executable, "-m", "mutmut", "results", "--all", "true"]).stdout
 
 
+_PREFILTER_WRAPPER = str(Path(__file__).with_name("_mutmut_prefilter_run.py"))
+
+
+def run_mutmut(changed_lines_json: str) -> int:
+    """Run ``mutmut run`` restricted to the PR's changed lines; return exit code.
+
+    Invokes the pre-filter wrapper, which monkeypatches mutmut so it only mutates
+    lines in ``changed_lines_json`` (``{relpath: [lines]}``). Pass ``"{}"`` to
+    mutate everything (the drift-probe fallback). The wrapper propagates mutmut's
+    own exit code; a crash (e.g. mutmut-internals drift breaking the monkeypatch)
+    surfaces as non-zero and fails the gate closed.
+    """
+    env = {**os.environ, "MUTATION_CHANGED_LINES": changed_lines_json}
+    return subprocess.run(
+        [sys.executable, _PREFILTER_WRAPPER], check=False, text=True, env=env
+    ).returncode
+
+
+def _run_prefiltered(
+    base: str, changed: list[str]
+) -> tuple[dict[str, str] | None, int]:
+    """Run mutmut restricted to the changed lines; return ``(statuses, exit)``.
+
+    ``statuses`` is ``None`` when the caller should return ``exit`` directly:
+    a crashed run (2), genuine 0-mutant drift (2), or a legit "changed lines have
+    no mutatable constructs" pass (0). Otherwise ``(parsed_statuses, 0)``.
+
+    Pre-filtering (issue #511) is the big speedup — mutmut otherwise mutates every
+    construct in every changed file (~1500 mutants for a multi-file PR); the
+    wrapper restricts it to the changed lines, cutting that to a handful. mutmut
+    exits 0 even with survivors, so a non-zero code means the run crashed (bad
+    config, import error, or mutmut-internals drift breaking the monkeypatch) —
+    fail closed.
+    """
+    if run_mutmut(json.dumps(changed_lines_by_file(base, changed))) != 0:
+        print("mutation-security: mutmut run failed to complete.", file=sys.stderr)
+        return None, 2
+
+    statuses = parse_results(_mutmut_results_text())
+    if statuses:
+        return statuses, 0
+
+    # Zero mutants after the line pre-filter is AMBIGUOUS: either the changed
+    # lines have no mutatable constructs (a legit pass — e.g. a comment/docstring/
+    # annotation-only change) or config/version drift. Disambiguate with an
+    # unrestricted probe: if the FULL file also yields 0 mutants, that is genuine
+    # drift (the #510 "silent green" hole) → fail; otherwise mutmut is healthy and
+    # the changed lines simply aren't mutatable → pass.
+    if run_mutmut("{}") != 0:
+        print(
+            "mutation-security: mutmut probe run failed to complete.", file=sys.stderr
+        )
+        return None, 2
+    if not parse_results(_mutmut_results_text()):
+        print(
+            "mutation-security: FAILED — mutmut produced 0 mutants even unrestricted "
+            "for the changed security module(s). This is config/scope/version drift, "
+            "not a pass.",
+            file=sys.stderr,
+        )
+        return None, 2
+    print(
+        "mutation-security: PASSED — the changed line(s) contain no mutatable "
+        "constructs (mutmut healthy; nothing to gate)."
+    )
+    return None, 0
+
+
 def main() -> int:
     base = os.environ.get("BASE", "origin/main")
     changed = changed_security_files(base)
@@ -413,26 +525,9 @@ def main() -> int:
 
     backup = _write_setup_cfg(changed)
     try:
-        # mutmut writes into ./mutants (gitignored) and exits 0 even with survivors;
-        # a non-zero code means the run itself crashed (bad config, import error...).
-        run = subprocess.run(
-            [sys.executable, "-m", "mutmut", "run"], check=False, text=True
-        )
-        if run.returncode != 0:
-            print("mutation-security: mutmut run failed to complete.", file=sys.stderr)
-            return 2
-
-        statuses = parse_results(_mutmut_results_text())
-
-        # >=1-mutant floor: zero mutants for changed files == config/version drift,
-        # not a pass. Without this, output-format drift would be a silent green.
-        if not statuses:
-            print(
-                "mutation-security: FAILED — mutmut produced 0 mutants for the changed "
-                "security module(s). This is config/scope/version drift, not a pass.",
-                file=sys.stderr,
-            )
-            return 2
+        statuses, early_exit = _run_prefiltered(base, changed)
+        if statuses is None:
+            return early_exit
 
         # Scope to the functions this PR actually changed. Untouched functions in a
         # touched file are pre-existing mutation debt, not this PR's regression

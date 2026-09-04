@@ -226,3 +226,54 @@ def test_scope_to_changed_lines_drops_unchanged_line_survivors(monkeypatch):
     }
     out = mutation_security.scope_to_changed_lines(scoped, changed_files=[], base="X")
     assert out == {"pkg.x_f__mutmut_1": "killed", "pkg.x_f__mutmut_2": "survived"}
+
+
+# ── Changed-line PRE-filter (speed): covered_lines_for_file fail-safe ─────────
+# The wrapper monkeypatches mutmut with this; it MUST return None (mutate the
+# whole file — slow but correct) on any mismatch, never an empty set (which
+# would make mutmut mutate nothing = fail-open).
+
+_REL = "src/py_identity_model/core/jwt_helpers.py"
+_CHANGED = {_REL: {80, 81, 82}}
+
+
+def test_covered_lines_exact_relpath_match():
+    assert mutation_security.covered_lines_for_file(_REL, _CHANGED) == {80, 81, 82}
+
+
+def test_covered_lines_matches_mutants_prefixed_path():
+    # mutmut may pass the path prefixed with the sandbox dir.
+    assert mutation_security.covered_lines_for_file(f"mutants/{_REL}", _CHANGED) == {
+        80,
+        81,
+        82,
+    }
+
+
+def test_covered_lines_matches_absolute_path():
+    assert mutation_security.covered_lines_for_file(
+        f"/home/runner/work/repo/py/mutants/{_REL}", _CHANGED
+    ) == {80, 81, 82}
+
+
+def test_covered_lines_unmatched_file_returns_none_not_empty():
+    """Fail-safe: an unknown file mutates the whole file (None), never nothing."""
+    assert (
+        mutation_security.covered_lines_for_file("src/other/thing.py", _CHANGED) is None
+    )
+
+
+def test_covered_lines_empty_map_returns_none():
+    assert mutation_security.covered_lines_for_file(_REL, {}) is None
+
+
+def test_covered_lines_never_returns_empty_set():
+    """A substring-but-not-suffix collision must not falsely match to an empty set."""
+    # 'jwt_helpers.py' is a suffix of the key; a file merely *containing* the
+    # key name mid-path but not as a suffix must not match.
+    assert (
+        mutation_security.covered_lines_for_file(
+            "src/py_identity_model/core/jwt_helpers.py.bak", _CHANGED
+        )
+        is None
+    )
