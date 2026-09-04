@@ -357,6 +357,56 @@ class TestPureIdTokenClaimValidation:
             )
 
 
+class TestNonAsciiInputsFailClosed:
+    """Non-ASCII hash inputs must fail closed as ``IdTokenValidationException``.
+
+    ``str.encode('ascii')`` (used to derive ``at_hash``/``c_hash``) raises
+    ``UnicodeEncodeError`` and ``hmac.compare_digest`` (used for the
+    ``nonce``/``at_hash``/``c_hash`` comparisons) raises ``TypeError`` on a
+    non-ASCII ``str``. Both are re-raised as ``IdTokenValidationException`` so
+    they stay inside the idiomatic ``except TokenValidationException``
+    fail-closed handler instead of escaping as an unrelated builtin (LOW-1).
+    Asserting ``IdTokenValidationException`` here would fail on the pre-fix
+    code, where the raw ``UnicodeEncodeError``/``TypeError`` propagates.
+    """
+
+    def test_non_ascii_access_token_raises_id_token_exception(self):
+        # A non-ASCII access token can't be ASCII-encoded for the at_hash
+        # digest; surface IdTokenValidationException, not UnicodeEncodeError.
+        with pytest.raises(IdTokenValidationException, match=r"ASCII"):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                access_token="café-access-token",
+                now=_NOW,
+            )
+
+    def test_non_ascii_code_raises_id_token_exception(self):
+        # Same for a non-ASCII authorization code feeding the c_hash digest.
+        with pytest.raises(IdTokenValidationException, match=r"ASCII"):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                code="café-code",
+                now=_NOW,
+            )
+
+    def test_non_ascii_expected_nonce_raises_id_token_exception(self):
+        # A non-ASCII expected nonce makes hmac.compare_digest raise TypeError;
+        # surface IdTokenValidationException instead of the bare TypeError.
+        claims = _valid_id_claims(nonce="n-abc")
+        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                nonce="café",
+                now=_NOW,
+            )
+
+
 class TestSyncValidateIdToken:
     """Full signature + discovery flow via the sync ``validate_id_token``."""
 
@@ -457,6 +507,44 @@ class TestSyncValidateIdToken:
             )
 
     @respx.mock
+    def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
+        # §3.3.2.11: a real RS256-signed ID token whose ``c_hash`` matches the
+        # supplied authorization code is accepted through the wrapper.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        code = "real-auth-code-abc"
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256)),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        claims = validate_id_token(
+            token, _config(), disco_doc_address=_DISCO_ADDRESS, code=code
+        )
+        assert claims["sub"] == "user-1"
+
+    @respx.mock
+    def test_signed_id_token_c_hash_wrong_rejected(self, rsa_keypair):
+        # §3.3.2.11: a ``c_hash`` that does not bind the supplied code is
+        # rejected through the wrapper.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(c_hash=_oidc_left_half("wrong-code", hashlib.sha256)),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        with pytest.raises(IdTokenValidationException, match=r"c_hash"):
+            validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=_DISCO_ADDRESS,
+                code="real-auth-code-abc",
+            )
+
+    @respx.mock
     def test_signed_id_token_max_age_stale_rejected(self, rsa_keypair):
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
@@ -530,6 +618,44 @@ class TestAsyncValidateIdToken:
             access_token=access_token,
         )
         assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
+        # §3.3.2.11 (async parity): a matching ``c_hash`` is accepted.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        code = "real-auth-code-abc"
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256)),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        claims = await aio_validate_id_token(
+            token, _config(), disco_doc_address=_DISCO_ADDRESS, code=code
+        )
+        assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_c_hash_wrong_rejected(self, rsa_keypair):
+        # §3.3.2.11 (async parity): a wrong ``c_hash`` is rejected.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(c_hash=_oidc_left_half("wrong-code", hashlib.sha256)),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        with pytest.raises(IdTokenValidationException, match=r"c_hash"):
+            await aio_validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=_DISCO_ADDRESS,
+                code="real-auth-code-abc",
+            )
 
     @pytest.mark.asyncio
     @respx.mock

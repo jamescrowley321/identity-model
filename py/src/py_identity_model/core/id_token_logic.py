@@ -59,6 +59,9 @@ def _hash_for_alg(alg: str | None):
         )
     normalized = alg.strip()
     if normalized in _EDDSA_ALGS:
+        # Assumes Ed25519 (SHA-512). Ed448 also carries ``alg:"EdDSA"`` but
+        # hashes with SHAKE256; it is intentionally unsupported here and fails
+        # closed on the resulting at_hash/c_hash mismatch.
         return hashlib.sha512
     if normalized.endswith("256"):
         return hashlib.sha256
@@ -72,7 +75,7 @@ def _hash_for_alg(alg: str | None):
     )
 
 
-def _left_half_hash(value: str, alg: str | None) -> str:
+def _left_half_hash(value: str, alg: str | None, field: str) -> str:
     """Compute the OIDC left-half hash of *value* under the ID Token *alg*.
 
     Hashes the ASCII octets of *value* with the SHA-2 variant implied by
@@ -80,12 +83,50 @@ def _left_half_hash(value: str, alg: str | None) -> str:
     and base64url-encodes it **without** padding — the exact construction of
     ``at_hash``/``c_hash`` in OpenID Connect Core 1.0 §3.3.2.11.
 
+    *field* names the caller-supplied input (e.g. ``"access_token"``) purely
+    for the error message when *value* is not ASCII.
+
     Raises:
-        IdTokenValidationException: If *alg* cannot be mapped to a hash.
+        IdTokenValidationException: If *alg* cannot be mapped to a hash, or if
+            *value* contains non-ASCII characters. Non-ASCII is re-raised as
+            this exception (rather than the bare ``UnicodeEncodeError`` from
+            :meth:`str.encode`) so it fails **closed** under the idiomatic
+            ``except TokenValidationException`` handler.
     """
-    digest = _hash_for_alg(alg)(value.encode("ascii")).digest()
+    hasher = _hash_for_alg(alg)
+    try:
+        octets = value.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise IdTokenValidationException(
+            f"ID token {field} must be ASCII to compute its at_hash/c_hash",
+            token_part="payload",
+        ) from exc
+    digest = hasher(octets).digest()
     left_half = digest[: len(digest) // 2]
     return base64.urlsafe_b64encode(left_half).rstrip(b"=").decode("ascii")
+
+
+def _hashes_equal(actual: str, expected: str, field: str) -> bool:
+    """Constant-time compare two ASCII strings for the ID-Token bindings.
+
+    Wraps :func:`hmac.compare_digest` (used to keep the ``nonce``/``at_hash``/
+    ``c_hash`` comparisons timing-safe) so that a non-ASCII ``str`` operand —
+    which makes ``compare_digest`` raise a bare ``TypeError`` — is re-raised as
+    a fail-**closed** :class:`IdTokenValidationException` under the idiomatic
+    ``except TokenValidationException`` handler. The timing-safe comparison is
+    unchanged for the normal ASCII path.
+
+    Raises:
+        IdTokenValidationException: If either operand is a ``str`` carrying
+            non-ASCII characters.
+    """
+    try:
+        return hmac.compare_digest(actual, expected)
+    except TypeError as exc:
+        raise IdTokenValidationException(
+            f"ID token {field} comparison requires ASCII values",
+            token_part="payload",
+        ) from exc
 
 
 def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knobs
@@ -157,8 +198,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     # §3.1.3.7 step 11 — ``nonce`` binding (only when the caller passed one).
     if nonce is not None:
         token_nonce = claims.get("nonce")
-        if not isinstance(token_nonce, str) or not hmac.compare_digest(
-            token_nonce, nonce
+        if not isinstance(token_nonce, str) or not _hashes_equal(
+            token_nonce, nonce, "'nonce'"
         ):
             raise IdTokenValidationException(
                 "ID token 'nonce' claim does not match the expected value",
@@ -183,10 +224,10 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
 
     # §3.3.2.11 — ``at_hash`` binding (only when an access token was passed).
     if access_token is not None:
-        expected_at_hash = _left_half_hash(access_token, header_alg)
+        expected_at_hash = _left_half_hash(access_token, header_alg, "access_token")
         token_at_hash = claims.get("at_hash")
-        if not isinstance(token_at_hash, str) or not hmac.compare_digest(
-            token_at_hash, expected_at_hash
+        if not isinstance(token_at_hash, str) or not _hashes_equal(
+            token_at_hash, expected_at_hash, "'at_hash'"
         ):
             raise IdTokenValidationException(
                 "ID token 'at_hash' claim does not match the access token",
@@ -195,10 +236,10 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
 
     # §3.3.2.11 — ``c_hash`` binding (only when an authorization code was passed).
     if code is not None:
-        expected_c_hash = _left_half_hash(code, header_alg)
+        expected_c_hash = _left_half_hash(code, header_alg, "code")
         token_c_hash = claims.get("c_hash")
-        if not isinstance(token_c_hash, str) or not hmac.compare_digest(
-            token_c_hash, expected_c_hash
+        if not isinstance(token_c_hash, str) or not _hashes_equal(
+            token_c_hash, expected_c_hash, "'c_hash'"
         ):
             raise IdTokenValidationException(
                 "ID token 'c_hash' claim does not match the authorization code",
