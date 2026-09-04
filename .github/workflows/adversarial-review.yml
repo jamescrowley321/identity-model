@@ -99,13 +99,16 @@ jobs:
           lens: ${{ matrix.lens }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           api_key: ${{ secrets.OPENROUTER_API_KEY }}
-          model: anthropic/claude-sonnet-5
+          # Dated slug — OpenRouter retired the undated `anthropic/claude-sonnet-5`
+          # alias (chat/completions now 404s on it); the dated id is the one that
+          # resolves. Bump when a newer Sonnet 5 snapshot supersedes it.
+          model: anthropic/claude-sonnet-5-20260630
           models_config: |
             {
               "providers": {
                 "openrouter": {
                   "modelOverrides": {
-                    "anthropic/claude-sonnet-5": {
+                    "anthropic/claude-sonnet-5-20260630": {
                       "compat": { "openRouterRouting": { "sort": "price", "zdr": true } }
                     }
                   }
