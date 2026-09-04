@@ -223,10 +223,7 @@ generate-token: ## Generate a sample JWT token
 	$(UVPY) python examples/generate_token.py
 
 .PHONY: ci-setup
-ci-setup: ## CI environment setup
-	python -m pip install --upgrade pip
-	pip install pipx
-	pipx install uv
+ci-setup: ## CI environment setup (uv is provided by astral-sh/setup-uv)
 	cd py && uv venv && uv sync --all-packages
 
 # ── Conformance ──────────────────────────────────────────────────────

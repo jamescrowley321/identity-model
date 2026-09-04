@@ -40,6 +40,7 @@ from py_identity_model.aio.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import (
     DiscoCacheEntry,
     JwksCacheEntry,
@@ -174,7 +175,9 @@ class TestSchemeEnforcement:
         # Caller explicitly opts out of HTTPS; the policy MUST be threaded
         # through to get_jwks (not dropped/None, which would re-impose the
         # strict default and reject this legitimate fetch).
-        response, _ = await _refresh_jwks("http://op.example/jwks", require_https=False)
+        response, _ = await _refresh_jwks(
+            "http://op.example/jwks", DiscoveryPolicy(require_https=False)
+        )
         assert response.is_successful is True
         assert response.keys
         assert route.call_count == 1
@@ -337,8 +340,8 @@ class TestDoubleCheckedLockAndLru:
         """
         addr_x = "https://opx.example/.well-known/openid-configuration"
         addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = (addr_x, True)
-        key_y = (addr_y, True)
+        key_x = (addr_x, DiscoveryPolicy().cache_key())
+        key_y = (addr_y, DiscoveryPolicy().cache_key())
         resp_x = _disco_resp("https://opx.example")
         # Seed order: x (oldest) then y (newest).
         aio_tv._disco_cache[key_x] = DiscoCacheEntry(
@@ -369,8 +372,8 @@ class TestDoubleCheckedLockAndLru:
         an attacker reading distinct addresses could evict it)."""
         addr_x = "https://opx.example/.well-known/openid-configuration"
         addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = (addr_x, True)
-        key_y = (addr_y, True)
+        key_x = (addr_x, DiscoveryPolicy().cache_key())
+        key_y = (addr_y, DiscoveryPolicy().cache_key())
         resp_x = _disco_resp("https://opx.example")
         aio_tv._disco_cache[key_x] = DiscoCacheEntry(
             response=resp_x, cached_at=time.monotonic(), ttl=1e9

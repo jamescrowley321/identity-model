@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
@@ -14,7 +15,7 @@ from fastapi_identity_model import (
     oidc_public_paths,
     rp,
 )
-from py_identity_model import TokenValidationException
+from py_identity_model import AuthorizeCallbackException, TokenValidationException
 
 
 pytestmark = pytest.mark.unit
@@ -189,15 +190,20 @@ async def test_callback_missing_code(monkeypatch):
     assert "missing code" in resp.json()["detail"]
 
 
-async def test_login_discovery_failure(monkeypatch):
+async def test_login_discovery_failure(monkeypatch, caplog):
     _patch(monkeypatch, disco=SimpleNamespace(is_successful=False, error="down"))
-    async with _client(_app()) as client:
-        resp = await client.get("/auth/login")
+    with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
+        async with _client(_app()) as client:
+            resp = await client.get("/auth/login")
     assert resp.status_code == 502
-    assert "discovery failed" in resp.json()["detail"].lower()
+    # Generic client detail — the provider's specific error must not be echoed
+    # to the browser (#601), but IS logged server-side for operators.
+    assert resp.json()["detail"] == "Identity provider discovery failed"
+    assert "down" not in resp.json()["detail"]
+    assert "down" in caplog.text
 
 
-async def test_login_rejects_discovery_issuer_mismatch(monkeypatch):
+async def test_login_rejects_discovery_issuer_mismatch(monkeypatch, caplog):
     # OIDC Discovery 1.0 §4.3: a document whose issuer does not match the
     # URL it was retrieved from must be rejected (issuer mix-up defense).
     mismatched = SimpleNamespace(
@@ -209,10 +215,15 @@ async def test_login_rejects_discovery_issuer_mismatch(monkeypatch):
         issuer="https://op/INVALID",
     )
     _patch(monkeypatch, disco=mismatched)
-    async with _client(_app()) as client:
-        resp = await client.get("/auth/login")
+    with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
+        async with _client(_app()) as client:
+            resp = await client.get("/auth/login")
     assert resp.status_code == 502
-    assert "issuer mismatch" in resp.json()["detail"].lower()
+    # The mismatched issuer value is not reflected to the client (#601)...
+    assert resp.json()["detail"] == "Identity provider configuration error"
+    assert "INVALID" not in resp.json()["detail"]
+    # ...but the expected/got pair is logged for operators.
+    assert "INVALID" in caplog.text
 
 
 async def test_fetch_userinfo_disabled_skips_userinfo(monkeypatch):
@@ -230,26 +241,84 @@ async def test_fetch_userinfo_disabled_skips_userinfo(monkeypatch):
     rp.get_userinfo.assert_not_called()
 
 
-async def test_callback_token_exchange_failure(monkeypatch):
+async def test_callback_token_exchange_failure(monkeypatch, caplog):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, _ = await _login(client)
         rp.request_authorization_code_token.return_value = SimpleNamespace(
             is_successful=False, error="invalid_grant", token=None
         )
-        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+        with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
+            resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 400
-    assert "Token exchange failed" in resp.json()["detail"]
+    # The provider's grant error is logged, not reflected to the client (#601).
+    assert resp.json()["detail"] == "Authorization code exchange failed"
+    assert "invalid_grant" not in resp.json()["detail"]
+    assert "invalid_grant" in caplog.text
 
 
-async def test_callback_invalid_id_token(monkeypatch):
+async def test_callback_invalid_id_token(monkeypatch, caplog):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, _ = await _login(client)
         rp.validate_token.side_effect = TokenValidationException("bad iss")
-        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+        with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+            resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
-    assert "ID token validation failed" in resp.json()["detail"]
+    # Generic detail — the specific validation cause ("bad iss") is logged, not
+    # returned, so the callback can't be used as a validation-stage oracle (#601).
+    assert resp.json()["detail"] == "ID token validation failed"
+    assert "bad iss" not in resp.json()["detail"]
+    assert "bad iss" in caplog.text
+
+
+async def test_callback_malformed_response_detail_is_generic(monkeypatch, caplog):
+    # A parse failure must return a generic detail: the library's exception
+    # text (which can carry attacker-influenced callback contents) is logged
+    # server-side, never reflected to the browser (#601).
+    secret = "parse-cause-4c2e9a-do-not-leak"
+
+    def _raise(_url):
+        raise AuthorizeCallbackException(secret)
+
+    _patch(monkeypatch)
+    monkeypatch.setattr(rp, "parse_authorize_callback_response", _raise)
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+            resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 400
+    # Generic detail — pre-#622 this reflected f"...: {exc}"; the parser's
+    # exception text must not appear anywhere in the response body.
+    assert resp.json()["detail"] == "Malformed authorization response"
+    assert secret not in resp.text
+    # ...but the real cause IS logged for operators.
+    assert secret in caplog.text
+
+
+async def test_callback_provider_error_detail_is_generic(monkeypatch, caplog):
+    # A provider error response (?error=...) must return a generic detail:
+    # neither the provider's error code nor the attacker-controllable
+    # error_description is reflected to the browser (#601).
+    secret = "err-desc-secret-8b7c1d-do-not-leak"
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+            resp = await client.get(
+                f"/auth/callback?state={state}"
+                f"&error=access_denied&error_description={secret}"
+            )
+    assert resp.status_code == 400
+    # Generic detail — pre-#622 this reflected f"Authorization error: {cb.error}".
+    assert resp.json()["detail"] == "Authorization request failed"
+    # Neither the error code nor the attacker-influenced description leaks to
+    # the client...
+    assert "access_denied" not in resp.text
+    assert secret not in resp.text
+    # ...but the error code IS logged for operators (the description is not).
+    assert "access_denied" in caplog.text
+    assert secret not in caplog.text
 
 
 async def test_callback_nonce_mismatch(monkeypatch):

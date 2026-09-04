@@ -2,6 +2,32 @@
 
 <!-- version list -->
 
+## v3.12.0 (2026-09-04)
+
+### Chores
+
+- Sync uv.lock with 3.11.5
+  ([`111f6fa`](https://github.com/jamescrowley321/identity-model/commit/111f6fad65b5b12746cb4edbc7ecc9a70ad33298))
+
+### Continuous Integration
+
+- **deps)(deps**: Bump actions/deploy-pages in the github-actions group
+  ([#606](https://github.com/jamescrowley321/identity-model/pull/606),
+  [`3c8336b`](https://github.com/jamescrowley321/identity-model/commit/3c8336b290f9ac740a5fb729b1bd2308c11d595a))
+
+### Features
+
+- **token-validation**: Make discovery policy injectable on the cached path
+  ([#585](https://github.com/jamescrowley321/identity-model/pull/585),
+  [`00fcac0`](https://github.com/jamescrowley321/identity-model/commit/00fcac0da0ae055393d1336362711b6d5b422d23))
+
+### Testing
+
+- **token-validation**: Prove injected discovery policy on rotation/retry paths
+  ([#585](https://github.com/jamescrowley321/identity-model/pull/585),
+  [`00fcac0`](https://github.com/jamescrowley321/identity-model/commit/00fcac0da0ae055393d1336362711b6d5b422d23))
+
+
 ## v3.11.5 (2026-09-04)
 
 ### Bug Fixes

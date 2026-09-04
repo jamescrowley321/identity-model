@@ -291,6 +291,9 @@ def build_resolved_config(
         # Propagate the issuer allowlist so the disco/retry paths (which validate
         # via this resolved config) still enforce issuer pinning.
         allowed_issuers=original_config.allowed_issuers,
+        # Preserve the injected discovery policy so a resolved config stays a
+        # faithful copy of the caller's config.
+        discovery_policy=original_config.discovery_policy,
     )
 
 

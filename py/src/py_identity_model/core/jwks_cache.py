@@ -561,8 +561,8 @@ def apply_jwks_cache_outcome(
 
 
 def apply_disco_cache_outcome(
-    cache: dict[tuple[str, bool], DiscoCacheEntry],
-    cache_key: tuple[str, bool],
+    cache: dict[tuple[str, tuple], DiscoCacheEntry],
+    cache_key: tuple[str, tuple],
     response: DiscoveryDocumentResponse,
     now: float,
 ) -> None:

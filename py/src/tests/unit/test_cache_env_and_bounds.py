@@ -33,6 +33,7 @@ import httpx
 import pytest
 import respx
 
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import (
     DEFAULT_DISCO_CACHE_TTL_SECONDS,
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
@@ -435,8 +436,8 @@ class TestLruReadHitEviction:
 
         Mirrors the JWKS end-to-end test but through the disco read path, so a
         regression that adds the read-hit touch to only one of the two caches is
-        caught. The cache key is ``(address, require_https)`` — a tuple, exactly
-        the shape a multi-tenant gateway attacker influences."""
+        caught. The cache key is ``(address, policy.cache_key())`` — a tuple,
+        exactly the shape a multi-tenant gateway attacker influences."""
         monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
         _reset_env_for_testing()
 
@@ -458,7 +459,7 @@ class TestLruReadHitEviction:
                 )
             )
 
-        keys = [(addr, True) for addr in addresses]
+        keys = [(addr, DiscoveryPolicy().cache_key()) for addr in addresses]
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
         for address in addresses[:4]:
