@@ -1,5 +1,5 @@
 {
-  "description": "CFG-106: a missing required key, an invalid value, and a stray group fragment are reported together, registry-ordered",
+  "description": "CFG-106: a missing required key (CFG-001) and an invalid value (CFG-003) are collected and reported together, registry-ordered",
   "mode": "strict",
   "group": "client",
   "client_auth_method": "none",

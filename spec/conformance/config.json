@@ -52,9 +52,9 @@
     {
       "id": "CFG-106",
       "title": "All construction errors are collected and reported atomically",
-      "given": "Strict-mode construction with a missing required key, an invalid value, and an incomplete group simultaneously",
+      "given": "Strict-mode construction with a missing required key and an invalid value present simultaneously (a CFG-001 and a CFG-003)",
       "when": "Config construction is attempted",
-      "then": "Exactly one failure is reported carrying all errors ordered by registry order, and no Config value exists",
+      "then": "Exactly one failure is reported carrying both errors ordered by registry order, and no Config value exists",
       "fixture": "config/strict-collected-errors.json",
       "references": ["config.md §Modes", "config.md §Error Taxonomy"]
     },
@@ -101,6 +101,14 @@
       "then": "CFG-003 names client.discovery_url; scheme policy (https-only) follows the consuming component's existing rules and is not weakened by configuration",
       "fixture": "config/strict-invalid-url.json",
       "references": ["config.md §Modes", "config.md §Design Principles"]
+    },
+    {
+      "id": "CFG-112",
+      "title": "No security-weakening key may exist in the registry",
+      "given": "The canonical key registry in config.md and each language's realization of it",
+      "when": "The registry is enumerated and checked for any key whose value could lower a security posture (e.g. an allow_http / insecure-transport / disable-TLS-verification toggle)",
+      "then": "No such key exists in the registry or in any implementation of it; allow_http-class switches remain code-only builder/option flags and are never resolvable from a ConfigSource. Verified as a per-language invariant, not a fixture: each language asserts that none of its registry keys is security-weakening. This rule is normative and permanent (Principle 5)",
+      "references": ["config.md §Design Principles", "config.md §Sources"]
     },
     {
       "id": "CFG-201",
@@ -156,6 +164,15 @@
       "references": ["config.md §Modes"]
     },
     {
+      "id": "CFG-207",
+      "title": "Legacy discovery cache-entry cap divergence is preserved per language",
+      "given": "Legacy-mode resolution of discovery.cache.max_entries with raw values '0', '-5', 'abc', '', unset, and '128'",
+      "when": "The values are resolved in each language",
+      "then": "Python does not read DISCO_CACHE_MAX_ENTRIES at all (n/a — it caps the jwks and discovery caches together); Go and Rust yield 64 for '-5'/'abc'/''/unset, 0 (unbounded) for '0', and the parsed value for '128' — each reproducing its own current behavior exactly (mirror of CFG-202 for the discovery cache)",
+      "fixture": "config/legacy-disco-cache-entries-divergence.json",
+      "references": ["config.md §Key Registry"]
+    },
+    {
       "id": "CFG-301",
       "title": "Explicit override wins over every source",
       "given": "A key set via explicit override and different values for it in a custom source and the environment",
@@ -201,6 +218,15 @@
       "references": ["config.md §Precedence"]
     },
     {
+      "id": "CFG-306",
+      "title": "Client-group env prefix is configurable",
+      "given": "Strict-mode construction of the client group under the default prefix OIDC_, and separately under a custom prefix, with a value also present under the non-selected prefix",
+      "when": "Config construction succeeds",
+      "then": "Client-group keys resolve from the selected prefix's environment names; under a custom prefix the default-prefixed variable is a different, unrelated env name and is not consulted",
+      "fixture": "config/precedence-client-prefix.json",
+      "references": ["config.md §Sources", "config.md §Key Registry"]
+    },
+    {
       "id": "CFG-401",
       "title": "Debug and display output redacts secrets",
       "given": "A constructed Config containing a secret-classified value",
@@ -233,6 +259,15 @@
       "given": "A constructed Config containing a secret-classified value",
       "when": "Code accesses the secret",
       "then": "The raw value is reachable only through an explicit accessor (expose/Value per language idiom), never via implicit string conversion",
+      "references": ["config.md §Secret Redaction"]
+    },
+    {
+      "id": "CFG-405",
+      "title": "Log output redacts secrets",
+      "given": "A constructed Config containing a secret-classified value",
+      "when": "The Config or any field carrying the secret is written to log output (a logging call, a structured-log field, or the value's logging representation)",
+      "then": "Log output contains the placeholder '<redacted>' for the secret and never the raw value",
+      "fixture": "config/redaction-log.json",
       "references": ["config.md §Secret Redaction"]
     },
     {

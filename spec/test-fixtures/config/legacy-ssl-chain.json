@@ -23,5 +23,6 @@
       "expect": { "resolved": { "tls.verify": true } }
     }
   ],
-  "note": "Python behavior as of 2026-09-03 (get_ssl_verify, lru_cached). go/rust configure TLS per-client in code and do not read these keys (n/a)."
+  "note": "Python behavior as of 2026-09-03 (get_ssl_verify, lru_cached). go/rust configure TLS per-client in code and do not read these keys (n/a).",
+  "resolved_key_note": "The resolved key `tls.verify` is NOT a registry logical key — it is the httpx `verify` output that the legacy chain produces (a path string when a CA bundle is selected, or boolean true for system CAs). The registry logical keys this case reads from are `tls.cert_file` (SSL_CERT_FILE), `tls.ca_bundle` (CURL_CA_BUNDLE), and `tls.ca_bundle_requests` (REQUESTS_CA_BUNDLE); a runner MUST map to those, not to `tls.verify`."
 }
