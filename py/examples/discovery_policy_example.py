@@ -8,6 +8,7 @@ environments using DiscoveryPolicy.
 from py_identity_model import (
     DiscoveryDocumentRequest,
     DiscoveryPolicy,
+    TokenValidationConfig,
     parse_discovery_url,
 )
 
@@ -66,6 +67,32 @@ def loopback_example():
     print("  HTTPS required, but localhost gets an exception")
 
 
+def cached_validation_example():
+    """Inject a policy into the cached token-validation path.
+
+    ``TokenValidationConfig.discovery_policy`` applies a full policy while
+    still using the built-in discovery/JWKS TTL cache — no need to fetch
+    discovery yourself and re-implement caching. Here the issuer publishes its
+    JWKS on a separate CDN host, which the default strict policy would reject.
+    """
+    print("\n" + "=" * 60)
+    print("Discovery Policy - Cached Token Validation")
+    print("=" * 60)
+
+    policy = DiscoveryPolicy(
+        additional_endpoint_base_addresses=["https://keys.cdn.example"],
+    )
+    config = TokenValidationConfig(
+        perform_disco=True,
+        audience="my-api",
+        discovery_policy=policy,
+    )
+    print(f"\n  discovery_policy: {config.discovery_policy}")
+    print("  Injected policy governs discovery validation on the cached path")
+    print("  (takes precedence over require_https); the built-in TTL cache is")
+    print("  reused, and cache entries are partitioned by the full policy.")
+
+
 def endpoint_parsing_example():
     """Parse discovery URLs to extract authority."""
     print("\n" + "=" * 60)
@@ -87,6 +114,7 @@ def main():
     production_example()
     development_example()
     loopback_example()
+    cached_validation_example()
     endpoint_parsing_example()
     print("\n" + "=" * 60)
     print("Examples completed!")

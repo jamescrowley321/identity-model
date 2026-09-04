@@ -6,6 +6,7 @@ from py_identity_model import DiscoveryPolicy
 from py_identity_model.core.discovery_policy import (
     is_loopback,
     parse_discovery_url,
+    resolve_discovery_policy,
     validate_url_scheme,
 )
 from py_identity_model.core.response_processors import (
@@ -349,3 +350,62 @@ class TestValidateEndpointAuthority:
             self._make_response(),
             policy,
         )
+
+
+class TestDiscoveryPolicyCacheKey:
+    """``DiscoveryPolicy.cache_key`` is the cache-partitioning identity that
+    prevents a lax-policy discovery response from being served to a stricter
+    caller. It must be hashable and distinguish every validation-affecting
+    field."""
+
+    def test_default_key_is_hashable(self):
+        """The key must be usable as a dict key (hashable, no list fields)."""
+        key = DiscoveryPolicy().cache_key()
+        assert hash(key) is not None
+        # Round-trips as a dict key.
+        assert {(("addr",), key): 1}[(("addr",), key)] == 1
+
+    def test_equal_policies_produce_equal_keys(self):
+        assert DiscoveryPolicy().cache_key() == DiscoveryPolicy().cache_key()
+        a = DiscoveryPolicy(additional_endpoint_base_addresses=["https://cdn"])
+        b = DiscoveryPolicy(additional_endpoint_base_addresses=["https://cdn"])
+        assert a.cache_key() == b.cache_key()
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"require_https": False},
+            {"allow_http_on_loopback": False},
+            {"validate_issuer": False},
+            {"validate_endpoints": False},
+            {"require_key_set": False},
+            {"additional_endpoint_base_addresses": ["https://cdn.example"]},
+            {"authority": "https://auth.example"},
+            {"allow_loopback_endpoints": True},
+        ],
+    )
+    def test_each_field_changes_the_key(self, kwargs):
+        """Every validation-affecting field must move the key, else two policies
+        that validate differently could collide onto one cache entry."""
+        assert DiscoveryPolicy(**kwargs).cache_key() != DiscoveryPolicy().cache_key()
+
+
+class TestResolveDiscoveryPolicy:
+    """``resolve_discovery_policy`` encodes the single precedence rule shared by
+    the sync/async cached ``validate_token`` paths: an explicit policy wins over
+    the legacy ``require_https`` bool."""
+
+    def test_none_derives_from_require_https_true(self):
+        assert resolve_discovery_policy(None, True) == DiscoveryPolicy(
+            require_https=True
+        )
+
+    def test_none_derives_from_require_https_false(self):
+        resolved = resolve_discovery_policy(None, False)
+        assert resolved.require_https is False
+
+    def test_explicit_policy_takes_precedence(self):
+        """The explicit policy is returned as-is; the require_https arg is
+        ignored (the policy's own require_https governs)."""
+        policy = DiscoveryPolicy(require_https=False, validate_issuer=False)
+        assert resolve_discovery_policy(policy, True) is policy
