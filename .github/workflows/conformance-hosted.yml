@@ -92,6 +92,78 @@ jobs:
             --publish "${{ inputs.publish }}" \
             --verbose
 
+      # ── Extended certification profiles (Story 23.1 / #607) ──
+      # Hosted evidence runs for the FAPI 2.0, Dynamic Registration and Logout
+      # RP plans, mirroring the basic-rp step. Each produces an --export-zip
+      # (certification submission bundle) + --rp-logs-zip. run_tests.py fails
+      # loud if CONFORMANCE_TOKEN is absent, so a missing secret never yields a
+      # silent pass. mTLS (fapi2-mtls-rp) is intentionally omitted here — it
+      # needs a mutual-TLS terminator not present in this hosted-RP path.
+      - name: Run FAPI 2.0 Security Profile RP conformance tests
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-rp \
+            --output conformance/results/hosted/fapi2-rp-latest.json \
+            --export-zip conformance/results/hosted/fapi2-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/fapi2-rp-rp-logs.zip \
+            --publish "${{ inputs.publish }}" \
+            --verbose
+
+      - name: Run FAPI 2.0 Message Signing RP conformance tests
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-message-signing-rp \
+            --output conformance/results/hosted/fapi2-message-signing-rp-latest.json \
+            --export-zip conformance/results/hosted/fapi2-message-signing-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/fapi2-message-signing-rp-rp-logs.zip \
+            --publish "${{ inputs.publish }}" \
+            --verbose
+
+      - name: Run Dynamic Registration RP conformance tests
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          python conformance/run_tests.py \
+            --plan dynamic-rp \
+            --output conformance/results/hosted/dynamic-rp-latest.json \
+            --export-zip conformance/results/hosted/dynamic-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/dynamic-rp-rp-logs.zip \
+            --publish "${{ inputs.publish }}" \
+            --verbose
+
+      - name: Run RP-Initiated Logout RP conformance tests
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          python conformance/run_tests.py \
+            --plan rpinitiated-logout-rp \
+            --output conformance/results/hosted/rpinitiated-logout-rp-latest.json \
+            --export-zip conformance/results/hosted/rpinitiated-logout-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/rpinitiated-logout-rp-rp-logs.zip \
+            --publish "${{ inputs.publish }}" \
+            --verbose
+
+      - name: Run Back-Channel Logout RP conformance tests
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          python conformance/run_tests.py \
+            --plan backchannel-logout-rp \
+            --output conformance/results/hosted/backchannel-logout-rp-latest.json \
+            --export-zip conformance/results/hosted/backchannel-logout-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/backchannel-logout-rp-rp-logs.zip \
+            --publish "${{ inputs.publish }}" \
+            --verbose
+
       - name: Upload conformance results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()

@@ -18,7 +18,7 @@ on:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -93,6 +93,68 @@ jobs:
             --plan form-post-basic-rp \
             --output conformance/results/form-post-basic-rp-latest.json \
             --verbose
+
+      # ── Extended certification profiles (Story 23.1 / #607) ──
+      # FAPI 2.0 + Dynamic Registration + Logout RP plans. These run nightly
+      # and on release (this job is workflow_call-gated by release.yml, so a
+      # non-continue-on-error step here blocks the release tag). They are
+      # report-only (continue-on-error) until each profile is proven green
+      # against the local suite, then flipped to a hard gate — see DEC-001 and
+      # docs/security/harder-tier-coverage.md. Evidence for each profile is
+      # picked up by the existing *-latest.json export + upload steps below.
+      - name: Run FAPI 2.0 Security Profile RP conformance tests
+        # report-only until proven green locally (DEC-001); flip to hard gate then
+        continue-on-error: true
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-rp \
+            --output conformance/results/fapi2-rp-latest.json \
+            --verbose
+
+      - name: Run FAPI 2.0 Message Signing RP conformance tests
+        # report-only until proven green locally (DEC-001); flip to hard gate then
+        continue-on-error: true
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-message-signing-rp \
+            --output conformance/results/fapi2-message-signing-rp-latest.json \
+            --verbose
+
+      - name: Run Dynamic Registration RP conformance tests
+        # report-only until proven green locally (DEC-001); flip to hard gate then
+        continue-on-error: true
+        run: |
+          python conformance/run_tests.py \
+            --plan dynamic-rp \
+            --output conformance/results/dynamic-rp-latest.json \
+            --verbose
+
+      - name: Run RP-Initiated Logout RP conformance tests
+        # report-only until proven green locally (DEC-001); flip to hard gate then
+        continue-on-error: true
+        run: |
+          python conformance/run_tests.py \
+            --plan rpinitiated-logout-rp \
+            --output conformance/results/rpinitiated-logout-rp-latest.json \
+            --verbose
+
+      - name: Run Back-Channel Logout RP conformance tests
+        # report-only until proven green locally (DEC-001); flip to hard gate then
+        continue-on-error: true
+        run: |
+          python conformance/run_tests.py \
+            --plan backchannel-logout-rp \
+            --output conformance/results/backchannel-logout-rp-latest.json \
+            --verbose
+
+      - name: Skip FAPI 2.0 mTLS RP conformance tests (explicit)
+        # Explicit loud skip, never a silent pass: the FAPI2 mTLS variant needs
+        # an mTLS terminator + provisioned client certs (RFC 8705) that are not
+        # wired into the local suite path. Tracked for a future hosted run.
+        run: |
+          echo "SKIP: fapi2-mtls-rp not run — mTLS terminator + client certs are not"
+          echo "      provisioned for the local conformance suite (RFC 8705)."
+          echo "      This is an explicit skip, not a pass. See conformance/README.md."
 
       - name: Export HTML results and logs
         if: always()

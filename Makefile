@@ -304,6 +304,44 @@ conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package r
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-form-post-basic-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-form-post-basic-rp-latest.json --verbose
 	@echo "fastapi-identity-model conformance regression complete. Results in conformance/results/"
 
+# ── Extended certification profiles (Story 23.1 / #607) ──────────────
+# FAPI 2.0 + Dynamic-Registration + Logout RP plans. Configs live in
+# conformance/configs/ and the RP harness (conformance/app.py) already serves
+# every endpoint they exercise; these targets just drive run_tests.py --plan
+# per profile against the local suite and write evidence to
+# conformance/results/<plan>-latest.json (the same glob CI exports + uploads).
+
+.PHONY: conformance-test-fapi2
+conformance-test-fapi2: conformance-up ## Run FAPI 2.0 (security + message-signing) RP plans against the local suite
+	$(UVROOT) python conformance/run_tests.py --plan fapi2-rp --output conformance/results/fapi2-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan fapi2-message-signing-rp --output conformance/results/fapi2-message-signing-rp-latest.json --verbose
+	@echo "FAPI 2.0 conformance plans complete. Results in conformance/results/"
+
+.PHONY: conformance-test-fapi2-mtls
+conformance-test-fapi2-mtls: ## Run FAPI 2.0 mTLS RP plan (requires mTLS terminator + client certs)
+ifdef CONFORMANCE_MTLS
+	$(UVROOT) python conformance/run_tests.py --plan fapi2-mtls-rp --output conformance/results/fapi2-mtls-rp-latest.json --verbose
+	@echo "FAPI 2.0 mTLS conformance plan complete. Results in conformance/results/"
+else
+	@echo "SKIP: fapi2-mtls-rp not run — mTLS terminator + client certs are not provisioned for the local suite."
+	@echo "      This is an explicit skip, not a pass. Set CONFORMANCE_MTLS=1 once mTLS (RFC 8705) is wired to run it."
+endif
+
+.PHONY: conformance-test-dynamic
+conformance-test-dynamic: conformance-up ## Run Dynamic Registration (RFC 7591) RP plan against the local suite
+	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --output conformance/results/dynamic-rp-latest.json --verbose
+	@echo "Dynamic Registration conformance plan complete. Results in conformance/results/"
+
+.PHONY: conformance-test-logout
+conformance-test-logout: conformance-up ## Run RP-Initiated + Back-Channel Logout RP plans against the local suite
+	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --output conformance/results/rpinitiated-logout-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --output conformance/results/backchannel-logout-rp-latest.json --verbose
+	@echo "Logout conformance plans complete. Results in conformance/results/"
+
+.PHONY: conformance-test-extended
+conformance-test-extended: conformance-test-fapi2 conformance-test-dynamic conformance-test-logout conformance-test-fapi2-mtls ## Run all extended certification profiles (FAPI2 + dynamic + logout; mTLS skips unless CONFORMANCE_MTLS=1)
+	@echo "Extended conformance profiles complete. Results in conformance/results/"
+
 .PHONY: conformance-test-harness
 conformance-test-harness: ## Run conformance harness unit tests (parser + callback)
 	$(UVROOT) --with fastapi --with httpx --with python-multipart --with respx pytest conformance/tests/ -v

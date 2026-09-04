@@ -52,6 +52,11 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 | `config-rp` | `configs/config-rp.json` | Config RP certification (discovery-based config) |
 | `form-post-basic-rp` | `configs/form-post-basic-rp.json` | Basic RP with `form_post` response mode |
 | `fapi2-rp` | `configs/fapi2-rp.json` | FAPI 2.0 Security Profile RP (PAR + PKCE S256 + private_key_jwt + DPoP + RFC 9207 `iss`) |
+| `fapi2-message-signing-rp` | `configs/fapi2-message-signing-rp.json` | FAPI 2.0 Message Signing RP (adds JARM signed authorization responses on top of the security profile) |
+| `fapi2-mtls-rp` | `configs/fapi2-mtls-rp.json` | FAPI 2.0 Security Profile RP, mTLS variant (`client_auth_type=mtls` + `sender_constrain=mtls`, RFC 8705). **Not run in CI** — needs an mTLS terminator + client certs; explicit skip (`make conformance-test-fapi2-mtls` without `CONFORMANCE_MTLS=1`) |
+| `dynamic-rp` | `configs/dynamic-rp.json` | Dynamic Registration RP (RFC 7591 `/register`) |
+| `rpinitiated-logout-rp` | `configs/rpinitiated-logout-rp.json` | RP-Initiated Logout RP (`end_session_endpoint` + post-logout callback) |
+| `backchannel-logout-rp` | `configs/backchannel-logout-rp.json` | Back-Channel Logout RP (OP-pushed `logout_token` validation) |
 | `fastapi-basic-rp` | `configs/fastapi-basic-rp.json` | Basic RP regression for the fastapi-identity-model router (`--rp-url http://localhost:8889`) |
 | `fastapi-config-rp` | `configs/fastapi-config-rp.json` | Config RP regression for the fastapi-identity-model router |
 | `fastapi-form-post-basic-rp` | `configs/fastapi-form-post-basic-rp.json` | Form Post Basic RP regression for the fastapi-identity-model router |
@@ -59,6 +64,34 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 The `fastapi-*` plans run the identical suite plans against the package harness
 (`make conformance-test-fastapi`). They are a CI regression shield for the
 package — the core library remains the OIDF certification target (#242).
+
+### Extended profile make targets (Story 23.1 / #607)
+
+The FAPI 2.0, Dynamic Registration and Logout plans are wired into make targets
+that drive `run_tests.py --plan` per profile against the local suite and write
+evidence to `conformance/results/<plan>-latest.json`:
+
+| Target | Plans |
+|--------|-------|
+| `make conformance-test-fapi2` | `fapi2-rp`, `fapi2-message-signing-rp` |
+| `make conformance-test-dynamic` | `dynamic-rp` |
+| `make conformance-test-logout` | `rpinitiated-logout-rp`, `backchannel-logout-rp` |
+| `make conformance-test-fapi2-mtls` | `fapi2-mtls-rp` (**explicit skip** unless `CONFORMANCE_MTLS=1`) |
+| `make conformance-test-extended` | all of the above |
+
+These profiles also run **nightly and on release** via the `conformance` job in
+`.github/workflows/conformance.yml` (that job is `workflow_call`-gated by
+`release.yml`, so it is a pre-release gate). Each profile step is report-only
+(`continue-on-error`) until it is proven green against the local suite, then
+flipped to a hard release gate — see `docs/security/harder-tier-coverage.md` and
+decision DEC-001. Hosted evidence (`--export-zip` certification bundles) is
+produced by `.github/workflows/conformance-hosted.yml`.
+
+**mTLS is never a silent pass.** `fapi2-mtls-rp` needs a mutual-TLS terminator
+and provisioned client certificates (RFC 8705) that are not wired into the local
+or hosted RP path. Both the make target and the CI step emit an explicit
+`SKIP:` line stating the reason and exit successfully — the profile is skipped,
+not passed. Set `CONFORMANCE_MTLS=1` once the mTLS path is provisioned to run it.
 
 ## FAPI 2.0 Security Profile RP
 
