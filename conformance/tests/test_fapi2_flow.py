@@ -176,6 +176,7 @@ def test_create_plan_merges_fapi2_client_overrides() -> None:
 
 class _Disco:
     issuer = ISSUER
+    token_endpoint = f"{ISSUER}/token"
 
 
 def _fapi2_session() -> harness_app.AuthSession:
@@ -221,9 +222,7 @@ def test_non_fapi2_session_skips_iss_validation() -> None:
 
 def test_build_token_request_fapi2_uses_private_key_jwt_and_dpop() -> None:
     session = _fapi2_session()
-    req = harness_app._build_auth_code_token_request(
-        session, f"{ISSUER}/token", "the-code"
-    )
+    req = harness_app._build_auth_code_token_request(session, _Disco(), "the-code")
     assert req.private_key_jwt is not None
     assert req.dpop_key is session.dpop_key
     assert req.client_secret is None
@@ -238,9 +237,7 @@ def test_build_token_request_non_fapi2_uses_client_secret() -> None:
         client_secret="sekret",
         redirect_uri="https://rp.example.com/callback",
     )
-    req = harness_app._build_auth_code_token_request(
-        session, f"{ISSUER}/token", "the-code"
-    )
+    req = harness_app._build_auth_code_token_request(session, _Disco(), "the-code")
     assert req.private_key_jwt is None
     assert req.dpop_key is None
     assert req.client_secret == "sekret"
