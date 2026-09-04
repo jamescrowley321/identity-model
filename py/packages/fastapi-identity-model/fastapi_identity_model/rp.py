@@ -103,9 +103,13 @@ async def _discover(settings: OIDCSettings) -> DiscoveryDocumentResponse:
         DiscoveryDocumentRequest(address=settings.discovery_url),
     )
     if not disco.is_successful:
+        # Log the provider's specific error for operators; return a generic
+        # detail so the callback endpoint cannot be probed for upstream
+        # internals (mirrors the resource-server middleware's F-18 posture).
+        logger.warning("OIDC discovery failed: %s", disco.error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"OIDC discovery failed: {disco.error}",
+            detail="Identity provider discovery failed",
         )
     # OIDC Discovery 1.0 §4.3: the document's issuer MUST match the URL the
     # document was retrieved from (issuer mix-up defense). The library only
@@ -114,12 +118,14 @@ async def _discover(settings: OIDCSettings) -> DiscoveryDocumentResponse:
     # document at "https://op/.well-known/openid-configuration".
     expected = _expected_issuer(settings.discovery_url)
     if (disco.issuer or "").rstrip("/") != expected:
+        logger.warning(
+            "Discovery document issuer mismatch: expected %r, got %r",
+            expected,
+            disco.issuer,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"Discovery document issuer mismatch: expected '{expected}', "
-                f"got '{disco.issuer}'"
-            ),
+            detail="Identity provider configuration error",
         )
     return disco
 
@@ -181,9 +187,10 @@ async def _exchange_code(
         ),
     )
     if not tok.is_successful or not tok.token:
+        logger.warning("Token exchange failed: %s", tok.error)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Token exchange failed: {tok.error}",
+            detail="Authorization code exchange failed",
         )
     return tok.token
 
@@ -210,9 +217,10 @@ async def _validate_id_token(
             disco_doc_address=settings.discovery_url,
         )
     except PyIdentityModelException as exc:
+        logger.info("ID token validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"ID token validation failed: {exc}",
+            detail="ID token validation failed",
         ) from exc
 
     # Nonce binding is the RP's responsibility — the library does not check it.
@@ -278,14 +286,19 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     try:
         cb = parse_authorize_callback_response(callback_url)
     except PyIdentityModelException as exc:
+        logger.info("Malformed authorization callback: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Malformed authorization callback: {exc}",
+            detail="Malformed authorization response",
         ) from exc
     if not cb.is_successful:
+        # ``cb.error`` is the provider's OAuth 2.0 ``error`` param, but it can
+        # carry an attacker-influenced ``error_description``; log it, return a
+        # generic detail rather than reflecting it to the browser.
+        logger.info("Authorization error from provider: %s", cb.error)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Authorization error: {cb.error}",
+            detail="Authorization request failed",
         )
     if not validate_authorize_callback_state(cb, flow["state"]).is_valid:
         raise HTTPException(
