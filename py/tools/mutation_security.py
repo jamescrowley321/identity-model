@@ -41,10 +41,21 @@ Guardrails
 * **>=1-mutant floor.** If mutmut produced **zero** mutants for the changed
   files, that is a config/scope/version-drift failure, not a pass — we exit 1.
   (This is the "silent green on output drift" hole the review flagged.)
-* **Exact-name equivalent-mutant allowlist.** Genuinely-equivalent mutants
-  (semantically identical, unkillable) are waived by their **exact mutant name**
-  in ``tools/mutation_security_allowlist.txt`` (anchored, not substring-anywhere
-  — one broad substring must never silently waive real survivors elsewhere).
+* **Content-verified equivalent-mutant allowlist.** Genuinely-equivalent
+  mutants (semantically identical, unkillable) are waived in
+  ``tools/mutation_security_allowlist.txt``. mutmut numbers mutants densely
+  per function (``{name}_{i+1}``), so the ``_N`` **index is not stable**: adding
+  or removing constructs — or the changed-line *pre-filter* above, which compacts
+  the generated list — renumbers a function's mutants, and an index-keyed waiver
+  would then silently rebind to a *different* mutant. In a security gate that is a
+  fail-open: a real, killable survivor inherits a stale waiver and the gate passes
+  green (issue #615). So a waiver is keyed by ``(function prefix, hash of the
+  mutant's ``mutmut show`` diff)`` — the *transformation itself*, not its index. A
+  survivor is waived **only** if its function AND its current diff hash match an
+  entry, so renumbering can neither rebind a waiver to a different mutant (the hash
+  won't match → fail-closed) nor lose track of the genuine equivalent (the hash
+  follows the transformation, not the index). A bare name with no hash is a hard
+  error, never a silent pass. See :func:`load_allowlist` / :func:`evaluate`.
 
 mutmut 3.x is configured via ``setup.cfg [mutmut]``; this driver writes a
 **temporary** ``setup.cfg`` for the run (restoring any pre-existing one) so the
@@ -55,13 +66,18 @@ tests live under ``src/tests`` (mutmut only auto-copies top-level ``tests/``).
 from __future__ import annotations
 
 import ast
+from functools import cache
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from typing import TYPE_CHECKING
+
+from mutmut.__main__ import MutantLineSpans, get_diff_for_mutant, mutate_file_contents
 
 
 if TYPE_CHECKING:
@@ -204,13 +220,19 @@ def covered_lines_for_file(
     **Fail-safe:** returns ``None`` on any non-match, which tells mutmut to mutate
     the *whole* file — slow but correct (the pre-#511 behaviour). So a path-keying
     or mutmut-version drift degrades to full mutation, **never** to "mutate
-    nothing" (which would be fail-open). Returning an empty set is deliberately
-    never done here.
+    nothing" (which would be fail-open). An empty set is likewise coerced to
+    ``None``: a matched file whose diff yielded *no* mutatable line numbers (a
+    mode-only change, or a hunk-parse miss) must fall back to full mutation, not
+    tell mutmut "mutate nothing on this file" — mutmut treats ``set()`` as an empty
+    scope and silently mutates none of it (fail-open, and with other files still
+    producing statuses the >=1 floor would not catch it). ``set(lines) or None``
+    guarantees this function returns a non-empty line set or ``None``, never
+    ``set()``.
     """
     fn = str(filename).replace(os.sep, "/")
     for rel, lines in changed_by_relpath.items():
         if fn == rel or fn.endswith("/" + rel):
-            return set(lines)
+            return set(lines) or None
     return None
 
 
@@ -296,6 +318,90 @@ def _removed_source_line(show_output: str) -> str | None:
 
 def _mutmut_show(mutant_name: str) -> str:
     return _run([sys.executable, "-m", "mutmut", "show", mutant_name]).stdout
+
+
+def _diff_signature(show_output: str) -> str:
+    """The *content* of a ``mutmut show`` diff, stripped of everything that is not
+    the transformation — so it is stable across mutant renumbering and identical
+    whichever of mutmut's two diff code paths produced it.
+
+    Dropped lines:
+
+    * ``# <name>: <status>`` — the header ``mutmut show`` prepends. It carries the
+      run status (volatile) and the mutant name, whose ``_N`` index is exactly what
+      must NOT key the waiver. (When the diff comes from ``get_diff_for_mutant``
+      directly there is no such header; dropping it makes both inputs agree.)
+    * ``--- <path>`` / ``+++ <path>`` — unified-diff file headers. mutmut fills
+      these from the mutants-sandbox path, which is environment-dependent
+      (absolute vs relative, ``mutants/`` prefix).
+    * ``@@ ... @@`` — hunk headers. Their line numbers shift when unrelated code is
+      added above the mutant and differ between mutmut's index-based and
+      source-based diff paths; the context + ``-``/``+`` lines that remain already
+      identify the transformation uniquely.
+
+    What remains — the context and changed lines — is byte-identical for a given
+    source transformation regardless of the mutant's index, so hashing it yields a
+    renumbering-stable waiver key (issue #615).
+    """
+    body = [
+        line
+        for line in show_output.splitlines()
+        if not line.startswith(("# ", "--- ", "+++ ", "@@"))
+    ]
+    return "\n".join(body).strip()
+
+
+def _diff_hash(show_output: str) -> str:
+    """A short, stable fingerprint of a mutant's transformation (see
+    :func:`_diff_signature`). 64 bits of SHA-256 is ample to distinguish the
+    handful of curated waivers without collision, and keeps the allowlist legible.
+    """
+    return hashlib.sha256(_diff_signature(show_output).encode()).hexdigest()[:16]
+
+
+def _mutant_prefix(mutant_name: str) -> str:
+    """The renumbering-stable identity of a mutant's *function*: everything up to
+    the ``__mutmut_`` index (``pkg.mod.x_foo__mutmut_3`` -> ``pkg.mod.x_foo``).
+    Two mutants share a prefix iff they mutate the same function."""
+    return mutant_name.partition("__mutmut_")[0]
+
+
+@cache
+def _generate_mutants(path: str) -> tuple[frozenset[str], str]:
+    """Generate *all* mutants for ``path`` from the current working-tree source and
+    return ``(mutant names, path to an on-disk span index)``.
+
+    This is mutmut's pure-libcst mutation step only — no sandbox copy, no coverage
+    pass, no test run — so it is milliseconds, not the ~40-minute gated run. Writing
+    the mutated module plus its ``MutantLineSpans`` index lets
+    ``get_diff_for_mutant`` render any mutant's diff via the same index-based path
+    the gate's ``mutmut show`` uses, so the hash it produces matches gate time.
+    Cached per file.
+    """
+    mutated = mutate_file_contents(path, Path(path).read_text(), None)
+    out = Path(tempfile.mkdtemp()) / Path(path).name
+    out.write_text(mutated.code)
+    MutantLineSpans(
+        path=out, span_by_function_name=mutated.line_span_by_function_name
+    ).save()
+    return frozenset(mutated.mutant_names), str(out)
+
+
+def compute_diff_hash(mutant_name: str) -> str:
+    """The waiver hash (:func:`_diff_hash`) for ``mutant_name`` computed from the
+    **current** working-tree source. Used to author/migrate allowlist entries and
+    by the gate's self-test to prove every entry still names a real transformation.
+
+    Raises :class:`ValueError` if the mutant no longer exists in current source —
+    i.e. the equivalence it waived was renumbered or removed and the waiver must be
+    re-authored (fail-closed, never a silent stale waiver).
+    """
+    names, indexed = _generate_mutants(_mutant_file(mutant_name))
+    if mutant_name.rpartition(".")[-1] not in names:
+        raise ValueError(
+            f"mutation_security: mutant not found in current source: {mutant_name}"
+        )
+    return _diff_hash(get_diff_for_mutant(mutant_name, path=indexed))
 
 
 def _mutant_on_changed_line(
@@ -395,14 +501,48 @@ def _restore_setup_cfg(backup: str | None) -> None:
         cfg.write_text(backup)
 
 
-def load_allowlist(text: str) -> set[str]:
-    """Exact mutant names to waive (equivalent mutants). One name per line;
-    ``#`` comments and blanks ignored."""
-    return {
-        stripped
-        for line in text.splitlines()
-        if (stripped := line.split("#", 1)[0].strip())
-    }
+_ALLOWLIST_HASH = re.compile(r"^[0-9a-f]{16}$")
+# Each allowlist entry is exactly two whitespace-separated fields: name + hash.
+_ALLOWLIST_FIELDS = 2
+
+
+def load_allowlist(text: str) -> set[tuple[str, str]]:
+    """Parse the equivalent-mutant allowlist into ``{(function prefix, diff hash)}``.
+
+    Each non-comment line is ``<exact mutant name> <16-hex diff hash>`` (trailing
+    ``#`` comment optional). The waiver is keyed by the mutant's **function prefix**
+    (stable module.function identity, see :func:`_mutant_prefix`) plus a hash of its
+    ``mutmut show`` diff content (:func:`_diff_hash`) — never the volatile ``_N``
+    index. A survivor is waived only if BOTH its function and its current
+    transformation hash match an entry (see :func:`evaluate`), so renumbering can
+    neither rebind a waiver to a different mutant (fail-open, issue #615) nor be
+    defeated by the index moving (the equivalent keeps its content hash).
+
+    A bare name with no ``16-hex`` hash — or any other malformed entry — raises
+    :class:`ValueError`. An un-verifiable waiver must be a hard, loud failure, never
+    a silent pass: dropping it would only fail closed, but leaving a name-only
+    waiver in place is exactly the index-keyed fail-open this format removes.
+    """
+    waivers: set[tuple[str, str]] = set()
+    for raw in text.splitlines():
+        stripped = raw.split("#", 1)[0].strip()
+        if not stripped:
+            continue
+        parts = stripped.split()
+        if (
+            len(parts) != _ALLOWLIST_FIELDS
+            or "__mutmut_" not in parts[0]
+            or not _ALLOWLIST_HASH.match(parts[1])
+        ):
+            raise ValueError(
+                "mutation_security_allowlist.txt: malformed entry "
+                f"{stripped!r}; expected '<mutant name> <16-hex diff hash>'. "
+                "Compute the hash with: "
+                "python tools/mutation_security.py --hash <mutant name>"
+            )
+        name, digest = parts
+        waivers.add((_mutant_prefix(name), digest))
+    return waivers
 
 
 def parse_results(text: str) -> dict[str, str]:
@@ -420,17 +560,27 @@ def parse_results(text: str) -> dict[str, str]:
 
 
 def evaluate(
-    statuses: dict[str, str], allowlist: set[str]
+    statuses: dict[str, str],
+    waivers: set[tuple[str, str]],
+    show: Callable[[str], str] = _mutmut_show,
 ) -> tuple[list[str], list[str]]:
     """Return ``(unwaived_survivors, waived_survivors)``.
 
-    A survivor is **any** mutant whose status is not exactly ``killed``.
+    A survivor is **any** mutant whose status is not exactly ``killed``. It is
+    waived only if ``(its function prefix, hash of its CURRENT ``mutmut show``
+    diff)`` is in ``waivers`` — i.e. the waiver was written for *this*
+    transformation, not merely for this (renumbering-unstable) name. If the name
+    now maps to a different transformation than the waiver recorded — because the
+    changed-line pre-filter or an unrelated edit renumbered the function's mutants
+    — the hash will not match and the survivor is NOT waived, so a real regression
+    can never inherit a stale index's waiver (issue #615).
     """
     unwaived, waived = [], []
     for name, status in sorted(statuses.items()):
         if status == KILLED_STATUS:
             continue
-        (waived if name in allowlist else unwaived).append(f"{name}: {status}")
+        key = (_mutant_prefix(name), _diff_hash(show(name)))
+        (waived if key in waivers else unwaived).append(f"{name}: {status}")
     return unwaived, waived
 
 
@@ -547,7 +697,12 @@ def main() -> int:
             f"({line_excluded} on unchanged lines within changed functions)."
         )
 
-        unwaived, waived = evaluate(scoped, load_allowlist(_read_allowlist()))
+        try:
+            waivers = load_allowlist(_read_allowlist())
+        except ValueError as exc:
+            print(f"mutation-security: FAILED — {exc}", file=sys.stderr)
+            return 1
+        unwaived, waived = evaluate(scoped, waivers)
         for w in waived:
             print(f"mutation-security: WAIVED equivalent mutant {w}")
 
@@ -559,8 +714,11 @@ def main() -> int:
                 print(f"  {s}")
             print(
                 "\nAdd a test under src/tests/security/ that kills the mutant "
-                "(`mutmut show <name>` to see it), or — if it is provably equivalent — "
-                "waive its exact name in tools/mutation_security_allowlist.txt with a justification."
+                "(`mutmut show <name>` to see it), or — if it is provably equivalent "
+                "— waive it in tools/mutation_security_allowlist.txt as "
+                "'<name> <hash>' with a justification, where <hash> comes from "
+                "`python tools/mutation_security.py --hash <name>` (content-keyed so "
+                "renumbering cannot rebind the waiver, issue #615)."
             )
             return 1
 
@@ -577,5 +735,20 @@ def _read_allowlist() -> str:
     return ALLOWLIST_FILE.read_text() if ALLOWLIST_FILE.exists() else ""
 
 
+def _hash_cli(names: list[str]) -> int:
+    """``--hash <name> [...]``: print ``<name> <hash>`` for each mutant, computed
+    from the current source. Emits the exact line to paste into the allowlist."""
+    rc = 0
+    for name in names:
+        try:
+            print(f"{name} {compute_diff_hash(name)}")
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            rc = 1
+    return rc
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--hash"]:
+        raise SystemExit(_hash_cli(sys.argv[2:]))
     raise SystemExit(main())
