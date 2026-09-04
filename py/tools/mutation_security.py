@@ -65,6 +65,7 @@ if TYPE_CHECKING:
 SECURITY_MODULES: list[str] = [
     # core validation / crypto / protocol
     "src/py_identity_model/core/token_validation_logic.py",
+    "src/py_identity_model/core/claims_validation.py",
     "src/py_identity_model/core/jwt_helpers.py",
     "src/py_identity_model/core/parsers.py",
     "src/py_identity_model/core/mtls.py",

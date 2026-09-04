@@ -35,6 +35,7 @@ def test_claims_validation_error_is_typed_and_structured():
     assert isinstance(err, TokenValidationException)
     assert err.reason == "nope"
     assert err.claim == "tenant"
+    assert err.token_part == "payload"
     assert err.details == {"reason": "nope", "claim": "tenant"}
 
 
@@ -63,8 +64,10 @@ def test_require_claims_treats_none_as_missing():
 
 
 def test_require_claims_needs_a_name():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="at least one") as exc:
         require_claims()
+    # Exact message (not just `match`) so a mutation to the string is killed.
+    assert str(exc.value) == "require_claims needs at least one claim name"
 
 
 # --- require_claim_value ---------------------------------------------------
@@ -75,6 +78,7 @@ def test_require_claim_value_accepts_and_rejects():
     with pytest.raises(ClaimsValidationError) as exc:
         require_claim_value("role", "admin")({"role": "user"})
     assert exc.value.claim == "role"
+    assert exc.value.reason == "claim 'role' must equal 'admin'"
 
 
 def test_require_claim_value_rejects_absent_claim():
@@ -102,11 +106,19 @@ def test_require_scopes_from_scp_list():
     require_scopes("read", "write")({"scp": ["read", "write", "admin"]})
 
 
+def test_require_scopes_needs_a_scope():
+    with pytest.raises(ValueError, match="at least one") as exc:
+        require_scopes()
+    assert str(exc.value) == "require_scopes needs at least one scope"
+
+
 def test_require_scopes_rejects_missing_and_names_them():
+    # Two missing scopes exercise the ', '-join separator; the granted "read" is
+    # not named. Exact reason + claim pin the message, separator, and claim tag.
     with pytest.raises(ClaimsValidationError) as exc:
-        require_scopes("read", "delete")({"scope": "read"})
-    assert "delete" in exc.value.reason
-    assert "read" not in exc.value.reason  # only the missing one is named
+        require_scopes("delete", "admin", "read")({"scope": "read"})
+    assert exc.value.claim == "scope"
+    assert exc.value.reason == "missing required scope(s): delete, admin"
 
 
 def test_require_scopes_malformed_claim_fails_closed():
@@ -168,13 +180,19 @@ def test_combine_any_aggregates_reasons_when_all_reject():
     )
     with pytest.raises(ClaimsValidationError) as exc:
         combined({"c": 1})
-    assert "'a'" in exc.value.reason
-    assert "'b'" in exc.value.reason
+    assert exc.value.reason == (
+        "no validator accepted the claims: "
+        "required claim 'a' is missing; required claim 'b' is missing"
+    )
 
 
 def test_combine_any_empty_is_rejected_at_construction():
-    with pytest.raises(ValueError, match="at least one"):
+    with pytest.raises(ValueError, match="at least one") as exc:
         combine_claims_validators([], require="any")
+    assert str(exc.value) == (
+        "combine_claims_validators(require='any') needs at least one "
+        "validator; an empty any-of set rejects every token."
+    )
 
 
 def test_combine_all_empty_is_a_noop():
