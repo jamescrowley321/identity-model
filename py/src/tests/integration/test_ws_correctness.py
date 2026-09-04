@@ -20,8 +20,11 @@ contract for the two surfaces that matrix cannot reach:
   no longer excluded: it is validated and, without a token, 401s (fail closed) —
   while ``/health`` itself stays open. Proven end-to-end against the booted RS.
 
-Run via ``make test-harness-matrix`` (self-contained: the mock OP is served over
-real localhost HTTP, no Docker). Under a plain env the module importorskips.
+Run via ``make test-harness-ws`` (self-contained: the mock OP is served over
+real localhost HTTP, no Docker). That target runs under ``uv --all-packages`` so
+the ``server`` extra (uvicorn + the ``websockets`` client) is present; under a
+plain integration env — where those are not installed — the module importorskips
+rather than failing, so the dedicated gated target is what actually exercises it.
 """
 
 import json
