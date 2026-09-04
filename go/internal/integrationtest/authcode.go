@@ -39,9 +39,15 @@ type AuthCodeResult struct {
 // headlessly against node-oidc-provider's devInteractions (login + consent)
 // and returns the code and state delivered to redirectURI. The token-endpoint
 // exchange is the caller's job so tests exercise their own package API.
+//
+// Optional authorizeParams mutators set extra query parameters on the authorize
+// request (e.g. nonce or max_age) so a caller can have the OP echo a nonce /
+// auth_time into the minted ID Token. They are applied in order after the base
+// parameters, so a mutator may override them.
 func PerformAuthCodeFlow(
 	ctx context.Context,
 	authorizationEndpoint, clientID, redirectURI, scope, codeChallenge, state string,
+	authorizeParams ...func(url.Values),
 ) (*AuthCodeResult, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -57,7 +63,7 @@ func PerformAuthCodeFlow(
 		},
 	}
 
-	authURL := authorizationEndpoint + "?" + url.Values{
+	params := url.Values{
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
 		"response_type":         {"code"},
@@ -65,7 +71,11 @@ func PerformAuthCodeFlow(
 		"state":                 {state},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
-	}.Encode()
+	}
+	for _, mutate := range authorizeParams {
+		mutate(params)
+	}
+	authURL := authorizationEndpoint + "?" + params.Encode()
 
 	resp, callback, err := followRedirects(ctx, client, "GET", authURL, nil, redirectURI)
 	if err != nil {
