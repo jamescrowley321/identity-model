@@ -96,10 +96,20 @@ def combine_claims_validators(
             ``require="all"`` set is a no-op (accept), which is harmless.
 
     Note:
+        In ``any`` mode only a :class:`ClaimsValidationError` counts as a
+        rejection worth trying the next validator for; any other exception
+        (including a non-``ClaimsValidationError`` ``TokenValidationException``)
+        propagates immediately rather than being aggregated — a "clean reject"
+        is specifically a ``ClaimsValidationError``.
+
         Members must be synchronous. The resulting validator is synchronous and
         works in both the sync and async token-validation paths. Composing
         async validators is not yet supported.
     """
+    if require not in ("all", "any"):
+        # Guard a typo (e.g. "All") rather than silently treating it as "any"
+        # and rejecting every token at call time with an empty reason.
+        raise ValueError(f"require must be 'all' or 'any', got {require!r}")
     members = tuple(validators)
     if require == "any" and not members:
         raise ValueError(
@@ -148,10 +158,16 @@ def require_claims(*names: str) -> ClaimsValidator:
 
 
 def require_claim_value(name: str, value: Any) -> ClaimsValidator:
-    """A validator that rejects unless claim ``name`` equals ``value``."""
+    """A validator that rejects unless claim ``name`` is present and equals ``value``.
+
+    An absent claim always rejects — including when ``value`` is ``None``, so
+    ``require_claim_value("x", None)`` means "``x`` must be present and null",
+    not "``x`` may be missing" (a fail-open a plain ``.get() != value`` would
+    allow).
+    """
 
     def _validate(claims: Mapping[str, Any]) -> None:
-        if claims.get(name) != value:
+        if name not in claims or claims[name] != value:
             raise ClaimsValidationError(
                 f"claim {name!r} must equal {value!r}", claim=name
             )
@@ -166,7 +182,11 @@ def _granted_scopes(claims: Mapping[str, Any]) -> frozenset[str]:
     raising — a malformed scope claim must fail closed, not crash validation.
     """
     raw = claims.get("scope")
-    if raw is None:
+    if raw is None or raw == "":
+        # An absent OR empty ``scope`` falls through to ``scp`` — some IdPs send
+        # ``{"scope": "", "scp": [...]}``; an empty string must not shadow the
+        # populated array. A malformed (non-string) ``scope`` does NOT fall
+        # through — it yields no scopes and rejects (fail closed).
         raw = claims.get("scp")
     if isinstance(raw, str):
         return frozenset(raw.split())

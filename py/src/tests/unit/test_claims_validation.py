@@ -1,5 +1,7 @@
 """Unit tests for the injectable, composable claims validators (issue #603)."""
 
+import logging
+
 import pytest
 
 from py_identity_model import (
@@ -75,6 +77,20 @@ def test_require_claim_value_accepts_and_rejects():
     assert exc.value.claim == "role"
 
 
+def test_require_claim_value_rejects_absent_claim():
+    with pytest.raises(ClaimsValidationError) as exc:
+        require_claim_value("role", "admin")({})
+    assert exc.value.claim == "role"
+
+
+def test_require_claim_value_none_requires_present_null_not_absent():
+    # "must equal None" means present-and-null — an absent claim must NOT pass
+    # (the fail-open a plain `.get() != value` would allow).
+    require_claim_value("x", None)({"x": None})
+    with pytest.raises(ClaimsValidationError):
+        require_claim_value("x", None)({})
+
+
 # --- require_scopes --------------------------------------------------------
 
 
@@ -94,9 +110,29 @@ def test_require_scopes_rejects_missing_and_names_them():
 
 
 def test_require_scopes_malformed_claim_fails_closed():
-    # A dict/number scope claim yields no granted scopes → reject, never crash.
+    # A non-string, non-list scope claim yields no granted scopes → reject,
+    # never crash.
+    for bad in ({"unexpected": "shape"}, 123, None):
+        with pytest.raises(ClaimsValidationError):
+            require_scopes("read")({"scope": bad})
+
+
+def test_require_scopes_list_drops_non_string_members_without_crashing():
+    # Non-string list members are ignored; valid string scopes still count.
+    require_scopes("read")({"scope": ["read", 7, None]})
     with pytest.raises(ClaimsValidationError):
-        require_scopes("read")({"scope": {"unexpected": "shape"}})
+        require_scopes("admin")({"scope": ["read", 7, None]})
+
+
+def test_require_scopes_empty_scope_falls_through_to_scp():
+    # An empty-string `scope` must not shadow a populated `scp` (interop).
+    require_scopes("read")({"scope": "", "scp": ["read", "write"]})
+
+
+def test_require_scopes_nonempty_scope_takes_precedence_over_scp():
+    # A present, non-empty `scope` wins; `scp` is not consulted.
+    with pytest.raises(ClaimsValidationError):
+        require_scopes("write")({"scope": "read", "scp": ["write"]})
 
 
 # --- combine_claims_validators ---------------------------------------------
@@ -154,11 +190,30 @@ def test_combine_all_propagates_non_claims_exception():
         combine_claims_validators([boom])({})
 
 
+def test_combine_any_propagates_non_claims_exception():
+    # The load-bearing invariant: `any` mode catches only ClaimsValidationError,
+    # so a member's programming error is NOT recorded as a rejection reason (which
+    # could flip the result to accept) — it propagates.
+    def boom(_claims):
+        raise RuntimeError("bug")
+
+    with pytest.raises(RuntimeError):
+        combine_claims_validators([boom, require_claims("sub")], require="any")({})
+
+
+def test_combine_rejects_invalid_require_mode():
+    # A typo like "All" must be a loud construction error, not a silent
+    # reject-everything (it would otherwise fall into the any-branch).
+    with pytest.raises(ValueError, match="'all' or 'any'"):
+        combine_claims_validators([require_claims("sub")], require="All")  # type: ignore[bad-argument-type]
+
+
 # --- protocol --------------------------------------------------------------
 
 
 def test_plain_callable_satisfies_the_protocol():
     assert isinstance(require_claims("sub"), ClaimsValidator)
+    assert not isinstance(42, ClaimsValidator)
 
 
 # --- integration with the validation pipeline ------------------------------
@@ -188,6 +243,18 @@ def test_validate_claims_accepts_valid_claims():
     validate_claims({"sub": "u1", "scope": "read"}, _config(require_scopes("read")))
 
 
+def test_validate_claims_logs_the_rejection(caplog):
+    # A structured rejection must still be logged server-side (the reason is not
+    # lost just because it propagates unwrapped).
+    with (
+        caplog.at_level(logging.INFO, logger="py_identity_model"),
+        pytest.raises(ClaimsValidationError),
+    ):
+        validate_claims({"sub": "u1"}, _config(require_claims("tid")))
+    assert "Claims validation rejected" in caplog.text
+    assert "tid" in caplog.text  # the specific reason is in the log
+
+
 async def test_validate_async_claims_preserves_structured_reason():
     config = _config(require_claim_value("role", "admin"))
     with pytest.raises(ClaimsValidationError) as exc:
@@ -203,3 +270,12 @@ async def test_validate_async_claims_supports_async_validator():
     with pytest.raises(ClaimsValidationError) as exc:
         await validate_async_claims({"sub": "no"}, _config(async_validator))
     assert exc.value.claim == "sub"
+
+
+async def test_validate_async_claims_logs_the_rejection(caplog):
+    with (
+        caplog.at_level(logging.INFO, logger="py_identity_model"),
+        pytest.raises(ClaimsValidationError),
+    ):
+        await validate_async_claims({"sub": "u1"}, _config(require_claims("tid")))
+    assert "Claims validation rejected" in caplog.text
