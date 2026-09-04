@@ -243,16 +243,29 @@ def test_validate_claims_accepts_valid_claims():
     validate_claims({"sub": "u1", "scope": "read"}, _config(require_scopes("read")))
 
 
+def _only_identity_record(caplog) -> logging.LogRecord:
+    # Exactly one py_identity_model record, so a mutation that drops or
+    # duplicates the log is caught by the count.
+    records = [r for r in caplog.records if r.name == "py_identity_model"]
+    assert len(records) == 1, [r.getMessage() for r in records]
+    return records[0]
+
+
 def test_validate_claims_logs_the_rejection(caplog):
     # A structured rejection must still be logged server-side (the reason is not
-    # lost just because it propagates unwrapped).
+    # lost just because it propagates unwrapped). Assert the EXACT message +
+    # level so a mutation to the log string, level, or the logged value is
+    # killed (a substring check survives mutmut's "XX…XX" string wrap).
     with (
         caplog.at_level(logging.INFO, logger="py_identity_model"),
         pytest.raises(ClaimsValidationError),
     ):
         validate_claims({"sub": "u1"}, _config(require_claims("tid")))
-    assert "Claims validation rejected" in caplog.text
-    assert "tid" in caplog.text  # the specific reason is in the log
+    rec = _only_identity_record(caplog)
+    assert rec.levelno == logging.INFO
+    assert rec.getMessage() == (
+        "Claims validation rejected the token: required claim 'tid' is missing"
+    )
 
 
 async def test_validate_async_claims_preserves_structured_reason():
@@ -278,4 +291,8 @@ async def test_validate_async_claims_logs_the_rejection(caplog):
         pytest.raises(ClaimsValidationError),
     ):
         await validate_async_claims({"sub": "u1"}, _config(require_claims("tid")))
-    assert "Claims validation rejected" in caplog.text
+    rec = _only_identity_record(caplog)
+    assert rec.levelno == logging.INFO
+    assert rec.getMessage() == (
+        "Claims validation rejected the token: required claim 'tid' is missing"
+    )
