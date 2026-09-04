@@ -136,15 +136,14 @@ def create_app() -> FastAPI:
     )
 
     @app.websocket("/ws")
-    async def ws(websocket: WebSocket) -> None:
-        # Invoke the authenticator explicitly rather than via ``Depends(...)``:
-        # this module uses ``from __future__ import annotations`` (PEP 563), which
-        # stringizes the ``Annotated[dict, Depends(ws_authenticator)]`` form so
-        # FastAPI cannot resolve the closure-local ``ws_authenticator`` — the
-        # marker is lost and every request 403s. Real apps (no closure-local dep)
-        # use ``claims: dict = Depends(ws_auth)``; here the direct call is
-        # equivalent and raises WebSocketException on rejection just the same.
-        claims = await ws_authenticator(websocket)
+    async def ws(websocket: WebSocket, claims: dict = Depends(ws_authenticator)):
+        # Use the DOCUMENTED ``= Depends(...)`` DI form so the integration tests
+        # exercise FastAPI's real WebSocket dependency resolution (raise →
+        # pre-accept close). The default-VALUE ``Depends`` is evaluated at def
+        # time, so it resolves even under this module's PEP 563
+        # ``from __future__ import annotations`` — unlike the
+        # ``Annotated[dict, Depends(ws_authenticator)]`` form, whose stringized
+        # annotation drops the closure-local dependency and 403s every request.
         await websocket.accept()
         await websocket.send_json(
             {"sub": claims.get("sub"), "scope": claims.get("scope")}

@@ -202,6 +202,13 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         A bare ``/*`` (root subtree) is ignored rather than excluding every
         path — disabling auth wholesale must be an explicit choice (don't add
         the middleware), never a one-character typo.
+
+        Caution: subtree (``/*``) matching runs on the raw ASGI request path,
+        not a normalized one. If you place a ``..``-resolving handler (e.g. a
+        ``StaticFiles`` mount) under an excluded ``/*`` prefix, a request whose
+        path *string* starts with that prefix but resolves elsewhere is treated
+        as excluded. Keep ``/*`` exclusions off subtrees that normalize paths;
+        the default (exact match) is immune.
         """
         for entry in self.excluded_paths:
             if entry.endswith("/*"):

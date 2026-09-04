@@ -178,6 +178,52 @@ async def test_custom_query_param(monkeypatch):
     assert claims["sub"] == "u1"
 
 
+async def test_threads_config_into_validate_token(monkeypatch):
+    # The authenticator must thread audience, discovery URL, perform_disco AND
+    # the injected custom_claims_validator into TokenValidationConfig — a
+    # regression dropping any of these would otherwise pass silently.
+    captured = {}
+
+    async def capturing_validate_token(
+        *, token_validation_config, disco_doc_address, **_
+    ):
+        captured["cfg"] = token_validation_config
+        captured["disco"] = disco_doc_address
+        return dict(_ACCESS_CLAIMS)
+
+    monkeypatch.setattr(ws, "validate_token", capturing_validate_token)
+
+    def my_validator(_claims):
+        return None
+
+    auth = build_ws_authenticator(
+        discovery_url=DISCOVERY_URL,
+        audience="cid",
+        custom_claims_validator=my_validator,
+    )
+    await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+
+    cfg = captured["cfg"]
+    assert cfg.audience == "cid"
+    assert cfg.perform_disco is True
+    assert cfg.claims_validator is my_validator
+    assert captured["disco"] == DISCOVERY_URL
+
+
+async def test_to_principal_failure_closes_internal_error(monkeypatch):
+    # A failure building the principal AFTER the token validated must fail closed
+    # with a mapped 1011, not escape as an unhandled exception (parity with the
+    # HTTP middleware's 500 guard).
+    def _raise(_claims):
+        raise RuntimeError("boom")
+
+    auth = _authenticator(monkeypatch, returns=_ACCESS_CLAIMS)
+    monkeypatch.setattr(ws, "to_principal", _raise)
+    with pytest.raises(WebSocketException) as exc:
+        await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+    assert exc.value.code == 1011
+
+
 def test_empty_audience_raises():
     with pytest.raises(ValueError, match="audience"):
         build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="")

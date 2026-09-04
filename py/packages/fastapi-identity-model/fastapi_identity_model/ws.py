@@ -133,6 +133,20 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
         FastAPI turns into a handshake close with the given code — the socket is
         never accepted. The validated claims/principal/token are also attached
         to ``websocket.state`` (``.claims`` / ``.user`` / ``.token``).
+
+    Note:
+        This performs **authentication only** — it validates the token and
+        rejects the wrong token type. It does **not** enforce scopes or any
+        authorization, and there is no WebSocket equivalent of
+        ``require_scope``. Check ``claims`` (or ``websocket.state.claims``) for
+        the scopes/roles a route requires yourself, mirroring what
+        ``require_scope`` does for HTTP routes.
+
+        The close *code* (1008 policy / 1013 try-again / 1011 internal) is the
+        WebSocket-native rejection signal — visible to programmatic WS clients
+        and in server logs. A **browser** sees a rejection as an HTTP 403
+        handshake denial (all pre-accept close codes surface the same way), so
+        do not rely on the code being distinguishable browser-side.
     """
     if not audience:
         raise ValueError(
@@ -202,7 +216,19 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
                 code=_WS_POLICY_VIOLATION, reason=_GENERIC_REJECT_REASON
             )
 
-        websocket.state.user = to_principal(claims)
+        # Build the principal under the same fail-closed guard as the HTTP
+        # middleware (which runs to_principal inside its try → 500): an
+        # unexpected failure here becomes a mapped 1011 close, never an
+        # unhandled exception that escapes after the token already validated.
+        try:
+            principal = to_principal(claims)
+        except Exception as e:
+            logger.exception("Unexpected error building principal during WS auth")
+            raise WebSocketException(
+                code=_WS_INTERNAL_ERROR,
+                reason="Internal error during authentication",
+            ) from e
+        websocket.state.user = principal
         websocket.state.claims = claims
         websocket.state.token = token
         return claims

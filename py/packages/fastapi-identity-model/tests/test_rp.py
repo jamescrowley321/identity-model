@@ -386,6 +386,16 @@ def test_oidc_public_paths_with_prefix():
     ]
 
 
+def test_oidc_public_paths_normalizes_missing_leading_slash():
+    # A relative prefix would yield paths that can never match request.url.path
+    # (always absolute), silently failing to exclude the login routes.
+    assert oidc_public_paths("auth") == [
+        "/auth/login",
+        "/auth/callback",
+        "/auth/logout",
+    ]
+
+
 def test_oidc_public_paths_root_and_trailing_slash():
     assert oidc_public_paths() == ["/login", "/callback", "/logout"]
     # A trailing slash on the prefix is normalized away (no doubled slash).

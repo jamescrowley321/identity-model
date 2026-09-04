@@ -103,6 +103,13 @@ def oidc_public_paths(prefix: str = "") -> list[str]:
         callback, and logout endpoints.
     """
     base = prefix.rstrip("/")
+    # Normalize a missing leading slash: request paths are always absolute, so a
+    # relative ``base`` ("auth" instead of "/auth") would produce entries that
+    # can never match and silently fail to exclude the login routes. FastAPI's
+    # include_router already requires a leading-slash prefix; this just makes the
+    # helper robust if called directly.
+    if base and not base.startswith("/"):
+        base = f"/{base}"
     return [f"{base}{route}" for route in _OIDC_ROUTER_PATHS]
 
 
