@@ -90,9 +90,9 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 	if err := claims.validate(cfg); err != nil {
 		return nil, err
 	}
-	// JWT-014: run the caller-supplied claims validator last, after every
-	// standard check has passed, so application policy sees only otherwise-valid
-	// tokens. A rejection is logged server-side and returned.
+	// Run the caller-supplied claims validator last, after every standard check
+	// has passed, so application policy sees only otherwise-valid tokens. A
+	// rejection is logged server-side and returned.
 	if cfg.claimsValidator != nil {
 		if err := runClaimsValidator(ctx, cfg, claims); err != nil {
 			return nil, err
