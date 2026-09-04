@@ -1,0 +1,22 @@
+{
+  "description": "CFG-106: a missing required key, an invalid value, and a stray group fragment are reported together, registry-ordered",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "none",
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": { "HTTP_TIMEOUT": "nope", "OIDC_CLIENT_ID": "spa-client" }
+    }
+  ],
+  "expect": {
+    "error": {
+      "errors": [
+        { "code": "CFG-003", "keys": ["http.timeout"] },
+        { "code": "CFG-001", "keys": ["client.discovery_url"] }
+      ],
+      "ordered_by": "registry order"
+    }
+  }
+}
