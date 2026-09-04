@@ -286,8 +286,22 @@ func scopesFromValue(value any) map[string]struct{} {
 // *ClaimsValidationError propagates unchanged, preserving its structured reason;
 // any other error is a programming bug in the validator, so the token fails
 // closed wrapped in a generic error rather than being trusted.
-func runClaimsValidator(ctx context.Context, cfg *config, claims *Claims) error {
-	err := cfg.claimsValidator.ValidateClaims(claims)
+func runClaimsValidator(ctx context.Context, cfg *config, claims *Claims) (err error) {
+	// A panicking validator (or a typed-nil ClaimsValidatorFunc, whose non-nil
+	// interface passes the guard but nil-func call panics) must fail the token
+	// CLOSED as a wrapped rejection — never crash Validate or yield an accept.
+	// Mirrors Python's "any error -> generic wrapped rejection".
+	defer func() {
+		if r := recover(); r != nil {
+			if cfg.logger != nil {
+				cfg.logger.LogAttrs(ctx, slog.LevelError, "claims validator panicked",
+					slog.Any("panic", r))
+			}
+			err = fmt.Errorf("jwt: claims validation failed: validator panicked: %v", r)
+		}
+	}()
+
+	err = cfg.claimsValidator.ValidateClaims(claims)
 	if err == nil {
 		return nil
 	}

@@ -392,6 +392,30 @@ func TestRunClaimsValidator_WrapsPlainErrorGenerically(t *testing.T) {
 	}
 }
 
+func TestRunClaimsValidator_RecoversFromPanic(t *testing.T) {
+	panicker := ClaimsValidatorFunc(func(*Claims) error { panic("boom") })
+	cfg := newConfig(WithClaimsValidator(panicker))
+	err := runClaimsValidator(context.Background(), cfg, claimsFrom(t, map[string]any{"sub": "u1"}))
+	// A panicking validator must fail the token CLOSED, not crash Validate.
+	if err == nil {
+		t.Fatal("a panicking validator must reject the token, got nil error")
+	}
+	if !strings.Contains(err.Error(), "claims validation failed") {
+		t.Errorf("err = %q, want fail-closed 'claims validation failed'", err.Error())
+	}
+}
+
+func TestRunClaimsValidator_RecoversFromTypedNilFunc(t *testing.T) {
+	// A typed-nil ClaimsValidatorFunc: the interface is non-nil (the guard
+	// passes) but calling the nil func panics — it must still fail closed.
+	var nilFunc ClaimsValidatorFunc
+	cfg := newConfig(WithClaimsValidator(nilFunc))
+	err := runClaimsValidator(context.Background(), cfg, claimsFrom(t, map[string]any{"sub": "u1"}))
+	if err == nil {
+		t.Fatal("a typed-nil validator must reject the token, got nil error")
+	}
+}
+
 func TestRunClaimsValidator_AcceptsValidClaims(t *testing.T) {
 	cfg := newConfig(WithClaimsValidator(requireScopes(t, "read")))
 	if err := runClaimsValidator(context.Background(), cfg, claimsFrom(t, map[string]any{"sub": "u1", "scope": "read"})); err != nil {
