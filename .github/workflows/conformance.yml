@@ -97,51 +97,74 @@ jobs:
       # ── Extended certification profiles (Story 23.1 / #607) ──
       # FAPI 2.0 + Dynamic Registration + Logout RP plans. These run nightly
       # and on release (this job is workflow_call-gated by release.yml, so a
-      # non-continue-on-error step here blocks the release tag). They are
-      # report-only (continue-on-error) until each profile is proven green
-      # against the local suite, then flipped to a hard gate — see DEC-001 and
-      # docs/security/harder-tier-coverage.md. Evidence for each profile is
-      # picked up by the existing *-latest.json export + upload steps below.
-      - name: Run FAPI 2.0 Security Profile RP conformance tests
-        # report-only until proven green locally (DEC-001); flip to hard gate then
+      # non-continue-on-error step here blocks the release tag). Per DEC-001 a
+      # profile is only promoted to a hard release gate once it proves green
+      # against the local suite in the test phase; otherwise it stays
+      # report-only (continue-on-error) with a loud ::warning:: naming the red
+      # leg + its follow-up task, never silent-pass.
+      # Status after the 2026-09-03 local OIDF run (see
+      # docs/security/harder-tier-coverage.md):
+      #   dynamic-rp .............. GREEN  -> hard gate
+      #   rpinitiated-logout-rp ... GREEN  -> hard gate
+      #   fapi2-rp ................ 21/22  -> report-only (invalid-alternate-alg)
+      #   fapi2-message-signing ... 27/28  -> report-only (invalid-alternate-alg)
+      #   backchannel-logout-rp ... 7/8    -> report-only (wrong-alg -> 400)
+      # Evidence for each profile is picked up by the existing *-latest.json
+      # export + upload steps below.
+      # report-only (DEC-001): local OIDF run 2026-09-03 left one known-red
+      # negative test — fapi2-security-profile-final-client-test-invalid-alternate-alg
+      # was INTERRUPTED (21/22, 27/28). The RP harness alg-rejection flow does
+      # not drive that leg to a verdict. Tracked in the run-time task
+      # fix:conformance-fapi2-invalid-alt-alg; keep continue-on-error until the
+      # harness path is fixed and the plan proves green — never gate a release
+      # tag on a red conformance leg, never silent-pass.
+      - name: Run FAPI 2.0 Security Profile RP conformance tests (report-only)
         continue-on-error: true
         run: |
+          echo "::warning::fapi2-rp is report-only — known red: invalid-alternate-alg INTERRUPTED (task fix:conformance-fapi2-invalid-alt-alg)"
           python conformance/run_tests.py \
             --plan fapi2-rp \
             --output conformance/results/fapi2-rp-latest.json \
             --verbose
 
-      - name: Run FAPI 2.0 Message Signing RP conformance tests
-        # report-only until proven green locally (DEC-001); flip to hard gate then
+      - name: Run FAPI 2.0 Message Signing RP conformance tests (report-only)
         continue-on-error: true
         run: |
+          echo "::warning::fapi2-message-signing-rp is report-only — known red: invalid-alternate-alg INTERRUPTED (task fix:conformance-fapi2-invalid-alt-alg)"
           python conformance/run_tests.py \
             --plan fapi2-message-signing-rp \
             --output conformance/results/fapi2-message-signing-rp-latest.json \
             --verbose
 
+      # Release gate: dynamic-rp proved green locally 2026-09-03 (10 passed,
+      # 0 failed, 2 skipped) — no continue-on-error, so a regression here blocks
+      # the release tag (this job is workflow_call-gated by release.yml).
       - name: Run Dynamic Registration RP conformance tests
-        # report-only until proven green locally (DEC-001); flip to hard gate then
-        continue-on-error: true
         run: |
           python conformance/run_tests.py \
             --plan dynamic-rp \
             --output conformance/results/dynamic-rp-latest.json \
             --verbose
 
+      # Release gate: rpinitiated-logout-rp proved green locally 2026-09-03
+      # (2 passed, 0 failed, 1 skipped) — hard gate, no continue-on-error.
       - name: Run RP-Initiated Logout RP conformance tests
-        # report-only until proven green locally (DEC-001); flip to hard gate then
-        continue-on-error: true
         run: |
           python conformance/run_tests.py \
             --plan rpinitiated-logout-rp \
             --output conformance/results/rpinitiated-logout-rp-latest.json \
             --verbose
 
-      - name: Run Back-Channel Logout RP conformance tests
-        # report-only until proven green locally (DEC-001); flip to hard gate then
+      # report-only (DEC-001): local OIDF run 2026-09-03 left one known-red leg —
+      # oidcc-client-test-rp-backchannel-rpinitlogout-wrong-alg FAILED
+      # (EnsureBackChannelLogoutUriResponseStatusCodeIs400: harness returned a
+      # non-400 response for a wrong-alg back-channel logout token; 7/8). Tracked
+      # in fix:conformance-backchannel-wrong-alg; keep continue-on-error until the
+      # harness backchannel_logout_uri handler rejects bad-alg tokens with 400.
+      - name: Run Back-Channel Logout RP conformance tests (report-only)
         continue-on-error: true
         run: |
+          echo "::warning::backchannel-logout-rp is report-only — known red: rpinitlogout-wrong-alg expects 400 (task fix:conformance-backchannel-wrong-alg)"
           python conformance/run_tests.py \
             --plan backchannel-logout-rp \
             --output conformance/results/backchannel-logout-rp-latest.json \
