@@ -2,65 +2,81 @@
 #
 # mutmut occasionally emits an *equivalent* mutant: a syntactic change that is
 # semantically identical to the original and therefore impossible to kill with
-# any test. Waive one by its **exact mutant name** (as printed by
-# `mutmut results` / shown by `mutmut show <name>`), one per line, with a
-# comment justifying why it is unkillable. Matching is exact — a name here
-# never waives a different mutant that merely contains it as a substring.
+# any test. Waive one with a line of the form
+#
+#     <exact mutant name> <16-hex diff hash>   # justification
+#
+# where <hash> is `python tools/mutation_security.py --hash <name>` (a hash of
+# the mutant's `mutmut show` diff *content* — the transformation, not its index).
+#
+# WHY the hash (issue #615): mutmut numbers a function's mutants densely
+# (`{name}_{i+1}`), so that `_N` index is NOT stable — adding/removing a construct,
+# or the changed-line pre-filter compacting the generated list, renumbers every
+# downstream mutant. A name-only (index-keyed) waiver then silently rebinds to a
+# DIFFERENT mutant; in a security gate that is a fail-open (a real, killable
+# survivor inherits a stale waiver and the gate passes green). The gate therefore
+# waives a survivor only when BOTH its function AND its current diff hash match an
+# entry here, so renumbering can neither rebind a waiver nor lose the genuine
+# equivalent. A name with no hash is a hard error, never a silent pass.
 #
 # Every entry weakens the gate, so keep the justification concrete and specific.
-#
-# Example (do NOT uncomment unless that mutant actually survives in your change):
-#   py_identity_model.core.client_auth.x_basic_auth_credentials__mutmut_4  # quote(x, safe="XXXX"): X is always unreserved, output identical
-#
-# SC0 seeds this file empty: SC0 changes no security module, so its gate run is
-# a no-op. Each remediation task (SC1–SC10) adds its own justified waivers.
+# The `_N` index in the name is only a human label — the (function, hash) pair is
+# the actual key — but keep it pointing at the mutant the hash was taken from.
 
 # R.9 issuer pinning (_enforce_allowed_issuers): the `else` branch sets
-# `candidates = []`; mutant _6 sets it to `None`. Both fall straight into
+# `candidates = []`; this mutant sets it to `None`. Both fall straight into
 # `if not candidates:` — `not []` and `not None` are both True — so both raise
 # the identical "no issuer was resolved" InvalidIssuerException and the for-loop
 # below is never reached. No input that reaches the else branch can observe []
 # vs None: semantically equivalent, unkillable.
-py_identity_model.core.token_validation_logic.x__enforce_allowed_issuers__mutmut_6
+py_identity_model.core.token_validation_logic.x__enforce_allowed_issuers__mutmut_6 1982f34b946ecf41
 
 # ── T299 cache-observability counters (aio.token_validation) ──────────────────
 #
 # Lock-stripe distribution (class 2): ``_get_*_fetch_lock(None)`` makes
 # ``hash(None) % STRIPES`` pick one fixed valid stripe instead of hashing the
 # URI/key. Single-flight correctness is unaffected — same-URI fetches still
-# serialise on the same lock object — only which of the 32 stripes is selected
-# changes, which is not observable.
-py_identity_model.aio.token_validation.x__get_disco_response__mutmut_19
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_3
+# serialise on the same lock object (over-serialising all URIs onto one stripe is
+# still correct) — only which of the stripes is selected changes, which is not
+# observable. (These are the `_get_disco_fetch_lock(None)` / `_get_jwks_fetch_lock(None)`
+# argument mutations; #615 migration re-pinned them from the drifted _19/_3 to the
+# current _20/_4 — the old indices now name the killable `fetch_lock = None`.)
+py_identity_model.aio.token_validation.x__get_disco_response__mutmut_20 4d1607a382da89ad
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_4 77ad9a8da3e78aa2
 
-# Log-only (class 1): message-text / logger-arg mutations of the "Forcing JWKS
-# refresh" info line (11-17) and the empty-keys retained-cache fallback info
-# line (42-56). These are human-readable log strings, not security controls;
-# they change no control flow, return value, or counter. Asserting exact log
-# text is brittle and out of scope. (53-56 mutate the "falling back ... in-flight
-# validation" segments of that same info line — identical justification.)
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_11
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_12
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_13
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_14
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_15
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_16
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_17
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_42
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_43
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_44
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_45
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_46
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_47
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_48
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_49
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_50
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_51
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_52
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_53
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_54
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_55
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56
+# Log-only (class 1): every mutation confined to the "Forcing JWKS refresh for %s
+# (possible key rotation)" info line (message text, logger arg, or arg removal).
+# These are human-readable log strings, not security controls; they change no
+# control flow, return value, or counter. Asserting exact log text is brittle and
+# out of scope. (This is the complete current set _12–_18 for that statement; the
+# old T299 waiver spanned _11–_17, but _11 is now the killable `return
+# entry.response, True` — dropped by the #615 migration.)
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_12 6b835f59467d34ed
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_13 5d4f053801b6caa1
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_14 779ea1b18b400922
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_15 4c6e835ead134b97
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_16 054990b7571748e7
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_17 de3a19743343c487
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_18 a143cb043eb8355a
+
+# Log-only (class 1): every mutation confined to the empty-keys retained-cache
+# fallback info line ("JWKS refresh for %s returned 200 with empty keys; falling
+# back to retained cache entry for in-flight validation", jwks_uri). Same
+# rationale as above — pure log text, no control-flow/return/counter effect.
+# (Current set _45–_55; the old T299 waiver spanned _42–_56, but _42–_44 are now
+# killable cache-logic mutants and _56 is the killable `return retained.response,
+# False` — dropped by the #615 migration.)
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_45 f7e7050b0c66acb3
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_46 51c20b72cfec8ff1
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_47 308fd94e0ae3651b
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_48 27d20ae40cd3dad3
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_49 01e360105e12577c
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_50 b1c1fee0c9f6826e
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_51 31a3c34c7c7b54ce
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_52 f35558064b93e24d
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_53 b9f710520453d59f
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_54 43acaaa6df27be03
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_55 77332bc01ec90cb3
 
 # ── #562 find_key_by_kid: no-kid signing-key kty pre-filter ───────────────────
 #
@@ -74,10 +90,10 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56
 #        so `>= 1` is always True; identical to `> 1` for every len > 1 case, and
 #        the extra len == 1 case narrows a single key to itself (no-op).
 # No input can observe a different selected key or algorithm: unkillable.
-py_identity_model.core.parsers.x_find_key_by_kid__mutmut_13
-py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14
+py_identity_model.core.parsers.x_find_key_by_kid__mutmut_13 09a8e8c7e5d7c1aa
+py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14 e4b9dbae66ea0835
 
-# ── #585 injectable discovery policy: sync twins + renumbered log mutants ──────
+# ── #585 injectable discovery policy: sync default-None no-ops + log twins ─────
 #
 # The injectable-policy change threads a `policy` argument through the sync/aio
 # cached refresh + retry paths. The behavioural threading is proven by
@@ -93,23 +109,20 @@ py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14
 # `jwks_request.policy or DiscoveryPolicy()` — so `None` and a fresh
 # `DiscoveryPolicy()` produce the identical request. No caller can observe the
 # difference.
-py_identity_model.sync.token_validation.x__get_cached_jwks__mutmut_2
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_2
+py_identity_model.sync.token_validation.x__get_cached_jwks__mutmut_2 2d9e4ae32f708fa8
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_2 53fdb85386561ba0
 #
-# Class 2 — log-only. Message-text / logger-arg mutations of the single
-# "Forcing JWKS refresh for %s (possible key rotation)" info line (the sync twin
-# of the already-waived aio 11-17; #585 renumbered mutmut indices so the
-# uppercase variant is now _18 on both sync and aio). Human-readable log text,
-# no control flow / return value / counter changes; asserting exact log text is
-# brittle and out of scope.
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_12
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_13
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_14
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_15
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_16
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_17
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_18
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_18
+# Class 2 — log-only. Every mutation confined to the single "Forcing JWKS refresh
+# for %s (possible key rotation)" info line (the sync twin of the aio _12–_18
+# above). Human-readable log text, no control flow / return value / counter
+# changes; asserting exact log text is brittle and out of scope.
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_12 bee3605999dc56d8
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_13 8d15670916a5614a
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_14 349a4308b4eb3c6a
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_15 ee5c7b99ca9f9fe5
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_16 3a347180285bf29f
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_17 ff4042f3e2e77c2c
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_18 a499bdf832942e1f
 #
 # Class 3 — require_https arg → None on the retry-path policy resolution:
 # `resolve_discovery_policy(config.discovery_policy, config.require_https)` →
@@ -121,5 +134,5 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_18
 # that would distinguish them (`require_https=True`, discovery_policy=None)
 # cannot reach the retry over an http scheme, because the initial discovery/JWKS
 # fetch under that same strict config already rejects it. Unobservable.
-py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9
-py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9
+py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9 0d528563379ce7c3
+py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9 6a5fbf6c84edcc13
