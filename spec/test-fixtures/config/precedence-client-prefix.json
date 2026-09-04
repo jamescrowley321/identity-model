@@ -1,0 +1,49 @@
+{
+  "description": "CFG-306: EnvSource client-group prefix is configurable (default OIDC_); a custom prefix maps the client group and the default prefix is not consulted",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "none",
+  "cases": [
+    {
+      "note": "default prefix OIDC_ maps the client group",
+      "sources": [
+        {
+          "name": "env",
+          "type": "env",
+          "values": {
+            "OIDC_DISCOVERY_URL": "https://issuer.example.com/.well-known/openid-configuration",
+            "OIDC_CLIENT_ID": "default-prefixed"
+          }
+        }
+      ],
+      "expect": {
+        "config": {
+          "client.discovery_url": "https://issuer.example.com/.well-known/openid-configuration",
+          "client.id": "default-prefixed"
+        }
+      }
+    },
+    {
+      "note": "custom prefix ACME_ maps the client group; the identically-suffixed default-prefixed var OIDC_CLIENT_ID is a different env name and is not consulted",
+      "client_prefix": "ACME_",
+      "sources": [
+        {
+          "name": "env",
+          "type": "env",
+          "values": {
+            "ACME_DISCOVERY_URL": "https://acme.example.com/.well-known/openid-configuration",
+            "ACME_CLIENT_ID": "acme-prefixed",
+            "OIDC_CLIENT_ID": "should-be-ignored"
+          }
+        }
+      ],
+      "expect": {
+        "config": {
+          "client.discovery_url": "https://acme.example.com/.well-known/openid-configuration",
+          "client.id": "acme-prefixed"
+        }
+      }
+    }
+  ],
+  "note": "The client-group prefix is an EnvSource configuration (config.md §Sources): only client-group environment names take the prefix. When a custom prefix is set, the default-prefixed OIDC_CLIENT_ID is an unrelated env name — the resolved client.id is 'acme-prefixed', proving 'should-be-ignored' was never read."
+}
