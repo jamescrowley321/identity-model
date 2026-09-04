@@ -22,6 +22,7 @@ from ..exceptions import (
     TokenValidationException,
 )
 from ..logging_config import logger
+from .models import JsonWebKey
 
 
 # Options that MUST NOT be disabled — these are core security checks.
@@ -65,12 +66,47 @@ def _sanitize_options(options: dict | None) -> dict | None:
     return options
 
 
+def _normalize_verification_key(key: dict | JsonWebKey) -> dict:
+    """Normalize a verification key into a PyJWK-safe JWK mapping.
+
+    Accepts both the typed :class:`~py_identity_model.core.models.JsonWebKey`
+    returned by ``get_jwks`` / ``jwks_from_dict`` and a plain JWK ``dict``. This
+    closes the round-trip gap where the typed key handed *out* of ``get_jwks``
+    could not be fed back *in* to ``validate_token`` (``TokenValidationConfig.key``),
+    which raised ``AttributeError: 'JsonWebKey' object has no attribute 'get'``
+    inside PyJWT.
+
+    Members whose value is ``None`` are dropped. PyJWT's ``Algorithm.from_jwk``
+    decides public-vs-private by key *name presence* (``"d" in obj``), not value,
+    so a public JWK carrying a null-valued private member — e.g.
+    ``{"kty": "RSA", "n": ..., "e": ..., "d": None}``, as produced by a naive
+    dataclass-to-dict conversion — would be routed into private-key construction
+    and raise ``TypeError: Expected a string value``. Stripping ``None`` members
+    (the value-based test :meth:`JsonWebKey.has_private_key` already uses) makes
+    the conversion safe regardless of how the caller built the mapping. A genuine
+    private key is untouched: its private members hold real values, never ``None``.
+
+    Raises:
+        ConfigurationException: If ``key`` is neither a ``JsonWebKey`` nor a dict.
+    """
+    if isinstance(key, JsonWebKey):
+        # as_dict() maps Python field names back to RFC 7517 member names and
+        # already omits None-valued members.
+        return key.as_dict()
+    if isinstance(key, dict):
+        return {k: v for k, v in key.items() if v is not None}
+    raise ConfigurationException(
+        f"Verification key must be a JsonWebKey or a JWK dict, got {type(key).__name__}"
+    )
+
+
 def _get_pyjwk(key_data: dict, algorithm: str | None) -> PyJWK:
     """
     Construct a PyJWK from key data.
 
     Args:
-        key_data: Dictionary representation of the key
+        key_data: JWK mapping (already normalized via
+            :func:`_normalize_verification_key`).
         algorithm: Algorithm to use
 
     Returns:
@@ -118,7 +154,7 @@ def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
 
 def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requires these params
     jwt: str,
-    key: dict,
+    key: dict | JsonWebKey,
     algorithms: list[str],
     audience: str | None,
     issuer: str | list[str] | None,
@@ -131,7 +167,9 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
 
     Args:
         jwt: The JWT token to decode
-        key: The public key to use for verification
+        key: The public key to use for verification — a :class:`JsonWebKey`
+            (as returned by ``get_jwks``) or a plain JWK dict. ``None``-valued
+            members are ignored, so a public key is never misread as private.
         algorithms: List of allowed algorithms
         audience: Expected audience
         issuer: Expected issuer (single string or list for multi-tenant)
@@ -163,9 +201,14 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         # Sanitize options — block attempts to disable core security checks
         sanitized_options = _sanitize_options(options)
 
+        # Accept a typed JsonWebKey or a plain JWK dict, and drop None-valued
+        # members so a public key is never misread as private (see
+        # _normalize_verification_key).
+        normalized_key = _normalize_verification_key(key)
+
         decoded = _decode_jwt(
             jwt,
-            key,
+            normalized_key,
             algorithms,
             audience,
             issuer,
