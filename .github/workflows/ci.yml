@@ -88,6 +88,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -114,6 +117,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -142,6 +148,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -169,6 +178,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -205,6 +217,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -249,6 +264,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -282,6 +300,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -328,6 +349,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -363,6 +387,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -394,6 +421,9 @@ jobs:
           restore-keys: |
             uv-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -422,6 +452,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -459,6 +492,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
@@ -561,6 +597,9 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
       - name: Install dependencies
         run: make ci-setup
 
@@ -594,6 +633,9 @@ jobs:
           key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
           restore-keys: |
             uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Install dependencies
         run: make ci-setup
