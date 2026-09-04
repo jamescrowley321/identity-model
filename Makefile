@@ -318,7 +318,7 @@ conformance-test-fapi2: conformance-up ## Run FAPI 2.0 (security + message-signi
 	@echo "FAPI 2.0 conformance plans complete. Results in conformance/results/"
 
 .PHONY: conformance-test-fapi2-mtls
-conformance-test-fapi2-mtls: ## Run FAPI 2.0 mTLS RP plan (requires mTLS terminator + client certs)
+conformance-test-fapi2-mtls: $(if $(CONFORMANCE_MTLS),conformance-up) ## Run FAPI 2.0 mTLS RP plan (requires mTLS terminator + client certs)
 ifdef CONFORMANCE_MTLS
 	$(UVROOT) python conformance/run_tests.py --plan fapi2-mtls-rp --output conformance/results/fapi2-mtls-rp-latest.json --verbose
 	@echo "FAPI 2.0 mTLS conformance plan complete. Results in conformance/results/"

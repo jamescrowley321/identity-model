@@ -99,11 +99,21 @@ jobs:
       # loud if CONFORMANCE_TOKEN is absent, so a missing secret never yields a
       # silent pass. mTLS (fapi2-mtls-rp) is intentionally omitted here — it
       # needs a mutual-TLS terminator not present in this hosted-RP path.
-      - name: Run FAPI 2.0 Security Profile RP conformance tests
+      #
+      # This is a manual (workflow_dispatch) evidence-collection workflow, NOT a
+      # release gate — its job is to produce the full bundle set in a single run.
+      # The three plans that are report-only in conformance.yml (fapi2-rp,
+      # fapi2-message-signing-rp, backchannel-logout-rp) carry a known-red leg
+      # (see docs/security/harder-tier-coverage.md / DEC-001), so they are marked
+      # continue-on-error here too — otherwise a red plan would abort the job and
+      # the later dynamic/logout evidence bundles would never be produced.
+      - name: Run FAPI 2.0 Security Profile RP conformance tests (report-only)
+        continue-on-error: true
         env:
           CONFORMANCE_SERVER: https://www.certification.openid.net/
           CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
         run: |
+          echo "::warning::fapi2-rp hosted evidence is report-only — known red: invalid-alternate-alg INTERRUPTED (task fix:conformance-fapi2-invalid-alt-alg)"
           python conformance/run_tests.py \
             --plan fapi2-rp \
             --output conformance/results/hosted/fapi2-rp-latest.json \
@@ -112,11 +122,13 @@ jobs:
             --publish "${{ inputs.publish }}" \
             --verbose
 
-      - name: Run FAPI 2.0 Message Signing RP conformance tests
+      - name: Run FAPI 2.0 Message Signing RP conformance tests (report-only)
+        continue-on-error: true
         env:
           CONFORMANCE_SERVER: https://www.certification.openid.net/
           CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
         run: |
+          echo "::warning::fapi2-message-signing-rp hosted evidence is report-only — known red: invalid-alternate-alg INTERRUPTED (task fix:conformance-fapi2-invalid-alt-alg)"
           python conformance/run_tests.py \
             --plan fapi2-message-signing-rp \
             --output conformance/results/hosted/fapi2-message-signing-rp-latest.json \
@@ -151,11 +163,13 @@ jobs:
             --publish "${{ inputs.publish }}" \
             --verbose
 
-      - name: Run Back-Channel Logout RP conformance tests
+      - name: Run Back-Channel Logout RP conformance tests (report-only)
+        continue-on-error: true
         env:
           CONFORMANCE_SERVER: https://www.certification.openid.net/
           CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
         run: |
+          echo "::warning::backchannel-logout-rp hosted evidence is report-only — known red: rpinitlogout-wrong-alg expects 400 (task fix:conformance-backchannel-wrong-alg)"
           python conformance/run_tests.py \
             --plan backchannel-logout-rp \
             --output conformance/results/hosted/backchannel-logout-rp-latest.json \

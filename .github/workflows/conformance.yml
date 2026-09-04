@@ -102,22 +102,20 @@ jobs:
       # against the local suite in the test phase; otherwise it stays
       # report-only (continue-on-error) with a loud ::warning:: naming the red
       # leg + its follow-up task, never silent-pass.
-      # Status after the 2026-09-03 local OIDF run (see
-      # docs/security/harder-tier-coverage.md):
+      # Status after the 2026-09-03 local OIDF run (authoritative record:
+      # docs/security/harder-tier-coverage.md / DEC-001):
       #   dynamic-rp .............. GREEN  -> hard gate
       #   rpinitiated-logout-rp ... GREEN  -> hard gate
-      #   fapi2-rp ................ 21/22  -> report-only (invalid-alternate-alg)
-      #   fapi2-message-signing ... 27/28  -> report-only (invalid-alternate-alg)
-      #   backchannel-logout-rp ... 7/8    -> report-only (wrong-alg -> 400)
+      #   fapi2-rp ................ 21/22  -> report-only (invalid-alternate-alg INTERRUPTED)
+      #   fapi2-message-signing ... 27/28  -> report-only (invalid-alternate-alg INTERRUPTED)
+      #   backchannel-logout-rp ... 7/8    -> report-only (wrong-alg expects 400)
+      # The three report-only plans each carry a single known-red negative leg
+      # (RP-harness alg-rejection flow, tracked as fix:conformance-fapi2-invalid-alt-alg
+      # and fix:conformance-backchannel-wrong-alg). continue-on-error keeps them
+      # from gating a release tag until the harness path is fixed and the plan
+      # proves green — never gate a release on a red leg, never silent-pass.
       # Evidence for each profile is picked up by the existing *-latest.json
       # export + upload steps below.
-      # report-only (DEC-001): local OIDF run 2026-09-03 left one known-red
-      # negative test — fapi2-security-profile-final-client-test-invalid-alternate-alg
-      # was INTERRUPTED (21/22, 27/28). The RP harness alg-rejection flow does
-      # not drive that leg to a verdict. Tracked in the run-time task
-      # fix:conformance-fapi2-invalid-alt-alg; keep continue-on-error until the
-      # harness path is fixed and the plan proves green — never gate a release
-      # tag on a red conformance leg, never silent-pass.
       - name: Run FAPI 2.0 Security Profile RP conformance tests (report-only)
         continue-on-error: true
         run: |
