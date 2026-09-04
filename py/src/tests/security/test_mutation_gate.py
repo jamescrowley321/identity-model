@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
+
+import pytest
 
 
 _DRIVER = Path(__file__).resolve().parents[3] / "tools" / "mutation_security.py"
@@ -18,6 +21,9 @@ _spec = importlib.util.spec_from_file_location("mutation_security", _DRIVER)
 assert _spec is not None
 assert _spec.loader is not None
 mutation_security = importlib.util.module_from_spec(_spec)
+# Register before exec so dataclasses can resolve the module's own (PEP 563,
+# string) annotations via sys.modules when it processes ``WaiverSet``.
+sys.modules[_spec.name] = mutation_security
 _spec.loader.exec_module(mutation_security)
 
 # One mutant name per mutmut status, to exercise the full classification.
@@ -50,8 +56,15 @@ def test_parse_results_only_captures_mutant_lines():
     assert mutation_security.parse_results(_SAMPLE_RESULTS) == _EXPECTED_STATUSES
 
 
+_EMPTY_WAIVERS = mutation_security.WaiverSet(frozenset(), frozenset())
+
+
 def test_only_killed_passes_everything_else_is_a_survivor():
-    unwaived, waived = mutation_security.evaluate(_EXPECTED_STATUSES, allowlist=set())
+    # An empty ``show`` diff has no removed line -> nothing can be waived, so every
+    # non-killed status surfaces as a survivor.
+    unwaived, waived = mutation_security.evaluate(
+        _EXPECTED_STATUSES, _EMPTY_WAIVERS, show=lambda _n: ""
+    )
     assert waived == []
     # Every non-killed status is a survivor — including "no tests" (the fail-open
     # the old denylist missed); killed mutants are never reported.
@@ -64,32 +77,184 @@ def test_only_killed_passes_everything_else_is_a_survivor():
     ]
 
 
-def test_exact_name_allowlist_waives_only_that_mutant():
-    unwaived, waived = mutation_security.evaluate(_EXPECTED_STATUSES, {f"{_M}2"})
-    assert waived == [f"{_M}2: survived"]
-    assert unwaived == [
-        f"{_M}3: no tests",
-        f"{_M}4: skipped",
-        f"{_M}5: timeout",
-        f"{_M}6: suspicious",
-    ]
+# ── Content-addressed waivers (issue #615) ───────────────────────────────────
+# A waiver matches a survivor by the CONTENT of its mutation — the function id
+# plus the source line it rewrote (from ``mutmut show``) — never the volatile
+# ``__mutmut_N`` index. This closes the fail-open where renumbering silently
+# rebinds a stale index-name waiver onto a *different, real* survivor.
+
+_PARSERS_FN = "py_identity_model.core.parsers.x_find_key_by_kid"
+_GUARD = "if len(signing_keys) > 1 and jwt_alg:"
 
 
-def test_allowlist_is_anchored_not_substring():
-    # A waiver for one mutant must NOT waive a different mutant whose name
-    # contains it as a substring.
-    statuses = {"pkg.x_f__mutmut_1": "survived", "pkg.x_f__mutmut_11": "survived"}
-    unwaived, waived = mutation_security.evaluate(statuses, {"pkg.x_f__mutmut_1"})
-    assert waived == ["pkg.x_f__mutmut_1: survived"]
-    assert unwaived == ["pkg.x_f__mutmut_11: survived"]
+def _show(original, mutated):
+    """A ``mutmut show`` unified diff rewriting ``original`` to ``mutated``."""
+    return (
+        "--- src/p.py\n+++ src/p.py\n@@ -2,3 +2,3 @@\n"
+        " def find_key_by_kid(keys, kid, jwt_alg):\n"
+        f"-        {original}\n"
+        f"+        {mutated}\n"
+        "         return keys\n"
+    )
 
 
-def test_load_allowlist_strips_comments_and_blanks():
-    text = "# a comment\n\npkg.x_a__mutmut_1  # equivalent\n  \npkg.x_b__mutmut_2\n"
-    assert mutation_security.load_allowlist(text) == {
-        "pkg.x_a__mutmut_1",
-        "pkg.x_b__mutmut_2",
-    }
+def test_added_source_line_extracts_the_mutated_line():
+    assert mutation_security._added_source_line(_SHOW_DIFF) == "if a >= b:"
+
+
+def test_added_source_line_none_when_no_added_line():
+    diff = "--- a\n+++ b\n@@ -1,2 +1 @@\n context\n-removed\n"
+    assert mutation_security._added_source_line(diff) is None
+
+
+def test_mutant_func_id_strips_the_index():
+    assert mutation_security._mutant_func_id(f"{_PARSERS_FN}__mutmut_14") == _PARSERS_FN
+
+
+def test_exact_waiver_waives_only_that_transformation():
+    waivers = mutation_security.load_allowlist(
+        f"{_PARSERS_FN} | {_GUARD} => if len(signing_keys) > 1 or jwt_alg:"
+    )
+    unwaived, waived = mutation_security.evaluate(
+        {f"{_PARSERS_FN}__mutmut_14": "survived"},
+        waivers,
+        show=lambda _n: _show(_GUARD, "if len(signing_keys) > 1 or jwt_alg:"),
+    )
+    assert waived == [f"{_PARSERS_FN}__mutmut_14: survived"]
+    assert unwaived == []
+
+
+def test_exact_waiver_does_not_waive_a_different_mutation_with_the_same_index():
+    # THE #615 fail-open, closed: a waiver written for the harmless `or` mutation
+    # must NOT waive a *different*, dangerous mutation (`< 1`) that inherited the
+    # same __mutmut_14 index after the function was renumbered.
+    waivers = mutation_security.load_allowlist(
+        f"{_PARSERS_FN} | {_GUARD} => if len(signing_keys) > 1 or jwt_alg:"
+    )
+    unwaived, waived = mutation_security.evaluate(
+        {f"{_PARSERS_FN}__mutmut_14": "survived"},
+        waivers,
+        show=lambda _n: _show(_GUARD, "if len(signing_keys) < 1 and jwt_alg:"),
+    )
+    assert waived == []
+    assert unwaived == [f"{_PARSERS_FN}__mutmut_14: survived"]
+
+
+def test_exact_waiver_is_index_independent():
+    # Same mutation content, different (renumbered) index -> still waived.
+    waivers = mutation_security.load_allowlist(
+        f"{_PARSERS_FN} | {_GUARD} => if len(signing_keys) > 1 or jwt_alg:"
+    )
+    for idx in ("__mutmut_9", "__mutmut_37", "__mutmut_200"):
+        unwaived, waived = mutation_security.evaluate(
+            {f"{_PARSERS_FN}{idx}": "survived"},
+            waivers,
+            show=lambda _n: _show(_GUARD, "if len(signing_keys) > 1 or jwt_alg:"),
+        )
+        assert waived == [f"{_PARSERS_FN}{idx}: survived"], idx
+        assert unwaived == []
+
+
+def test_line_waiver_waives_any_mutation_of_that_line():
+    log = 'logger.info("Forcing JWKS refresh for %s", jwks_uri)'
+    waivers = mutation_security.load_allowlist(f"{_PARSERS_FN} | {log}")
+    for mutated in (
+        'logger.info("XXForcing JWKS refresh for %sXX", jwks_uri)',
+        'logger.info("", jwks_uri)',
+        "logger.info(None, jwks_uri)",
+    ):
+        unwaived, waived = mutation_security.evaluate(
+            {f"{_PARSERS_FN}__mutmut_3": "survived"},
+            waivers,
+            show=lambda _n, m=mutated: _show(log, m),
+        )
+        assert waived == [f"{_PARSERS_FN}__mutmut_3: survived"], mutated
+        assert unwaived == []
+
+
+def test_line_waiver_does_not_waive_a_different_line():
+    waivers = mutation_security.load_allowlist(f"{_PARSERS_FN} | {_GUARD}")
+    unwaived, waived = mutation_security.evaluate(
+        {f"{_PARSERS_FN}__mutmut_3": "survived"},
+        waivers,
+        show=lambda _n: _show("return keys[0]", "return keys[1]"),
+    )
+    assert waived == []
+    assert unwaived == [f"{_PARSERS_FN}__mutmut_3: survived"]
+
+
+def test_waiver_is_scoped_to_its_function():
+    # Identical source line, different function -> not waived (a broad line in one
+    # function must never leak a waiver into another).
+    waivers = mutation_security.load_allowlist(f"{_PARSERS_FN} | {_GUARD}")
+    other = "py_identity_model.core.jwks_logic.x_other"
+    unwaived, waived = mutation_security.evaluate(
+        {f"{other}__mutmut_1": "survived"},
+        waivers,
+        show=lambda _n: _show(_GUARD, "if len(signing_keys) >= 1 and jwt_alg:"),
+    )
+    assert waived == []
+    assert unwaived == [f"{other}__mutmut_1: survived"]
+
+
+def test_unparseable_show_is_never_waived():
+    # Fail-closed: a survivor whose diff has no removed line cannot be placed, so
+    # even a matching-looking waiver must not apply.
+    waivers = mutation_security.load_allowlist(f"{_PARSERS_FN} | {_GUARD}")
+    unwaived, waived = mutation_security.evaluate(
+        {f"{_PARSERS_FN}__mutmut_1": "survived"},
+        waivers,
+        show=lambda _n: "no diff here",
+    )
+    assert waived == []
+    assert unwaived == [f"{_PARSERS_FN}__mutmut_1: survived"]
+
+
+def test_killed_mutants_need_no_show_call():
+    called: list[str] = []
+    mutation_security.evaluate(
+        {f"{_PARSERS_FN}__mutmut_1": "killed"},
+        _EMPTY_WAIVERS,
+        show=lambda n: called.append(n) or "",
+    )
+    assert called == []
+
+
+def test_load_allowlist_parses_line_and_exact_waivers():
+    text = (
+        "# a comment\n"
+        "\n"
+        f"{_PARSERS_FN} | {_GUARD}\n"
+        f"{_PARSERS_FN} | {_GUARD} => if len(signing_keys) >= 1 and jwt_alg:\n"
+    )
+    waivers = mutation_security.load_allowlist(text)
+    assert waivers.line == frozenset({(_PARSERS_FN, _GUARD)})
+    assert waivers.exact == frozenset(
+        {(_PARSERS_FN, _GUARD, "if len(signing_keys) >= 1 and jwt_alg:")}
+    )
+
+
+def test_load_allowlist_rejects_a_malformed_line():
+    with pytest.raises(ValueError, match="malformed waiver"):
+        mutation_security.load_allowlist("this line has no pipe separator\n")
+
+
+def test_load_allowlist_does_not_strip_hash_inside_a_source_line():
+    # A ``#`` inside a waived source line is content, not a comment (whole-line
+    # ``#`` is still a comment).
+    waivers = mutation_security.load_allowlist(f"{_PARSERS_FN} | count = 0  # noqa\n")
+    assert waivers.line == frozenset({(_PARSERS_FN, "count = 0  # noqa")})
+
+
+def test_repo_allowlist_parses_and_is_index_free():
+    # The checked-in allowlist must always parse, and no entry may reference a
+    # volatile ``__mutmut_N`` index (that would be the #615 fail-open re-entering).
+    text = _DRIVER.with_name("mutation_security_allowlist.txt").read_text()
+    waivers = mutation_security.load_allowlist(text)
+    assert waivers.line
+    assert waivers.exact
+    for entry in [*waivers.line, *waivers.exact]:
+        assert "__mutmut_" not in entry[0], entry
 
 
 # ── Changed-LINE scoping (issue #511) ────────────────────────────────────────

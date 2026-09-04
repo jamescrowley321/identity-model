@@ -41,10 +41,16 @@ Guardrails
 * **>=1-mutant floor.** If mutmut produced **zero** mutants for the changed
   files, that is a config/scope/version-drift failure, not a pass — we exit 1.
   (This is the "silent green on output drift" hole the review flagged.)
-* **Exact-name equivalent-mutant allowlist.** Genuinely-equivalent mutants
-  (semantically identical, unkillable) are waived by their **exact mutant name**
-  in ``tools/mutation_security_allowlist.txt`` (anchored, not substring-anywhere
-  — one broad substring must never silently waive real survivors elsewhere).
+* **Content-addressed equivalent-mutant allowlist.** Genuinely-equivalent
+  mutants (semantically identical, unkillable) are waived in
+  ``tools/mutation_security_allowlist.txt`` by the **content of the mutation**
+  — the function it lives in plus the source line it rewrote (from
+  ``mutmut show``) — **never** its ``__mutmut_N`` index. mutmut numbers mutants
+  sequentially and *renumbers* them whenever a function changes, so an
+  index-keyed waiver can silently rebind to a *different, real* survivor and pass
+  the gate green (issue #615: fail-open). Keying on content makes a waiver track
+  the exact mutation it was written for; a survivor whose mutation is not waived
+  — or whose ``mutmut show`` diff cannot be parsed — stays gated (fail-closed).
 
 mutmut 3.x is configured via ``setup.cfg [mutmut]``; this driver writes a
 **temporary** ``setup.cfg`` for the run (restoring any pre-existing one) so the
@@ -55,6 +61,8 @@ tests live under ``src/tests`` (mutmut only auto-copies top-level ``tests/``).
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
+import functools
 import json
 import os
 from pathlib import Path
@@ -294,7 +302,40 @@ def _removed_source_line(show_output: str) -> str | None:
     return None
 
 
+def _added_source_line(show_output: str) -> str | None:
+    """The stripped text of the first *added* (mutated) line in a ``mutmut show``
+    unified diff — i.e. the source line as mutmut rewrote it.
+
+    Mirror of :func:`_removed_source_line` for the ``+`` side. Returns ``None``
+    when the diff has no added line (callers treat that fail-closed). ``+++`` is a
+    file header, not hunk content.
+    """
+    in_hunk = False
+    for line in show_output.splitlines():
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk and line.startswith("+") and not line.startswith("+++"):
+            return line[1:].strip()
+    return None
+
+
+def _mutant_func_id(mutant_name: str) -> str:
+    """The dotted mutmut function id a mutant belongs to — its name minus the
+    ``__mutmut_N`` suffix, e.g.
+    ``py_identity_model.aio.token_validation.x__refresh_jwks``.
+
+    Only the trailing index changes when mutmut renumbers a function's mutants, so
+    this prefix is stable and anchors a content waiver to a specific function
+    without pinning a volatile mutant number.
+    """
+    return mutant_name.rpartition("__mutmut_")[0]
+
+
+@functools.cache
 def _mutmut_show(mutant_name: str) -> str:
+    # Cached: the line-scoping pass and the waiver-evaluation pass both call this
+    # per survivor within one run, and a mutant's diff is stable for that run.
     return _run([sys.executable, "-m", "mutmut", "show", mutant_name]).stdout
 
 
@@ -395,14 +436,71 @@ def _restore_setup_cfg(backup: str | None) -> None:
         cfg.write_text(backup)
 
 
-def load_allowlist(text: str) -> set[str]:
-    """Exact mutant names to waive (equivalent mutants). One name per line;
-    ``#`` comments and blanks ignored."""
-    return {
-        stripped
-        for line in text.splitlines()
-        if (stripped := line.split("#", 1)[0].strip())
-    }
+@dataclass(frozen=True)
+class WaiverSet:
+    """Content-addressed equivalent-mutant waivers parsed from the allowlist.
+
+    Both kinds key on the mutation's CONTENT — the dotted function id plus the
+    source text it changed — never the volatile ``__mutmut_N`` index:
+
+    * ``exact`` — waive one specific ``original -> mutated`` transformation.
+    * ``line``  — waive *every* mutation of a certified no-effect source line
+      (e.g. a log message, where any mutation is equivalent). Use only for lines
+      with no control-flow or security effect.
+    """
+
+    line: frozenset[tuple[str, str]]
+    exact: frozenset[tuple[str, str, str]]
+
+    def waives(self, func_id: str, original: str | None, mutated: str | None) -> bool:
+        """Whether a survivor with this content is waived.
+
+        ``original``/``mutated`` come from the mutant's ``mutmut show`` diff.
+        ``original is None`` (an unparseable diff) is never waived — fail-closed.
+        """
+        if original is None:
+            return False
+        if (func_id, original) in self.line:
+            return True
+        if mutated is None:
+            return False
+        return (func_id, original, mutated) in self.exact
+
+
+def load_allowlist(text: str) -> WaiverSet:
+    """Parse the content-addressed waiver file into a :class:`WaiverSet`.
+
+    Each non-comment, non-blank line is one waiver::
+
+        <func_id> | <original source line>                    # LINE waiver
+        <func_id> | <original source line> => <mutated line>   # EXACT waiver
+
+    ``func_id`` is a mutmut function id (a mutant name minus its ``__mutmut_N``
+    suffix). Source text is compared stripped, matching ``_removed_source_line``
+    / ``_added_source_line``. Justifications go on their own ``#`` comment lines
+    above the waiver; a whole-line ``#`` is a comment, but ``#`` is **not**
+    stripped mid-line (a source line may legitimately contain one). A line with
+    no `` | `` separator raises — a security gate must not silently drop a waiver
+    it cannot parse (that would fail-open).
+    """
+    line_w: set[tuple[str, str]] = set()
+    exact_w: set[tuple[str, str, str]] = set()
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        entry = raw.strip()
+        if " | " not in entry:
+            raise ValueError(
+                f"malformed waiver (expected '<func_id> | <source line>'): {entry!r}"
+            )
+        func_id, _, rest = entry.partition(" | ")
+        func_id = func_id.strip()
+        if " => " in rest:
+            original, _, mutated = rest.partition(" => ")
+            exact_w.add((func_id, original.strip(), mutated.strip()))
+        else:
+            line_w.add((func_id, rest.strip()))
+    return WaiverSet(line=frozenset(line_w), exact=frozenset(exact_w))
 
 
 def parse_results(text: str) -> dict[str, str]:
@@ -420,17 +518,34 @@ def parse_results(text: str) -> dict[str, str]:
 
 
 def evaluate(
-    statuses: dict[str, str], allowlist: set[str]
+    statuses: dict[str, str],
+    waivers: WaiverSet,
+    show: Callable[[str], str] = _mutmut_show,
 ) -> tuple[list[str], list[str]]:
     """Return ``(unwaived_survivors, waived_survivors)``.
 
-    A survivor is **any** mutant whose status is not exactly ``killed``.
+    A survivor is **any** mutant whose status is not exactly ``killed``. It is
+    waived only when the CONTENT of its mutation — its function id plus the source
+    line it changed, read from ``mutmut show`` — matches a waiver (see
+    :meth:`WaiverSet.waives`). The mutant's ``__mutmut_N`` index plays no part, so
+    renumbering can neither silently rebind a waiver to a different real survivor
+    (issue #615) nor break a genuine one. A survivor whose diff cannot be parsed
+    is unwaivable (fail-closed).
     """
     unwaived, waived = [], []
     for name, status in sorted(statuses.items()):
         if status == KILLED_STATUS:
             continue
-        (waived if name in allowlist else unwaived).append(f"{name}: {status}")
+        diff = show(name)
+        entry = f"{name}: {status}"
+        if waivers.waives(
+            _mutant_func_id(name),
+            _removed_source_line(diff),
+            _added_source_line(diff),
+        ):
+            waived.append(entry)
+        else:
+            unwaived.append(entry)
     return unwaived, waived
 
 
@@ -547,7 +662,12 @@ def main() -> int:
             f"({line_excluded} on unchanged lines within changed functions)."
         )
 
-        unwaived, waived = evaluate(scoped, load_allowlist(_read_allowlist()))
+        try:
+            waivers = load_allowlist(_read_allowlist())
+        except ValueError as exc:
+            print(f"mutation-security: FAILED — {exc}", file=sys.stderr)
+            return 2
+        unwaived, waived = evaluate(scoped, waivers)
         for w in waived:
             print(f"mutation-security: WAIVED equivalent mutant {w}")
 
@@ -559,8 +679,14 @@ def main() -> int:
                 print(f"  {s}")
             print(
                 "\nAdd a test under src/tests/security/ that kills the mutant "
-                "(`mutmut show <name>` to see it), or — if it is provably equivalent — "
-                "waive its exact name in tools/mutation_security_allowlist.txt with a justification."
+                "(`mutmut show <name>` shows its diff), or — if it is provably "
+                "equivalent — waive it in tools/mutation_security_allowlist.txt by "
+                "its CONTENT, with a justification:\n"
+                "  <func_id> | <original line> => <mutated line>   (this mutation)\n"
+                "  <func_id> | <original line>                     (any mutation of "
+                "a no-effect line, e.g. a log message)\n"
+                "where <func_id> is the mutant name up to (not including) "
+                "'__mutmut_'."
             )
             return 1
 
