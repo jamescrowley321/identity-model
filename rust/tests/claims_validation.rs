@@ -161,6 +161,32 @@ fn rejection_surfaces_structured_reason() {
     }
 }
 
+// Regression through the real pipeline: a genuinely signed token whose `aud` is
+// JSON null is rejected by require_claims(["aud"]). With no expected audience the
+// standard aud/azp checks are skipped, so the token passes signature/iss/exp and
+// only the injected validator rejects it — proving the aud:null fail-open is
+// closed end-to-end (not just in a unit).
+#[test]
+fn require_claims_rejects_null_aud_through_pipeline() {
+    let n = now();
+    let token = mint(json!({
+        "iss": TEST_ISSUER,
+        "sub": "user-1",
+        "aud": null,
+        "exp": n + 3600,
+        "iat": n - 5,
+    }));
+    let opts = ValidationOptions::builder()
+        .issuer(TEST_ISSUER)
+        .claims_validator(require_claims(["aud"]).expect("names supplied"))
+        .build();
+    let err = validate_token(&token, &public_key(), &opts).expect_err("aud:null rejected");
+    match err {
+        IdentityError::ClaimsValidation { claim, .. } => assert_eq!(claim.as_deref(), Some("aud")),
+        other => panic!("expected ClaimsValidation, got {other:?}"),
+    }
+}
+
 // Ordering guarantee: the injected validator runs only *after* the standard
 // checks. An expired token is rejected by the registered-claim check before the
 // validator is ever consulted, so its side effect never fires.
@@ -203,6 +229,97 @@ fn non_claims_error_from_validator_propagates() {
         matches!(err, IdentityError::Configuration(_)),
         "err = {err:?}, want the validator's own Configuration error"
     );
+}
+
+// Ordering guarantee vs signature verification: a token whose signature is
+// tampered is rejected before the injected validator is consulted, so the spy
+// never fires. Complements the expired-token test (which only proves ordering
+// vs the registered-claim checks) by proving the hook runs *after* the crypto.
+#[test]
+fn validator_not_invoked_when_signature_fails() {
+    let invoked = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&invoked);
+    let spy = from_fn(move |_claims: &_| {
+        flag.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    let opts = ValidationOptions::builder()
+        .issuer(TEST_ISSUER)
+        .audience(TEST_AUDIENCE)
+        .claims_validator(spy)
+        .build();
+
+    // Flip the final character of the signature segment of an otherwise-valid
+    // token.
+    let token = valid_token();
+    let (head, sig) = token.rsplit_once('.').expect("three segments");
+    let last = sig.chars().last().expect("non-empty signature");
+    let swapped = if last == 'A' { 'B' } else { 'A' };
+    let tampered = format!("{head}.{}{swapped}", &sig[..sig.len() - 1]);
+
+    let err =
+        validate_token(&tampered, &public_key(), &opts).expect_err("tampered signature rejected");
+    assert!(err.to_string().contains("signature"), "{err}");
+    assert!(
+        !invoked.load(Ordering::SeqCst),
+        "claims validator must not run when signature verification fails"
+    );
+}
+
+// The `validate_token_with_jwks` delegation path carries the injected validator.
+// Offline: a mock server serves the JWKS fixture, so the resolve-key -> verify ->
+// validate -> injected-validator chain runs in plain `cargo test` (no live
+// provider), unlike the `#[ignore]` live leg below. A passing validator accepts;
+// a rejecting one surfaces the structured error after the real JWKS fetch and
+// signature verification.
+#[tokio::test]
+async fn injected_validator_runs_through_jwks_delegation() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let jwks_body = String::from_utf8(read_fixture("jwks.json")).expect("utf8 jwks fixture");
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(jwks_body))
+        .mount(&server)
+        .await;
+    let jwks_uri = format!("{}/jwks", server.uri());
+
+    let jwks = JwksClient::builder()
+        .allow_http(true)
+        .timeout(Duration::from_secs(5))
+        .build();
+    let token = valid_token();
+
+    // Passing: the token (kid=test-key-1) resolves against the mock JWKS, its
+    // signature verifies, and the injected read-scope validator accepts.
+    let accept = ValidationOptions::builder()
+        .issuer(TEST_ISSUER)
+        .audience(TEST_AUDIENCE)
+        .claims_validator(require_scopes(["read"]).expect("scopes supplied"))
+        .build();
+    let claims = validate_token_with_jwks(&token, &jwks, &jwks_uri, &accept)
+        .await
+        .expect("passing validator via jwks delegation");
+    assert_eq!(claims.subject.as_deref(), Some("user-1"));
+
+    // Rejecting: the same delegation path carries a rejecting validator, which
+    // fires only after the live signature/JWKS work succeeds.
+    let reject = ValidationOptions::builder()
+        .issuer(TEST_ISSUER)
+        .audience(TEST_AUDIENCE)
+        .claims_validator(require_scopes(["admin"]).expect("scopes supplied"))
+        .build();
+    let err = validate_token_with_jwks(&token, &jwks, &jwks_uri, &reject)
+        .await
+        .expect_err("missing admin scope rejected via jwks delegation");
+    match err {
+        IdentityError::ClaimsValidation { reason, claim } => {
+            assert!(reason.contains("admin"), "{reason}");
+            assert_eq!(claim.as_deref(), Some("scope"));
+        }
+        other => panic!("expected ClaimsValidation via jwks delegation, got {other:?}"),
+    }
 }
 
 // --- live legs (mirroring tests/jwt_validation.rs) --------------------------

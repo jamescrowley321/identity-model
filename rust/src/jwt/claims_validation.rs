@@ -257,10 +257,15 @@ pub fn combine_claims_validators(
 }
 
 /// Returns a validator that rejects unless every named claim is present with a
-/// non-null value.
+/// meaningful value.
 ///
-/// A claim that is absent — or present as JSON `null` — is treated as missing
-/// (mirroring the Python `require_claims`, which treats `None` as missing).
+/// A claim that is absent, JSON `null`, an empty string, or an empty
+/// array/object is treated as missing — the same presence notion the built-in
+/// [`crate::ValidationOptions`] `required_claims` (JWT-012) enforces, so the two
+/// required-claim surfaces agree and a present-but-null `aud` cannot slip
+/// through the typed-field reconstruction. This is marginally stricter than the
+/// Python `require_claims` (which treats only `None`/absent as missing); the
+/// difference — rejecting present-but-empty values — is fail-closed.
 ///
 /// # Errors
 ///
@@ -297,6 +302,23 @@ where
 /// [`Value::Null`], so `require_claim_value("x", Value::Null)` means "`x` must
 /// be present and null", not "`x` may be missing" (the fail-open a plain
 /// "get-or-default != value" would allow).
+///
+/// # Comparison semantics
+///
+/// The claim is compared against the decoded [`Claims`] representation, not the
+/// raw token JSON. Two consequences, both **fail-closed** (a mismatch rejects,
+/// never accepts):
+///
+/// * The `aud` claim is normalised to an array of strings, so
+///   `require_claim_value("aud", "acme")` does **not** match a token carrying
+///   `aud: "acme"`. To assert an audience, prefer the token-validation
+///   `audience` check, or compare against the array form
+///   (`require_claim_value("aud", serde_json::json!(["acme"]))`).
+/// * Numeric equality is exact by JSON number type: an integer `1` in the token
+///   is not equal to a float `1.0` passed here.
+///
+/// For the common case — string claims such as `role`, `tid`, or `iss` — this
+/// is exactly the intended behaviour.
 pub fn require_claim_value(
     name: impl Into<String>,
     value: impl Into<Value>,
@@ -389,13 +411,17 @@ fn claim_value(claims: &Claims, name: &str) -> Option<Value> {
     }
 }
 
-/// Whether `name` is absent or present-but-`null` in `claims` (the Python
-/// `_missing`: `claims.get(name) is None`).
+/// Whether `name` is missing for `require_claims`.
+///
+/// Routed through the crate's own presence logic ([`Claims::has_meaningful`],
+/// the `meaningful` set the built-in `required_claims` uses) rather than the
+/// lossy typed-field reconstruction in [`claim_value`]: a present-but-`null`
+/// `aud` reconstructs to an empty array, which would otherwise read as present.
+/// Delegating keeps the injectable and built-in required-claim checks in
+/// agreement and fails closed on `null`/empty (marginally stricter than the
+/// Python `_missing`, which treats only `None`/absent as missing).
 fn is_missing(claims: &Claims, name: &str) -> bool {
-    match claim_value(claims, name) {
-        None => true,
-        Some(value) => value.is_null(),
-    }
+    !claims.has_meaningful(name)
 }
 
 /// The scopes the token grants, from `scope` (space-delimited string) or `scp`
@@ -493,6 +519,26 @@ mod tests {
         let v = require_claims(["tid"]).expect("names supplied");
         let (_, claim) = reject_claims(&v, json!({ "tid": null }));
         assert_eq!(claim.as_deref(), Some("tid"));
+    }
+
+    #[test]
+    fn require_claims_treats_null_aud_as_missing() {
+        // Regression: a present-but-null `aud` reconstructs to an empty audience
+        // via the typed field, so it must be treated as missing (fail closed)
+        // rather than accepted — matching the built-in `required_claims`.
+        let v = require_claims(["aud"]).expect("names supplied");
+        let (_, claim) = reject_claims(&v, json!({ "aud": null }));
+        assert_eq!(claim.as_deref(), Some("aud"));
+    }
+
+    #[test]
+    fn require_claims_treats_empty_value_as_missing() {
+        // Consistent with the built-in required_claims (JWT-012): a present-but-
+        // empty value does not satisfy a required-claim check.
+        let v = require_claims(["x"]).expect("names supplied");
+        reject(&v, json!({ "x": "" }));
+        reject(&v, json!({ "x": [] }));
+        reject(&v, json!({ "x": {} }));
     }
 
     #[test]
