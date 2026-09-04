@@ -3,7 +3,7 @@ members = [".", "packages/fastapi-identity-model", "examples/fastapi", "examples
 
 [project]
 name = "py-identity-model"
-version = "3.11.4"
+version = "3.11.5"
 description = "OAuth2.0 and OpenID Connect Client Library"
 authors = [{ name = "jamescrowley321", email = "jamescrowley151@gmail.com" }]
 requires-python = ">=3.12"

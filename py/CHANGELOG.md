@@ -2,6 +2,60 @@
 
 <!-- version list -->
 
+## v3.11.5 (2026-09-04)
+
+### Bug Fixes
+
+- **token-validation**: Accept JsonWebKey and null-safe key dicts
+  ([#587](https://github.com/jamescrowley321/identity-model/pull/587),
+  [`80c7825`](https://github.com/jamescrowley321/identity-model/commit/80c78250d919a0500ef845b1be40b4f9b8fe7216))
+
+### Chores
+
+- Sync uv.lock with 3.11.4
+  ([`f221801`](https://github.com/jamescrowley321/identity-model/commit/f2218010984450f4ec84c980de6975d6d956f5c5))
+
+### Continuous Integration
+
+- Remove adversarial-review merge gate (unstable)
+  ([#591](https://github.com/jamescrowley321/identity-model/pull/591),
+  [`2b9c688`](https://github.com/jamescrowley321/identity-model/commit/2b9c6887854aad3df9bf20588bcbaff2b1fb596c))
+
+- **conformance**: Gate releases on conformance + run it daily off main
+  ([#571](https://github.com/jamescrowley321/identity-model/pull/571),
+  [`606dd32`](https://github.com/jamescrowley321/identity-model/commit/606dd32de37e1d65380cfe3150aa711f0b77ca8e))
+
+- **conformance**: Pin OIDF suite image to release-v5.2.4 (stop :latest drift)
+  ([#582](https://github.com/jamescrowley321/identity-model/pull/582),
+  [`1b286c0`](https://github.com/jamescrowley321/identity-model/commit/1b286c0a22da05f55a1646bd26fce404bacbe565))
+
+- **deps)(deps**: Bump softprops/action-gh-release
+  ([#581](https://github.com/jamescrowley321/identity-model/pull/581),
+  [`6008e2e`](https://github.com/jamescrowley321/identity-model/commit/6008e2e759207ace0e8c28d2090f2ddbc92db3e7))
+
+- **deps)(deps**: Bump the github-actions group with 4 updates
+  ([#580](https://github.com/jamescrowley321/identity-model/pull/580),
+  [`27c3134`](https://github.com/jamescrowley321/identity-model/commit/27c313482f867d49f7ad901df338cdd9f2952cc7))
+
+- **deps-dev**: Bump mkdocs-material from 9.7.6 to 9.7.7 in /py
+  ([#589](https://github.com/jamescrowley321/identity-model/pull/589),
+  [`b9a400c`](https://github.com/jamescrowley321/identity-model/commit/b9a400c7d73910de30715b244ca10576a78a6965))
+
+- **release**: Auto-tag and publish Go and Rust releases
+  ([#570](https://github.com/jamescrowley321/identity-model/pull/570),
+  [`7be588e`](https://github.com/jamescrowley321/identity-model/commit/7be588e03a4f41b4f9a676acffb09753d0664511))
+
+- **release**: Drop orphaned directory line from asset-upload step
+  ([`e229748`](https://github.com/jamescrowley321/identity-model/commit/e229748831e89fde3259d1df356bf4ce43bd395b))
+
+- **release**: Pin gitpython<3.1.60 in the fastapi-version job too
+  ([`e87a31c`](https://github.com/jamescrowley321/identity-model/commit/e87a31c15a55590509a9d5ea54137d63aa58268c))
+
+- **security-gate**: Scope mutation gate to changed lines, not whole functions
+  ([#588](https://github.com/jamescrowley321/identity-model/pull/588),
+  [`fde917a`](https://github.com/jamescrowley321/identity-model/commit/fde917a5448ecd31d971963994bc406b5a0511b3))
+
+
 ## v3.11.4 (2026-08-28)
 
 ### Bug Fixes
