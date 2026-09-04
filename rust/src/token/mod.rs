@@ -35,11 +35,10 @@ mod response;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use reqwest::Client as HttpClient;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 
+use crate::client_auth::{OAuthErrorBody, basic_auth_header, body_snippet, read_capped_body};
 use crate::{IdentityError, Result};
 
 pub use pkce::{
@@ -57,10 +56,6 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Placeholder printed in place of secret material in `Debug` output (#24).
 const REDACTED: &str = "<redacted>";
-
-/// Caps the token response read into memory (memory-exhaustion DoS guard).
-/// Token responses are small.
-const MAX_BODY_BYTES: usize = 1 << 20; // 1 MiB
 
 /// Parameters owned by the grant and client-authentication logic. They can
 /// never be set or overridden via [`TokenClientBuilder::extra_param`], so that
@@ -310,82 +305,6 @@ impl TokenClient {
     }
 }
 
-/// A typed OAuth 2.0 error response body (RFC 6749 §5.2), used only to decode
-/// the endpoint reply before mapping to [`IdentityError::TokenEndpoint`].
-#[derive(serde::Deserialize)]
-struct OAuthErrorBody {
-    #[serde(default)]
-    error: String,
-    #[serde(default)]
-    error_description: Option<String>,
-    #[serde(default)]
-    error_uri: Option<String>,
-}
-
-/// Builds an HTTP Basic `Authorization` header value from `client_id` and
-/// `client_secret`.
-///
-/// RFC 6749 §2.3.1 requires the credentials to be form-urlencoded before the
-/// Basic base64 encoding so reserved characters survive; `reqwest`'s
-/// `basic_auth` does NOT url-encode, so the header is built manually to match
-/// the Go reference and the RFC.
-fn basic_auth_header(client_id: &str, client_secret: &str) -> String {
-    let credentials = format!(
-        "{}:{}",
-        form_urlencode(client_id),
-        form_urlencode(client_secret)
-    );
-    format!("Basic {}", BASE64_STANDARD.encode(credentials))
-}
-
-/// `application/x-www-form-urlencoded` encoding of a single value
-/// (RFC 6749 §2.3.1).
-fn form_urlencode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char)
-            }
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
-}
-
-/// Reads a response body in chunks, rejecting one that exceeds
-/// [`MAX_BODY_BYTES`] before it is fully buffered.
-async fn read_capped_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|e| IdentityError::Http(format!("read token response: {e}")))?
-    {
-        if body.len() + chunk.len() > MAX_BODY_BYTES {
-            return Err(IdentityError::Http(format!(
-                "token response exceeds {MAX_BODY_BYTES} bytes"
-            )));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-/// Returns a short, single-line view of an unexpected response body for error
-/// messages.
-fn body_snippet(body: &[u8]) -> String {
-    const MAX: usize = 200;
-    let text = String::from_utf8_lossy(body);
-    let text = text.trim().replace('\n', " ");
-    if text.chars().count() > MAX {
-        format!("{}…", text.chars().take(MAX).collect::<String>())
-    } else {
-        text
-    }
-}
-
 /// Builder for [`TokenClient`]. Obtain one via [`TokenClient::builder`].
 #[derive(Default)]
 pub struct TokenClientBuilder {
@@ -534,6 +453,8 @@ impl TokenClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use wiremock::matchers::{header_exists, method, path};
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
