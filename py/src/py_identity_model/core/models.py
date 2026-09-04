@@ -1321,11 +1321,19 @@ class TokenValidationConfig:
             Security-critical options (verify_signature, verify_exp, verify_nbf,
             verify_iat) cannot be disabled and will raise ConfigurationException
             if set to False.
-        claims_validator: Optional callable for custom claims validation.
-                         Can be sync: Callable[[dict], None]
-                         or async: Callable[[dict], Awaitable[None]] (in async context)
-                         Should raise an exception if validation fails.
-                         The decoded token claims dict is passed as the only argument.
+        claims_validator: Optional injectable claims validator, run after the
+                         standard checks pass. A ``ClaimsValidator`` is any
+                         callable ``(claims) -> None`` — sync, or async in the
+                         async context — that raises ``ClaimsValidationError``
+                         (carrying a structured ``reason``/``claim``) to reject.
+                         The decoded claims dict is passed as the only argument.
+                         Any raised exception rejects the token; a
+                         ``ClaimsValidationError`` (or any
+                         ``TokenValidationException``) propagates with its reason
+                         intact, other exceptions become a generic failure.
+                         Compose several with ``combine_claims_validators`` and
+                         reuse ``require_claims`` / ``require_claim_value`` /
+                         ``require_scopes``.
         leeway: Clock skew tolerance in seconds for ``exp`` and ``nbf``
             claims.  Useful when clocks between the issuer and this
             server are not perfectly synchronized.

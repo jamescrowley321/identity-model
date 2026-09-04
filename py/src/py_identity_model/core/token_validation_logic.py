@@ -218,6 +218,11 @@ def validate_claims(
     if token_validation_config.claims_validator:
         try:
             token_validation_config.claims_validator(decoded_token)
+        except TokenValidationException:
+            # A validator that rejected via ClaimsValidationError (or any
+            # TokenValidationException) already carries a structured reason —
+            # propagate it unwrapped rather than flattening to a generic string.
+            raise
         except Exception as e:
             logger.error(f"Claims validation failed: {e!s}")
             raise TokenValidationException(
@@ -250,6 +255,10 @@ async def validate_async_claims(
                 await token_validation_config.claims_validator(decoded_token)
             else:
                 token_validation_config.claims_validator(decoded_token)
+        except TokenValidationException:
+            # Preserve a ClaimsValidationError's structured reason (see the sync
+            # path); only non-library exceptions are wrapped generically.
+            raise
         except Exception as e:
             logger.error(f"Claims validation failed: {e!s}")
             raise TokenValidationException(
