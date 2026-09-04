@@ -76,3 +76,50 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56
 # No input can observe a different selected key or algorithm: unkillable.
 py_identity_model.core.parsers.x_find_key_by_kid__mutmut_13
 py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14
+
+# ── #585 injectable discovery policy: sync twins + renumbered log mutants ──────
+#
+# The injectable-policy change threads a `policy` argument through the sync/aio
+# cached refresh + retry paths. The behavioural threading is proven by
+# test_discovery_policy_rotation_paths.py (an injected require_https=False policy
+# admits an http:// non-loopback jwks_uri that the strict default rejects, on
+# each of the kid-miss refresh, signature-failure retry, and injected-client
+# paths). The mutants below are the residual *equivalent* ones on those changed
+# lines — genuinely unkillable, in three classes:
+#
+# Class 1 — default-None no-op. `if policy is None: policy = DiscoveryPolicy()`
+# mutated to `policy = None`. `policy` is then used solely as
+# `get_jwks(JwksRequest(address=..., policy=policy))`, and get_jwks re-defaults
+# `jwks_request.policy or DiscoveryPolicy()` — so `None` and a fresh
+# `DiscoveryPolicy()` produce the identical request. No caller can observe the
+# difference.
+py_identity_model.sync.token_validation.x__get_cached_jwks__mutmut_2
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_2
+#
+# Class 2 — log-only. Message-text / logger-arg mutations of the single
+# "Forcing JWKS refresh for %s (possible key rotation)" info line (the sync twin
+# of the already-waived aio 11-17; #585 renumbered mutmut indices so the
+# uppercase variant is now _18 on both sync and aio). Human-readable log text,
+# no control flow / return value / counter changes; asserting exact log text is
+# brittle and out of scope.
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_12
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_13
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_14
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_15
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_16
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_17
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_18
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_18
+#
+# Class 3 — require_https arg → None on the retry-path policy resolution:
+# `resolve_discovery_policy(config.discovery_policy, config.require_https)` →
+# `resolve_discovery_policy(config.discovery_policy, None)`. The 2nd arg is only
+# consulted when `discovery_policy is None`, and then only as
+# `DiscoveryPolicy(require_https=<arg>)`, whose sole retry-path effect is the
+# `validate_url_scheme` guard `if not policy.require_https: return` — where
+# `not None` and `not False` are both truthy (identical admit). The one config
+# that would distinguish them (`require_https=True`, discovery_policy=None)
+# cannot reach the retry over an http scheme, because the initial discovery/JWKS
+# fetch under that same strict config already rejects it. Unobservable.
+py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9
+py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9
