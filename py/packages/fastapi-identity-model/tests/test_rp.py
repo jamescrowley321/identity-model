@@ -9,7 +9,7 @@ import pytest
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import OIDCSettings, build_oidc_router, rp
-from py_identity_model import TokenValidationException
+from py_identity_model import AuthorizeCallbackException, TokenValidationException
 
 
 pytestmark = pytest.mark.unit
@@ -264,6 +264,55 @@ async def test_callback_invalid_id_token(monkeypatch, caplog):
     assert resp.json()["detail"] == "ID token validation failed"
     assert "bad iss" not in resp.json()["detail"]
     assert "bad iss" in caplog.text
+
+
+async def test_callback_malformed_response_detail_is_generic(monkeypatch, caplog):
+    # A parse failure must return a generic detail: the library's exception
+    # text (which can carry attacker-influenced callback contents) is logged
+    # server-side, never reflected to the browser (#601).
+    secret = "parse-cause-4c2e9a-do-not-leak"
+
+    def _raise(_url):
+        raise AuthorizeCallbackException(secret)
+
+    _patch(monkeypatch)
+    monkeypatch.setattr(rp, "parse_authorize_callback_response", _raise)
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+            resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 400
+    # Generic detail — pre-#622 this reflected f"...: {exc}"; the parser's
+    # exception text must not appear anywhere in the response body.
+    assert resp.json()["detail"] == "Malformed authorization response"
+    assert secret not in resp.text
+    # ...but the real cause IS logged for operators.
+    assert secret in caplog.text
+
+
+async def test_callback_provider_error_detail_is_generic(monkeypatch, caplog):
+    # A provider error response (?error=...) must return a generic detail:
+    # neither the provider's error code nor the attacker-controllable
+    # error_description is reflected to the browser (#601).
+    secret = "err-desc-secret-8b7c1d-do-not-leak"
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+            resp = await client.get(
+                f"/auth/callback?state={state}"
+                f"&error=access_denied&error_description={secret}"
+            )
+    assert resp.status_code == 400
+    # Generic detail — pre-#622 this reflected f"Authorization error: {cb.error}".
+    assert resp.json()["detail"] == "Authorization request failed"
+    # Neither the error code nor the attacker-influenced description leaks to
+    # the client...
+    assert "access_denied" not in resp.text
+    assert secret not in resp.text
+    # ...but the error code IS logged for operators (the description is not).
+    assert "access_denied" in caplog.text
+    assert secret not in caplog.text
 
 
 async def test_callback_nonce_mismatch(monkeypatch):
