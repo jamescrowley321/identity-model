@@ -114,9 +114,14 @@ class _Kind(Enum):
     STR = "str"
     INT = "int"
     FLOAT = "float"
-    BOOL = "bool"
     URL = "url"
     STRLIST = "strlist"
+    # NOTE: no BOOL kind. The only boolean-typed keys in the contract
+    # (spec/config.md §Test tier: TEST_REQUIRE_LIVE / TEST_REQUIRE_HTTPS) are
+    # test-tier harness keys the Python typed surface does not implement, so
+    # conformance case CFG-107 (uniform bool parsing) is out of scope here and
+    # a bool parser would be unreachable dead code. Add BOOL alongside the first
+    # bool registry row if the test tier is ever adopted.
 
 
 class ClientAuthMethod(Enum):
@@ -145,16 +150,27 @@ class _KeySpec:
     secret: bool = False
     group: str | None = None
     prefixed: bool = False  # env names take the client prefix
-    lo: float | None = None  # inclusive lower bound (numeric)
+    lo: float | None = None  # lower bound (numeric); inclusive unless lo_exclusive
     hi: float | None = None  # inclusive upper bound (numeric)
+    lo_exclusive: bool = (
+        False  # when True, lo is a strict '>' bound (value must exceed lo)
+    )
 
 
 # Registry is ordered: error collection reports in this order (spec/config.md).
 # Values transcribed from the implementation as of 2026-09-03.
 _REGISTRY: tuple[_KeySpec, ...] = (
     # HTTP transport
+    # Contract (spec/config.md HTTP transport row) mandates strictly > 0: a
+    # zero timeout is a footgun, so the lower bound is exclusive.
     _KeySpec(
-        "http.timeout", "http_timeout", ("HTTP_TIMEOUT",), _Kind.FLOAT, 30.0, lo=0.0
+        "http.timeout",
+        "http_timeout",
+        ("HTTP_TIMEOUT",),
+        _Kind.FLOAT,
+        30.0,
+        lo=0.0,
+        lo_exclusive=True,
     ),
     _KeySpec(
         "http.retry.max_attempts",
@@ -506,7 +522,9 @@ def _resolve_raw(
 ) -> dict[str, str]:
     """Resolve raw values by precedence: overrides > sources in order.
 
-    A source that raises fails closed with CFG-004; it is never skipped.
+    Sources supply raw strings only (spec/config.md §Sources). A source that
+    raises, or that misbehaves by returning a non-string value, fails closed
+    with CFG-004; it is never silently skipped and never crashes ``build()``.
     """
     logical_keys = tuple(spec.logical for spec in _REGISTRY)
     raw: dict[str, str] = {k: overrides[k] for k in logical_keys if k in overrides}
@@ -514,10 +532,10 @@ def _resolve_raw(
     for source in chain:
         if not remaining:
             break
+        name = getattr(source, "name", type(source).__name__)
         try:
             supplied = source.resolve(remaining)
         except Exception:
-            name = getattr(source, "name", type(source).__name__)
             issues.append(
                 ConfigIssue(
                     "CFG-004", (f"source:{name}",), f"source {name!r} failed to resolve"
@@ -525,9 +543,25 @@ def _resolve_raw(
             )
             continue
         for logical in list(remaining):
-            if logical in supplied:
-                raw[logical] = supplied[logical]
+            if logical not in supplied:
+                continue
+            value = supplied[logical]
+            if not isinstance(value, str):
+                # Contract violation: a source returned a non-string value.
+                # Contain it as a controlled CFG-004 (source misbehavior) rather
+                # than letting the later ``.strip()``/``.split()`` raise an
+                # uncontained AttributeError out of build().
+                issues.append(
+                    ConfigIssue(
+                        "CFG-004",
+                        (f"source:{name}", logical),
+                        f"source {name!r} returned a non-string value for {logical!r}",
+                    )
+                )
                 remaining.remove(logical)
+                continue
+            raw[logical] = value
+            remaining.remove(logical)
     return raw
 
 
@@ -550,13 +584,21 @@ def _parse_number(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> objec
             ConfigIssue("CFG-003", (spec.logical,), "value is not a finite number")
         )
         return _SENTINEL
-    if spec.lo is not None and num < spec.lo:
-        issues.append(
-            ConfigIssue(
-                "CFG-003", (spec.logical,), f"value is below the minimum {spec.lo}"
+    if spec.lo is not None:
+        if spec.lo_exclusive and num <= spec.lo:
+            issues.append(
+                ConfigIssue(
+                    "CFG-003", (spec.logical,), f"value must be greater than {spec.lo}"
+                )
             )
-        )
-        return _SENTINEL
+            return _SENTINEL
+        if not spec.lo_exclusive and num < spec.lo:
+            issues.append(
+                ConfigIssue(
+                    "CFG-003", (spec.logical,), f"value is below the minimum {spec.lo}"
+                )
+            )
+            return _SENTINEL
     if spec.hi is not None and num > spec.hi:
         issues.append(
             ConfigIssue(
@@ -565,16 +607,6 @@ def _parse_number(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> objec
         )
         return _SENTINEL
     return num
-
-
-def _parse_bool(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> object:
-    low = text.lower()
-    if low in ("true", "1"):
-        return True
-    if low in ("false", "0"):
-        return False
-    issues.append(ConfigIssue("CFG-003", (spec.logical,), "value is not a boolean"))
-    return _SENTINEL
 
 
 def _parse_url(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> object:
@@ -601,8 +633,6 @@ def _parse(spec: _KeySpec, raw: str, issues: list[ConfigIssue]) -> object:
 
     if spec.kind is _Kind.STR:
         return raw
-    if spec.kind is _Kind.BOOL:
-        return _parse_bool(spec, text, issues)
     if spec.kind is _Kind.URL:
         return _parse_url(spec, text, issues)
     # INT / FLOAT

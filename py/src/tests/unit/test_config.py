@@ -6,6 +6,7 @@ Test ids reference the configuration conformance cases in
 """
 
 import dataclasses
+from typing import cast
 
 import pytest
 
@@ -13,6 +14,7 @@ from py_identity_model import (
     ClientAuthMethod,
     Config,
     ConfigError,
+    EnvSource,
     MappingSource,
     Secret,
 )
@@ -31,6 +33,19 @@ def _codes(exc: ConfigError) -> set[str]:
 
 def _keys(exc: ConfigError) -> set[str]:
     return {k for issue in exc.issues for k in issue.keys}
+
+
+def _full(cfg: Config) -> dict:
+    """Every resolved field as a plain dict (secret exposed) for deep-equality.
+
+    Per the repo test-assertion standard we compare the *whole* resolved value
+    against an expected dict rather than spot-checking individual fields.
+    """
+    out: dict[str, object] = {}
+    for field in dataclasses.fields(cfg):
+        value = getattr(cfg, field.name)
+        out[field.name] = value.expose() if isinstance(value, Secret) else value
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -105,25 +120,41 @@ def test_cfg106_all_errors_collected_atomically():
 
 
 def test_cfg108_absent_optional_keys_take_defaults():
+    # Mirrors spec/test-fixtures/config/strict-defaults.json, deep-equality
+    # over the *entire* resolved value so a mutated default cannot survive.
     cfg = Config.build(
         sources=[
             _src(
                 **{
                     "client.discovery_url": "https://issuer.example.com/.well-known/openid-configuration",
-                    "client.id": "spa",
+                    "client.id": "spa-client",
                 }
             )
         ],
         env=False,
         group="client",
     )
-    assert cfg.client_scope == "openid profile email"
-    assert cfg.client_audience == "spa"  # defaults to client id
-    assert cfg.client_post_login_redirect == "/"
-    assert cfg.client_excluded_paths == ("/docs", "/openapi.json", "/health")
-    assert cfg.http_timeout == 30.0
-    assert cfg.jwks_cache_ttl == 86400.0
-    assert cfg.discovery_cache_ttl == 3600.0
+    assert _full(cfg) == {
+        "http_timeout": 30.0,
+        "http_retry_max_attempts": 3,
+        "http_retry_base_delay": 1.0,
+        "jwks_max_size": 524288,
+        "jwks_max_keys": 100,
+        "jwks_cache_ttl": 86400.0,
+        "discovery_cache_ttl": 3600.0,
+        "jwks_kid_miss_cooldown": 5.0,
+        "jwks_cache_max_entries": 64,
+        "discovery_cache_max_entries": 64,
+        "client_discovery_url": "https://issuer.example.com/.well-known/openid-configuration",
+        "client_id": "spa-client",
+        "client_secret": None,
+        "client_scope": "openid profile email",
+        "client_audience": "spa-client",  # defaults to client id
+        "client_redirect_uri": "",
+        "client_post_login_redirect": "/",
+        "client_post_logout_redirect": "/",
+        "client_excluded_paths": ("/docs", "/openapi.json", "/health"),
+    }
 
 
 def test_cfg109_config_is_immutable():
@@ -155,11 +186,78 @@ def test_cfg111_url_must_be_absolute():
     assert "client.discovery_url" in _keys(ei.value)
 
 
-def test_ttl_clamp_is_rejected_in_strict_mode():
-    # strict mode does not silently clamp — out of range is CFG-003
+def test_ttl_clamp_below_min_is_rejected_in_strict_mode():
+    # strict mode does not silently clamp — below the [60, 86400] floor is CFG-003
     with pytest.raises(ConfigError) as ei:
         Config.build(sources=[_src(**{"jwks.cache.ttl": "5"})], env=False)
     assert "CFG-003" in _codes(ei.value)
+    assert "jwks.cache.ttl" in _keys(ei.value)
+
+
+def test_ttl_clamp_above_max_is_rejected_in_strict_mode():
+    # strict mode does not silently clamp — above the [60, 86400] ceiling is CFG-003
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[_src(**{"jwks.cache.ttl": "999999"})], env=False)
+    assert _codes(ei.value) == {"CFG-003"}
+    assert "jwks.cache.ttl" in _keys(ei.value)
+
+
+def test_ttl_at_max_boundary_is_accepted():
+    # the upper bound is inclusive: exactly the ceiling constructs (kills a
+    # `>` -> `>=` mutation of the clamp check)
+    cfg = Config.build(sources=[_src(**{"jwks.cache.ttl": "86400"})], env=False)
+    assert cfg.jwks_cache_ttl == 86400.0
+
+
+def test_http_timeout_zero_is_rejected_exclusive_lower_bound():
+    # Contract (spec/config.md HTTP transport row) mandates http.timeout > 0.
+    # Zero is a footgun and must NOT construct — kills a `<=` -> `<` bound mutation.
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[_src(**{"http.timeout": "0"})], env=False)
+    assert _codes(ei.value) == {"CFG-003"}
+    assert "http.timeout" in _keys(ei.value)
+
+
+def test_http_timeout_negative_is_rejected():
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[_src(**{"http.timeout": "-1"})], env=False)
+    assert _codes(ei.value) == {"CFG-003"}
+    assert "http.timeout" in _keys(ei.value)
+
+
+def test_http_timeout_small_positive_is_accepted():
+    # the bound is exactly 0 (exclusive), not a wholesale reject: a tiny
+    # positive value constructs — kills an over-rejection mutation.
+    cfg = Config.build(sources=[_src(**{"http.timeout": "0.001"})], env=False)
+    assert cfg.http_timeout == 0.001
+
+
+@pytest.mark.parametrize(
+    ("key", "raw"),
+    [
+        ("http.timeout", "nan"),
+        ("http.timeout", "inf"),
+        ("http.retry.base_delay", "nan"),
+        ("http.retry.base_delay", "-inf"),
+        ("jwks.cache.ttl", "inf"),
+    ],
+)
+def test_non_finite_floats_are_rejected(key, raw):
+    # NaN/Inf parse as floats but are not finite -> CFG-003 (never accepted,
+    # never silently defaulted). NaN also slips past every range comparison,
+    # so the finiteness gate is the only thing rejecting it.
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[_src(**{key: raw})], env=False)
+    assert _codes(ei.value) == {"CFG-003"}
+    assert key in _keys(ei.value)
+
+
+# NOTE (CFG-107, uniform bool parsing): out of scope for the Python typed
+# surface. The only boolean-typed keys in the contract are the test-tier
+# TEST_REQUIRE_LIVE / TEST_REQUIRE_HTTPS harness keys (spec/config.md §Test
+# tier), which this registry does not implement, so there is no bool key to
+# exercise and no bool parser to test. The strict-bool-parsing.json fixture is
+# proven by the languages that implement the test tier.
 
 
 # --------------------------------------------------------------------------- #
@@ -204,6 +302,34 @@ def test_cfg305_alias_resolves_within_env_source(monkeypatch):
     monkeypatch.setenv("HTTP_RETRY_MAX_ATTEMPTS", "5")
     cfg2 = Config.build(env=True)
     assert cfg2.http_retry_max_attempts == 5  # primary wins over alias
+
+
+def test_cfg305_alias_in_higher_source_beats_primary_in_lower_source(monkeypatch):
+    # Cross-source case (spec/test-fixtures/config/precedence-alias-within-source
+    # .json, first case): a higher-precedence source that resolves the value via
+    # its alias env name wins over a lower-precedence source supplying the
+    # primary. Alias resolution happens *within* the higher source before it
+    # falls through to the next.
+    monkeypatch.delenv("HTTP_RETRY_MAX_ATTEMPTS", raising=False)
+    monkeypatch.setenv("HTTP_RETRY_COUNT", "2")  # alias only, in the env source
+    cfg = Config.build(
+        # higher-precedence EnvSource yields 2 via the alias; the lower source's
+        # primary value (9) must lose.
+        sources=[EnvSource(), _src(**{"http.retry.max_attempts": "9"})],
+        env=False,
+    )
+    assert cfg.http_retry_max_attempts == 2
+
+
+def test_cfg305_lower_source_wins_when_higher_source_silent():
+    # Control for the cross-source case: with no alias/primary in the higher
+    # (empty) source, the lower source's value is used — proves the win above is
+    # the alias resolving, not the ordering alone.
+    cfg = Config.build(
+        sources=[_src(), _src(**{"http.retry.max_attempts": "9"})],
+        env=False,
+    )
+    assert cfg.http_retry_max_attempts == 9
 
 
 # --------------------------------------------------------------------------- #
@@ -288,6 +414,43 @@ def test_cfg502_failing_source_fails_closed():
         Config.build(sources=[Boom()], env=False)
     assert "CFG-004" in _codes(ei.value)
     assert any("broken" in k for k in _keys(ei.value))
+
+
+@pytest.mark.parametrize("bad_value", [None, 5, 3.14, ["not", "a", "string"], object()])
+def test_source_returning_non_string_is_contained_not_crashing(bad_value):
+    # Sources supply raw strings only (spec/config.md §Sources). A source that
+    # misbehaves by returning a non-string MUST be contained as a controlled
+    # CFG-004 collected into ConfigError — never an uncontained AttributeError
+    # out of build() from the downstream .strip()/.split(). pytest.raises here
+    # would fail loudly if an AttributeError leaked instead.
+    class NonString:
+        name = "non-string-source"
+
+        def resolve(self, keys):
+            # cast launders the deliberate contract violation past the type
+            # checker: the source claims a str value but returns a non-str.
+            return {"http.timeout": cast("str", bad_value)}
+
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[NonString()], env=False)
+    assert "CFG-004" in _codes(ei.value)
+    assert any("non-string-source" in k for k in _keys(ei.value))
+    assert "http.timeout" in _keys(ei.value)
+
+
+def test_non_string_source_value_does_not_fall_through_to_default():
+    # A misbehaving source that "supplies" a key with a non-string does not get
+    # silently ignored so the registry default sneaks in — construction fails
+    # closed with the CFG-004 issue, so no Config is produced at all.
+    class NonString:
+        name = "bad"
+
+        def resolve(self, keys):
+            return {"http.timeout": cast("str", 123)}
+
+    with pytest.raises(ConfigError) as ei:
+        Config.build(sources=[NonString()], env=False)
+    assert _codes(ei.value) == {"CFG-004"}
 
 
 def test_cfg503_source_consulted_once_with_key_list():
