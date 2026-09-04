@@ -34,6 +34,7 @@
 //! ```
 
 mod claims;
+mod id_token;
 mod options;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,6 +49,10 @@ use crate::jwks::{JsonWebKey, JwksClient};
 use crate::{IdentityError, Result};
 
 pub use claims::{Audience, Claims};
+pub use id_token::{
+    IdTokenValidationOptions, IdTokenValidationOptionsBuilder, validate_id_token,
+    validate_id_token_claims,
+};
 pub use options::{DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder};
 
 /// The subset of the JWS protected header inspected before any cryptographic
@@ -166,6 +171,24 @@ fn parse_header(token: &str) -> Result<JoseHeader> {
         .map_err(|e| IdentityError::Validation(format!("malformed token: parse header JSON: {e}")))
 }
 
+/// Returns the `alg` from a compact JWS protected header, or `None` when the
+/// header carries no (or an empty) `alg`.
+///
+/// Used by the ID-Token profile after base validation to select the
+/// `at_hash`/`c_hash` hash: because [`validate_token`] verifies the signature
+/// under exactly this header `alg` (and rejects any `alg` outside the
+/// allowlist), the value returned here for an already-validated token is the
+/// *signature-verified* algorithm, not an unauthenticated header read.
+///
+/// # Errors
+///
+/// [`IdentityError::Validation`] when the token is not a well-formed compact
+/// JWS (the same parse errors as [`validate_token`]).
+pub(super) fn parse_header_alg(token: &str) -> Result<Option<String>> {
+    let header = parse_header(token.trim())?;
+    Ok((!header.alg.is_empty()).then_some(header.alg))
+}
+
 /// Rejects the `none` algorithm and any header `alg` outside the configured
 /// allowlist, returning the mapped [`Algorithm`] for signature verification.
 fn check_algorithm(header: &JoseHeader, options: &ValidationOptions) -> Result<Algorithm> {
@@ -241,7 +264,7 @@ fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
 }
 
 /// Current wall-clock time in whole seconds since the Unix epoch.
-fn now_unix() -> i64 {
+pub(super) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))

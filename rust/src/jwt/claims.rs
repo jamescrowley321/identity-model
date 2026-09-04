@@ -126,6 +126,24 @@ impl Claims {
         Self::from_map(map)
     }
 
+    /// Builds a typed claim set from an already-decoded JWT payload (a
+    /// `serde_json` object), applying the same claim-shape checks as the
+    /// signature-verifying path.
+    ///
+    /// Most callers obtain [`Claims`] from [`crate::validate_token`]; this is
+    /// the entry point for enforcing the ID-Token profile
+    /// ([`crate::validate_id_token_claims`]) against a claim set that was
+    /// decoded elsewhere (e.g. the shared cross-language conformance vectors),
+    /// with no network or signature step.
+    ///
+    /// # Errors
+    ///
+    /// [`IdentityError::Deserialization`] when `value` is not a JSON object;
+    /// [`IdentityError::Validation`] when a claim has the wrong JSON shape.
+    pub fn from_json(value: Value) -> Result<Self> {
+        Self::from_value(value)
+    }
+
     fn from_map(map: Map<String, Value>) -> Result<Self> {
         let present: HashSet<String> = map.keys().cloned().collect();
         let meaningful: HashSet<String> = map

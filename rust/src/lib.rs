@@ -45,8 +45,9 @@ pub use introspection::{
 };
 pub use jwks::{JsonWebKey, JsonWebKeySet, JwksClient, JwksClientBuilder};
 pub use jwt::{
-    Audience, Claims, DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder,
-    validate_token, validate_token_with_jwks,
+    Audience, Claims, DEFAULT_ALLOWED_ALGORITHMS, IdTokenValidationOptions,
+    IdTokenValidationOptionsBuilder, ValidationOptions, ValidationOptionsBuilder,
+    validate_id_token, validate_id_token_claims, validate_token, validate_token_with_jwks,
 };
 pub use token::{
     ClientAuthMethod, PkceChallenge, TokenClient, TokenClientBuilder, TokenResponse,
