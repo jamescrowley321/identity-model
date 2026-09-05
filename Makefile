@@ -83,6 +83,16 @@ test-integration-keycloak: ## Run integration tests against Keycloak
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
+.PHONY: lint-go
+lint-go: ## Vet + golangci-lint (go/.golangci.yml) + race-enabled unit tests for the Go library
+	cd go && go vet ./...
+	cd go && golangci-lint run ./...
+	cd go && go test -race ./...
+
+.PHONY: vuln-go
+vuln-go: ## Reachability-aware vuln scan of the Go module (govulncheck)
+	cd go && govulncheck ./...
+
 .PHONY: test-integration-go
 test-integration-go: ## Run Go integration tests against node-oidc (defaults) + IdentityServer profile
 	@echo "Starting node-oidc-provider + IdentityServer fixtures..."
@@ -130,6 +140,11 @@ test-harness-matrix: ## Run the TH-1.3 token correctness matrix (mock-OP forged 
 	$(UVPY) --all-packages pytest src/tests/integration/test_correctness_matrix.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
+
+.PHONY: test-harness-ws
+test-harness-ws: ## Run the WebSocket auth + exact-exclusion correctness matrix (#598/#600) through the booted RS — real uvicorn + websockets client, self-contained (no Docker)
+	@echo "Running the WebSocket auth + exact-exclusion correctness matrix (real handshake)..."
+	$(UVPY) --all-packages pytest src/tests/integration/test_ws_correctness.py -m integration -p no:benchmark -v
 
 .PHONY: test-harness-cross-issuer
 test-harness-cross-issuer: ## Real cross-issuer proof: a token from one Docker IdP (node-oidc/Keycloak) is rejected by an RS trusting the other

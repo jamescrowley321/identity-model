@@ -14,7 +14,12 @@ def test_audience_defaults_to_client_id():
     )
     assert s.audience == "cid"
     assert s.scope == "openid profile email"
-    assert s.excluded_paths == ["/docs", "/openapi.json", "/health"]
+    assert s.excluded_paths == [
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/openapi.json",
+        "/health",
+    ]
 
 
 def test_explicit_audience_preserved():
@@ -57,7 +62,12 @@ def test_from_env_default_excluded_paths(monkeypatch):
     monkeypatch.setenv("OIDC_REDIRECT_URI", "r")
     monkeypatch.delenv("OIDC_EXCLUDED_PATHS", raising=False)
     s = OIDCSettings.from_env()
-    assert s.excluded_paths == ["/docs", "/openapi.json", "/health"]
+    assert s.excluded_paths == [
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/openapi.json",
+        "/health",
+    ]
 
 
 def test_from_env_redirect_uri_optional_for_resource_server(monkeypatch):

@@ -7,6 +7,7 @@ This directory is the **single source of truth** for what every identity-model l
 | Path | Purpose |
 |------|---------|
 | [`capabilities.md`](capabilities.md) | Canonical capability matrix with normative (MUST/SHOULD/MAY) behavior and per-language status |
+| [`config.md`](config.md) | Configuration contract: canonical key registry, source/precedence resolution, validation modes, error taxonomy, secret redaction |
 | `conformance/*.json` | Machine-readable, language-agnostic test-case definitions (one file per capability) |
 | `test-fixtures/` | Shared input data (discovery documents, JWK sets, tokens) referenced by conformance tests |
 

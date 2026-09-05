@@ -34,6 +34,8 @@
 //! ```
 
 mod claims;
+mod claims_validation;
+mod id_token;
 mod options;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,6 +50,14 @@ use crate::jwks::{JsonWebKey, JwksClient};
 use crate::{IdentityError, Result};
 
 pub use claims::{Audience, Claims};
+pub use claims_validation::{
+    BoxedClaimsValidator, ClaimsValidationError, ClaimsValidator, CombineMode, CombinedValidator,
+    boxed, combine_claims_validators, from_fn, require_claim_value, require_claims, require_scopes,
+};
+pub use id_token::{
+    IdTokenValidationOptions, IdTokenValidationOptionsBuilder, validate_id_token,
+    validate_id_token_claims,
+};
 pub use options::{DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder};
 
 /// The subset of the JWS protected header inspected before any cryptographic
@@ -105,6 +115,20 @@ pub fn validate_token(
 
     let claims = Claims::from_value(token_data.claims)?;
     claims.validate(options, now_unix())?;
+
+    // Injectable, composable claims validator (#603): the application-policy
+    // hook runs only after the signature, algorithm allowlist, and
+    // registered/configured claim checks pass — parity with the Python
+    // pipeline's `validate_claims`, which runs after `decode_with_config`. A
+    // clean rejection surfaces as `IdentityError::ClaimsValidation` carrying the
+    // structured reason/claim; any other error the validator returns propagates
+    // unchanged. (The Python layer additionally logs the rejection server-side;
+    // this crate has no logging facility, so the structured error is the
+    // observability channel — the caller decides how to record it.)
+    if let Some(validator) = &options.claims_validator {
+        validator.validate(&claims)?;
+    }
+
     Ok(claims)
 }
 
@@ -164,6 +188,24 @@ fn parse_header(token: &str) -> Result<JoseHeader> {
         .map_err(|e| IdentityError::Validation(format!("malformed token: decode header: {e}")))?;
     serde_json::from_slice(&raw)
         .map_err(|e| IdentityError::Validation(format!("malformed token: parse header JSON: {e}")))
+}
+
+/// Returns the `alg` from a compact JWS protected header, or `None` when the
+/// header carries no (or an empty) `alg`.
+///
+/// Used by the ID-Token profile after base validation to select the
+/// `at_hash`/`c_hash` hash: because [`validate_token`] verifies the signature
+/// under exactly this header `alg` (and rejects any `alg` outside the
+/// allowlist), the value returned here for an already-validated token is the
+/// *signature-verified* algorithm, not an unauthenticated header read.
+///
+/// # Errors
+///
+/// [`IdentityError::Validation`] when the token is not a well-formed compact
+/// JWS (the same parse errors as [`validate_token`]).
+pub(super) fn parse_header_alg(token: &str) -> Result<Option<String>> {
+    let header = parse_header(token.trim())?;
+    Ok((!header.alg.is_empty()).then_some(header.alg))
 }
 
 /// Rejects the `none` algorithm and any header `alg` outside the configured
@@ -241,7 +283,7 @@ fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
 }
 
 /// Current wall-clock time in whole seconds since the Unix epoch.
-fn now_unix() -> i64 {
+pub(super) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))

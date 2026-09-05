@@ -6,6 +6,16 @@ Provides both synchronous and asynchronous APIs for OpenID Connect operations.
 # Initialize SSL compatibility for backward compatibility with requests library
 from . import ssl_config  # noqa: F401
 from .core.cache_metrics import CacheCounters, get_cache_counters
+from .core.config import (
+    ClientAuthMethod,
+    Config,
+    ConfigError,
+    ConfigIssue,
+    ConfigSource,
+    EnvSource,
+    MappingSource,
+    Secret,
+)
 
 # Backward compatible sync exports (default)
 from .exceptions import (
@@ -14,6 +24,7 @@ from .exceptions import (
     ConfigurationException,
     DiscoveryException,
     FailedResponseAccessError,
+    IdTokenValidationException,
     InvalidAudienceException,
     InvalidIssuerException,
     JarmValidationException,
@@ -44,6 +55,8 @@ from .sync import (
     AuthorizeCallbackValidationResult,
     BaseRequest,
     BaseResponse,
+    ClaimsValidationError,
+    ClaimsValidator,
     ClientCredentialsTokenRequest,
     ClientCredentialsTokenResponse,
     ClientDeleteRequest,
@@ -91,6 +104,7 @@ from .sync import (
     certificate_thumbprint_from_file,
     clear_discovery_cache,
     clear_jwks_cache,
+    combine_claims_validators,
     compute_ath,
     compute_certificate_thumbprint,
     create_dpop_proof,
@@ -120,6 +134,9 @@ from .sync import (
     request_authorization_code_token,
     request_client_credentials_token,
     request_device_authorization,
+    require_claim_value,
+    require_claims,
+    require_scopes,
     resolve_mtls_endpoint,
     revoke_token,
     update_client,
@@ -129,6 +146,7 @@ from .sync import (
     validate_fapi_authorization_request,
     validate_fapi_client_config,
     validate_fapi_discovery,
+    validate_id_token,
     validate_logout_token,
     validate_post_logout_state,
     validate_token,
@@ -158,6 +176,10 @@ __all__ = [
     "Claim",
     "ClaimsIdentity",
     "ClaimsPrincipal",
+    "ClaimsValidationError",
+    "ClaimsValidator",
+    # Configuration
+    "ClientAuthMethod",
     "ClientCredentialsTokenRequest",
     "ClientCredentialsTokenResponse",
     # Dynamic Client Registration
@@ -167,6 +189,10 @@ __all__ = [
     "ClientRegistrationRequest",
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
+    "Config",
+    "ConfigError",
+    "ConfigIssue",
+    "ConfigSource",
     "ConfigurationException",
     # DPoP
     "DPoPKey",
@@ -181,10 +207,12 @@ __all__ = [
     "DiscoveryEndpoint",
     "DiscoveryException",
     "DiscoveryPolicy",
+    "EnvSource",
     "FAPIValidationResult",
     "FailedResponseAccessError",
     # HTTP Client
     "HTTPClient",
+    "IdTokenValidationException",
     "InvalidAudienceException",
     "InvalidIssuerException",
     "JarmValidationException",
@@ -196,6 +224,7 @@ __all__ = [
     "JwksResponse",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
+    "MappingSource",
     "MtlsClientAuth",
     "NetworkException",
     # Client authentication (private_key_jwt)
@@ -208,6 +237,7 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "Secret",
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",
@@ -235,6 +265,7 @@ __all__ = [
     "certificate_thumbprint_from_file",
     "clear_discovery_cache",
     "clear_jwks_cache",
+    "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
     "create_dpop_proof",
@@ -266,6 +297,9 @@ __all__ = [
     "request_authorization_code_token",
     "request_client_credentials_token",
     "request_device_authorization",
+    "require_claim_value",
+    "require_claims",
+    "require_scopes",
     "resolve_mtls_endpoint",
     "revoke_token",
     "to_principal",
@@ -276,6 +310,7 @@ __all__ = [
     "validate_fapi_authorization_request",
     "validate_fapi_client_config",
     "validate_fapi_discovery",
+    "validate_id_token",
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",

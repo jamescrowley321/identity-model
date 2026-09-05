@@ -1,0 +1,13 @@
+{
+  "description": "CFG-205: legacy kid-miss cooldown — garbage to default 5.0, numeric clamps to [0, 3600], 0 is the opt-out",
+  "mode": "legacy",
+  "key": "jwks.kid_miss_cooldown",
+  "cases": [
+    { "raw": "garbage", "expect": { "resolved": { "jwks.kid_miss_cooldown": 5.0 } } },
+    { "raw": "-1", "expect": { "resolved": { "jwks.kid_miss_cooldown": 0.0 } } },
+    { "raw": "999999", "expect": { "resolved": { "jwks.kid_miss_cooldown": 3600.0 } } },
+    { "raw": "0", "expect": { "resolved": { "jwks.kid_miss_cooldown": 0.0 } } },
+    { "raw": "30", "expect": { "resolved": { "jwks.kid_miss_cooldown": 30.0 } } }
+  ],
+  "note": "Python behavior as of 2026-09-03. go/rust use a static 5 s option default and do not read this env key (n/a)."
+}

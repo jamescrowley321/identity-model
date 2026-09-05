@@ -126,6 +126,24 @@ impl Claims {
         Self::from_map(map)
     }
 
+    /// Builds a typed claim set from an already-decoded JWT payload (a
+    /// `serde_json` object), applying the same claim-shape checks as the
+    /// signature-verifying path.
+    ///
+    /// Most callers obtain [`Claims`] from [`crate::validate_token`]; this is
+    /// the entry point for enforcing the ID-Token profile
+    /// ([`crate::validate_id_token_claims`]) against a claim set that was
+    /// decoded elsewhere (e.g. the shared cross-language conformance vectors),
+    /// with no network or signature step.
+    ///
+    /// # Errors
+    ///
+    /// [`IdentityError::Deserialization`] when `value` is not a JSON object;
+    /// [`IdentityError::Validation`] when a claim has the wrong JSON shape.
+    pub fn from_json(value: Value) -> Result<Self> {
+        Self::from_value(value)
+    }
+
     fn from_map(map: Map<String, Value>) -> Result<Self> {
         let present: HashSet<String> = map.keys().cloned().collect();
         let meaningful: HashSet<String> = map
@@ -174,6 +192,17 @@ impl Claims {
     /// [`Claims::extra`].
     pub fn has(&self, claim: &str) -> bool {
         self.present.contains(claim)
+    }
+
+    /// Reports whether the named claim is present with a *meaningful* value —
+    /// not JSON `null`, an empty string, or an empty array/object. This is the
+    /// exact presence notion the built-in `required_claims` check (JWT-012)
+    /// enforces, exposed so the injectable `require_claims` validator (#603)
+    /// shares one definition of "present" and a present-but-null claim (e.g.
+    /// `aud: null`, which reconstructs to an empty audience) is not accepted via
+    /// lossy typed-field reconstruction.
+    pub(crate) fn has_meaningful(&self, claim: &str) -> bool {
+        self.meaningful.contains(claim)
     }
 
     /// Returns the raw JSON value of an unmodelled claim, if present.

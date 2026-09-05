@@ -2,6 +2,194 @@
 
 <!-- version list -->
 
+## v3.18.0 (2026-09-05)
+
+### Bug Fixes
+
+- **config**: Reject non-positive http.timeout and contain non-str source values
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+### Chores
+
+- Sync uv.lock with 3.17.0
+  ([`aee4da3`](https://github.com/jamescrowley321/identity-model/commit/aee4da3476ed3f2499d779621c78c9aaf0034f6b))
+
+### Features
+
+- **config**: Typed fail-closed Config with pluggable sources (Python)
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+### Testing
+
+- **config**: Drive shared spec vectors + real-env path against Config
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+
+## v3.17.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#631](https://github.com/jamescrowley321/identity-model/pull/631),
+  [`37462c9`](https://github.com/jamescrowley321/identity-model/commit/37462c9fc97ee76a28bf6bc8baa86cc6b13d7575))
+
+### Chores
+
+- Sync uv.lock with 3.16.0
+  ([`fd76bb6`](https://github.com/jamescrowley321/identity-model/commit/fd76bb67bdcd08e1618a719ab969a8e72d1865e6))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#631](https://github.com/jamescrowley321/identity-model/pull/631),
+  [`37462c9`](https://github.com/jamescrowley321/identity-model/commit/37462c9fc97ee76a28bf6bc8baa86cc6b13d7575))
+
+
+## v3.16.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#632](https://github.com/jamescrowley321/identity-model/pull/632),
+  [`2db6ba8`](https://github.com/jamescrowley321/identity-model/commit/2db6ba8dbbf26f9278d8c079535f794bdc917e2f))
+
+### Chores
+
+- Sync uv.lock with 3.15.0
+  ([`d1f542a`](https://github.com/jamescrowley321/identity-model/commit/d1f542afd76710ec637f99aaf037d10dbd10169d))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#632](https://github.com/jamescrowley321/identity-model/pull/632),
+  [`2db6ba8`](https://github.com/jamescrowley321/identity-model/commit/2db6ba8dbbf26f9278d8c079535f794bdc917e2f))
+
+
+## v3.15.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#630](https://github.com/jamescrowley321/identity-model/pull/630),
+  [`e0046e1`](https://github.com/jamescrowley321/identity-model/commit/e0046e1b056d6265e8a3930686a5de82b4a3b1f5))
+
+### Chores
+
+- Sync uv.lock with 3.14.0
+  ([`ad4a8ea`](https://github.com/jamescrowley321/identity-model/commit/ad4a8ea20df4b6785aa7e7369fb3b5058a3ec305))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#630](https://github.com/jamescrowley321/identity-model/pull/630),
+  [`e0046e1`](https://github.com/jamescrowley321/identity-model/commit/e0046e1b056d6265e8a3930686a5de82b4a3b1f5))
+
+
+## v3.14.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#629](https://github.com/jamescrowley321/identity-model/pull/629),
+  [`272987d`](https://github.com/jamescrowley321/identity-model/commit/272987d09aeae1e48efa51fcb5dd4fc9a2bee6a1))
+
+### Chores
+
+- Sync uv.lock with 3.13.0
+  ([`a58e171`](https://github.com/jamescrowley321/identity-model/commit/a58e1717fec43ae5dd35a563b3defb349886e6e6))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#629](https://github.com/jamescrowley321/identity-model/pull/629),
+  [`272987d`](https://github.com/jamescrowley321/identity-model/commit/272987d09aeae1e48efa51fcb5dd4fc9a2bee6a1))
+
+### Testing
+
+- **validation**: CLV-003 uses an unregistered claim for uniform null->missing
+  ([#625](https://github.com/jamescrowley321/identity-model/pull/625),
+  [`a225eb5`](https://github.com/jamescrowley321/identity-model/commit/a225eb560e09f5a37b80cfe7ca40ba12ed8a7a7d))
+
+- **validation**: CLV-003 uses an unregistered claim for uniform null->missing
+  ([#624](https://github.com/jamescrowley321/identity-model/pull/624),
+  [`ed6d939`](https://github.com/jamescrowley321/identity-model/commit/ed6d939a16275c894082f0d03de92863accba113))
+
+
+## v3.13.0 (2026-09-05)
+
+### Bug Fixes
+
+- **validation**: Log claims rejections, harden validators, add live integration
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+### Chores
+
+- Sync uv.lock with 3.12.0
+  ([`3be9a48`](https://github.com/jamescrowley321/identity-model/commit/3be9a48b67a44d3675e0e2da6457cdb2f5686bdf))
+
+### Continuous Integration
+
+- Collapse per-job uv setup into a pinned composite action
+  ([#634](https://github.com/jamescrowley321/identity-model/pull/634),
+  [`23d85ba`](https://github.com/jamescrowley321/identity-model/commit/23d85baccc915c1a571e104cc81f0eb1df99a7f6))
+
+- Harden supply chain and remediate conformance idna CVE
+  ([#628](https://github.com/jamescrowley321/identity-model/pull/628),
+  [`a27c947`](https://github.com/jamescrowley321/identity-model/commit/a27c9475f9061121dd66f89879dd04d04e4d107a))
+
+- Install uv in integration-tests-ws job
+  ([#604](https://github.com/jamescrowley321/identity-model/pull/604),
+  [`6a88c56`](https://github.com/jamescrowley321/identity-model/commit/6a88c56f5798f2dbfda6a7c2c5f19535eea817ab))
+
+- **security-gate**: Content-verify equivalent-mutant waivers (#615) + empty-set failopen
+  ([#626](https://github.com/jamescrowley321/identity-model/pull/626),
+  [`94c07ee`](https://github.com/jamescrowley321/identity-model/commit/94c07eea58c186dafeaa7a8881d175c79f21cde6))
+
+- **security-gate**: Pre-filter mutmut to changed lines (fast feedback)
+  ([#592](https://github.com/jamescrowley321/identity-model/pull/592),
+  [`b4a173d`](https://github.com/jamescrowley321/identity-model/commit/b4a173dad818113bd32eba2316826f21567b577c))
+
+### Features
+
+- **validation**: First-class injectable, composable claims validators
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+- **validation**: First-class injectable, composable claims validators (Python foundation for #603)
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+### Testing
+
+- **conformance**: Fix _Disco stub so FAPI2 token-request tests exercise real code
+  ([#621](https://github.com/jamescrowley321/identity-model/pull/621),
+  [`7d759dd`](https://github.com/jamescrowley321/identity-model/commit/7d759dd8203978672fb8cfc21ca5af2d7ed9357d))
+
+- **validation**: Claims-validator conformance vectors, example, and docs
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+- **validation**: CLV-003 uses an unregistered claim for uniform null->missing
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+- **validation**: Mutation-gate claims_validation.py; kill all changed-line mutants
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+- **validation**: Pin exact rejection-log message to satisfy the mutation gate
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+- **validation**: Resolve claims vectors by walking up (mutmut-safe)
+  ([#623](https://github.com/jamescrowley321/identity-model/pull/623),
+  [`678946f`](https://github.com/jamescrowley321/identity-model/commit/678946fb4fa2784a6c3b405e919232a5e572ec5b))
+
+
 ## v3.12.0 (2026-09-04)
 
 ### Chores

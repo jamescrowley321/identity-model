@@ -87,6 +87,23 @@ class LogoutTokenValidationException(TokenValidationException):
     """
 
 
+class IdTokenValidationException(TokenValidationException):
+    """Raised when OpenID Connect ID Token profile validation fails.
+
+    Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
+    and §3.3.2.11 (required ``sub``, the ``azp`` authorized-party rules,
+    ``nonce`` binding, ``auth_time``/``max_age`` freshness, and the
+    ``at_hash``/``c_hash`` token/code binding) that sit on top of standard JWT
+    validation.
+
+    Subclasses ``TokenValidationException`` (mirroring
+    ``LogoutTokenValidationException``) rather than ``ValidationException``
+    directly: an ID-Token profile failure is a token-validation failure, so
+    callers using the idiomatic ``except TokenValidationException`` fail
+    **closed** on it. As a sibling it would escape that handler and fail open.
+    """
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.
@@ -212,6 +229,7 @@ __all__ = [
     "ConfigurationException",
     "DiscoveryException",
     "FailedResponseAccessError",
+    "IdTokenValidationException",
     "InvalidAudienceException",
     "InvalidIssuerException",
     "JwksException",
