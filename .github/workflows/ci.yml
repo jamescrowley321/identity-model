@@ -399,6 +399,77 @@ jobs:
         if: always()
         run: docker compose -f infra/docker-compose.yml down
 
+  go-checks:
+    # Static analysis + race-enabled unit tests for the Go library, mirroring the
+    # Python lint + unit-tests gate. golangci-lint runs the committed
+    # go/.golangci.yml (gosec + the v2 default set) which nothing in CI invoked
+    # before — the config existed but was never enforced. Unit tests run with the
+    # race detector and emit a coverage profile (uploaded as an artifact; no hard
+    # threshold — the integration suite exercises the live paths). Change-gated
+    # like the other native jobs (CONS-2.4).
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Build
+        working-directory: go
+        run: go build ./...
+
+      - name: go vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+          working-directory: go
+
+      - name: Unit tests (race + coverage)
+        working-directory: go
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: go-coverage
+          path: go/coverage.out
+          if-no-files-found: ignore
+
+  go-vulncheck:
+    # Reachability-aware vuln scan (govulncheck): flags advisories only on code
+    # paths actually reached, complementing the lockfile-level OSV scan. Runs on
+    # the latest stable Go (go-version-input: stable + check-latest) so a stdlib
+    # advisory already fixed upstream (e.g. GO-2026-5026, fixed in go1.26.6) is
+    # resolved by upgrading the toolchain, never by allowlisting a CVE. Change-
+    # gated like the other native jobs (CONS-2.4).
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          work-dir: go
+          repo-checkout: false
+
   spec-vector-coverage:
     # CONS-1.5 cross-language coverage gate: every language's thin runner must
     # execute every executable vector id in spec/conformance (offline — no
@@ -506,7 +577,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, integration-tests-rust, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -523,6 +594,8 @@ jobs:
             "${{ needs.integration-tests-cross-issuer.result }}" \
             "${{ needs.integration-tests-ws.result }}" \
             "${{ needs.integration-tests-go.result }}" \
+            "${{ needs.go-checks.result }}" \
+            "${{ needs.go-vulncheck.result }}" \
             "${{ needs.integration-tests-rust.result }}" \
             "${{ needs.spec-vector-coverage.result }}" \
             "${{ needs.publish-parity.result }}" \
