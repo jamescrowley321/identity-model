@@ -8,6 +8,13 @@
 // typed [Claims] value exposing the registered claims plus generic accessors
 // for custom claims.
 //
+// Application policy on the decoded claims (tenant, scope, or role checks) is an
+// injectable, composable [ClaimsValidator] supplied with [WithClaimsValidator];
+// it runs after every standard check passes. Ready-made validators
+// [RequireClaims], [RequireClaimValue], and [RequireScopes] compose with
+// [CombineClaimsValidators]. A rejection is a typed [ClaimsValidationError] and
+// is logged server-side when [WithLogger] is set.
+//
 // Security posture:
 //   - The unsecured "none" algorithm is rejected unconditionally, before any
 //     key resolution (RFC 7519 §7.2).

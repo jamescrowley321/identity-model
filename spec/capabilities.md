@@ -21,6 +21,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | implemented | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
+| Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | planned | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | implemented | implemented | implemented |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | planned |
@@ -28,6 +29,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
+| Extended | Injectable claims validators | [#603](https://github.com/jamescrowley321/identity-model/issues/603) | `test-fixtures/claims-validation/vectors.json` | implemented | in-progress | in-progress |
 | Advanced | mTLS + cert-bound tokens | RFC 8705 | — | implemented | planned | planned |
 | Advanced | private_key_jwt client auth | RFC 7523 | — | implemented | planned | planned |
 | Advanced | PAR | RFC 9126 | — | implemented | planned | planned |
@@ -40,6 +42,8 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
 > **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/conformance` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-reconciliation-plan.md` (and the parity report beside it) for the full diff and roadmap.
+>
+> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`conformance/config.json`](conformance/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors, and hard-fails if a second such capability appears before the runners emit per-capability coverage reports. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >
 > **Known cross-language divergences** the plan reconciles: Go and Rust support `client_secret_post`, id-token `nonce` validation, and the RFC 8414 issuer-identifier match, none of which Python does yet; Rust validates `azp`, which Python and Go do not.
 

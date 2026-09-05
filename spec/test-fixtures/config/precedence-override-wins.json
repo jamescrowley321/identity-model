@@ -1,0 +1,11 @@
+{
+  "description": "CFG-301: explicit override beats every source",
+  "mode": "strict",
+  "group": null,
+  "overrides": { "http.timeout": "12" },
+  "sources": [
+    { "name": "custom", "type": "map", "values": { "http.timeout": "45" } },
+    { "name": "env", "type": "env", "values": { "HTTP_TIMEOUT": "99" } }
+  ],
+  "expect": { "config": { "http.timeout": 12.0 } }
+}
