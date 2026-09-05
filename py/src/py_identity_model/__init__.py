@@ -6,6 +6,16 @@ Provides both synchronous and asynchronous APIs for OpenID Connect operations.
 # Initialize SSL compatibility for backward compatibility with requests library
 from . import ssl_config  # noqa: F401
 from .core.cache_metrics import CacheCounters, get_cache_counters
+from .core.config import (
+    ClientAuthMethod,
+    Config,
+    ConfigError,
+    ConfigIssue,
+    ConfigSource,
+    EnvSource,
+    MappingSource,
+    Secret,
+)
 
 # Backward compatible sync exports (default)
 from .exceptions import (
@@ -168,6 +178,8 @@ __all__ = [
     "ClaimsPrincipal",
     "ClaimsValidationError",
     "ClaimsValidator",
+    # Configuration
+    "ClientAuthMethod",
     "ClientCredentialsTokenRequest",
     "ClientCredentialsTokenResponse",
     # Dynamic Client Registration
@@ -177,6 +189,10 @@ __all__ = [
     "ClientRegistrationRequest",
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
+    "Config",
+    "ConfigError",
+    "ConfigIssue",
+    "ConfigSource",
     "ConfigurationException",
     # DPoP
     "DPoPKey",
@@ -191,6 +207,7 @@ __all__ = [
     "DiscoveryEndpoint",
     "DiscoveryException",
     "DiscoveryPolicy",
+    "EnvSource",
     "FAPIValidationResult",
     "FailedResponseAccessError",
     # HTTP Client
@@ -207,6 +224,7 @@ __all__ = [
     "JwksResponse",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
+    "MappingSource",
     "MtlsClientAuth",
     "NetworkException",
     # Client authentication (private_key_jwt)
@@ -219,6 +237,7 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "Secret",
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",

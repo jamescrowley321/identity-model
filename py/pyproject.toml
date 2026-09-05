@@ -197,6 +197,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/tests/**/*.py" = ["S101"]   # 1858 assert violations — all test assertions, 0 in production code
+"src/tests/unit/test_config.py" = [
+    "S101",    # pytest assertions
+    "PLR2004", # magic values — config tests assert against the specific registry defaults/values under test
+    "ARG002",  # unused args on ConfigSource Protocol stub implementations (resolve(self, keys))
+]
 "src/tests/harness/**/*.py" = [
     "S101",    # pytest assertions
     "PLR0913", # minter / mock-OP APIs are intentionally parameter-rich (mint, sign, mint_access_token)
