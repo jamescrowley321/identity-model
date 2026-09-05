@@ -213,6 +213,16 @@ publish-parity: ## CONS-2.5: prove the /py build packages byte-for-byte vs the l
 mutation-security: ## Mutation-test changed security modules vs BASE (Epic 19 G.1)
 	$(UVPY) python tools/mutation_security.py
 
+# The native drivers are stdlib-only Python on purpose, so the Go/Rust CI jobs
+# need no uv/venv setup — plain python3 suffices.
+.PHONY: mutation-security-go
+mutation-security-go: ## Diff-scoped Go mutation gate vs BASE (#638; needs gremlins in PATH)
+	python3 tools/mutation_security_native.py go
+
+.PHONY: mutation-security-rust
+mutation-security-rust: ## Diff-scoped Rust mutation gate vs BASE (#638; needs cargo-mutants)
+	python3 tools/mutation_security_native.py rust
+
 .PHONY: security-gate
 security-gate: mutation-security ## Aggregate mechanical security gate (Epic 19 G.5)
 
