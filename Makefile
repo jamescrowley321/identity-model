@@ -83,6 +83,16 @@ test-integration-keycloak: ## Run integration tests against Keycloak
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
+.PHONY: lint-go
+lint-go: ## Vet + golangci-lint (go/.golangci.yml) + race-enabled unit tests for the Go library
+	cd go && go vet ./...
+	cd go && golangci-lint run ./...
+	cd go && go test -race ./...
+
+.PHONY: vuln-go
+vuln-go: ## Reachability-aware vuln scan of the Go module (govulncheck)
+	cd go && govulncheck ./...
+
 .PHONY: test-integration-go
 test-integration-go: ## Run Go integration tests against node-oidc (defaults) + IdentityServer profile
 	@echo "Starting node-oidc-provider + IdentityServer fixtures..."
