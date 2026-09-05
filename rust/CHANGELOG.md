@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.3.1 (2026-09-05)
+
+### Bug Fixes
+
+- **rust**: Bump yanked wnaf 0.14.0 -> 0.14.1 to satisfy cargo-deny
+  ([#636](https://github.com/jamescrowley321/identity-model/pull/636),
+  [`eb7969d`](https://github.com/jamescrowley321/identity-model/commit/eb7969d65a417c9a17edaa2ee7ddbce4cd7cb6f8))
+
+### Chores
+
+- **rust**: Sync Cargo.lock with 0.3.0
+  ([`1940ce5`](https://github.com/jamescrowley321/identity-model/commit/1940ce5be2bc43d6ba3181ec3874cb6faee35657))
+
+
 ## v0.3.0 (2026-09-05)
 
 ### Bug Fixes
