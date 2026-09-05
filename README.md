@@ -37,8 +37,8 @@ screens), and not framework middleware — though middleware is built on top of 
 | Language | Status | Install |
 |----------|--------|---------|
 | **Python** — [`py/`](py/) | Production-proven and **OpenID Foundation certified**. The reference implementation the others are measured against. Full Core + Extended surface. | `pip install py-identity-model` |
-| **Go** — [`go/`](go/) | Core + Extended (introspection, revocation, token exchange, DPoP) implemented. | `go get github.com/jamescrowley321/identity-model/go` |
-| **Rust** — [`rust/`](rust/) | Core implemented; Extended in progress. Not yet published to crates.io. | build from source (crate `rs-identity-model`) |
+| **Go** — [`go/`](go/) | Core (incl. ID token validation) + Extended (introspection, revocation, token exchange, DPoP) implemented. Tagged releases (`go/vX.Y.Z`). | `go get github.com/jamescrowley321/identity-model/go` |
+| **Rust** — [`rust/`](rust/) | Core (incl. ID token validation) + token introspection implemented; revocation, token exchange, and DPoP in progress. Published to [crates.io](https://crates.io/crates/rs-identity-model). | `cargo add rs-identity-model` |
 | **Node / TypeScript** | Planned. | — |
 
 Capabilities span discovery, JWKS retrieval with caching, JWT validation, the
@@ -76,7 +76,7 @@ A polyglot monorepo — each language keeps its own native toolchain.
 ```
 py/    Python library + fastapi-identity-model middleware   (uv, PyPI)
 go/    Go library                                            (go)
-rust/  Rust library — crate rs-identity-model                (cargo)
+rust/  Rust library — crate rs-identity-model                (cargo, crates.io)
 spec/  cross-language conformance spec + vectors
 infra/ shared local identity-provider fixtures
 ```

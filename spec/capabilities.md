@@ -18,11 +18,11 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json` | implemented | implemented | implemented |
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | implemented | implemented |
-| Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json` | implemented | planned | planned |
+| Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json` | implemented | implemented | implemented |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | implemented | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
-| Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | planned | planned | planned |
+| Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | implemented | implemented | implemented |
 | Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | planned |
@@ -30,7 +30,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
-| Extended | Injectable claims validators | [#603](https://github.com/jamescrowley321/identity-model/issues/603) | `test-fixtures/claims-validation/vectors.json` | implemented | in-progress | in-progress |
+| Extended | Injectable claims validators | [#603](https://github.com/jamescrowley321/identity-model/issues/603) | `test-fixtures/claims-validation/vectors.json` | implemented | implemented | implemented |
 | Advanced | mTLS + cert-bound tokens | RFC 8705 | — | implemented | planned | planned |
 | Advanced | private_key_jwt client auth | RFC 7523 | — | implemented | planned | planned |
 | Advanced | PAR | RFC 9126 | — | implemented | planned | planned |

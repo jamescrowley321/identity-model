@@ -1,8 +1,8 @@
 # identity-model (Go)
 
 A native Go library for OpenID Connect and OAuth 2.0 clients: discovery, JWKS
-retrieval and key resolution, JWT validation, and the token, introspection,
-revocation, DPoP, and UserInfo endpoints.
+retrieval and key resolution, JWT and ID token validation, and the token,
+introspection, revocation, DPoP, and UserInfo endpoints.
 
 - **Module:** `github.com/jamescrowley321/identity-model/go`
 - **Minimum Go:** 1.26
@@ -15,6 +15,7 @@ revocation, DPoP, and UserInfo endpoints.
 | `pkg/discovery` | OIDC Discovery client | OIDC Discovery 1.0 |
 | `pkg/jwks` | JWKS fetch + key resolution | RFC 7517 / 7518 |
 | `pkg/jwt` | JWT signature + claims validation | RFC 7519 / 7515 |
+| `pkg/idtoken` | ID token validation (OIDC id-token profile) | OIDC Core 1.0 §3.1.3.7 |
 | `pkg/token` | Client credentials, authorization code, PKCE | RFC 6749 / 7636 |
 | `pkg/introspection` | Token introspection client | RFC 7662 |
 | `pkg/revocation` | Token revocation client | RFC 7009 |

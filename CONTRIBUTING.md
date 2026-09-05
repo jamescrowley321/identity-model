@@ -1,6 +1,11 @@
-# Contributing to py-identity-model
+# Contributing to identity-model
 
-Thank you for your interest in contributing to py-identity-model! This document provides guidelines and instructions for contributing to the project.
+Thank you for your interest in contributing! This repository is a polyglot
+monorepo containing three native OIDC/OAuth 2.0 client libraries — Python
+(`py-identity-model` plus the `fastapi-identity-model` middleware package), Go,
+and Rust — held to a single shared behavioral contract in
+[`spec/`](https://github.com/jamescrowley321/identity-model/tree/main/spec).
+This document covers the development workflow for all of them.
 
 ## Code of Conduct
 
@@ -10,16 +15,35 @@ By participating in this project, you agree to maintain a respectful and inclusi
 
 ### Prerequisites
 
-- Python 3.12 or higher
-- [uv](https://github.com/astral-sh/uv) for dependency management
+- Python 3.12 or higher and [uv](https://github.com/astral-sh/uv) (Python library, docs, tooling)
+- Go (see `go/go.mod` for the required version) — only for Go changes
+- Rust (see `rust/README.md` for the MSRV) — only for Rust changes
+- Docker (integration-test identity providers and the conformance suite)
 - Git
+
+### Repository layout
+
+```
+identity-model/
+├── py/           Python library + fastapi-identity-model package (uv, PyPI)
+│   ├── src/py_identity_model/    library source
+│   ├── src/tests/                unit / integration / security / benchmark tests
+│   └── packages/fastapi-identity-model/
+├── go/           Go library (module github.com/jamescrowley321/identity-model/go)
+├── rust/         Rust library (crate rs-identity-model)
+├── spec/         cross-language capability spec + conformance vectors
+├── infra/        shared local identity-provider fixtures (docker compose)
+├── conformance/  OpenID Foundation conformance-suite harness
+├── docs/         mkdocs documentation site
+└── Makefile      wraps the common flows for every language
+```
 
 ### Development Setup
 
 1. **Fork and clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/py-identity-model.git
-   cd py-identity-model
+   git clone https://github.com/YOUR_USERNAME/identity-model.git
+   cd identity-model
    ```
 
 2. **Install uv** (if not already installed)
@@ -27,76 +51,83 @@ By participating in this project, you agree to maintain a respectful and inclusi
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-3. **Create a virtual environment and install dependencies**
+3. **Install Python dependencies** (both packages)
    ```bash
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   uv sync --all-extras
+   cd py && uv sync --all-packages && cd ..
    ```
 
 4. **Install pre-commit hooks**
    ```bash
-   pre-commit install
+   uv run --project py pre-commit install
    ```
 
 ## Development Workflow
 
 ### Code Style and Conventions
 
-- **Linting**: We use [Ruff](https://github.com/astral-sh/ruff) for linting and formatting
-- **Type Hints**: All code must include comprehensive type hints
-- **Docstrings**: Use Google-style docstrings for all public classes and functions
-- **Line Length**: Maximum 100 characters per line
-- **Import Order**: Imports are automatically sorted by Ruff
+- **Python**: [Ruff](https://github.com/astral-sh/ruff) for linting and formatting
+  (line length 88), [pyrefly](https://pyrefly.org/) for type checking. All code
+  must include comprehensive type hints and Google-style docstrings for public
+  classes and functions. Imports are sorted by Ruff.
+- **Go**: `gofmt`, `go vet`, and `golangci-lint` (config in `go/.golangci.yml`).
+- **Rust**: `cargo fmt` and `cargo clippy -- -D warnings`.
 
 ### Running Tests
 
-Run the full test suite:
+All targets run from the repository root; `make help` lists everything.
+
+Python — full suite (unit + integration) with the coverage gate:
 ```bash
 make test
 ```
 
-Run only unit tests:
+Python — unit tests only:
 ```bash
 make test-unit
 ```
 
-Run only integration tests:
+Python — integration tests against a specific provider (Docker fixtures are
+started automatically where needed):
 ```bash
-make test-integration
+make test-integration-node-oidc   # node-oidc-provider (local Docker)
+make test-integration-keycloak    # Keycloak (local Docker)
+make test-integration-local       # your own provider via .env.local
+make test-integration-ory         # Ory
+make test-integration-descope     # Descope
 ```
 
-Run integration tests against local environment:
+Go and Rust:
 ```bash
-make test-integration-local
+make lint-go                # vet + golangci-lint + race-enabled unit tests
+make test-integration-go    # Go integration suite against the shared fixtures
+cd rust && cargo test       # Rust unit tests
+make test-integration-rust  # Rust live integration suite
 ```
 
-Run tests with coverage:
+Cross-language conformance (every language must pass every shared vector):
 ```bash
-uv run pytest src/tests --cov=py_identity_model --cov-report=html -v
+make spec-coverage
 ```
 
-Run specific tests:
+Run specific Python tests (from `py/`):
 ```bash
-uv run pytest src/tests/test_discovery.py
-uv run pytest src/tests/test_discovery.py::test_specific_function
+uv run pytest src/tests/unit/test_discovery.py -v
+uv run pytest src/tests/unit/test_discovery.py::test_specific_function -v
 ```
 
 ### Code Formatting and Linting
 
-Run all pre-commit checks (linting and formatting):
+Run all pre-commit checks (Ruff lint + format, pyrefly, coverage):
 ```bash
 make lint
 ```
 
-This will run Ruff for both formatting and linting checks.
-
 ### Pre-commit Hooks
 
-Pre-commit hooks will automatically run when you commit. They will:
+Pre-commit hooks run automatically when you commit. They will:
 - Format code with Ruff
 - Check for linting issues
-- Validate type hints
+- Validate type hints with pyrefly
 - Check for common issues
 
 If pre-commit fails, fix the issues and commit again.
@@ -147,6 +178,11 @@ docs(readme): add examples for token validation
 test(discovery): add integration tests for discovery endpoint
 ```
 
+PRs are squash-merged, and the **PR title becomes the commit message that
+drives Python releases** — so the title itself must be a valid conventional
+commit line. A `feat:`/`fix:` title cuts a new PyPI release when it merges;
+use `docs:`, `test:`, `ci:`, or `chore:` for changes that should not.
+
 ### Pull Request Process
 
 1. **Create a feature branch** from `main`
@@ -158,11 +194,11 @@ test(discovery): add integration tests for discovery endpoint
 
 3. **Write or update tests** to cover your changes
    - Unit tests for new functionality
-   - Update existing tests if behavior changes
-   - Aim for high test coverage
+   - Integration tests proving the behavior against a real provider
+   - Shared `spec/` vectors when the change affects cross-language behavior
 
 4. **Update documentation** if needed
-   - Update README.md if adding new features
+   - Update the docs site (`docs/`) and per-language READMEs for new features
    - Update docstrings for changed functions/classes
    - Add examples if appropriate
 
@@ -180,7 +216,7 @@ test(discovery): add integration tests for discovery endpoint
    ```
 
 8. **Create a Pull Request** on GitHub
-   - Use a clear, descriptive title
+   - Use a conventional-commit title (it becomes the squash commit)
    - Reference related issues (e.g., "Closes #123")
    - Describe what changes you made and why
    - Include examples if adding new features
@@ -198,15 +234,19 @@ test(discovery): add integration tests for discovery endpoint
 
 ### Test Coverage
 
-- Target minimum 90% code coverage
+- The Python suite enforces a **minimum 80% coverage gate** (`make test` fails below it)
 - All new features must include tests
 - Bug fixes should include regression tests
+- Behavioral claims need integration tests against a real provider — green
+  unit tests alone are not sufficient for protocol behavior
 
 ### Test Types
 
 1. **Unit Tests**: Test individual functions and classes
-2. **Integration Tests**: Test interactions between components
-3. **End-to-End Tests**: Test complete workflows against real providers (where feasible)
+2. **Integration Tests**: Test complete flows against real identity providers
+   (the shared fixtures in `infra/`, or live providers)
+3. **Conformance Tests**: The shared `spec/` vectors (all languages) and the
+   OpenID Foundation conformance suite (`conformance/`)
 
 ### Writing Tests
 
@@ -268,91 +308,49 @@ def validate_token(jwt: str, token_validation_config: TokenValidationConfig, dis
 
 Build the documentation locally:
 ```bash
-mkdocs serve
+make docs-serve
 ```
 
-Then visit http://127.0.0.1:8000 to view the docs.
+Then visit http://127.0.0.1:8000 to view the docs. `make docs-build` runs the
+same strict build CI uses.
 
 ## Release Process
 
-### Official Releases
+Each language releases on its own cadence. Version numbers follow
+[Semantic Versioning](https://semver.org/).
 
-Releases are automated using semantic-release. Version numbers follow [Semantic Versioning](https://semver.org/):
+### Python (`py-identity-model` on PyPI)
 
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes (backward compatible)
+Releases are automated with semantic-release. When commits land on `main`,
+it analyzes the (squash) commit messages to determine the version bump,
+updates `py/pyproject.toml` and `py/CHANGELOG.md`, pushes a `py-v{version}`
+tag, and the tag triggers publishing to PyPI.
 
-When commits are pushed to the `main` branch, semantic-release automatically:
-1. Analyzes commit messages to determine version bump
-2. Updates version in `pyproject.toml`
-3. Generates CHANGELOG
-4. Creates a git tag
-5. Publishes to PyPI
+### Go (`github.com/jamescrowley321/identity-model/go`)
+
+A Go release is a `go/vX.Y.Z` tag — the subdirectory-module format `go get`
+requires. Pushing the tag verifies the library and cuts a GitHub Release.
+
+### Rust (`rs-identity-model` on crates.io)
+
+A Rust release is a `rust-vX.Y.Z` tag matching the version in
+`rust/Cargo.toml`. Pushing the tag publishes the crate to crates.io and cuts
+a GitHub Release.
 
 ### Pre-releases
 
-For testing changes before official release, create a pre-release tag:
-
-```bash
-# Create and push a pre-release tag
-git tag 2.0.0-rc.1
-git push origin 2.0.0-rc.1
-```
-
-**Pre-release tag formats:**
-- `X.Y.Z-rc.N` - Release candidate
-- `X.Y.Z-alpha.N` - Alpha version
-- `X.Y.Z-beta.N` - Beta version
-
-When you push a pre-release tag, GitHub Actions will:
-1. Build distribution packages (wheel and source distribution)
-2. Create a GitHub pre-release
-3. Attach distribution files as release assets
-4. Include installation instructions in release notes
-
-**Installing pre-releases:**
-
-```bash
-# Option 1: From GitHub release (recommended)
-pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
-
-# Option 2: From git tag
-pip install git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
-```
-
-For detailed pre-release testing instructions, see [Pre-release Testing Guide](docs/pre-release-guide.md).
-
-## Project Structure
-
-```
-py-identity-model/
-├── src/py_identity_model/       # Main source code
-│   ├── __init__.py              # Public API exports
-│   ├── discovery.py             # Discovery document support
-│   ├── jwks.py                  # JWKS support
-│   ├── tokens.py                # Token generation
-│   ├── validation.py            # Token validation
-│   ├── identity.py              # Identity/Claims/Principal
-│   └── ...
-├── tests/                       # Test files
-├── docs/                        # Documentation
-├── examples/                    # Example code
-├── pyproject.toml              # Project configuration
-├── README.md                   # Project readme
-└── CONTRIBUTING.md             # This file
-```
+Every pull request automatically gets a GitHub pre-release build of the
+Python package (an `-rc` version tied to the PR), with install instructions
+posted as a PR comment — useful for testing a change in a real environment
+before it merges. See the
+[Pre-release Testing Guide](https://jamescrowley321.github.io/identity-model/pre-release-guide/)
+for details.
 
 ## Roadmap
 
-See the [project roadmap](docs/py_identity_model_roadmap.md) and [GitHub issues](https://github.com/jamescrowley321/identity-model/issues) for planned features and current priorities.
-
-Current focus areas:
-- **v0.1.0 - Foundation**: Testing, documentation, base classes
-- **v0.2.0 - Core Protocols**: Authorization code flow, refresh tokens, token exchange
-- **v0.3.0 - Advanced Endpoints**: Introspection, revocation, userinfo
-- **v0.4.0 - Modern Security**: DPoP, PAR, JAR, FAPI 2.0
-- **v0.5.0 - Async & Examples**: Async support, middleware examples, provider integrations
+See the [project roadmap](https://jamescrowley321.github.io/identity-model/py_identity_model_roadmap/)
+and [GitHub issues](https://github.com/jamescrowley321/identity-model/issues)
+for planned features and current priorities.
 
 ## Getting Help
 
@@ -362,11 +360,11 @@ Current focus areas:
 
 ## Recognition
 
-Contributors will be recognized in the project documentation and release notes. Thank you for helping make py-identity-model better!
+Contributors will be recognized in the project documentation and release notes. Thank you for helping make identity-model better!
 
 ## License
 
-By contributing to py-identity-model, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing to identity-model, you agree that your contributions will be licensed under the Apache License 2.0.
 
 ## AI-Assisted Contributions
 

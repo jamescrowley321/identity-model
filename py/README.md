@@ -7,10 +7,10 @@ Production-grade OIDC/OAuth2.0 client library for Python. Dual sync/async API wi
 ## OpenID Certified
 
 <a href="https://openid.net/certification/certified-openid-relying-parties-profiles/">
-  <img src="docs/assets/openid-certified.png" alt="OpenID Certified" width="220">
+  <img src="https://raw.githubusercontent.com/jamescrowley321/identity-model/main/docs/assets/openid-certified.png" alt="OpenID Certified" width="220">
 </a>
 
-py-identity-model is [OpenID Certified<sup>®</sup>](https://openid.net/certification/certified-openid-relying-parties-profiles/) by the OpenID Foundation as a Relying Party (RP) for the **Basic RP**, **Config RP**, and **Form Post Basic RP** conformance profiles (certified 2 July 2026, `py-identity-model 3.1.0`). See [the certification docs](docs/certification.md) for the conformance harness and submission process.
+py-identity-model is [OpenID Certified<sup>®</sup>](https://openid.net/certification/certified-openid-relying-parties-profiles/) by the OpenID Foundation as a Relying Party (RP) for the **Basic RP**, **Config RP**, and **Form Post Basic RP** conformance profiles (certified 2 July 2026, `py-identity-model 3.1.0`). See [the certification docs](https://jamescrowley321.github.io/identity-model/certification/) for the conformance harness and submission process.
 
 > OpenID Certified is a certification mark of the OpenID Foundation.
 

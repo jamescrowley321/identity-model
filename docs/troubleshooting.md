@@ -358,9 +358,9 @@ If you're still experiencing issues:
 
 ## Known Limitations
 
-- **Opaque tokens**: Currently not supported (only JWT tokens)
-- **Refresh tokens**: Not yet implemented (see [roadmap](py_identity_model_roadmap.md))
-- **Authorization code flow**: Not yet implemented (see [roadmap](py_identity_model_roadmap.md))
-- **Token introspection**: Not yet implemented (see [roadmap](py_identity_model_roadmap.md))
+- **Opaque tokens**: Cannot be validated locally (no signature to verify) —
+  use [token introspection](api/introspection.md) (RFC 7662) instead
+- **Encrypted JARM responses**: Only signed JARM (JWS) is supported; encrypted
+  (JWE) authorization responses are rejected
 
 For upcoming features, check the [project roadmap](py_identity_model_roadmap.md).
