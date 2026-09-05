@@ -1,0 +1,148 @@
+# Adversarial Review — fresh-context, diff-only AI PR review that fails the merge
+# on real defects. https://github.com/jamescrowley321/adversarial-review
+#
+# Setup: add repo secret OPENROUTER_API_KEY; then require the "Merge Gate" check
+# in branch protection. Toggle lenses in the ENABLED list below (one source of
+# truth for the matrix + gate). Action pinned to a commit SHA (v1.6.0).
+
+name: Adversarial Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+concurrency:
+  group: adversarial-review-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  issues: read
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      csv: ${{ steps.pick.outputs.csv }}
+    steps:
+      - id: pick
+        shell: node {0}
+        env:
+          ENABLED: |
+            blind          # logic bugs, footguns (zero context)
+            edge-case      # unhandled branches / boundaries
+            acceptance     # PR acceptance criteria met + tested
+            sentinel       # exploitable security vulnerabilities
+            viper          # red-team attack paths (auth/infra)
+            compliance     # AI-provenance policy + repo rules
+        run: |
+          const NAMES = {
+            blind: "Blind Hunter", "edge-case": "Edge Case Hunter",
+            acceptance: "Acceptance Auditor", sentinel: "Sentinel", viper: "Viper",
+            compliance: "Compliance Auditor",
+          };
+          const keys = (process.env.ENABLED || "").split("\n")
+            .map((l) => l.replace(/#.*/, "").trim()).filter(Boolean);
+          if (keys.length === 0) {
+            core.setFailed("ENABLED must list at least one lens; an empty matrix would fail workflow validation with an opaque error.");
+            return;
+          }
+          const include = keys.map((k) => ({ lens: k, name: NAMES[k] || k }));
+          const fs = require("fs");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `csv=${keys.join(",")}\n`);
+
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event.pull_request.head.repo.fork == false &&
+      github.actor != 'dependabot[bot]'
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Wait for deterministic checks
+        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        with:
+          mode: preflight
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Only the *fast* deterministic checks gate the review — their job is
+          # to avoid spending review compute on a PR that fails basic CI. The
+          # mutation gate (ci / security-gate) is deliberately excluded: on PRs
+          # that touch security-critical code it runs 40+ minutes, far past the
+          # action's 600s preflight timeout, so waiting on it here made the
+          # preflight time out and skip every lens (Merge Gate then failed
+          # closed). It stays enforced independently via the required
+          # ci / ci-complete check, which aggregates security-gate.
+          required_checks: "ci / lint, ci / unit-tests"
+
+  review:
+    name: ${{ matrix.name }}
+    needs: [config, preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
+    steps:
+      - name: ${{ matrix.name }}
+        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        with:
+          mode: lens
+          lens: ${{ matrix.lens }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          api_key: ${{ secrets.OPENROUTER_API_KEY }}
+          # google/gemini-2.5-pro: stable OpenRouter slug that pi's catalog also
+          # carries, with strong JSON adherence. Anthropic Sonnet-5 is unusable
+          # via openrouter+pi right now — OpenRouter retired the undated alias
+          # (404) while pi's catalog lacks the dated snapshot. This matches the
+          # action's v1.7.1 default; kept explicit here for clarity. No
+          # models_config: the account/default routing is used (the proven-green
+          # self-review config), avoiding a zdr-no-endpoint failure mode.
+          model: google/gemini-2.5-pro
+
+  gate:
+    name: Merge Gate
+    needs: [config, preflight, review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Always run so the required "Merge Gate" check is never absent or skipped.
+    # Branch protection treats a skipped required check as passing, so a gate
+    # that skips (as it did for fork/bot PRs when review was skipped) would let
+    # an untrusted PR merge with zero adversarial review. Fail closed instead.
+    if: always()
+    # Read-only by design: gate mode reads the lens reviews and reports its
+    # verdict through this job's own success/failure status (the required
+    # "Merge Gate" check). It performs no Octokit writes, so it needs no
+    # checks:write / pull-requests:write — keep it least-privilege.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Fail closed whenever the review did not complete cleanly. Two cases:
+      #   - skipped: fork/bot PRs (out of the trust boundary — preflight skips
+      #     them, which skips the lenses).
+      #   - failure/cancelled: one or more lens legs crashed (model 5xx, network,
+      #     action bug), leaving an incomplete review.
+      # In both cases the required check must be an explicit failure, never
+      # absent/skipped (branch protection treats a skipped required check as
+      # passing) and never adjudicated on a partial lens set as if it were clean.
+      - name: Fail closed when review did not complete
+        if: needs.review.result != 'success'
+        run: |
+          echo "::error::Adversarial review did not complete cleanly (fork/bot PR, or one or more lenses failed: review=${{ needs.review.result }}). The Merge Gate fails closed — a maintainer must review and merge manually, or re-run the lenses."
+          exit 1
+      - name: Adjudicate lenses
+        if: needs.review.result == 'success'
+        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        with:
+          mode: gate
+          lenses: ${{ needs.config.outputs.csv }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
