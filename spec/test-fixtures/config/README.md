@@ -1,7 +1,7 @@
 # Configuration test fixtures
 
 Shared, language-neutral inputs for the configuration conformance cases in
-[`../../conformance/config.json`](../../conformance/config.json). Each fixture describes a
+[`../../vectors/config.json`](../../vectors/config.json). Each fixture describes a
 resolution scenario (or a parametrized family of them) and its expected outcome under the
 contract in [`../../config.md`](../../config.md). `config.json` is a prose contract today (no
 executable `vectors`), so these fixtures are the reference inputs each language's own tests key

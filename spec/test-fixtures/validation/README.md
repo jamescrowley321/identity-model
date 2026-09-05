@@ -1,7 +1,7 @@
 # JWT validation fixtures
 
 Shared key material and static tokens for the `validation` conformance suite
-(`spec/conformance/validation.json`, IDs `JWT-001`..`JWT-013`).
+(`spec/vectors/validation.json`, IDs `JWT-001`..`JWT-013`).
 
 | File | Purpose |
 |------|---------|

@@ -1,7 +1,7 @@
 # Token Introspection test fixtures
 
 Fixtures backing the `introspection` conformance suite
-(`spec/conformance/introspection.json`), per RFC 7662.
+(`spec/vectors/introspection.json`), per RFC 7662.
 
 - `active-response.json` — a 200 introspection response with `active: true` and
   the full set of standard §2.2 metadata members (`scope`, `client_id`,

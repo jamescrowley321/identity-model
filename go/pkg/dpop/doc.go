@@ -36,6 +36,6 @@
 //	rsClient := &http.Client{Transport: dpop.NewTransport(key, dpop.WithAccessToken(accessToken))}
 //	resp, _ := rsClient.Get("https://resource.example.com/protectedresource")
 //
-// The conformance suite for this package is spec/conformance/dpop.json
+// The conformance suite for this package is spec/vectors/dpop.json
 // (DPOP-001..008).
 package dpop

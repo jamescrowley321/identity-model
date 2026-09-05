@@ -25,7 +25,7 @@ const fixedNowUnix = 1_700_000_000
 func fixedNow() time.Time { return time.Unix(fixedNowUnix, 0).UTC() }
 
 // Real OIDC §3.3.2.11 left-half hashes, taken from the shared vectors
-// (spec/conformance/id-token.json). Reused here so the unit tests assert the
+// (spec/vectors/id-token.json). Reused here so the unit tests assert the
 // production hash construction, not a self-consistent fixture.
 const (
 	rs256AccessToken = "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU"

@@ -1,6 +1,6 @@
 //! Thin Rust executor for the shared `/spec` conformance vectors (CONS-1.5).
 //!
-//! Drives every executable vector in `spec/conformance/validation.json`
+//! Drives every executable vector in `spec/vectors/validation.json`
 //! against [`rs_identity_model::validate_token`] — the same language-neutral
 //! vector set the Go (`go/internal/conformance`) and Python
 //! (`src/tests/unit/test_spec_conformance.py`) runners execute — so the
@@ -41,7 +41,7 @@ use rs_identity_model::{
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-const SPEC_FILE: &str = "../spec/conformance/validation.json";
+const SPEC_FILE: &str = "../spec/vectors/validation.json";
 const FIXTURE_ROOT: &str = "../spec/test-fixtures";
 const SIGNING_KEY_DER: &str = "../spec/test-fixtures/validation/signing-key.pkcs1.der";
 const JWKS_FIXTURE: &str = "../spec/test-fixtures/validation/jwks.json";

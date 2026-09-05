@@ -1,6 +1,6 @@
 """Thin Python executor for the shared /spec conformance vectors (CONS-1.5).
 
-Drives every executable vector in ``spec/conformance/validation.json`` against
+Drives every executable vector in ``spec/vectors/validation.json`` against
 py-identity-model's validation API — the same language-neutral vector set the
 Go (``go/internal/conformance``) and Rust (``rust/tests/spec_conformance.rs``)
 runners execute — so the "build conformance vectors once" constraint holds.
@@ -69,7 +69,7 @@ def _find_repo_root() -> Path:
     ``spec/``. Walking up to the marker works in both the normal tree and the
     sandbox.
     """
-    marker = Path("spec") / "conformance" / "validation.json"
+    marker = Path("spec") / "vectors" / "validation.json"
     for parent in Path(__file__).resolve().parents:
         if (parent / marker).is_file():
             return parent
@@ -78,7 +78,7 @@ def _find_repo_root() -> Path:
 
 
 _REPO_ROOT = _find_repo_root()
-_SPEC_FILE = _REPO_ROOT / "spec" / "conformance" / "validation.json"
+_SPEC_FILE = _REPO_ROOT / "spec" / "vectors" / "validation.json"
 _FIXTURE_ROOT = _REPO_ROOT / "spec" / "test-fixtures"
 
 _CAPABILITY = json.loads(_SPEC_FILE.read_text())

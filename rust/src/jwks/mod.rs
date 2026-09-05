@@ -7,7 +7,7 @@
 //! can force one refresh and retry to support key rotation
 //! ([`JwksClient::resolve_key`] / [`JwksClient::force_refresh`]). Behaviour is
 //! proven against the cross-language conformance IDs `JWKS-001`..`JWKS-007` in
-//! `spec/conformance/jwks.json`.
+//! `spec/vectors/jwks.json`.
 //!
 //! RFC / spec references: RFC 7517 (JWK), RFC 7518 (JWA).
 //!

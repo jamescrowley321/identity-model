@@ -472,7 +472,7 @@ jobs:
 
   spec-vector-coverage:
     # CONS-1.5 cross-language coverage gate: every language's thin runner must
-    # execute every executable vector id in spec/conformance (offline — no
+    # execute every executable vector id in spec/vectors (offline — no
     # docker fixtures), and native cases must carry per-language test anchors.
     runs-on: ubuntu-latest
     steps:

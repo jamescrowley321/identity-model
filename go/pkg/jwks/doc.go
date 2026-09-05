@@ -11,7 +11,7 @@
 //	key, ok := set.ResolveKey("rsa-sig-key")
 //
 // Behaviour is governed by the cross-language conformance contract in
-// spec/conformance/jwks.json (test IDs JWKS-001..JWKS-007) and the capability
+// spec/vectors/jwks.json (test IDs JWKS-001..JWKS-007) and the capability
 // definitions in spec/capabilities.md:
 //
 //   - The key set is fetched and parsed into typed [JSONWebKey] values, each

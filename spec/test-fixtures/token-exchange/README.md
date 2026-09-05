@@ -1,7 +1,7 @@
 # Token Exchange test fixtures
 
 Fixtures backing the `token-exchange` conformance suite
-(`spec/conformance/token-exchange.json`), per RFC 8693.
+(`spec/vectors/token-exchange.json`), per RFC 8693.
 
 Response fixtures (HTTP 200 bodies):
 

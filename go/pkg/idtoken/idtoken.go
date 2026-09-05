@@ -60,7 +60,7 @@ func ValidateIDToken(ctx context.Context, rawToken string, keySet *jwks.JSONWebK
 // for at_hash/c_hash. It returns a *[ProfileError] on the first violation.
 //
 // This is the network-free entry point the cross-language conformance vectors
-// (spec/conformance/id-token.json) drive; it is the Go analog of the reference
+// (spec/vectors/id-token.json) drive; it is the Go analog of the reference
 // validate_id_token_claims.
 func ValidateClaims(claims map[string]any, headerAlg string, opts ...Option) error {
 	return validateProfile(claims, headerAlg, newConfig(opts...))

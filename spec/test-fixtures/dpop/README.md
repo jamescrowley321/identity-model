@@ -1,6 +1,6 @@
 # DPoP test fixtures
 
-Fixtures backing the `dpop` conformance suite (`spec/conformance/dpop.json`), per
+Fixtures backing the `dpop` conformance suite (`spec/vectors/dpop.json`), per
 RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
 
 - `dpop-proof-token-request.json` — a decoded DPoP proof JWT (header + payload)
@@ -35,11 +35,11 @@ RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
 
 ## Format note (DEC-003)
 
-`spec/conformance/dpop.json` follows the same shape as the existing core
+`spec/vectors/dpop.json` follows the same shape as the existing core
 conformance files (`discovery.json`, `introspection.json`, …): top-level
 `capability` / `spec` / `spec_url` / `required_fields` / `tests[]`, with each test
 carrying `id` / `title` / `given` / `when` / `then` / `references[]` and an
-optional `fixture`. The referenced `spec/conformance/schema.json` does not exist
+optional `fixture`. The referenced `spec/vectors/schema.json` does not exist
 in this repo; the established core-file shape is the normative format. The Epic 0F
 S.13 field names (`rfc_references`, `fixture_files`) map onto `references` and
 `fixture` respectively.

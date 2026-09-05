@@ -1,6 +1,6 @@
 # identity-model — Configuration Contract
 
-This is the **normative, cross-language contract for configuration behavior**: the canonical key registry, how values are resolved from sources, how validation fails, and how secrets are redacted. Every language implements this contract idiomatically; behavioral parity is proven by the conformance definitions in [`conformance/config.json`](conformance/config.json) with fixtures in [`test-fixtures/config/`](test-fixtures/config/).
+This is the **normative, cross-language contract for configuration behavior**: the canonical key registry, how values are resolved from sources, how validation fails, and how secrets are redacted. Every language implements this contract idiomatically; behavioral parity is proven by the conformance definitions in [`vectors/config.json`](vectors/config.json) with fixtures in [`test-fixtures/config/`](test-fixtures/config/).
 
 Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
@@ -147,6 +147,6 @@ Canonical error codes, allocated `CFG-001`–`CFG-099` (append-only, never renum
 
 ## Conformance
 
-The observable behaviors of this contract are enumerated as test cases in [`conformance/config.json`](conformance/config.json) (IDs `CFG-101`+: 1xx strict validation, 2xx legacy-mode equivalence, 3xx precedence/composition, 4xx redaction, 5xx source behavior), with shared input fixtures in [`test-fixtures/config/`](test-fixtures/config/).
+The observable behaviors of this contract are enumerated as test cases in [`vectors/config.json`](vectors/config.json) (IDs `CFG-101`+: 1xx strict validation, 2xx legacy-mode equivalence, 3xx precedence/composition, 4xx redaction, 5xx source behavior), with shared input fixtures in [`test-fixtures/config/`](test-fixtures/config/).
 
 `config.json` is currently a **prose contract** (no executable `vectors`), like most capability files: each language's implementation proves it with its own tests keyed to the `CFG-1xx` IDs. Promoting these cases to executable vectors requires, in the same change, extending `tools/spec_coverage_gate.py` and all language runners to per-capability coverage reports — the gate intentionally hard-fails when a second capability carries executable vectors, so partial promotion cannot silently go ungated.

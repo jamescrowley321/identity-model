@@ -7,13 +7,13 @@ import (
 	"os"
 )
 
-// The ID-Token capability (spec/conformance/id-token.json) uses a different,
+// The ID-Token capability (spec/vectors/id-token.json) uses a different,
 // higher-level vector shape than validation.json: each vector supplies an
 // already-decoded claim set plus the ID-Token JOSE-header alg and the caller
 // inputs, rather than a token to mint and sign. These types model that shape so
 // the Go runner drives the same cross-language oracle the Python reference does.
 
-// IDTokenCapability is spec/conformance/id-token.json.
+// IDTokenCapability is spec/vectors/id-token.json.
 type IDTokenCapability struct {
 	Capability                string        `json:"capability"`
 	Spec                      string        `json:"spec"`

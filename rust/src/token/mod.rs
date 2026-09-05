@@ -10,8 +10,8 @@
 //! [`PkceChallenge`] and [`authorization_url`] implement the PKCE transform and
 //! authorization request (RFC 7636 §4.1–§4.3).
 //!
-//! Behavioural contract: `spec/conformance/client-credentials.json`
-//! (`CC-001`..`CC-006`) and `spec/conformance/authorization-code.json`
+//! Behavioural contract: `spec/vectors/client-credentials.json`
+//! (`CC-001`..`CC-006`) and `spec/vectors/authorization-code.json`
 //! (`ACG-001`..`ACG-006`); see also `spec/capabilities.md`.
 //!
 //! ```no_run

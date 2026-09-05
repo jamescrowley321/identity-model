@@ -2,7 +2,7 @@
 """Cross-language /spec vector-coverage gate (CONS-1.5, AC-CONS-1.5.2/1.5.3).
 
 Runs each language's thin conformance runner (Python, Go, Rust) against the
-shared ``spec/conformance`` vectors with ``SPEC_COVERAGE_OUT`` set, then
+shared ``spec/vectors`` vectors with ``SPEC_COVERAGE_OUT`` set, then
 verifies every language executed every executable vector case id. Any missing
 (language, vector-id) pair fails the gate by name; success prints a 100%
 per-language coverage report.
@@ -32,7 +32,7 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SPEC_DIR = REPO_ROOT / "spec" / "conformance"
+SPEC_DIR = REPO_ROOT / "spec" / "vectors"
 DEFAULT_REPORT_DIR = REPO_ROOT / "build" / "spec-coverage"
 
 # (language, working dir, command) — each runner writes SPEC_COVERAGE_OUT.

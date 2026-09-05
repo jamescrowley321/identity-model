@@ -8,13 +8,13 @@ This directory is the **single source of truth** for what every identity-model l
 |------|---------|
 | [`capabilities.md`](capabilities.md) | Canonical capability matrix with normative (MUST/SHOULD/MAY) behavior and per-language status |
 | [`config.md`](config.md) | Configuration contract: canonical key registry, source/precedence resolution, validation modes, error taxonomy, secret redaction |
-| `conformance/*.json` | Machine-readable, language-agnostic test-case definitions (one file per capability) |
+| `vectors/*.json` | Machine-readable, language-agnostic test-case definitions (one file per capability) |
 | `test-fixtures/` | Shared input data (discovery documents, JWK sets, tokens) referenced by conformance tests |
 
 ## How It's Used
 
 1. A capability is specified in `capabilities.md` with RFC references and normative requirements.
-2. Its observable behaviors become test cases in `conformance/<capability>.json`. Each case carries the human contract (`id`, `title`, `given`, `when`, `then`, `references`) and, where expressible, one or more **executable `vectors`** (see below). A case that cannot be expressed as a static vector (e.g. a live JWKS refresh) sets `execution: "native"` with a `reason` and `native_test`.
+2. Its observable behaviors become test cases in `vectors/<capability>.json`. Each case carries the human contract (`id`, `title`, `given`, `when`, `then`, `references`) and, where expressible, one or more **executable `vectors`** (see below). A case that cannot be expressed as a static vector (e.g. a live JWKS refresh) sets `execution: "native"` with a `reason` and `native_test`.
 3. Each language implements a **thin conformance runner** that loads these JSON files and executes the vectors against its own implementation — using `test-fixtures/` for static inputs and the shared provider in [`../infra`](../infra) for live integration. It is *thin* because the vectors carry both inputs and expected outcomes; only the mapping of canonical outcomes to that language's API/error types is per-language. Go's runner lives in [`../go/internal/conformance`](../go/internal/conformance).
 4. CI gates merges: a language that marks a capability `implemented` in `capabilities.md` MUST pass its conformance vectors, and each runner asserts **full coverage** — every case id must be executed or explicitly `native`, so a language cannot silently skip a case.
 
@@ -58,15 +58,15 @@ A case becomes machine-checkable by adding `vectors`. Expected outcomes use **ca
 }
 ```
 
-See [`conformance/validation.json`](conformance/validation.json) for the full set.
+See [`vectors/validation.json`](vectors/validation.json) for the full set.
 
 ## Current Coverage
 
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
-| OIDC Discovery | `conformance/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
-| JWKS | `conformance/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
-| Validation | `conformance/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
+| OIDC Discovery | `vectors/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
+| JWKS | `vectors/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
+| Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 
 Validation is the first capability with executable vectors and a runner in
 **every language**: Go `go/internal/conformance`, Python

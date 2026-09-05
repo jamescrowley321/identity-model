@@ -16,8 +16,8 @@
 // decode into a typed [TokenError] (RFC 6749 §5.2). Requests are customised
 // with the functional With* options.
 //
-// Behavioural contract: spec/conformance/client-credentials.json (CC-001..006),
-// spec/conformance/authorization-code.json (ACG-001..006), and
-// spec/conformance/token-exchange.json (EXCH-001..006); see also
+// Behavioural contract: spec/vectors/client-credentials.json (CC-001..006),
+// spec/vectors/authorization-code.json (ACG-001..006), and
+// spec/vectors/token-exchange.json (EXCH-001..006); see also
 // spec/capabilities.md.
 package token

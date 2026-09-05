@@ -6,7 +6,7 @@ import (
 )
 
 // CanonicalError is the language-neutral error family the shared conformance
-// vectors (spec/conformance/id-token.json) assign to every ID-Token profile
+// vectors (spec/vectors/id-token.json) assign to every ID-Token profile
 // rejection. Each language maps it to its own error type; in Go that type is
 // [ProfileError].
 const CanonicalError = "id_token_profile"

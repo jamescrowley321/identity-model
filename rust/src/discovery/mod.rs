@@ -4,7 +4,7 @@
 //! validates the required metadata fields and the issuer match, and caches the
 //! result with a configurable TTL backed by a [`tokio::sync::RwLock`]. Behaviour
 //! is proven against the cross-language conformance IDs `DISC-001`..`DISC-010`
-//! in `spec/conformance/discovery.json`.
+//! in `spec/vectors/discovery.json`.
 //!
 //! RFC / spec references: OpenID Connect Discovery 1.0 §3, §4.
 //!

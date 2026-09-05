@@ -7,7 +7,7 @@
 //! unsecured `none` algorithm before any cryptographic work (JWT-003) and
 //! restrict acceptance to an asymmetric algorithm allowlist to defeat
 //! algorithm-confusion attacks. Behaviour is proven against the cross-language
-//! conformance IDs `JWT-001`..`JWT-013` in `spec/conformance/validation.json`.
+//! conformance IDs `JWT-001`..`JWT-013` in `spec/vectors/validation.json`.
 //!
 //! RFC / spec references: RFC 7519 (JWT), RFC 7515 (JWS), OIDC Core 1.0
 //! §3.1.3.7.

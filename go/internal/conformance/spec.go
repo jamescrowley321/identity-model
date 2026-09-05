@@ -1,6 +1,6 @@
 // Package conformance is the shared, cross-language conformance harness for
 // identity-model. It loads the language-neutral vector definitions in
-// spec/conformance/*.json so every language binding validates against a single
+// spec/vectors/*.json so every language binding validates against a single
 // source of truth rather than a per-language copy of the tests.
 //
 // The vectors express expected outcomes with canonical, language-neutral error
@@ -36,7 +36,7 @@ const (
 // is covered by a bespoke package test instead.
 const executionNative = "native"
 
-// Capability is one spec/conformance/<capability>.json file.
+// Capability is one spec/vectors/<capability>.json file.
 type Capability struct {
 	Capability string `json:"capability"`
 	Spec       string `json:"spec"`

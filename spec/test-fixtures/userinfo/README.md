@@ -1,7 +1,7 @@
 # UserInfo endpoint test fixtures
 
 Fixtures backing the `userinfo` conformance suite
-(`spec/conformance/userinfo.json`).
+(`spec/vectors/userinfo.json`).
 
 - `standard-claims.json` — a UserInfo response covering the full OpenID Connect
   Core 1.0 §5.1 standard claim set (including the structured `address` claim,

@@ -42,6 +42,6 @@
 //		fmt.Println(resp.Sub, resp.Scope, resp.Extra)
 //	}
 //
-// The conformance suite for this package is spec/conformance/introspection.json
+// The conformance suite for this package is spec/vectors/introspection.json
 // (INTR-001..006).
 package introspection

@@ -22,7 +22,7 @@
 //! ([`subtle::ConstantTimeEq`]).
 //!
 //! Behaviour is proven against the cross-language conformance IDs
-//! `IDT-001`..`IDT-011` in `spec/conformance/id-token.json`
+//! `IDT-001`..`IDT-011` in `spec/vectors/id-token.json`
 //! (`rust/tests/spec_conformance_id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
