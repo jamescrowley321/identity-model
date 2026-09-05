@@ -1,0 +1,34 @@
+name: Setup Python + uv
+description: >-
+  Install Python and a pinned uv, restore uv's cache, and sync the py/ workspace
+  (all packages). Replaces the legacy pip -> pipx -> uv install used by
+  `make ci-setup`; the uv version is pinned by SHA for reproducibility.
+
+inputs:
+  python-version:
+    description: Python version to install
+    required: false
+    default: "3.13"
+  sync:
+    description: Whether to `uv sync --all-packages` the py/ workspace after installing uv
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        enable-cache: true
+        cache-dependency-glob: py/uv.lock
+
+    - name: Sync workspace
+      if: inputs.sync == 'true'
+      shell: bash
+      run: cd py && uv sync --all-packages
