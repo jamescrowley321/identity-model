@@ -17,10 +17,10 @@
     },
     {
       "id": "CLV-003",
-      "desc": "require_claims treats an explicit null as missing (fail closed)",
-      "validator": { "type": "require_claims", "names": ["sub"] },
-      "claims": { "sub": null },
-      "expect": { "reject": { "claim": "sub" } }
+      "desc": "require_claims treats an explicit null as missing (fail closed); uses an unregistered claim so typed languages exercise the validator's own null->missing check rather than rejecting at decode",
+      "validator": { "type": "require_claims", "names": ["tenant_id"] },
+      "claims": { "sub": "user-1", "tenant_id": null },
+      "expect": { "reject": { "claim": "tenant_id" } }
     },
     {
       "id": "CLV-011",
