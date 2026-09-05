@@ -2,6 +2,36 @@
 
 <!-- version list -->
 
+## v3.14.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#629](https://github.com/jamescrowley321/identity-model/pull/629),
+  [`272987d`](https://github.com/jamescrowley321/identity-model/commit/272987d09aeae1e48efa51fcb5dd4fc9a2bee6a1))
+
+### Chores
+
+- Sync uv.lock with 3.13.0
+  ([`a58e171`](https://github.com/jamescrowley321/identity-model/commit/a58e1717fec43ae5dd35a563b3defb349886e6e6))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#629](https://github.com/jamescrowley321/identity-model/pull/629),
+  [`272987d`](https://github.com/jamescrowley321/identity-model/commit/272987d09aeae1e48efa51fcb5dd4fc9a2bee6a1))
+
+### Testing
+
+- **validation**: CLV-003 uses an unregistered claim for uniform null->missing
+  ([#625](https://github.com/jamescrowley321/identity-model/pull/625),
+  [`a225eb5`](https://github.com/jamescrowley321/identity-model/commit/a225eb560e09f5a37b80cfe7ca40ba12ed8a7a7d))
+
+- **validation**: CLV-003 uses an unregistered claim for uniform null->missing
+  ([#624](https://github.com/jamescrowley321/identity-model/pull/624),
+  [`ed6d939`](https://github.com/jamescrowley321/identity-model/commit/ed6d939a16275c894082f0d03de92863accba113))
+
+
 ## v3.13.0 (2026-09-05)
 
 ### Bug Fixes
