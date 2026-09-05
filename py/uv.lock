@@ -502,7 +502,7 @@ wheels = [
 
 [[package]]
 name = "fastapi-identity-model"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "packages/fastapi-identity-model" }
 dependencies = [
     { name = "fastapi" },
