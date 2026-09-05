@@ -28,6 +28,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
+| Extended | Injectable claims validators | [#603](https://github.com/jamescrowley321/identity-model/issues/603) | `test-fixtures/claims-validation/vectors.json` | implemented | in-progress | in-progress |
 | Advanced | mTLS + cert-bound tokens | RFC 8705 | — | implemented | planned | planned |
 | Advanced | private_key_jwt client auth | RFC 7523 | — | implemented | planned | planned |
 | Advanced | PAR | RFC 9126 | — | implemented | planned | planned |

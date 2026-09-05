@@ -1,0 +1,166 @@
+{
+  "description": "Cross-language conformance vectors for the injectable claims-validator API (issue #603). A dedicated per-language runner builds a validator from `validator`, runs it against `claims`, and checks `expect`: one of `accept`, `reject` (optionally asserting the structured `claim` the rejection names), or `construction_error` (building the validator itself must fail). Rejection *reason* wording is language-specific and intentionally NOT asserted — the accept/reject/construction outcome and the named `claim` are the contract. Validator specs: require_claims{names}, require_claim_value{name,value}, require_scopes{scopes}, combine{require:all|any, of:[...]}.",
+  "cases": [
+    {
+      "id": "CLV-001",
+      "desc": "require_claims accepts when every named claim is present and non-null",
+      "validator": { "type": "require_claims", "names": ["sub", "email"] },
+      "claims": { "sub": "user-1", "email": "a@example.com" },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-002",
+      "desc": "require_claims rejects a missing claim, naming it",
+      "validator": { "type": "require_claims", "names": ["sub", "email"] },
+      "claims": { "sub": "user-1" },
+      "expect": { "reject": { "claim": "email" } }
+    },
+    {
+      "id": "CLV-003",
+      "desc": "require_claims treats an explicit null as missing (fail closed)",
+      "validator": { "type": "require_claims", "names": ["sub"] },
+      "claims": { "sub": null },
+      "expect": { "reject": { "claim": "sub" } }
+    },
+    {
+      "id": "CLV-011",
+      "desc": "require_claim_value accepts when the claim equals the expected value",
+      "validator": { "type": "require_claim_value", "name": "role", "value": "admin" },
+      "claims": { "role": "admin" },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-012",
+      "desc": "require_claim_value rejects a mismatched value",
+      "validator": { "type": "require_claim_value", "name": "role", "value": "admin" },
+      "claims": { "role": "user" },
+      "expect": { "reject": { "claim": "role" } }
+    },
+    {
+      "id": "CLV-013",
+      "desc": "require_claim_value rejects an absent claim",
+      "validator": { "type": "require_claim_value", "name": "role", "value": "admin" },
+      "claims": { "sub": "user-1" },
+      "expect": { "reject": { "claim": "role" } }
+    },
+    {
+      "id": "CLV-021",
+      "desc": "require_scopes accepts scopes from the space-delimited `scope` string",
+      "validator": { "type": "require_scopes", "scopes": ["read", "write"] },
+      "claims": { "scope": "read write delete" },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-022",
+      "desc": "require_scopes accepts scopes from the `scp` array",
+      "validator": { "type": "require_scopes", "scopes": ["read"] },
+      "claims": { "scp": ["read", "write"] },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-023",
+      "desc": "require_scopes rejects when a required scope is not granted, naming the scope claim",
+      "validator": { "type": "require_scopes", "scopes": ["admin"] },
+      "claims": { "scope": "read write" },
+      "expect": { "reject": { "claim": "scope" } }
+    },
+    {
+      "id": "CLV-024",
+      "desc": "an empty `scope` string falls through to `scp` (must not shadow the populated array)",
+      "validator": { "type": "require_scopes", "scopes": ["read"] },
+      "claims": { "scope": "", "scp": ["read"] },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-025",
+      "desc": "a malformed (non-string) `scope` claim yields no scopes and rejects (fail closed, no crash)",
+      "validator": { "type": "require_scopes", "scopes": ["read"] },
+      "claims": { "scope": 123 },
+      "expect": { "reject": { "claim": "scope" } }
+    },
+    {
+      "id": "CLV-031",
+      "desc": "combine(all) accepts when every member accepts",
+      "validator": {
+        "type": "combine",
+        "require": "all",
+        "of": [
+          { "type": "require_claims", "names": ["sub"] },
+          { "type": "require_scopes", "scopes": ["read"] }
+        ]
+      },
+      "claims": { "sub": "user-1", "scope": "read" },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-032",
+      "desc": "combine(all) fails fast on the first rejecting member, surfacing that member's claim",
+      "validator": {
+        "type": "combine",
+        "require": "all",
+        "of": [
+          { "type": "require_claims", "names": ["sub"] },
+          { "type": "require_scopes", "scopes": ["read"] }
+        ]
+      },
+      "claims": { "scope": "read" },
+      "expect": { "reject": { "claim": "sub" } }
+    },
+    {
+      "id": "CLV-033",
+      "desc": "combine(any) accepts when at least one member accepts",
+      "validator": {
+        "type": "combine",
+        "require": "any",
+        "of": [
+          { "type": "require_scopes", "scopes": ["admin"] },
+          { "type": "require_scopes", "scopes": ["read"] }
+        ]
+      },
+      "claims": { "scope": "read" },
+      "expect": { "accept": true }
+    },
+    {
+      "id": "CLV-034",
+      "desc": "combine(any) rejects (aggregating reasons) when every member rejects",
+      "validator": {
+        "type": "combine",
+        "require": "any",
+        "of": [
+          { "type": "require_scopes", "scopes": ["admin"] },
+          { "type": "require_claims", "names": ["groups"] }
+        ]
+      },
+      "claims": { "scope": "read" },
+      "expect": { "reject": {} }
+    },
+    {
+      "id": "CLV-041",
+      "desc": "combine(any) with no members is a construction error (an empty any-of can never be satisfied)",
+      "validator": { "type": "combine", "require": "any", "of": [] },
+      "expect": { "construction_error": true }
+    },
+    {
+      "id": "CLV-042",
+      "desc": "combine with an unknown require mode is a construction error",
+      "validator": {
+        "type": "combine",
+        "require": "some",
+        "of": [{ "type": "require_claims", "names": ["sub"] }]
+      },
+      "expect": { "construction_error": true }
+    },
+    {
+      "id": "CLV-043",
+      "desc": "require_scopes with no scopes is a construction error",
+      "validator": { "type": "require_scopes", "scopes": [] },
+      "expect": { "construction_error": true }
+    },
+    {
+      "id": "CLV-044",
+      "desc": "require_claims with no names is a construction error",
+      "validator": { "type": "require_claims", "names": [] },
+      "expect": { "construction_error": true }
+    }
+  ]
+}
