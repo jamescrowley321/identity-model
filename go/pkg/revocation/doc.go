@@ -41,6 +41,6 @@
 //	}
 //	// Token is now revoked (or was already invalid — indistinguishable by design).
 //
-// The conformance suite for this package is spec/conformance/revocation.json
+// The conformance suite for this package is spec/vectors/revocation.json
 // (REV-001..005).
 package revocation

@@ -8,7 +8,7 @@
 //! challenge; [`UserInfoClient::fetch_with_subject`] additionally rejects a
 //! `sub` that does not match the ID token's `sub` (§5.3.2).
 //!
-//! Behavioural contract: `spec/conformance/userinfo.json` (`UI-001`..`UI-008`);
+//! Behavioural contract: `spec/vectors/userinfo.json` (`UI-001`..`UI-008`);
 //! see also `spec/capabilities.md`.
 //!
 //! ```no_run

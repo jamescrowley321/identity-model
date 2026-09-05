@@ -1,7 +1,7 @@
 # Token Revocation test fixtures
 
 Fixtures backing the `revocation` conformance suite
-(`spec/conformance/revocation.json`), per RFC 7009.
+(`spec/vectors/revocation.json`), per RFC 7009.
 
 - `revoke-success-empty.json` — an empty (0-byte) body, the most common HTTP 200
   revocation success response. A revocation success carries no response body, so

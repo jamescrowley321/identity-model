@@ -12,7 +12,7 @@
 //! `introspection_endpoint` field of the discovery document (RFC 8414 §2).
 //!
 //! This mirrors the Go reference (`go/pkg/introspection`) and satisfies
-//! `spec/conformance/introspection.json` (`INTR-001`..`INTR-006`); see also
+//! `spec/vectors/introspection.json` (`INTR-001`..`INTR-006`); see also
 //! `spec/capabilities.md`.
 //!
 //! ```no_run

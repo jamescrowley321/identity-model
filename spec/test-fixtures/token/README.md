@@ -1,8 +1,8 @@
 # Token endpoint test fixtures
 
 Fixtures backing the `client-credentials` and `authorization-code` conformance
-suites (`spec/conformance/client-credentials.json`,
-`spec/conformance/authorization-code.json`).
+suites (`spec/vectors/client-credentials.json`,
+`spec/vectors/authorization-code.json`).
 
 The OAuth2 success and error token bodies (RFC 6749 §5.1/§5.2) are tiny and are
 constructed inline in the unit tests via `httptest`, so they are not duplicated

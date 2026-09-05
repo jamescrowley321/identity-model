@@ -21,8 +21,8 @@ import (
 
 // Paths from go/internal/conformance to the shared spec tree at the repo root.
 const (
-	specConformanceDir = "../../../spec/conformance"
-	fixtureRoot        = "../../../spec/test-fixtures"
+	specVectorsDir = "../../../spec/vectors"
+	fixtureRoot    = "../../../spec/test-fixtures"
 )
 
 // fallbackNow is used when a vector omits options.now. It matches the fixture
@@ -33,7 +33,7 @@ var fallbackNow = time.Unix(1_700_000_000, 0).UTC()
 // Go jwt.Validate implementation, and asserts full coverage of the capability's
 // test ids so Go cannot silently skip a case another language executes.
 func TestValidationConformance(t *testing.T) {
-	suite, err := LoadCapability(filepath.Join(specConformanceDir, "validation.json"))
+	suite, err := LoadCapability(filepath.Join(specVectorsDir, "validation.json"))
 	if err != nil {
 		t.Fatalf("load capability: %v", err)
 	}

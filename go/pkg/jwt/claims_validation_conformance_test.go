@@ -3,7 +3,7 @@ package jwt
 // Cross-language conformance for the injectable claims-validator API (issue
 // #603). This is a bespoke, per-language runner: it reads the shared vector set
 // in spec/test-fixtures/claims-validation/vectors.json directly (NOT via the
-// generic spec/conformance/*.json capability machinery, which has a different
+// generic spec/vectors/*.json capability machinery, which has a different
 // schema), builds each validator from the `validator` spec, runs it against
 // `claims`, and asserts the accept / reject / construction_error outcome. When a
 // rejection names a specific claim, that claim is asserted too; rejection reason

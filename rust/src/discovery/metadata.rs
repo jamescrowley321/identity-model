@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// The parsed OpenID Connect provider metadata document (OIDC Discovery 1.0 §3).
 ///
 /// The seven fields the conformance contract marks required
-/// (`spec/conformance/discovery.json`) are modelled as plain owned values and
+/// (`spec/vectors/discovery.json`) are modelled as plain owned values and
 /// default to empty when absent, so a document that omits one parses
 /// successfully and is then reported by presence validation (DISC-008) rather
 /// than failing to deserialize. Optional endpoints are `Option`, and any field

@@ -1,6 +1,6 @@
 """Thin Python executor for the shared ID-Token /spec conformance vectors.
 
-Drives every vector in ``spec/conformance/id-token.json`` — the language-neutral
+Drives every vector in ``spec/vectors/id-token.json`` — the language-neutral
 source of truth for the OpenID Connect ID-Token *profile* rules (OIDC Core 1.0
 §2 / §3.1.3.7 / §3.3.2.11) — through py-identity-model's pure claim validator
 ``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners will
@@ -44,14 +44,14 @@ def _find_repo_root() -> Path:
     a fixed ``parents[n]``) also resolves correctly inside the mutation-testing
     sandbox, which inserts a directory level.
     """
-    marker = Path("spec") / "conformance" / "id-token.json"
+    marker = Path("spec") / "vectors" / "id-token.json"
     for parent in Path(__file__).resolve().parents:
         if (parent / marker).is_file():
             return parent
     return Path(__file__).resolve().parents[4]
 
 
-_SPEC_FILE = _find_repo_root() / "spec" / "conformance" / "id-token.json"
+_SPEC_FILE = _find_repo_root() / "spec" / "vectors" / "id-token.json"
 _CAPABILITY = json.loads(_SPEC_FILE.read_text())
 _CASES = _CAPABILITY["tests"]
 

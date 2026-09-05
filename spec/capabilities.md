@@ -1,6 +1,6 @@
 # identity-model — Capability Matrix
 
-This is the **canonical, cross-language capability specification**. Every language’s library implements these capabilities idiomatically and proves behavioral parity by passing the machine-readable conformance definitions in [`conformance/`](conformance/) against the shared provider in [`../infra`](../infra).
+This is the **canonical, cross-language capability specification**. Every language’s library implements these capabilities idiomatically and proves behavioral parity by passing the machine-readable conformance definitions in [`vectors/`](vectors/) against the shared provider in [`../infra`](../infra).
 
 Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
@@ -42,9 +42,9 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/conformance` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-reconciliation-plan.md` (and the parity report beside it) for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-reconciliation-plan.md` (and the parity report beside it) for the full diff and roadmap.
 >
-> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`conformance/config.json`](conformance/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors, and hard-fails if a second such capability appears before the runners emit per-capability coverage reports. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
+> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors, and hard-fails if a second such capability appears before the runners emit per-capability coverage reports. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >
 > **Known cross-language divergences** the plan reconciles: Go and Rust support `client_secret_post`, id-token `nonce` validation, and the RFC 8414 issuer-identifier match, none of which Python does yet; Rust validates `azp`, which Python and Go do not.
 
@@ -460,7 +460,7 @@ capabilities:
   - name: "OIDC Discovery"
     tier: core
     spec_ref: "OpenID Connect Discovery 1.0"
-    conformance_file: "spec/conformance/discovery.json"
+    conformance_file: "spec/vectors/discovery.json"
     languages:
       python: { status: implemented }
       go: { status: implemented }

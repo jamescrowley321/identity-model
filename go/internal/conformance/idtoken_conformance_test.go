@@ -21,7 +21,7 @@ import (
 // writes no coverage report. The in-test coverage assertion below still guards
 // against silently skipping a case.
 func TestIDTokenConformance(t *testing.T) {
-	suite, err := LoadIDTokenCapability(filepath.Join(specConformanceDir, "id-token.json"))
+	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
 		t.Fatalf("load id-token capability: %v", err)
 	}

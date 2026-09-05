@@ -1,7 +1,7 @@
 """Unit tests for the typed configuration surface (spec/config.md).
 
 Test ids reference the configuration conformance cases in
-``spec/conformance/config.json`` (CFG-1xx strict, 3xx precedence, 4xx redaction,
+``spec/vectors/config.json`` (CFG-1xx strict, 3xx precedence, 4xx redaction,
 5xx source).
 """
 

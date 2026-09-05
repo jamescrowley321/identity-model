@@ -27,5 +27,5 @@
 //
 // RFC / spec references: RFC 7519 (JWT), RFC 7515 (JWS), RFC 7518 (JWA),
 // OIDC Core 1.0 §3.1.3.7 (ID Token Validation). The behavioural contract is in
-// spec/capabilities.md and spec/conformance/validation.json (IDs JWT-001..013).
+// spec/capabilities.md and spec/vectors/validation.json (IDs JWT-001..013).
 package jwt

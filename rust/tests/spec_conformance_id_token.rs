@@ -1,6 +1,6 @@
 //! Rust executor for the shared ID-Token profile conformance vectors.
 //!
-//! Drives every vector in `spec/conformance/id-token.json` (`IDT-001`..`IDT-011`)
+//! Drives every vector in `spec/vectors/id-token.json` (`IDT-001`..`IDT-011`)
 //! through the pure [`rs_identity_model::validate_id_token_claims`] — the same
 //! language-neutral vector set the Python
 //! (`py/src/tests/unit/test_id_token_conformance.py`) and Go runners execute —
@@ -25,9 +25,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
 
-const SPEC_FILE: &str = "../spec/conformance/id-token.json";
+const SPEC_FILE: &str = "../spec/vectors/id-token.json";
 
-// ── Vector schema (mirrors spec/conformance/id-token.json) ──────────────────
+// ── Vector schema (mirrors spec/vectors/id-token.json) ──────────────────
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
