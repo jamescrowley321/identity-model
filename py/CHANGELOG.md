@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v3.16.0 (2026-09-05)
+
+### Bug Fixes
+
+- **token-validation**: Raise IdTokenValidationException on non-ASCII hash inputs + c_hash wrapper
+  test ([#632](https://github.com/jamescrowley321/identity-model/pull/632),
+  [`2db6ba8`](https://github.com/jamescrowley321/identity-model/commit/2db6ba8dbbf26f9278d8c079535f794bdc917e2f))
+
+### Chores
+
+- Sync uv.lock with 3.15.0
+  ([`d1f542a`](https://github.com/jamescrowley321/identity-model/commit/d1f542afd76710ec637f99aaf037d10dbd10169d))
+
+### Features
+
+- **token-validation**: First-class validate_id_token (OIDC id-token profile)
+  ([#632](https://github.com/jamescrowley321/identity-model/pull/632),
+  [`2db6ba8`](https://github.com/jamescrowley321/identity-model/commit/2db6ba8dbbf26f9278d8c079535f794bdc917e2f))
+
+
 ## v3.15.0 (2026-09-05)
 
 ### Bug Fixes
