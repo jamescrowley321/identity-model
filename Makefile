@@ -105,6 +105,15 @@ test-integration-go: ## Run Go integration tests against node-oidc (defaults) + 
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
+.PHONY: lint-rust
+lint-rust: ## rustfmt check + clippy (warnings as errors) for the Rust library
+	cd rust && cargo fmt --all --check
+	cd rust && cargo clippy --all-targets --all-features -- -D warnings
+
+.PHONY: audit-rust
+audit-rust: ## Supply-chain scan of the Rust crate (cargo-deny: advisories/licenses/bans/sources)
+	cd rust && cargo deny check
+
 .PHONY: test-integration-rust
 test-integration-rust: ## Run Rust live integration tests (#[ignore]-gated) against node-oidc
 	@echo "Starting node-oidc-provider fixture..."
