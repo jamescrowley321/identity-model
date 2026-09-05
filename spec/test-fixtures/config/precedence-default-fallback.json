@@ -1,0 +1,15 @@
+{
+  "description": "CFG-304: registry default applies only when no source yields the key",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    { "name": "custom", "type": "map", "values": { "http.retry.max_attempts": "7" } }
+  ],
+  "expect": {
+    "config": {
+      "http.retry.max_attempts": 7,
+      "http.timeout": 30.0
+    },
+    "note": "http.retry.max_attempts takes the source value; http.timeout, yielded by nobody, takes the registry default 30.0 — not a source value."
+  }
+}

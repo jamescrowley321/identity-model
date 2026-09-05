@@ -1,0 +1,10 @@
+{
+  "description": "CFG-101: client group requested, no source yields the required keys",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "none",
+  "sources": [{ "name": "empty-env", "type": "env", "values": {} }],
+  "expect": {
+    "error": { "code": "CFG-001", "keys": ["client.discovery_url", "client.id"] }
+  }
+}

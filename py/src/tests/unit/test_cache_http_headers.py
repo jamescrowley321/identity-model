@@ -34,6 +34,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as async_clear_jwks_cache,
 )
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.sync import token_validation as sync_tv
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
@@ -50,6 +51,9 @@ from .token_validation_helpers import (
 
 DISCO_URL = "https://example.com/.well-known/openid-configuration"
 JWKS_URL = "https://example.com/jwks"
+# Second element of the disco cache key for the default (strict) policy — the
+# discovery cache keys on ``(address, policy.cache_key())``.
+_STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()
 
 
 @pytest.fixture(autouse=True)
@@ -115,11 +119,11 @@ class TestSyncFailedResponseNotCached:
 
         failed = _get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert (DISCO_URL, True) not in sync_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in sync_tv._disco_cache
 
         success = _get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert (DISCO_URL, True) in sync_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) in sync_tv._disco_cache
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -162,11 +166,11 @@ class TestAsyncFailedResponseNotCached:
 
         failed = await async_get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert (DISCO_URL, True) not in aio_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in aio_tv._disco_cache
 
         success = await async_get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert (DISCO_URL, True) in aio_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) in aio_tv._disco_cache
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -205,7 +209,7 @@ class TestSyncNoStoreCachedForJwks:
 
         response = _get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert (DISCO_URL, True) not in sync_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in sync_tv._disco_cache
 
 
 class TestAsyncNoStoreCachedForJwks:
@@ -239,7 +243,7 @@ class TestAsyncNoStoreCachedForJwks:
 
         response = await async_get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert (DISCO_URL, True) not in aio_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in aio_tv._disco_cache
 
 
 # ============================================================================
@@ -281,7 +285,7 @@ class TestSyncNoCacheCachedForJwks:
             response = _get_disco_response(DISCO_URL)
             assert response.is_successful is True
 
-        assert (DISCO_URL, True) not in sync_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in sync_tv._disco_cache
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -320,7 +324,7 @@ class TestAsyncNoCacheCachedForJwks:
         for _ in range(3):
             await async_get_disco_response(DISCO_URL)
 
-        assert (DISCO_URL, True) not in aio_tv._disco_cache
+        assert (DISCO_URL, _STRICT_DISCO_KEY) not in aio_tv._disco_cache
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -427,7 +431,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         primed = _get_disco_response(DISCO_URL)
         assert primed.is_successful is True
-        cache_key = (DISCO_URL, True)
+        cache_key = (DISCO_URL, _STRICT_DISCO_KEY)
         assert cache_key in sync_tv._disco_cache
 
         # Manually expire the entry without removing it — this is the state

@@ -1,0 +1,12 @@
+{
+  "description": "CFG-502: a source whose resolve operation errors fails construction closed with CFG-004",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    { "name": "broken", "type": "map", "raises": true }
+  ],
+  "expect": {
+    "error": { "code": "CFG-004", "source": "broken" },
+    "note": "The failing source is identified; it is not silently skipped, and no Config value is produced."
+  }
+}

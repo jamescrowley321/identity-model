@@ -117,7 +117,7 @@ class TestPerLoopLocksAreIndependent:
                 aio_tv._get_jwks_cache_write_lock(),
                 aio_tv._get_jwks_fetch_lock(JWKS_URL),
                 aio_tv._get_disco_cache_write_lock(),
-                aio_tv._get_disco_fetch_lock((JWKS_URL, True)),
+                aio_tv._get_disco_fetch_lock((JWKS_URL, ())),
             )
 
         loop_a = asyncio.new_event_loop()
@@ -176,7 +176,7 @@ class TestPerLoopLocksAreIndependent:
             aio_tv._get_jwks_cache_write_lock()
             aio_tv._get_jwks_fetch_lock("x")
             aio_tv._get_disco_cache_write_lock()
-            aio_tv._get_disco_fetch_lock(("x", True))
+            aio_tv._get_disco_fetch_lock(("x", ()))
 
         try:
             loop.run_until_complete(touch())

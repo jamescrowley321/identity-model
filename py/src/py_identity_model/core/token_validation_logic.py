@@ -218,6 +218,13 @@ def validate_claims(
     if token_validation_config.claims_validator:
         try:
             token_validation_config.claims_validator(decoded_token)
+        except TokenValidationException as e:
+            # A validator that rejected via ClaimsValidationError (or any
+            # TokenValidationException) already carries a structured reason. Log
+            # it server-side (parity with the generic branch below) and
+            # propagate it unwrapped rather than flattening the reason.
+            logger.info("Claims validation rejected the token: %s", e)
+            raise
         except Exception as e:
             logger.error(f"Claims validation failed: {e!s}")
             raise TokenValidationException(
@@ -250,6 +257,12 @@ async def validate_async_claims(
                 await token_validation_config.claims_validator(decoded_token)
             else:
                 token_validation_config.claims_validator(decoded_token)
+        except TokenValidationException as e:
+            # Preserve a ClaimsValidationError's structured reason (see the sync
+            # path); log it server-side, then propagate unwrapped. Only
+            # non-library exceptions are wrapped generically.
+            logger.info("Claims validation rejected the token: %s", e)
+            raise
         except Exception as e:
             logger.error(f"Claims validation failed: {e!s}")
             raise TokenValidationException(
@@ -291,6 +304,9 @@ def build_resolved_config(
         # Propagate the issuer allowlist so the disco/retry paths (which validate
         # via this resolved config) still enforce issuer pinning.
         allowed_issuers=original_config.allowed_issuers,
+        # Preserve the injected discovery policy so a resolved config stays a
+        # faithful copy of the caller's config.
+        discovery_policy=original_config.discovery_policy,
     )
 
 

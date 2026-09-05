@@ -126,6 +126,28 @@ config = TokenValidationConfig(
 )
 ```
 
+**Composable validators (recommended for common cases):**
+
+Instead of hand-writing a callable, use the ready-made `require_claims` /
+`require_claim_value` / `require_scopes` and compose them with
+`combine_claims_validators`. They raise a typed `ClaimsValidationError` whose
+reason is preserved to the caller. See [Claims Validation](api/claims-validation.md).
+
+```python
+from py_identity_model import (
+    combine_claims_validators,
+    require_claim_value,
+    require_scopes,
+)
+
+config = TokenValidationConfig(
+    perform_disco=True,
+    claims_validator=combine_claims_validators(
+        [require_claim_value("token_use", "access"), require_scopes("orders:read")]
+    ),
+)
+```
+
 ## Common Migration Patterns
 
 ### Pattern 1: Discovery Document

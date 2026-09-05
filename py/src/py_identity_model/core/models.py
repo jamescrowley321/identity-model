@@ -1321,11 +1321,19 @@ class TokenValidationConfig:
             Security-critical options (verify_signature, verify_exp, verify_nbf,
             verify_iat) cannot be disabled and will raise ConfigurationException
             if set to False.
-        claims_validator: Optional callable for custom claims validation.
-                         Can be sync: Callable[[dict], None]
-                         or async: Callable[[dict], Awaitable[None]] (in async context)
-                         Should raise an exception if validation fails.
-                         The decoded token claims dict is passed as the only argument.
+        claims_validator: Optional injectable claims validator, run after the
+                         standard checks pass. A ``ClaimsValidator`` is any
+                         callable ``(claims) -> None`` — sync, or async in the
+                         async context — that raises ``ClaimsValidationError``
+                         (carrying a structured ``reason``/``claim``) to reject.
+                         The decoded claims dict is passed as the only argument.
+                         Any raised exception rejects the token; a
+                         ``ClaimsValidationError`` (or any
+                         ``TokenValidationException``) propagates with its reason
+                         intact, other exceptions become a generic failure.
+                         Compose several with ``combine_claims_validators`` and
+                         reuse ``require_claims`` / ``require_claim_value`` /
+                         ``require_scopes``.
         leeway: Clock skew tolerance in seconds for ``exp`` and ``nbf``
             claims.  Useful when clocks between the issuer and this
             server are not perfectly synchronized.
@@ -1338,6 +1346,19 @@ class TokenValidationConfig:
             Set it only for multi-tenant callers that resolve discovery from an
             untrusted token's ``iss`` — without it an attacker who stands up their
             own tenant and mints a validly-signed token would pass validation.
+        discovery_policy: Optional :class:`DiscoveryPolicy` applied to the
+            discovery document (and its advertised endpoints) on the cached
+            ``validate_token`` path. When ``None`` (the default) a policy is
+            derived from ``require_https`` alone — behaviour is unchanged. Set it
+            to reach any of the other policy knobs (``validate_issuer``,
+            ``validate_endpoints``, ``additional_endpoint_base_addresses``,
+            ``authority``, ``allow_loopback_endpoints``, ``allow_http_on_loopback``)
+            while still using the built-in discovery/JWKS TTL cache, instead of
+            calling ``get_discovery_document`` directly and re-implementing
+            caching. When provided, ``discovery_policy`` **takes precedence over**
+            ``require_https`` (the policy's own ``require_https`` governs). The
+            discovery cache is partitioned by the full policy, so a response
+            admitted under a lax policy is never served to a stricter caller.
 
     Examples:
         >>> # Multi-tenant with clock skew tolerance
@@ -1373,6 +1394,7 @@ class TokenValidationConfig:
     require_https: bool = True
     leeway: float | None = None
     allowed_issuers: list[str] | None = None
+    discovery_policy: DiscoveryPolicy | None = None
 
 
 __all__ = [

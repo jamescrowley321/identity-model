@@ -34,6 +34,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import TokenValidationException
@@ -56,6 +57,8 @@ from .token_validation_helpers import (
 
 DISCO_URL = "https://example.com/.well-known/openid-configuration"
 JWKS_URL = "https://example.com/jwks"
+# Second element of the disco cache key for the default (strict) policy.
+_STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()
 
 # Expected fetch counts: 1 initial prime + 1 single-flight refresh after expiry
 FETCH_AFTER_EXPIRY = 2
@@ -201,7 +204,7 @@ class TestSyncStampedeAfterExpiry:
         _get_disco_response(DISCO_URL)
         assert disco_route.call_count == 1
 
-        cache_key = (DISCO_URL, True)
+        cache_key = (DISCO_URL, _STRICT_DISCO_KEY)
         sync_tv._disco_cache[cache_key] = DiscoCacheEntry(
             response=sync_tv._disco_cache[cache_key].response,
             cached_at=time.monotonic() - 3601,
@@ -313,7 +316,7 @@ class TestAsyncStampedeAfterExpiry:
         assert disco_route.call_count == 1
 
         # Expire the entry
-        cache_key = (DISCO_URL, True)
+        cache_key = (DISCO_URL, _STRICT_DISCO_KEY)
         aio_tv._disco_cache[cache_key] = DiscoCacheEntry(
             response=aio_tv._disco_cache[cache_key].response,
             cached_at=time.monotonic() - 3601,

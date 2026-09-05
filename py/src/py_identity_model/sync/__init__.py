@@ -5,6 +5,14 @@ from ..core.authorize_response import (
     parse_authorize_callback_response,
 )
 from ..core.authorize_url import build_authorization_url
+from ..core.claims_validation import (
+    ClaimsValidationError,
+    ClaimsValidator,
+    combine_claims_validators,
+    require_claim_value,
+    require_claims,
+    require_scopes,
+)
 from ..core.discovery_policy import (
     DiscoveryEndpoint,
     DiscoveryPolicy,
@@ -73,6 +81,7 @@ from .discovery import (
     DiscoveryDocumentResponse,
     get_discovery_document,
 )
+from .id_token import validate_id_token
 from .introspection import (
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
@@ -152,6 +161,8 @@ __all__ = [
     # Base Classes
     "BaseRequest",
     "BaseResponse",
+    "ClaimsValidationError",
+    "ClaimsValidator",
     # Token Client
     "ClientCredentialsTokenRequest",
     "ClientCredentialsTokenResponse",
@@ -215,6 +226,7 @@ __all__ = [
     "certificate_thumbprint_from_file",
     "clear_discovery_cache",
     "clear_jwks_cache",
+    "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
     "create_dpop_proof",
@@ -244,6 +256,9 @@ __all__ = [
     "request_authorization_code_token",
     "request_client_credentials_token",
     "request_device_authorization",
+    "require_claim_value",
+    "require_claims",
+    "require_scopes",
     "resolve_mtls_endpoint",
     "revoke_token",
     "update_client",
@@ -253,6 +268,7 @@ __all__ = [
     "validate_fapi_authorization_request",
     "validate_fapi_client_config",
     "validate_fapi_discovery",
+    "validate_id_token",
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",

@@ -1,0 +1,10 @@
+{
+  "description": "CFG-302: earlier source wins over later source",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    { "name": "high", "type": "map", "values": { "http.timeout": "20" } },
+    { "name": "low", "type": "map", "values": { "http.timeout": "80" } }
+  ],
+  "expect": { "config": { "http.timeout": 20.0 } }
+}

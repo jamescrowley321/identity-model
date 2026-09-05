@@ -8,6 +8,44 @@ inserted below the marker.
 
 <!-- psr: next release -->
 
+## v0.3.0 (2026-09-05)
+
+### Features
+
+- **fastapi**: Authenticate WebSockets, fix exclusion foot-guns and login self-block
+  ([#604](https://github.com/jamescrowley321/identity-model/pull/604),
+  [`6a88c56`](https://github.com/jamescrowley321/identity-model/commit/6a88c56f5798f2dbfda6a7c2c5f19535eea817ab))
+
+### Testing
+
+- **fastapi**: Address fresh-context adversarial review findings
+  ([#604](https://github.com/jamescrowley321/identity-model/pull/604),
+  [`6a88c56`](https://github.com/jamescrowley321/identity-model/commit/6a88c56f5798f2dbfda6a7c2c5f19535eea817ab))
+
+- **fastapi**: Integration + red-team coverage for WS auth, exclusion, RP composition
+  ([#604](https://github.com/jamescrowley321/identity-model/pull/604),
+  [`6a88c56`](https://github.com/jamescrowley321/identity-model/commit/6a88c56f5798f2dbfda6a7c2c5f19535eea817ab))
+
+- **fastapi**: Wire test_ws_correctness into a gated target
+  ([#604](https://github.com/jamescrowley321/identity-model/pull/604),
+  [`6a88c56`](https://github.com/jamescrowley321/identity-model/commit/6a88c56f5798f2dbfda6a7c2c5f19535eea817ab))
+
+
+## v0.2.3 (2026-09-04)
+
+### Bug Fixes
+
+- **fastapi**: Don't reflect provider/library error internals from the RP callback
+  ([#622](https://github.com/jamescrowley321/identity-model/pull/622),
+  [`2480587`](https://github.com/jamescrowley321/identity-model/commit/2480587a1ef28837ce9b36f928dcd8cef26e07cd))
+
+### Testing
+
+- **fastapi**: Cover the two genericized error branches
+  ([#622](https://github.com/jamescrowley321/identity-model/pull/622),
+  [`2480587`](https://github.com/jamescrowley321/identity-model/commit/2480587a1ef28837ce9b36f928dcd8cef26e07cd))
+
+
 ## v0.2.2 (2026-08-22)
 
 ### Bug Fixes

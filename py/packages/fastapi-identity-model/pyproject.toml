@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-identity-model"
-version = "0.2.2"
+version = "0.3.0"
 description = "FastAPI OIDC/OAuth2 middleware and relying-party router, built on py-identity-model"
 authors = [{ name = "jamescrowley321", email = "jamescrowley151@gmail.com" }]
 requires-python = ">=3.12"
