@@ -1,0 +1,15 @@
+{
+  "description": "CFG-104: invalid values fail closed and are never silently defaulted",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": { "HTTP_TIMEOUT": "soon", "HTTP_RETRY_MAX_ATTEMPTS": "-2" }
+    }
+  ],
+  "expect": {
+    "error": { "code": "CFG-003", "keys": ["http.timeout", "http.retry.max_attempts"] }
+  }
+}

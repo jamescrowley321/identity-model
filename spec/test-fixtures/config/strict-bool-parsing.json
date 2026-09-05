@@ -1,0 +1,13 @@
+{
+  "description": "CFG-107: boolean parsing accepts true/false/1/0 case-insensitively; anything else is CFG-003",
+  "mode": "strict",
+  "group": null,
+  "cases": [
+    { "raw": "TRUE", "expect": { "config": { "test.require_live": true } } },
+    { "raw": "false", "expect": { "config": { "test.require_live": false } } },
+    { "raw": "1", "expect": { "config": { "test.require_live": true } } },
+    { "raw": "0", "expect": { "config": { "test.require_live": false } } },
+    { "raw": "yes", "expect": { "error": { "code": "CFG-003", "keys": ["test.require_live"] } } }
+  ],
+  "note": "Each case supplies TEST_REQUIRE_LIVE=<raw> via an env source and constructs in strict mode."
+}

@@ -5,6 +5,14 @@ from ..core.authorize_response import (
     parse_authorize_callback_response,
 )
 from ..core.authorize_url import build_authorization_url
+from ..core.claims_validation import (
+    ClaimsValidationError,
+    ClaimsValidator,
+    combine_claims_validators,
+    require_claim_value,
+    require_claims,
+    require_scopes,
+)
 from ..core.discovery_policy import (
     DiscoveryEndpoint,
     DiscoveryPolicy,
@@ -153,6 +161,8 @@ __all__ = [
     # Base Classes
     "BaseRequest",
     "BaseResponse",
+    "ClaimsValidationError",
+    "ClaimsValidator",
     # Token Client
     "ClientCredentialsTokenRequest",
     "ClientCredentialsTokenResponse",
@@ -216,6 +226,7 @@ __all__ = [
     "certificate_thumbprint_from_file",
     "clear_discovery_cache",
     "clear_jwks_cache",
+    "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
     "create_dpop_proof",
@@ -245,6 +256,9 @@ __all__ = [
     "request_authorization_code_token",
     "request_client_credentials_token",
     "request_device_authorization",
+    "require_claim_value",
+    "require_claims",
+    "require_scopes",
     "resolve_mtls_endpoint",
     "revoke_token",
     "update_client",

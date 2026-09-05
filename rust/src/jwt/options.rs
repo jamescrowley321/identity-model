@@ -1,6 +1,10 @@
 //! Validation options for [`crate::validate_token`] (RFC 7519 §4.1).
 
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
+
+use super::claims_validation::ClaimsValidator;
 
 /// The default set of accepted JWS algorithms when the caller does not override
 /// it with [`ValidationOptionsBuilder::allowed_algorithms`].
@@ -25,7 +29,7 @@ pub const DEFAULT_ALLOWED_ALGORITHMS: &[&str] = &[
 /// `exp` expiry — leaving issuer, audience, and nonce unchecked. The `With*`
 /// surface mirrors the discovery and jwks builders so the modules compose
 /// consistently.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ValidationOptions {
     pub(crate) expected_issuer: Option<String>,
     pub(crate) expected_audience: Option<String>,
@@ -42,6 +46,29 @@ pub struct ValidationOptions {
     /// When `true`, `nbf` must be present (and in the past within skew). When
     /// `false` (the default), `nbf` is checked only if present (JWT-006).
     pub(crate) require_nbf: bool,
+    /// An optional application-policy claims validator run after every standard
+    /// check passes (issue #603). `None` (the default) leaves behaviour
+    /// unchanged. See [`ValidationOptionsBuilder::claims_validator`].
+    pub(crate) claims_validator: Option<Arc<dyn ClaimsValidator>>,
+}
+
+impl fmt::Debug for ValidationOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValidationOptions")
+            .field("expected_issuer", &self.expected_issuer)
+            .field("expected_audience", &self.expected_audience)
+            .field("expected_nonce", &self.expected_nonce)
+            .field("clock_skew", &self.clock_skew)
+            .field("required_claims", &self.required_claims)
+            .field("allowed_algorithms", &self.allowed_algorithms)
+            .field("require_exp", &self.require_exp)
+            .field("require_nbf", &self.require_nbf)
+            .field(
+                "claims_validator",
+                &self.claims_validator.as_ref().map(|_| "<claims_validator>"),
+            )
+            .finish()
+    }
 }
 
 impl ValidationOptions {
@@ -66,7 +93,7 @@ impl Default for ValidationOptions {
 
 /// Builder for [`ValidationOptions`]. Obtain one via
 /// [`ValidationOptions::builder`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ValidationOptionsBuilder {
     expected_issuer: Option<String>,
     expected_audience: Option<String>,
@@ -76,6 +103,26 @@ pub struct ValidationOptionsBuilder {
     allowed_algorithms: Vec<String>,
     require_exp: bool,
     require_nbf: bool,
+    claims_validator: Option<Arc<dyn ClaimsValidator>>,
+}
+
+impl fmt::Debug for ValidationOptionsBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValidationOptionsBuilder")
+            .field("expected_issuer", &self.expected_issuer)
+            .field("expected_audience", &self.expected_audience)
+            .field("expected_nonce", &self.expected_nonce)
+            .field("clock_skew", &self.clock_skew)
+            .field("required_claims", &self.required_claims)
+            .field("allowed_algorithms", &self.allowed_algorithms)
+            .field("require_exp", &self.require_exp)
+            .field("require_nbf", &self.require_nbf)
+            .field(
+                "claims_validator",
+                &self.claims_validator.as_ref().map(|_| "<claims_validator>"),
+            )
+            .finish()
+    }
 }
 
 impl ValidationOptionsBuilder {
@@ -93,6 +140,7 @@ impl ValidationOptionsBuilder {
                 .collect(),
             require_exp: true,
             require_nbf: false,
+            claims_validator: None,
         }
     }
 
@@ -173,6 +221,22 @@ impl ValidationOptionsBuilder {
         self
     }
 
+    /// Sets an application-policy claims validator run after every standard
+    /// check passes (issue #603) — the hook for enforcing custom rules on the
+    /// decoded claims (tenant membership, scopes, roles, ...).
+    ///
+    /// Accepts any [`ClaimsValidator`]: a ready-made validator such as
+    /// [`crate::require_scopes`], a [`crate::combine_claims_validators`]
+    /// composition, or a closure adapted with [`crate::from_fn`]. Leaving it
+    /// unset (the default) preserves the pre-#603 behaviour exactly.
+    pub fn claims_validator<V>(mut self, validator: V) -> Self
+    where
+        V: ClaimsValidator + 'static,
+    {
+        self.claims_validator = Some(Arc::new(validator));
+        self
+    }
+
     /// Builds the [`ValidationOptions`].
     pub fn build(self) -> ValidationOptions {
         ValidationOptions {
@@ -184,6 +248,7 @@ impl ValidationOptionsBuilder {
             allowed_algorithms: self.allowed_algorithms,
             require_exp: self.require_exp,
             require_nbf: self.require_nbf,
+            claims_validator: self.claims_validator,
         }
     }
 }

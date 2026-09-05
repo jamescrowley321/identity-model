@@ -4,15 +4,18 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
 
+# Least-privilege default; the auto-merge job elevates as needed.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   auto-merge:
     # Only run on PRs actually opened by dependabot.
     if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # enable auto-merge on the dependabot PR
+      pull-requests: write # approve the dependabot PR
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
