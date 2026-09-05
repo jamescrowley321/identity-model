@@ -352,26 +352,25 @@ jobs:
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # PSR bumps rust/Cargo.toml but not the lockfile. Keep the local crate's
-      # own version entry in rust/Cargo.lock in sync so main stays clean (a
-      # local `cargo build` won't show a dirty tree). The rust-v* tag itself
-      # points at the version-bump commit whose lock still lags by one version;
-      # that is harmless because release-rust.yml's `cargo build`/`cargo publish`
-      # regenerate the lock in-tree before publishing. This mirrors the core
-      # job's uv.lock sync. The sed relies on cargo always emitting `version`
-      # immediately after `name` within a [[package]] entry.
-      - name: Sync Cargo.lock with released version
+      # rust/Cargo.lock is synced INSIDE the version commit, by PSR's
+      # build_command (tools/sync_cargo_lock_version.py) with the lock listed
+      # in `assets` — see py/tools/semantic-release-rust.toml. A follow-up sync
+      # commit, which is what this job used to do, lands after the rust-v* tag
+      # has already been placed, so the tagged tree keeps a lock one version
+      # behind the manifest; release-rust.yml's `cargo build` then rewrites it
+      # and `cargo publish` aborts on the dirty tree (exit 101). That is why
+      # rust-v0.1.0 through rust-v0.3.1 never reached crates.io.
+      #
+      # This step asserts the invariant that failure taught us, at the moment
+      # the tag is cut rather than in the downstream publish workflow: the tag
+      # must point at the version commit, and that commit's lock must already
+      # agree with its manifest.
+      - name: Verify the tagged release commit is publishable
         if: steps.rust.outputs.released == 'true'
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@users.noreply.github.com"
-          git pull --ff-only origin main
-          ver="${{ steps.rust.outputs.version }}"
-          sed -i '/^name = "rs-identity-model"$/{n;s/^version = ".*"$/version = "'"$ver"'"/}' rust/Cargo.lock
-          if git diff --quiet rust/Cargo.lock; then
-            echo "Cargo.lock already up to date"
-          else
-            git add rust/Cargo.lock
-            git commit -m "chore(rust): sync Cargo.lock with $ver"
-            git push
+          tag="rust-v${{ steps.rust.outputs.version }}"
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$tag^{commit}")" ]; then
+            echo "::error::$tag does not point at the version commit just created"
+            exit 1
           fi
+          python3 tools/sync_cargo_lock_version.py --check

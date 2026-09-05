@@ -304,8 +304,12 @@ fastapi package — merging a `feat(go)`/`feat(rust)` (or `fix(...)`) commit to
   (after the go job) runs semantic-release with `tools/semantic-release-rust.toml`
   on `(rust)`-scoped commits, bumping `rust/Cargo.toml`; the pushed
   `rust-v{version}` tag triggers `release-rust.yml`, which publishes to
-  crates.io (needs the `CARGO_REGISTRY_TOKEN` secret). The version job also
-  syncs the crate's own entry in `rust/Cargo.lock`.
+  crates.io (needs the `CARGO_REGISTRY_TOKEN` secret). Cargo records the crate's
+  own version in its lockfile, so semantic-release's `build_command`
+  (`tools/sync_cargo_lock_version.py`) rewrites that entry and `assets` stages
+  `rust/Cargo.lock` into the *same* release commit the tag points at — a lock
+  synced in a later commit leaves the tagged tree one version behind, and
+  `cargo publish` then aborts on the dirty lockfile `cargo build` regenerates.
 
 The four version jobs run as a **serial chain** (`release` → fastapi → go →
 rust), each pulling `main` before it versions, so the release pipelines never
