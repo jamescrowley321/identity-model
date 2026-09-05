@@ -1,0 +1,11 @@
+{
+  "description": "CFG-102: client group NOT requested, a stray client key appears without client.discovery_url",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    { "name": "env", "type": "env", "values": { "OIDC_CLIENT_ID": "spa-client" } }
+  ],
+  "expect": {
+    "error": { "code": "CFG-002", "keys": ["client", "client.discovery_url"] }
+  }
+}

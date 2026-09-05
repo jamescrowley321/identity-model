@@ -1,0 +1,22 @@
+{
+  "description": "CFG-305: alias resolves within a source before falling through to a lower-precedence source",
+  "mode": "strict",
+  "group": null,
+  "cases": [
+    {
+      "note": "higher source yields only the alias; it beats the lower source's primary",
+      "sources": [
+        { "name": "high-env", "type": "env", "values": { "HTTP_RETRY_COUNT": "2" } },
+        { "name": "low-env", "type": "env", "values": { "HTTP_RETRY_MAX_ATTEMPTS": "9" } }
+      ],
+      "expect": { "config": { "http.retry.max_attempts": 2 } }
+    },
+    {
+      "note": "within one source the primary wins over the alias",
+      "sources": [
+        { "name": "env", "type": "env", "values": { "HTTP_RETRY_MAX_ATTEMPTS": "5", "HTTP_RETRY_COUNT": "2" } }
+      ],
+      "expect": { "config": { "http.retry.max_attempts": 5 } }
+    }
+  ]
+}

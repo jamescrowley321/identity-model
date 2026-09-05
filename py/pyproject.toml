@@ -3,7 +3,7 @@ members = [".", "packages/fastapi-identity-model", "examples/fastapi", "examples
 
 [project]
 name = "py-identity-model"
-version = "3.12.0"
+version = "3.13.0"
 description = "OAuth2.0 and OpenID Connect Client Library"
 authors = [{ name = "jamescrowley321", email = "jamescrowley151@gmail.com" }]
 requires-python = ">=3.12"
@@ -200,6 +200,7 @@ ignore = [
 "src/tests/harness/**/*.py" = [
     "S101",    # pytest assertions
     "PLR0913", # minter / mock-OP APIs are intentionally parameter-rich (mint, sign, mint_access_token)
+    "B008",    # Depends(...) in route defaults — standard FastAPI pattern; rs_app's WS/HTTP routes exercise the documented DI resolution
 ]
 "src/tests/load/**/*.py" = [
     "S101",    # pytest assertions
