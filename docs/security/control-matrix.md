@@ -7,6 +7,16 @@ mechanical mutation gate (`make mutation-security`, Epic 19 G.1): a control is
 only "done" when a test under `src/tests/security/` fails if the control is
 deleted, and that test kills the corresponding mutant.
 
+The Go and Rust libraries carry the same diff-scoped gate
+(`make mutation-security-go` / `make mutation-security-rust`, driven by
+`tools/mutation_security_native.py`): every mutant on a changed line inside the
+language's security surface must be killed, or waived as an equivalent mutant
+in `tools/mutation_security_go_allowlist.txt` /
+`tools/mutation_security_rust_allowlist.txt`. Waivers are content-keyed — a
+16-hex hash of the transformation itself, never a line number — so position
+drift cannot silently rebind a waiver to a different mutant; the driver's
+docstring and the allowlist headers document the exact key for each language.
+
 **Provenance:** rows track the remediation of the 2026-08-02 red/blue security
 audit (Epic 16, tracked in #476) and the mechanical-gate foundation
 (Epic 19). Each remediation task (SC1–SC10) flips its own row from `pending`

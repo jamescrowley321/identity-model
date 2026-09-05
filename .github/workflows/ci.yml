@@ -470,6 +470,98 @@ jobs:
           work-dir: go
           repo-checkout: false
 
+  go-mutation-gate:
+    # Diff-scoped mutation gate for the Go security surface (#638), mirroring
+    # the Python security-gate contract: every mutant on a changed line inside
+    # tools/mutation_security_native.py's GO_SURFACE must be killed by tests or
+    # waived as a content-hashed equivalent (tools/mutation_security_go_allowlist.txt).
+    # Fail-closed: only KILLED / NOT VIABLE pass; NOT COVERED, LIVED, TIMED OUT,
+    # SKIPPED and any future status survive. gremlins scopes execution to the
+    # changed lines itself (--diff), so out-of-scope PRs pass in seconds.
+    # Change-gated like the other native jobs (CONS-2.4).
+    needs: changes
+    if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # Full history + the base branch tip so the gate can diff the changed
+          # security surface against BASE (same pattern as security-gate).
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Install gremlins
+        # Pinned tag, integrity-checked by the Go module sumdb on install.
+        run: |
+          go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch base branch for diff
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: git fetch --no-tags origin "$BASE_REF"
+
+      - name: Go mutation gate (diff-scoped)
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: BASE="origin/$BASE_REF" make mutation-security-go
+
+  rust-mutation-gate:
+    # Diff-scoped mutation gate for the Rust security surface (#638), mirroring
+    # the Python security-gate contract: every mutant on a changed line inside
+    # tools/mutation_security_native.py's RUST_SURFACE must be killed by tests
+    # or waived as a content-hashed equivalent (tools/mutation_security_rust_allowlist.txt).
+    # Fail-closed: only CaughtMutant / Unviable pass; MissedMutant, Timeout and
+    # any future summary survive, and any changed-line mutant cargo-mutants
+    # skips fails the run outright. Out-of-scope PRs pass without a cargo build.
+    # Change-gated like the other native jobs (CONS-2.4).
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install cargo-mutants
+        # Prebuilt release binary, pinned by version + SHA-256 (compiling it
+        # from source would cost several minutes per run).
+        run: |
+          curl -sSL -o /tmp/cargo-mutants.tar.gz https://github.com/sourcefrog/cargo-mutants/releases/download/v27.1.0/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz
+          echo "dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e  /tmp/cargo-mutants.tar.gz" | sha256sum --check
+          tar -xzf /tmp/cargo-mutants.tar.gz -C "$HOME/.cargo/bin" cargo-mutants
+
+      - name: Fetch base branch for diff
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: git fetch --no-tags origin "$BASE_REF"
+
+      - name: Rust mutation gate (diff-scoped)
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: BASE="origin/$BASE_REF" make mutation-security-rust
+
   spec-vector-coverage:
     # CONS-1.5 cross-language coverage gate: every language's thin runner must
     # execute every executable vector id in spec/vectors (offline — no
@@ -620,7 +712,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, rust-checks, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -639,8 +731,10 @@ jobs:
             "${{ needs.integration-tests-go.result }}" \
             "${{ needs.go-checks.result }}" \
             "${{ needs.go-vulncheck.result }}" \
+            "${{ needs.go-mutation-gate.result }}" \
             "${{ needs.integration-tests-rust.result }}" \
             "${{ needs.rust-checks.result }}" \
+            "${{ needs.rust-mutation-gate.result }}" \
             "${{ needs.spec-vector-coverage.result }}" \
             "${{ needs.publish-parity.result }}" \
             "${{ needs.example-tests.result }}" \

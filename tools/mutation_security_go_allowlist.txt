@@ -1,0 +1,24 @@
+# Equivalent-mutant allowlist for `make mutation-security-go` (issue #638).
+#
+# gremlins occasionally emits an *equivalent* mutant: a syntactic change that is
+# semantically identical to the original and therefore impossible to kill with
+# any test. Waive one with a line of the form
+#
+#     <file>:<line>:<col>:<TYPE> <16-hex content hash>   # justification
+#
+# A failing gate run prints the exact `<name> <hash>` line to paste for each
+# survivor, so the hash never needs computing by hand.
+#
+# WHY the hash: line/column positions are NOT stable — any edit above the mutant
+# renumbers it, and a position-keyed waiver would silently rebind to a DIFFERENT
+# mutant (in a security gate that is a fail-open: a real, killable survivor
+# inherits a stale waiver and the gate passes green — the Python gate's issue
+# #615). The hash instead covers the mutator type, the mutated source line's
+# stripped text, and the token's offset within that stripped text, so the gate
+# waives a survivor only when BOTH its (file, TYPE) and its current content
+# hash match an entry here. Re-indenting moves nothing; changing the line's
+# content kills the waiver, which must then be re-authored. The `<line>:<col>`
+# in the name is only a human label — keep it pointing at the mutant the hash
+# was taken from. A name with no hash is a hard error, never a silent pass.
+#
+# Every entry weakens the gate, so keep the justification concrete and specific.
