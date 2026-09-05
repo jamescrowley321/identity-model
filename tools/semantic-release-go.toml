@@ -1,9 +1,9 @@
 # python-semantic-release config for the Go library (identity-model/go).
 #
-# Invoked from the REPO ROOT so the sibling `go/` and `py/tools/` paths below
+# Invoked from the REPO ROOT so the sibling `go/` and `tools/` paths below
 # resolve directly:
 #   uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" \
-#     semantic-release -c py/tools/semantic-release-go.toml version
+#     semantic-release -c tools/semantic-release-go.toml version
 # (the `release-go-version` job in release.yml, after the core + fastapi version
 # jobs and before the rust one, so the release pipelines never push to main
 # concurrently).
@@ -16,10 +16,10 @@
 # which verifies the build and cuts the GitHub Release.
 #
 # Only commits scoped "(go)" drive this version (scope routing:
-# py/tools/release_parsers.py:GoCommitParser); every other commit belongs to
+# tools/release_parsers.py:GoCommitParser); every other commit belongs to
 # another release track.
 [tool.semantic_release]
-commit_parser = "py/tools/release_parsers.py:GoCommitParser"
+commit_parser = "tools/release_parsers.py:GoCommitParser"
 tag_format = "go/v{version}"
 # 0.x library: a breaking change bumps the minor, not to 1.0.0.
 major_on_zero = false

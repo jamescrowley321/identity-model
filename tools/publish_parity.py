@@ -41,7 +41,9 @@ import zipfile
 import httpx
 
 
-PY_ROOT = Path(__file__).resolve().parents[1]
+#: The Python package root. This driver lives in the repo-root tools/ tree, so
+#: py/ is a sibling of that tree rather than its parent.
+PY_ROOT = Path(__file__).resolve().parents[1] / "py"
 
 # Metadata headers expected to differ release-to-release and that say nothing
 # about what is installed — never compared.

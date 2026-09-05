@@ -122,7 +122,10 @@ SOURCE_ROOT = "src/py_identity_model"
 # mean every test runs for every mutant.
 TEST_SELECTION: list[str] = ["src/tests/security", "src/tests/unit"]
 
-ALLOWLIST_FILE = Path("tools/mutation_security_allowlist.txt")
+# Anchored to this file, not the cwd: the driver runs with cwd=py/ (mutmut must
+# see the Python package) while the driver itself lives in the repo-root tools/
+# tree with the rest of the repo infrastructure.
+ALLOWLIST_FILE = Path(__file__).resolve().with_name("mutation_security_allowlist.txt")
 
 # The ONLY status that counts as a killed mutant. Everything else is a survivor.
 KILLED_STATUS = "killed"

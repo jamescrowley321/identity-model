@@ -1,19 +1,19 @@
 # python-semantic-release config for the Rust crate `rs-identity-model`.
 #
 # Invoked from the REPO ROOT (not py/, unlike the core and fastapi configs) so
-# the sibling `rust/` and `py/tools/` paths below resolve directly:
+# the sibling `rust/` and `tools/` paths below resolve directly:
 #   uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" \
-#     semantic-release -c py/tools/semantic-release-rust.toml version
+#     semantic-release -c tools/semantic-release-rust.toml version
 # (the `release-rust-version` job in release.yml, after the core + fastapi + go
 # version jobs, so the release pipelines never push to main concurrently).
 #
 # Only commits scoped "(rust)" drive this version (scope routing:
-# py/tools/release_parsers.py:RustCommitParser); every other commit belongs to
+# tools/release_parsers.py:RustCommitParser); every other commit belongs to
 # another release track. The bump is written into rust/Cargo.toml; the pushed
 # `rust-v{version}` tag then triggers .github/workflows/release-rust.yml, which
 # publishes the crate to crates.io via CARGO_REGISTRY_TOKEN.
 [tool.semantic_release]
-commit_parser = "py/tools/release_parsers.py:RustCommitParser"
+commit_parser = "tools/release_parsers.py:RustCommitParser"
 tag_format = "rust-v{version}"
 # 0.x crate: a breaking change bumps the minor, not to 1.0.0 — the 1.0.0 jump
 # stays a deliberate, manual decision (mirrors the fastapi package).

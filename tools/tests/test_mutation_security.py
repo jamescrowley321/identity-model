@@ -9,18 +9,40 @@ implementation was fail-open on exactly that status.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
 
 
-_DRIVER = Path(__file__).resolve().parents[3] / "tools" / "mutation_security.py"
+_DRIVER = Path(__file__).resolve().parents[1] / "mutation_security.py"
+_PY_ROOT = _DRIVER.parents[1] / "py"
+
+
+@contextlib.contextmanager
+def _cwd(path: Path):
+    previous = Path.cwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 _spec = importlib.util.spec_from_file_location("mutation_security", _DRIVER)
 assert _spec is not None
 assert _spec.loader is not None
 mutation_security = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(mutation_security)
+# The driver imports ``mutmut.__main__``, and mutmut resolves its source paths
+# from the CWD at import time — so importing the driver from the repo root
+# raises "Could not figure out where the code to mutate is". The gate itself
+# always runs with cwd=py/ (see the security-gate make target), so the import is
+# performed under the same cwd here. Contained to this module rather than
+# chdir-ing the whole pytest session, which the sibling tools tests do not want.
+with _cwd(_PY_ROOT):
+    _spec.loader.exec_module(mutation_security)
 
 # One mutant name per mutmut status, to exercise the full classification.
 _M = "py_identity_model.core.mtls.x_verify__mutmut_"
@@ -518,7 +540,10 @@ def test_allowlist_hashes_match_current_source(monkeypatch):
     Uses mutmut's pure-libcst generation (no sandbox, no test run — milliseconds
     per file), so it is deterministic and fast.
     """
-    package_root = _DRIVER.parents[1]  # .../py  (so src/... paths resolve)
+    # The driver lives in the repo-root tools/ tree; the Python package it
+    # mutates is a sibling of that tree, and mutmut needs it as the cwd so
+    # the "src/py_identity_model/..." paths in the allowlist resolve.
+    package_root = _DRIVER.parents[1] / "py"
     monkeypatch.chdir(package_root)
     mutation_security._generate_mutants.cache_clear()
 

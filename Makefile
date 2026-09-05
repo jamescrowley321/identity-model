@@ -195,7 +195,7 @@ test-all: test test-examples ## Run all tests including examples
 
 .PHONY: test-tools
 test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outside the library suite
-	$(UVROOT) pyrefly check tools
+	$(UVROOT) --with "python-semantic-release==10.6.1" pyrefly check tools
 	$(UVROOT) pytest tools/tests/ -v
 
 # ── fastapi-identity-model package ───────────────────────────────────
@@ -219,12 +219,12 @@ spec-coverage: ## CONS-1.5: run the py/go/rust /spec vector runners + 100% per-l
 
 .PHONY: publish-parity
 publish-parity: ## CONS-2.5: prove the /py build packages byte-for-byte vs the latest PyPI release
-	$(UVPY) python tools/publish_parity.py --package py-identity-model
-	$(UVPY) python tools/publish_parity.py --package fastapi-identity-model
+	$(UVROOT) python tools/publish_parity.py --package py-identity-model
+	$(UVROOT) python tools/publish_parity.py --package fastapi-identity-model
 
 .PHONY: mutation-security
 mutation-security: ## Mutation-test changed security modules vs BASE (Epic 19 G.1)
-	$(UVPY) python tools/mutation_security.py
+	$(UVPY) python ../tools/mutation_security.py
 
 .PHONY: security-gate
 security-gate: mutation-security ## Aggregate mechanical security gate (Epic 19 G.5)
