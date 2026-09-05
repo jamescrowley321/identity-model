@@ -1,0 +1,22 @@
+{
+  "description": "CFG-405: a secret-classified value never appears in log output",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "client_secret_basic",
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": {
+        "OIDC_DISCOVERY_URL": "https://issuer.example.com/.well-known/openid-configuration",
+        "OIDC_CLIENT_ID": "confidential-client",
+        "OIDC_CLIENT_SECRET": "s3cr3t-sentinel-VALUE"
+      }
+    }
+  ],
+  "expect": {
+    "rendered_includes": ["<redacted>"],
+    "rendered_excludes": ["s3cr3t-sentinel-VALUE"],
+    "note": "When the Config — or any field of it carrying the secret — is written to log output (a logging call, a structured-log field, or the value's own logging/format representation), the secret renders as the placeholder and never as the raw value. Log output is one of the MUST-NOT-appear surfaces named in config.md §Secret Redaction, distinct from debug/display (CFG-401), serialization (CFG-402), and error messages (CFG-403)."
+  }
+}

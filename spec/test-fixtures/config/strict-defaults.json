@@ -1,0 +1,29 @@
+{
+  "description": "CFG-108: absent optional keys take their registry defaults",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "none",
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": {
+        "OIDC_DISCOVERY_URL": "https://issuer.example.com/.well-known/openid-configuration",
+        "OIDC_CLIENT_ID": "spa-client"
+      }
+    }
+  ],
+  "expect": {
+    "config": {
+      "client.discovery_url": "https://issuer.example.com/.well-known/openid-configuration",
+      "client.id": "spa-client",
+      "client.scope": "openid profile email",
+      "client.audience": "spa-client",
+      "client.redirect_uri": "",
+      "client.post_login_redirect": "/",
+      "client.post_logout_redirect": "/",
+      "client.excluded_paths": ["/docs", "/openapi.json", "/health"],
+      "http.timeout": 30.0
+    }
+  }
+}

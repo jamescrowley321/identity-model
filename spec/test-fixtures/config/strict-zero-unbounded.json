@@ -1,0 +1,12 @@
+{
+  "description": "CFG-110: strict mode harmonizes jwks.cache.max_entries=0 as unbounded in every language",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    { "name": "env", "type": "env", "values": { "JWKS_CACHE_MAX_ENTRIES": "0" } }
+  ],
+  "expect": {
+    "config": { "jwks.cache.max_entries": 0 },
+    "note": "0 records the documented unbounded semantics identically across python/go/rust in strict mode (unlike legacy mode, see CFG-202)."
+  }
+}

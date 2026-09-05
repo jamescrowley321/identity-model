@@ -1,0 +1,22 @@
+{
+  "description": "CFG-401: native debug/display output redacts secret-classified values",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "client_secret_basic",
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": {
+        "OIDC_DISCOVERY_URL": "https://issuer.example.com/.well-known/openid-configuration",
+        "OIDC_CLIENT_ID": "confidential-client",
+        "OIDC_CLIENT_SECRET": "s3cr3t-sentinel-VALUE"
+      }
+    }
+  ],
+  "expect": {
+    "rendered_includes": ["<redacted>"],
+    "rendered_excludes": ["s3cr3t-sentinel-VALUE"],
+    "note": "Applies to Debug/Display (rust), String()/GoString()/Format (go), repr/str (python), toString/inspect (ts)."
+  }
+}

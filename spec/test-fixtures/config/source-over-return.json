@@ -1,0 +1,20 @@
+{
+  "description": "CFG-501: keys a source returns that are not in the registry are silently discarded",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    {
+      "name": "over-returning",
+      "type": "map",
+      "values": {
+        "http.timeout": "25",
+        "totally.unknown.key": "ignore-me",
+        "future.feature.flag": "also-ignored"
+      }
+    }
+  ],
+  "expect": {
+    "config": { "http.timeout": 25.0 },
+    "note": "Unknown keys raise no error (forward compatibility); requested keys resolve normally."
+  }
+}
