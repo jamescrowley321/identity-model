@@ -1,0 +1,20 @@
+{
+  "description": "CFG-111: URL keys must be absolute with a scheme",
+  "mode": "strict",
+  "group": "client",
+  "client_auth_method": "none",
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": {
+        "OIDC_DISCOVERY_URL": "issuer.example.com/.well-known/openid-configuration",
+        "OIDC_CLIENT_ID": "spa-client"
+      }
+    }
+  ],
+  "expect": {
+    "error": { "code": "CFG-003", "keys": ["client.discovery_url"] },
+    "note": "Schemeless/relative fails parsing. https-only policy is enforced by the consuming component per config.md and is not weakened by configuration."
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "description": "CFG-201: legacy TTL resolution — invalid/NaN to default, numeric clamps to [60, 86400]",
+  "mode": "legacy",
+  "cases": [
+    { "key": "jwks.cache.ttl", "raw": "banana", "expect": { "resolved": { "jwks.cache.ttl": 86400.0 } } },
+    { "key": "jwks.cache.ttl", "raw": "NaN", "expect": { "resolved": { "jwks.cache.ttl": 86400.0 } } },
+    { "key": "jwks.cache.ttl", "raw": "5", "expect": { "resolved": { "jwks.cache.ttl": 60.0 } } },
+    { "key": "jwks.cache.ttl", "raw": "999999", "expect": { "resolved": { "jwks.cache.ttl": 86400.0 } } },
+    { "key": "jwks.cache.ttl", "raw": "3600", "expect": { "resolved": { "jwks.cache.ttl": 3600.0 } } },
+    { "key": "discovery.cache.ttl", "raw": "banana", "expect": { "resolved": { "discovery.cache.ttl": 3600.0 } } },
+    { "key": "discovery.cache.ttl", "raw": "10", "expect": { "resolved": { "discovery.cache.ttl": 60.0 } } },
+    { "key": "discovery.cache.ttl", "raw": "7200", "expect": { "resolved": { "discovery.cache.ttl": 7200.0 } } }
+  ],
+  "note": "Python behavior as of 2026-09-03. go/rust do not read these env keys today (n/a); when adopted per the parity roadmap they must reproduce this via legacy mode."
+}

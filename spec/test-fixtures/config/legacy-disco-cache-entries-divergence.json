@@ -1,0 +1,33 @@
+{
+  "description": "CFG-207: legacy discovery.cache.max_entries divergence — Python does not read the key (n/a); Go/Rust honor 0 as unbounded and coerce invalid/negative/empty/unset to 64",
+  "mode": "legacy",
+  "key": "discovery.cache.max_entries",
+  "cases": [
+    {
+      "raw": "0",
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 0, "rust": 0 } }
+    },
+    {
+      "raw": "-5",
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 64, "rust": 64 } }
+    },
+    {
+      "raw": "abc",
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 64, "rust": 64 } }
+    },
+    {
+      "raw": "",
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 64, "rust": 64 } }
+    },
+    {
+      "raw": null,
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 64, "rust": 64 } },
+      "note": "unset"
+    },
+    {
+      "raw": "128",
+      "expect": { "resolved_by_language": { "python": "n/a", "go": 128, "rust": 128 } }
+    }
+  ],
+  "note": "Python caps the jwks and discovery caches together and never reads DISCO_CACHE_MAX_ENTRIES, so it is n/a here (per the config.md registry n/a convention: the language does not read the key today). Only go/rust cap the discovery cache independently and honor 0 as the unbounded escape hatch. Strict mode harmonizes 0 to unbounded everywhere — the discovery-cache mirror of CFG-110/CFG-202."
+}

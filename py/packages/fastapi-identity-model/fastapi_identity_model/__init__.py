@@ -23,8 +23,9 @@ from .dependencies import (
     require_scope,
 )
 from .middleware import TokenValidationMiddleware
-from .rp import build_oidc_router
+from .rp import build_oidc_router, oidc_public_paths
 from .token_manager import TokenManager
+from .ws import build_ws_authenticator
 
 
 try:
@@ -39,11 +40,13 @@ __all__ = [
     "TokenManager",
     "TokenValidationMiddleware",
     "build_oidc_router",
+    "build_ws_authenticator",
     "get_claim_value",
     "get_claim_values",
     "get_claims",
     "get_current_user",
     "get_token",
+    "oidc_public_paths",
     "require_claim",
     "require_scope",
 ]

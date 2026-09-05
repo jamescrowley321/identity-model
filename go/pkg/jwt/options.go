@@ -1,6 +1,9 @@
 package jwt
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
 
 // defaultAllowedAlgorithms is the set of accepted JWS algorithms when
 // [WithAllowedAlgorithms] is not supplied. Only asymmetric signature algorithms
@@ -23,6 +26,8 @@ type config struct {
 	requiredClaims   []string
 	allowedAlgs      []string
 	now              func() time.Time
+	claimsValidator  ClaimsValidator
+	logger           *slog.Logger
 }
 
 // Option customises [Validate] via the functional-options pattern. The option
@@ -94,4 +99,23 @@ func WithAllowedAlgorithms(algs ...string) Option {
 // tests. Production callers should leave the default ([time.Now]).
 func WithNow(now func() time.Time) Option {
 	return func(c *config) { c.now = now }
+}
+
+// WithClaimsValidator installs a [ClaimsValidator] that runs after the signature
+// and the registered/required claim checks pass — the hook for application
+// policy on the decoded claims (tenant, scope, role checks). A rejection
+// (*[ClaimsValidationError]) fails the token; any other error from the validator
+// fails it closed too, wrapped generically. Compose several rules with
+// [CombineClaimsValidators] and the ready-made [RequireClaims],
+// [RequireClaimValue], and [RequireScopes].
+func WithClaimsValidator(v ClaimsValidator) Option {
+	return func(c *config) { c.claimsValidator = v }
+}
+
+// WithLogger enables server-side logging of claims-validator outcomes through
+// logger: a rejection is logged at INFO with its structured reason, a
+// programming error in a validator at ERROR. When unset (the default) the
+// library logs nothing, keeping it quiet unless the application opts in.
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *config) { c.logger = logger }
 }

@@ -176,6 +176,17 @@ impl Claims {
         self.present.contains(claim)
     }
 
+    /// Reports whether the named claim is present with a *meaningful* value —
+    /// not JSON `null`, an empty string, or an empty array/object. This is the
+    /// exact presence notion the built-in `required_claims` check (JWT-012)
+    /// enforces, exposed so the injectable `require_claims` validator (#603)
+    /// shares one definition of "present" and a present-but-null claim (e.g.
+    /// `aud: null`, which reconstructs to an empty audience) is not accepted via
+    /// lossy typed-field reconstruction.
+    pub(crate) fn has_meaningful(&self, claim: &str) -> bool {
+        self.meaningful.contains(claim)
+    }
+
     /// Returns the raw JSON value of an unmodelled claim, if present.
     pub fn get(&self, claim: &str) -> Option<&Value> {
         self.extra.get(claim)

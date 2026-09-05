@@ -237,6 +237,44 @@ jobs:
         if: always()
         run: docker compose -f infra/docker-compose.yml down
 
+  integration-tests-ws:
+    # WebSocket auth (#598) + exact-match exclusion (#600) end-to-end proof:
+    # test_ws_correctness.py boots the RS under real uvicorn and drives the
+    # forged corpus through a real websockets handshake. It is self-contained
+    # (mock OP over localhost HTTP, no Docker fixture), but it needs the `server`
+    # extra (uvicorn + websockets), which the plain `-m integration` runs above
+    # do NOT install — so it runs under `--all-packages` via its own target.
+    # Without this job the test importorskips and a WS route silently losing its
+    # guard would pass CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: 3.13
+
+      - name: Cache uv dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('py/uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install dependencies
+        run: make ci-setup
+
+      - name: WebSocket + exact-exclusion correctness matrix (real handshake)
+        run: make test-harness-ws
+
   example-tests:
     if: inputs.run-example-tests
     runs-on: ubuntu-latest
@@ -539,7 +577,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -554,6 +592,7 @@ jobs:
             "${{ needs.integration-tests-node-oidc.result }}" \
             "${{ needs.integration-tests-keycloak.result }}" \
             "${{ needs.integration-tests-cross-issuer.result }}" \
+            "${{ needs.integration-tests-ws.result }}" \
             "${{ needs.integration-tests-go.result }}" \
             "${{ needs.go-checks.result }}" \
             "${{ needs.go-vulncheck.result }}" \
