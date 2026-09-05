@@ -79,6 +79,18 @@ Because the composed result is itself a plain `(claims) -> None` callable, it
 drops straight into the FastAPI middleware / WebSocket authenticator's
 `custom_claims_validator` with no adapter.
 
+## Construction errors and edge cases
+
+Impossible validators are rejected at **construction** (`ValueError`), not at
+validation time: `require_claims()` / `require_scopes()` with zero arguments,
+`combine_claims_validators` with `require="any"` and no members, or a
+`require` value other than `"all"` / `"any"`.
+
+In `"any"` mode, only a `ClaimsValidationError` counts as a clean rejection to
+aggregate — any other exception from a member propagates immediately.
+Validators are synchronous callables; composing async validators is not
+supported.
+
 ## Backward compatibility
 
 This is a pure opt-in layer. Any existing `(claims) -> None` callable that

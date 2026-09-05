@@ -23,19 +23,11 @@
 //! and decoded back into a `Claims`; the built validator is then run against that
 //! value in isolation. No issuer/audience is configured, so only the injected
 //! validator can reject a decoded token. The construction-error cases carry no
-//! `claims` and exercise only the constructor.
-//!
-//! ## One language-specific divergence (documented, conformant on outcome)
-//!
-//! Rust's typed `Claims` cannot represent a present-but-`null` *registered*
-//! string claim: a token carrying `sub: null` (vector CLV-003) is rejected by the
-//! typed decode (`claim "sub" ... must be a string`) *before* the claims
-//! validator runs. That is a fail-closed rejection at an earlier layer that still
-//! names `sub`, so the vector's contract (reject, naming the claim) holds — the
-//! runner accepts a decode-layer rejection that names the expected claim. For
-//! *unregistered* claims (and even `aud: null`) `require_claims` performs the
-//! present-but-null → missing check itself, exactly as the contract requires (see
-//! the inline unit tests in `src/jwt/claims_validation.rs`).
+//! `claims` and exercise only the constructor. Present-but-`null` claims in the
+//! vectors are *unregistered* (e.g. CLV-003's `tenant_id: null`), which the typed
+//! decode accepts and `require_claims` itself maps to "missing", exactly as the
+//! shared contract requires (see the inline unit tests in
+//! `src/jwt/claims_validation.rs`).
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rs_identity_model::{
@@ -115,9 +107,8 @@ fn mint(claims: Value) -> String {
 /// Decodes a vector `claims` object into a typed [`Claims`] through the real
 /// pipeline. The object is augmented with `iat`/`exp` (only when absent) so the
 /// standard registered-claim checks pass; no issuer/audience is configured, so
-/// only the separately-run injected validator can reject a decoded token.
-/// Returns the decode error when the typed claim set itself refuses the payload
-/// (e.g. a `null` registered string claim — see the module divergence note).
+/// only the separately-run injected validator can reject a decoded token. A
+/// decode failure is a runner bug, surfaced by the caller with the case id.
 fn decode_claims(claims: &Value) -> Result<Claims, IdentityError> {
     let mut obj: Map<String, Value> = claims.as_object().cloned().unwrap_or_default();
     let n = now();
@@ -233,35 +224,23 @@ fn claims_validation_conformance_vectors() {
             panic!("{id}: expectation is neither accept, reject, nor construction_error")
         });
 
-        match decoded {
-            // Fail-closed at the typed-decode layer (e.g. `sub: null`): a
-            // rejection that still names the claim satisfies the contract.
-            Err(decode_err) => {
-                if let Some(claim) = &expected.claim {
-                    assert!(
-                        decode_err.to_string().contains(claim.as_str()),
-                        "{id}: decode-layer rejection {decode_err:?} does not name claim {claim:?}"
+        let claims =
+            decoded.unwrap_or_else(|e| panic!("{id}: claims should decode for a reject case: {e}"));
+        let err = match validator.validate(&claims) {
+            Ok(()) => panic!("{id}: expected the validator to reject"),
+            Err(e) => e,
+        };
+        match err {
+            IdentityError::ClaimsValidation { claim, .. } => {
+                if let Some(expected_claim) = &expected.claim {
+                    assert_eq!(
+                        claim.as_deref(),
+                        Some(expected_claim.as_str()),
+                        "{id}: rejection named the wrong claim"
                     );
                 }
             }
-            Ok(claims) => {
-                let err = match validator.validate(&claims) {
-                    Ok(()) => panic!("{id}: expected the validator to reject"),
-                    Err(e) => e,
-                };
-                match err {
-                    IdentityError::ClaimsValidation { claim, .. } => {
-                        if let Some(expected_claim) = &expected.claim {
-                            assert_eq!(
-                                claim.as_deref(),
-                                Some(expected_claim.as_str()),
-                                "{id}: rejection named the wrong claim"
-                            );
-                        }
-                    }
-                    other => panic!("{id}: expected a ClaimsValidation rejection, got {other:?}"),
-                }
-            }
+            other => panic!("{id}: expected a ClaimsValidation rejection, got {other:?}"),
         }
     }
 }

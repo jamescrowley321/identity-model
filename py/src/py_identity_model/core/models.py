@@ -1164,13 +1164,14 @@ class UserInfoResponse(BaseResponse):
 class ClientRegistrationRequest(BaseRequest):
     """Request to register a client (RFC 7591 Section 3, OIDC Registration 1.0).
 
+    The optional ``response_types``, ``grant_types``, ``application_type``,
+    ``contacts``, ``client_name``, ``logo_uri``, ``client_uri``,
+    ``policy_uri``, ``tos_uri``, ``token_endpoint_auth_method``, ``scope``,
+    and ``jwks_uri`` fields carry the client metadata of RFC 7591 Section 2.
+
     Attributes:
         address: The client registration endpoint URL.
         redirect_uris: Redirection URIs registered for the client.
-        response_types / grant_types / application_type / contacts /
-            client_name / logo_uri / client_uri / policy_uri / tos_uri /
-            token_endpoint_auth_method / scope / jwks_uri: Optional client
-            metadata (RFC 7591 Section 2).
         extra_metadata: Additional metadata merged into the request body
             (e.g. ``sector_identifier_uri``, ``subject_type``) so OIDC-specific
             fields flow without a dedicated attribute.
