@@ -7,7 +7,10 @@ import os
 
 
 def _default_excluded_paths() -> list[str]:
-    return ["/docs", "/openapi.json", "/health"]
+    # Exact paths (the middleware matches excluded_paths exactly by default;
+    # append ``/*`` for a subtree). ``/docs/oauth2-redirect`` is listed
+    # explicitly because exact matching no longer implies the ``/docs`` subtree.
+    return ["/docs", "/docs/oauth2-redirect", "/openapi.json", "/health"]
 
 
 @dataclass

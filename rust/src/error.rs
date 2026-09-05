@@ -29,6 +29,20 @@ pub enum IdentityError {
     /// `at_hash`/`c_hash` check is this error, never a silently skipped check.
     #[error("id token validation error: {0}")]
     IdTokenValidation(String),
+    /// A caller-supplied claims validator (issue #603) rejected the token's
+    /// claims. Carries a structured reason and the offending claim name (when
+    /// the validator identified one), so a rejection surfaces *why* without
+    /// parsing a message string. Kept distinct from [`IdentityError::Validation`]
+    /// so a validation pipeline — and `combine_claims_validators` in `Any` mode —
+    /// can tell a clean claims rejection from any other failure. Constructed from
+    /// a [`crate::ClaimsValidationError`] via `From`.
+    #[error("claims validation error: {reason}{}", .claim.as_deref().map(|c| format!(" (claim {c:?})")).unwrap_or_default())]
+    ClaimsValidation {
+        /// Why the claims were rejected.
+        reason: String,
+        /// The offending claim name, when the validator identified one.
+        claim: Option<String>,
+    },
 
     /// A client or builder was misconfigured (missing required fields).
     #[error("configuration error: {0}")]

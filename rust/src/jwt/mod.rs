@@ -34,6 +34,7 @@
 //! ```
 
 mod claims;
+mod claims_validation;
 mod id_token;
 mod options;
 
@@ -49,6 +50,10 @@ use crate::jwks::{JsonWebKey, JwksClient};
 use crate::{IdentityError, Result};
 
 pub use claims::{Audience, Claims};
+pub use claims_validation::{
+    BoxedClaimsValidator, ClaimsValidationError, ClaimsValidator, CombineMode, CombinedValidator,
+    boxed, combine_claims_validators, from_fn, require_claim_value, require_claims, require_scopes,
+};
 pub use id_token::{
     IdTokenValidationOptions, IdTokenValidationOptionsBuilder, validate_id_token,
     validate_id_token_claims,
@@ -110,6 +115,20 @@ pub fn validate_token(
 
     let claims = Claims::from_value(token_data.claims)?;
     claims.validate(options, now_unix())?;
+
+    // Injectable, composable claims validator (#603): the application-policy
+    // hook runs only after the signature, algorithm allowlist, and
+    // registered/configured claim checks pass — parity with the Python
+    // pipeline's `validate_claims`, which runs after `decode_with_config`. A
+    // clean rejection surfaces as `IdentityError::ClaimsValidation` carrying the
+    // structured reason/claim; any other error the validator returns propagates
+    // unchanged. (The Python layer additionally logs the rejection server-side;
+    // this crate has no logging facility, so the structured error is the
+    // observability channel — the caller decides how to record it.)
+    if let Some(validator) = &options.claims_validator {
+        validator.validate(&claims)?;
+    }
+
     Ok(claims)
 }
 

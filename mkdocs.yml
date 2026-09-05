@@ -94,6 +94,7 @@ nav:
       - JWKS: api/jwks.md
       - Token Client: api/token-client.md
       - Token Validation: api/token-validation.md
+      - Claims Validation: api/claims-validation.md
       - Authorization Code + PKCE: api/auth-code-pkce.md
       - Refresh Token: api/refresh-token.md
       - Device Authorization: api/device-auth.md

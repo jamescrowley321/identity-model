@@ -14,7 +14,7 @@ endpoints.
 |--------|---------|------|
 | `discovery` | OIDC Discovery client | OIDC Discovery 1.0 |
 | `jwks` | JWKS fetch + key resolution | RFC 7517 / 7518 |
-| `jwt` | JWT signature + claims validation | RFC 7519 / 7515 |
+| `jwt` | JWT signature + claims validation, plus injectable/composable claims validators | RFC 7519 / 7515 |
 | `token` | Client credentials, auth code, PKCE | RFC 6749 / 7636 |
 | `userinfo` | UserInfo endpoint client | OIDC Core 1.0 §5.3 |
 | `error` | `IdentityError` — the crate error type | — |
@@ -36,10 +36,36 @@ cargo fmt --check
 cargo clippy -- -D warnings
 cargo test
 cargo run --example basic_setup
+cargo run --example combined_claims_validator
 ```
 
 Integration tests run against the shared provider in [`../infra`](../infra)
 (`make infra-up` from the repo root).
+
+## Claims Validation (injectable policy)
+
+After the signature, algorithm-allowlist, and registered-claim checks pass,
+`validate_token` runs an optional caller-supplied *claims validator* over the
+decoded claims — the hook an application uses to enforce its own policy (tenant
+membership, custom scopes, role checks). The API is composable and portable
+across the Python and Go libraries:
+
+- `require_claims([...])` — every named claim must be present and non-empty.
+- `require_claim_value(name, value)` — the claim must be present and equal `value`.
+- `require_scopes([...])` — every scope must be granted via the `scope` (space
+  delimited) or `scp` (array) claim; a malformed scope claim fails closed.
+- `combine_claims_validators([...], CombineMode::All | Any)` — compose several
+  validators (all-must-pass, or any-must-pass with aggregated reasons).
+- `from_fn(|claims| ...)` — adapt an arbitrary closure into a validator.
+
+A rejection surfaces as `IdentityError::ClaimsValidation { reason, claim }`,
+carrying the offending claim without parsing a message string. Inject a validator
+with `ValidationOptions::builder().claims_validator(...)`. See
+[`examples/combined_claims_validator.rs`](examples/combined_claims_validator.rs)
+for a runnable `combine` demonstration. Behavioural parity with the sibling
+libraries is enforced by the shared vectors in
+[`../spec/test-fixtures/claims-validation/vectors.json`](../spec/test-fixtures/claims-validation/vectors.json),
+driven by `tests/claims_validation_conformance.rs`.
 
 ## Capabilities
 

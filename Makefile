@@ -122,6 +122,11 @@ test-harness-matrix: ## Run the TH-1.3 token correctness matrix (mock-OP forged 
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
+.PHONY: test-harness-ws
+test-harness-ws: ## Run the WebSocket auth + exact-exclusion correctness matrix (#598/#600) through the booted RS — real uvicorn + websockets client, self-contained (no Docker)
+	@echo "Running the WebSocket auth + exact-exclusion correctness matrix (real handshake)..."
+	$(UVPY) --all-packages pytest src/tests/integration/test_ws_correctness.py -m integration -p no:benchmark -v
+
 .PHONY: test-harness-cross-issuer
 test-harness-cross-issuer: ## Real cross-issuer proof: a token from one Docker IdP (node-oidc/Keycloak) is rejected by an RS trusting the other
 	@echo "Starting node-oidc + Keycloak fixtures side by side..."
@@ -218,10 +223,7 @@ generate-token: ## Generate a sample JWT token
 	$(UVPY) python examples/generate_token.py
 
 .PHONY: ci-setup
-ci-setup: ## CI environment setup
-	python -m pip install --upgrade pip
-	pip install pipx
-	pipx install uv
+ci-setup: ## CI environment setup (uv is provided by astral-sh/setup-uv)
 	cd py && uv venv && uv sync --all-packages
 
 # ── Conformance ──────────────────────────────────────────────────────

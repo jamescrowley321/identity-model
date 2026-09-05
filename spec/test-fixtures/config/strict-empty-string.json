@@ -1,0 +1,15 @@
+{
+  "description": "CFG-105: empty and whitespace-only strings are present-but-invalid, never treated as absent",
+  "mode": "strict",
+  "group": null,
+  "sources": [
+    {
+      "name": "env",
+      "type": "env",
+      "values": { "HTTP_TIMEOUT": "", "MAX_JWKS_KEYS": "   " }
+    }
+  ],
+  "expect": {
+    "error": { "code": "CFG-003", "keys": ["http.timeout", "jwks.max_keys"] }
+  }
+}

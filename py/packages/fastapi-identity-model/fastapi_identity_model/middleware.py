@@ -3,6 +3,12 @@ FastAPI middleware for OAuth2/OIDC token validation.
 
 This module provides middleware components for validating Bearer tokens
 in FastAPI applications using py-identity-model.
+
+Scope: this middleware validates **HTTP** requests only. It extends Starlette's
+``BaseHTTPMiddleware``, which forwards every non-HTTP ASGI scope (WebSocket,
+lifespan) straight to the app without calling ``dispatch`` — so WebSocket
+handshakes are **not** authenticated here (issue #598). Guard WebSocket routes
+with :func:`fastapi_identity_model.build_ws_authenticator` instead.
 """
 
 from collections.abc import Callable
@@ -78,6 +84,32 @@ def _is_upstream_fetch_failure(exc: Exception) -> bool:
     return any(message.startswith(p) for p in _UPSTREAM_FETCH_FAILURE_PREFIXES)
 
 
+def evaluate_token_type(
+    claims: dict,
+    *,
+    require_access_token_marker: bool,
+    access_token_marker_claims: tuple[str, ...],
+) -> str | None:
+    """Reason string if *claims* are the wrong token type for a resource server
+    (an ID token presented as an access token), else ``None``.
+
+    Pure and transport-agnostic so the HTTP middleware and the WebSocket
+    authenticator (:func:`fastapi_identity_model.build_ws_authenticator`) apply
+    a byte-for-byte identical check — the F-07 defence must not diverge between
+    the two entry points. See :meth:`TokenValidationMiddleware._wrong_token_type_error`
+    for the semantics of the two complementary checks.
+    """
+    if any(c in claims for c in _ID_TOKEN_ONLY_CLAIMS):
+        return "ID token cannot be used as an access token"
+    if require_access_token_marker and not any(
+        c in claims for c in access_token_marker_claims
+    ):
+        return (
+            "Access token required; presented token lacks an access-token marker claim"
+        )
+    return None
+
+
 class TokenValidationMiddleware(BaseHTTPMiddleware):
     """
     Middleware for validating Bearer tokens on incoming requests.
@@ -92,10 +124,15 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             audience does not enforce ``aud`` for tokens that omit the claim,
             which on a shared multi-tenant issuer accepts tokens minted for
             other clients.
-        excluded_paths: Paths that skip token validation. A path matches if it
-            equals an entry or is a subpath of one (``/docs`` also covers
-            ``/docs/oauth2-redirect``). Pass ``[]`` to exclude nothing. When
-            omitted, defaults to ``/docs``, ``/openapi.json``, ``/health``.
+        excluded_paths: Paths that skip token validation. Matching is **exact**
+            by default: ``/health`` excludes only ``/health``, never
+            ``/health/db-dump`` (issue #600 — exact-match fails closed so a
+            nested route under an excluded prefix is not silently exposed). To
+            exclude a whole subtree, append ``/*`` to the entry: ``/docs/*``
+            excludes ``/docs`` and every path beneath it. Pass ``[]`` to
+            exclude nothing. When omitted, defaults to ``/docs``,
+            ``/docs/oauth2-redirect`` (the Swagger OAuth2 redirect),
+            ``/openapi.json``, ``/health``.
         custom_claims_validator: Optional custom function to validate additional claims
         require_access_token_marker: Opt-in ID-token-substitution defence
             (F-07), default ``False`` (behaviour unchanged). When ``True``, a
@@ -149,21 +186,36 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self.excluded_paths = (
             excluded_paths
             if excluded_paths is not None
-            else ["/docs", "/openapi.json", "/health"]
+            else ["/docs", "/docs/oauth2-redirect", "/openapi.json", "/health"]
         )
         self.custom_claims_validator = custom_claims_validator
 
     def _is_excluded(self, path: str) -> bool:
-        """Whether *path* equals or is a subpath of an excluded entry.
+        """Whether *path* is excluded from token validation.
 
-        A bare ``/`` entry matches only the root, never as a subpath prefix
-        (otherwise it would exclude every path).
+        Matching is **exact** by default: an entry ``/health`` excludes only
+        ``/health``, never ``/health/db-dump``. To exclude a whole subtree,
+        append ``/*`` to the entry — ``/docs/*`` excludes ``/docs`` and every
+        path beneath it. Exact-by-default fails closed: adding a nested route
+        under an excluded prefix does not silently expose it (issue #600).
+
+        A bare ``/*`` (root subtree) is ignored rather than excluding every
+        path — disabling auth wholesale must be an explicit choice (don't add
+        the middleware), never a one-character typo.
+
+        Caution: subtree (``/*``) matching runs on the raw ASGI request path,
+        not a normalized one. If you place a ``..``-resolving handler (e.g. a
+        ``StaticFiles`` mount) under an excluded ``/*`` prefix, a request whose
+        path *string* starts with that prefix but resolves elsewhere is treated
+        as excluded. Keep ``/*`` exclusions off subtrees that normalize paths;
+        the default (exact match) is immune.
         """
         for entry in self.excluded_paths:
-            if path == entry:
-                return True
-            prefix = entry.rstrip("/")
-            if prefix and path.startswith(prefix + "/"):
+            if entry.endswith("/*"):
+                prefix = entry[:-2].rstrip("/")
+                if prefix and (path == prefix or path.startswith(prefix + "/")):
+                    return True
+            elif path == entry:
                 return True
         return False
 
@@ -202,16 +254,11 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
           access-token marker (``scope``/``scp`` by default). Off by default —
           behaviour unchanged unless explicitly enabled.
         """
-        if any(c in claims for c in _ID_TOKEN_ONLY_CLAIMS):
-            return "ID token cannot be used as an access token"
-        if self.require_access_token_marker and not any(
-            c in claims for c in self.access_token_marker_claims
-        ):
-            return (
-                "Access token required; presented token lacks an "
-                "access-token marker claim"
-            )
-        return None
+        return evaluate_token_type(
+            claims,
+            require_access_token_marker=self.require_access_token_marker,
+            access_token_marker_claims=self.access_token_marker_claims,
+        )
 
     async def _authenticate(self, request: Request, token: str) -> JSONResponse | None:
         """Validate *token* and attach claims; return an error response or None."""
