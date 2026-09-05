@@ -466,9 +466,52 @@ jobs:
         if: always()
         run: docker compose -f infra/docker-compose.yml down
 
+  rust-checks:
+    # Formatting + clippy (warnings-as-errors) + cargo-deny (advisories, licenses,
+    # bans, sources — via the committed rust/deny.toml) for the Rust library,
+    # mirroring the Python lint gate. cargo test already runs in
+    # integration-tests-rust; this adds the static-analysis + supply-chain leg.
+    # deny.toml existed but nothing in CI invoked it. Change-gated like the other
+    # native jobs (CONS-2.4).
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: rustfmt (check)
+        working-directory: rust
+        run: cargo fmt --all --check
+
+      - name: clippy (warnings as errors)
+        working-directory: rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: cargo-deny (advisories, licenses, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: rust/Cargo.toml
+
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-go, integration-tests-rust, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-go, integration-tests-rust, rust-checks, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -485,6 +528,7 @@ jobs:
             "${{ needs.integration-tests-cross-issuer.result }}" \
             "${{ needs.integration-tests-go.result }}" \
             "${{ needs.integration-tests-rust.result }}" \
+            "${{ needs.rust-checks.result }}" \
             "${{ needs.spec-vector-coverage.result }}" \
             "${{ needs.publish-parity.result }}" \
             "${{ needs.example-tests.result }}" \
