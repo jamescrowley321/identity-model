@@ -185,6 +185,19 @@ test-examples: ## Run example integration tests (Docker)
 .PHONY: test-all
 test-all: test test-examples ## Run all tests including examples
 
+# ── repo tooling ─────────────────────────────────────────────────────
+# Drivers under tools/ are repo infrastructure, not library code: they gate or
+# release the repo and ship in no package. Their tests therefore live in
+# tools/tests/ and run here, NOT in py/src/tests — that suite and its 80%
+# coverage gate belong to the published py-identity-model package, and a
+# release-pipeline bug must not surface as a library unit-test failure. Same
+# split as conformance/tests (see conformance-test-harness).
+
+.PHONY: test-tools
+test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outside the library suite
+	$(UVROOT) pyrefly check tools
+	$(UVROOT) pytest tools/tests/ -v
+
 # ── fastapi-identity-model package ───────────────────────────────────
 
 .PHONY: test-fastapi
