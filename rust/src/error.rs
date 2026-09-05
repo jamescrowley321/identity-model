@@ -19,6 +19,16 @@ pub enum IdentityError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// An ID Token failed one of the OpenID Connect ID-Token *profile* rules
+    /// layered on top of standard JWT validation — the required `sub`, the
+    /// `azp` authorized-party rules, or the opt-in `nonce` / `max_age` /
+    /// `at_hash` / `c_hash` bindings (OIDC Core 1.0 §3.1.3.7 / §3.3.2.11). Kept
+    /// distinct from [`IdentityError::Validation`] (signature/iss/aud/exp) so a
+    /// caller can tell a profile violation apart from a base-JWT failure. The
+    /// profile fails **closed**: an unknown or missing header `alg` on an
+    /// `at_hash`/`c_hash` check is this error, never a silently skipped check.
+    #[error("id token validation error: {0}")]
+    IdTokenValidation(String),
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without
