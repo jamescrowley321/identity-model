@@ -94,7 +94,9 @@ nav:
       - JWKS: api/jwks.md
       - Token Client: api/token-client.md
       - Token Validation: api/token-validation.md
+      - ID Token Validation: api/id-token.md
       - Claims Validation: api/claims-validation.md
+      - Configuration: api/config.md
       - Authorization Code + PKCE: api/auth-code-pkce.md
       - Refresh Token: api/refresh-token.md
       - Device Authorization: api/device-auth.md
@@ -104,9 +106,13 @@ nav:
       - DPoP: api/dpop.md
       - Pushed Authorization Requests: api/par.md
       - JWT-Secured Authorization Request: api/jar.md
+      - JARM: api/jarm.md
+      - Mutual TLS (mTLS): api/mtls.md
       - FAPI 2.0: api/fapi.md
       - UserInfo: api/userinfo.md
       - Authorize Callback: api/authorize-callback.md
+      - Logout: api/logout.md
+      - Dynamic Client Registration: api/dcr.md
       - Identity & Claims: api/identity.md
       - HTTP Client: api/http-client.md
       - Exceptions: api/exceptions.md

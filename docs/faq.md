@@ -30,22 +30,23 @@ OIDC adds standardized ways to authenticate users and retrieve user information,
 
 ### What OAuth flows are supported?
 
-Currently supported:
 - ✅ Client Credentials Grant
-
-Coming soon (see [roadmap](py_identity_model_roadmap.md)):
-- Authorization Code Flow with PKCE
-- Refresh Token Grant
-- Device Authorization Grant
-- Token Exchange
+- ✅ Authorization Code Flow with PKCE
+- ✅ Refresh Token Grant
+- ✅ Device Authorization Grant (RFC 8628)
+- ✅ Token Exchange (RFC 8693)
 
 ### Does it support opaque tokens?
 
-No, only JWT (JSON Web Token) tokens are currently supported. Opaque token support is on the roadmap.
+Local (offline) validation applies to JWT tokens only. Opaque tokens are
+supported through [token introspection](api/introspection.md) (RFC 7662) —
+`introspect_token` asks the authorization server whether the token is active
+and returns its claims.
 
 ### Can I use this with async/await?
 
-Not yet. Async support is planned for v0.5.0. See [issue #51](https://github.com/jamescrowley321/identity-model/issues/51).
+Yes. The `py_identity_model.aio` module mirrors the sync API — see the
+[API Reference](api/index.md) for the import conventions.
 
 ### What identity providers are supported?
 
@@ -61,7 +62,8 @@ py-identity-model works with any OAuth 2.0 / OpenID Connect compliant provider, 
 
 ### Does it support token refresh?
 
-Not yet. Refresh token support is planned for v0.2.0. See [issue #19](https://github.com/jamescrowley321/identity-model/issues/19).
+Yes — see [Refresh Token](api/refresh-token.md) for `refresh_token` and its
+request/response models.
 
 ## Usage Questions
 
@@ -220,9 +222,8 @@ Yes, you can use py-identity-model in Lambda functions behind API Gateway to val
 
 ### Can I validate tokens from multiple issuers?
 
-This is planned for v0.2.0. See [issue #93](https://github.com/jamescrowley321/identity-model/issues/93).
-
-Current workaround: Create separate validation configs for each issuer.
+Yes. `TokenValidationConfig` accepts a list of issuers via `issuer` /
+`allowed_issuers` — see [Token Validation](api/token-validation.md).
 
 ## Development Questions
 
@@ -239,13 +240,14 @@ make test
 # Unit tests only
 make test-unit
 
-# Integration tests
-make test-integration
+# Integration tests against a specific provider (Docker fixtures)
+make test-integration-node-oidc
+make test-integration-keycloak
 ```
 
 ### Where can I find examples?
 
-Check the [examples directory](https://github.com/jamescrowley321/identity-model/tree/main/examples) in the repository.
+Check the [examples directory](https://github.com/jamescrowley321/identity-model/tree/main/py/examples) in the repository.
 
 ### Is there API documentation?
 
@@ -283,13 +285,13 @@ See more in the [Troubleshooting Guide](troubleshooting.md).
 
 ### What features are coming next?
 
-See the [project roadmap](py_identity_model_roadmap.md) for detailed plans. Highlights:
+See the [project roadmap](py_identity_model_roadmap.md) and the
+[capability matrix](https://github.com/jamescrowley321/identity-model/blob/main/spec/capabilities.md)
+for detailed plans. Highlights:
 
-- **v0.1.0**: Better testing, documentation, base classes
-- **v0.2.0**: Authorization code flow, refresh tokens, token exchange
-- **v0.3.0**: Introspection, revocation, userinfo endpoints
-- **v0.4.0**: DPoP, PAR, JAR, FAPI 2.0
-- **v0.5.0**: Async support, examples, middleware
+- Node/TypeScript library (the fourth language in the family)
+- Go and Rust parity with the full Python capability surface
+- Rich Authorization Requests (RFC 9396) and CIBA
 
 ### Can I request a feature?
 

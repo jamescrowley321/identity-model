@@ -6,15 +6,17 @@
 //!
 //! ## Status
 //!
-//! Foundation scaffold. Module surfaces and the error type are in place;
-//! capability implementations (discovery, JWKS, JWT validation, token flows,
-//! UserInfo) land per the cross-language `spec/`.
+//! The Core tier — discovery, JWKS retrieval and key resolution, JWT
+//! validation (including the OIDC ID-token profile), client-credentials and
+//! authorization-code + PKCE token flows, and UserInfo — is implemented, as is
+//! Extended token introspection (RFC 7662). Behavior is proven against the
+//! cross-language conformance vectors in the repository's `spec/`.
 //!
 //! ## Module Overview
 //!
 //! - [`discovery`] — OIDC Discovery client
 //! - [`jwks`] — JWKS fetch + key resolution
-//! - [`jwt`] — JWT signature + claims validation
+//! - [`jwt`] — JWT signature + claims validation, ID token validation
 //! - [`token`] — client credentials, authorization code, PKCE
 //! - [`introspection`] — token introspection (RFC 7662)
 //! - [`userinfo`] — UserInfo endpoint client

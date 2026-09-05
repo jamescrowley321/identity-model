@@ -4,9 +4,9 @@ A native Rust library for OpenID Connect and OAuth 2.0 clients: discovery,
 JWKS retrieval and key resolution, JWT validation, and the token and UserInfo
 endpoints.
 
-- **Crate:** `rs-identity-model` (not yet published to crates.io)
+- **Crate:** [`rs-identity-model`](https://crates.io/crates/rs-identity-model) on crates.io
 - **Edition:** 2024 · **MSRV:** 1.96
-- **Build:** from source with `cargo build`
+- **Install:** `cargo add rs-identity-model`
 
 ## Module Layout
 
@@ -14,8 +14,9 @@ endpoints.
 |--------|---------|------|
 | `discovery` | OIDC Discovery client | OIDC Discovery 1.0 |
 | `jwks` | JWKS fetch + key resolution | RFC 7517 / 7518 |
-| `jwt` | JWT signature + claims validation, plus injectable/composable claims validators | RFC 7519 / 7515 |
+| `jwt` | JWT signature + claims validation, ID token validation, plus injectable/composable claims validators | RFC 7519 / 7515, OIDC Core 1.0 §3.1.3.7 |
 | `token` | Client credentials, auth code, PKCE | RFC 6749 / 7636 |
+| `introspection` | Token introspection client | RFC 7662 |
 | `userinfo` | UserInfo endpoint client | OIDC Core 1.0 §5.3 |
 | `error` | `IdentityError` — the crate error type | — |
 
@@ -69,8 +70,9 @@ driven by `tests/claims_validation_conformance.rs`.
 
 ## Capabilities
 
-The Core tier (discovery, JWKS, JWT validation, client-credentials and
-authorization-code + PKCE, UserInfo) is implemented. The Extended tier
-(introspection, revocation, token exchange, DPoP) is in progress. Behavioral
-parity with the Python and Go libraries is enforced by the cross-language
-conformance vectors in [`../spec`](../spec).
+The Core tier (discovery, JWKS, JWT validation including the OIDC ID-token
+profile, client-credentials and authorization-code + PKCE, UserInfo) is
+implemented, as is Extended token introspection (RFC 7662). Revocation, token
+exchange, and DPoP are not yet implemented. Behavioral parity with the Python
+and Go libraries is enforced by the cross-language conformance vectors in
+[`../spec`](../spec).
