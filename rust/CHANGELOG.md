@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v0.3.0 (2026-09-05)
+
+### Bug Fixes
+
+- **rust**: Treat empty-string azp as absent for id-token multi-aud rule
+  ([#631](https://github.com/jamescrowley321/identity-model/pull/631),
+  [`37462c9`](https://github.com/jamescrowley321/identity-model/commit/37462c9fc97ee76a28bf6bc8baa86cc6b13d7575))
+
+### Chores
+
+- **rust**: Sync Cargo.lock with 0.2.0
+  ([`c38328e`](https://github.com/jamescrowley321/identity-model/commit/c38328e6b3c0622efb970b3770bc10616bab2cac))
+
+### Features
+
+- **rust**: Validate_id_token (OIDC id-token profile) + conformance + integration
+  ([#631](https://github.com/jamescrowley321/identity-model/pull/631),
+  [`37462c9`](https://github.com/jamescrowley321/identity-model/commit/37462c9fc97ee76a28bf6bc8baa86cc6b13d7575))
+
+
 ## v0.2.0 (2026-09-05)
 
 ### Bug Fixes
