@@ -2,6 +2,32 @@
 
 <!-- version list -->
 
+## v3.18.0 (2026-09-05)
+
+### Bug Fixes
+
+- **config**: Reject non-positive http.timeout and contain non-str source values
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+### Chores
+
+- Sync uv.lock with 3.17.0
+  ([`aee4da3`](https://github.com/jamescrowley321/identity-model/commit/aee4da3476ed3f2499d779621c78c9aaf0034f6b))
+
+### Features
+
+- **config**: Typed fail-closed Config with pluggable sources (Python)
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+### Testing
+
+- **config**: Drive shared spec vectors + real-env path against Config
+  ([#605](https://github.com/jamescrowley321/identity-model/pull/605),
+  [`a943cc9`](https://github.com/jamescrowley321/identity-model/commit/a943cc9dc0bdac143a351bdd8dd067ee17e2da14))
+
+
 ## v3.17.0 (2026-09-05)
 
 ### Bug Fixes
