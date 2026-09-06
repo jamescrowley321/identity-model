@@ -470,6 +470,26 @@ jobs:
           work-dir: go
           repo-checkout: false
 
+  tools-tests:
+    # Repo-infrastructure drivers under tools/ — release machinery and gate
+    # drivers that ship in no package. Tested here rather than in unit-tests
+    # because py/src/tests and its 80% coverage gate belong to the published
+    # py-identity-model package: a Rust release-pipeline bug must not surface as
+    # a Python library unit-test failure, and infra tests must not move the
+    # library's coverage number. Same split as conformance/tests.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python-uv
+
+      - name: Repo-tooling tests
+        run: make test-tools
+
   spec-vector-coverage:
     # CONS-1.5 cross-language coverage gate: every language's thin runner must
     # execute every executable vector id in spec/vectors (offline — no
@@ -620,7 +640,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, rust-checks, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, integration-tests-rust, rust-checks, tools-tests, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -641,6 +661,7 @@ jobs:
             "${{ needs.go-vulncheck.result }}" \
             "${{ needs.integration-tests-rust.result }}" \
             "${{ needs.rust-checks.result }}" \
+            "${{ needs.tools-tests.result }}" \
             "${{ needs.spec-vector-coverage.result }}" \
             "${{ needs.publish-parity.result }}" \
             "${{ needs.example-tests.result }}" \

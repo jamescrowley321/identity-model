@@ -49,21 +49,44 @@ py-identity-model is a production-grade OIDC/OAuth2.0 helper library for Python 
 ## Repository Layout
 
 This repository is a **polyglot monorepo**. The Python package lives under
-**`py/`**; Go, Rust, the shared conformance `spec/`, and the shared IdP
-fixtures `infra/` are siblings at the root:
+**`py/`**; Go, Rust, the shared conformance `spec/`, the shared IdP fixtures
+`infra/`, and the repo's own tooling `tools/` are siblings at the root:
 
 ```
-py/      # Python core (src/, packages/, tools/, pyproject.toml, uv.lock) — this package
+py/      # Python core (src/, packages/, pyproject.toml, uv.lock) — the published package
 go/      # Go library     rust/    # Rust library
 spec/    # cross-language conformance vectors    infra/   # shared IdP docker fixtures
+tools/   # repo infrastructure: gates + release machinery; tests in tools/tests/
 conformance/  # OIDF certification harness (Python)
 ```
 
-**Every path below that starts `src/…`, `packages/…`, or `tools/…` lives under
-`py/`.** Run Python tooling from `py/` (`cd py && uv run …`) or, preferably, via
+### Where a file belongs
+
+**`py/` holds only what ships in, or builds and tests, the published
+`py-identity-model` package. Anything that operates on the *repository* — the
+mutation gates, the spec-coverage gate, publish-parity, the semantic-release
+configs and commit parsers, the Cargo lock sync — lives in the repo-root
+`tools/` tree whatever language it targets, and its tests live in `tools/tests/`
+and run via `make test-tools`.**
+
+The split is load-bearing, not cosmetic. `py/src/tests` and its 80% coverage
+gate describe the *published library*: infrastructure tested there moves the
+library's coverage number and makes a release-pipeline bug surface as a library
+unit-test failure. `conformance/tests` is split out for the same reason. When
+adding a gate or a release script, add it under `tools/` and its test under
+`tools/tests/` — never under `py/`.
+
+Two drivers still need `cd py` at *run* time even though they live in `tools/`:
+`mutation_security.py` (mutmut must see the Python package, and mutmut resolves
+its source paths from the CWD at import) and anything else driving a py-scoped
+tool. The `Makefile` targets handle that; the file's location and its runtime
+CWD are separate questions.
+
+**Every path below that starts `src/…` or `packages/…` lives under `py/`.** Run Python tooling from `py/` (`cd py && uv run …`) or, preferably, via
 the repo-root `Makefile` targets, which already `cd` into `py/` for you
 (`make lint`, `make test-unit`, `make test-fastapi`, `make spec-coverage`,
-`make test-integration-*`). The shared `.env.*` provider profiles stay at the
+`make test-integration-*`). Repo tooling has its own target, `make test-tools`,
+which runs from the repo root. The shared `.env.*` provider profiles stay at the
 repo root (they are read by the Python, Go, and Rust suites alike).
 
 ## Architecture
@@ -304,8 +327,12 @@ fastapi package — merging a `feat(go)`/`feat(rust)` (or `fix(...)`) commit to
   (after the go job) runs semantic-release with `tools/semantic-release-rust.toml`
   on `(rust)`-scoped commits, bumping `rust/Cargo.toml`; the pushed
   `rust-v{version}` tag triggers `release-rust.yml`, which publishes to
-  crates.io (needs the `CARGO_REGISTRY_TOKEN` secret). The version job also
-  syncs the crate's own entry in `rust/Cargo.lock`.
+  crates.io (needs the `CARGO_REGISTRY_TOKEN` secret). Cargo records the crate's
+  own version in its lockfile, so semantic-release's `build_command`
+  (`tools/sync_cargo_lock_version.py`) rewrites that entry and `assets` stages
+  `rust/Cargo.lock` into the *same* release commit the tag points at — a lock
+  synced in a later commit leaves the tagged tree one version behind, and
+  `cargo publish` then aborts on the dirty lockfile `cargo build` regenerates.
 
 The four version jobs run as a **serial chain** (`release` → fastapi → go →
 rust), each pulling `main` before it versions, so the release pipelines never

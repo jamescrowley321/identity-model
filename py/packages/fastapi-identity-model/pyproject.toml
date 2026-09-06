@@ -61,11 +61,13 @@ build-backend = "hatchling.build"
 #   cd py && semantic-release -c packages/fastapi-identity-model/pyproject.toml version
 # (release.yml, after the root release job) — all paths below are
 # py/-relative (semantic-release resolves commit_parser + version_toml relative
-# to the CWD, not to this config file's directory). Only commits scoped
-# "(fastapi)" drive this version; every other commit belongs to the root
-# py-identity-model pipeline. See tools/release_parsers.py for the scope routing.
+# to the CWD, not to this config file's directory) — hence the `../` on the
+# parser, which lives in the repo-root tools/ tree with the rest of the repo
+# infrastructure. Only commits scoped "(fastapi)" drive this version; every
+# other commit belongs to the root py-identity-model pipeline. See
+# tools/release_parsers.py for the scope routing.
 [tool.semantic_release]
-commit_parser = "tools/release_parsers.py:FastapiCommitParser"
+commit_parser = "../tools/release_parsers.py:FastapiCommitParser"
 tag_format = "fastapi-identity-model-v{version}"
 # 0.x package: a breaking change bumps the minor, not to 1.0.0 — the 1.0.0
 # jump stays a deliberate, manual decision.

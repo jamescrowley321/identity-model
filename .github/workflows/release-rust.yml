@@ -49,17 +49,29 @@ jobs:
           echo "version=$crate_version" >> "$GITHUB_OUTPUT"
           echo "Releasing rs-identity-model $crate_version"
 
+      # A tag whose Cargo.lock lags its Cargo.toml is unpublishable: the first
+      # cargo invocation rewrites the lock and `cargo publish` then refuses the
+      # dirty tree ("uncommitted changes: Cargo.lock", exit 101). Every rust-v*
+      # tag from 0.1.0 to 0.3.1 died there, several minutes into the job with an
+      # error that names the symptom and not the cause. Fail here instead, in
+      # seconds, saying which file is stale and why.
+      - name: Verify Cargo.lock matches the tagged version
+        run: python3 tools/sync_cargo_lock_version.py --check
+
+      # --locked throughout: cargo must publish exactly the dependency graph the
+      # tag recorded, and cannot silently rewrite the lockfile out from under the
+      # publish step.
       - name: Build and test
         working-directory: rust
         run: |
-          cargo build --release
-          cargo test
+          cargo build --release --locked
+          cargo test --locked
 
       - name: Publish to crates.io
         working-directory: rust
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+        run: cargo publish --locked
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
