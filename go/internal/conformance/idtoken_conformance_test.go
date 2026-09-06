@@ -1,8 +1,11 @@
 package conformance
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -15,11 +18,11 @@ import (
 // parity: it MUST agree with the Python reference runner
 // (py/src/tests/unit/test_id_token_conformance.py) on all vectors.
 //
-// This capability is marked cross_language_coverage_gate: "pending" in the spec,
-// so it is deliberately NOT wired into the enforcement gate
-// (tools/spec_coverage_gate.py, which runs only TestValidationConformance) and
-// writes no coverage report. The in-test coverage assertion below still guards
-// against silently skipping a case.
+// This capability IS wired into the cross-language enforcement gate
+// (tools/spec_coverage_gate.py): when SPEC_COVERAGE_OUT is set the run writes a
+// per-capability coverage report the gate reads, and the gate fails if any
+// language skipped a vector. The in-test coverage assertion below is the
+// belt-and-braces check that every case ran at all.
 func TestIDTokenConformance(t *testing.T) {
 	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
@@ -48,6 +51,38 @@ func TestIDTokenConformance(t *testing.T) {
 		if !executed[tc.ID] {
 			t.Errorf("case %s is defined but was not executed by the Go id-token runner", tc.ID)
 		}
+	}
+
+	writeIDTokenCoverageReport(t, suite, executed)
+}
+
+// writeIDTokenCoverageReport emits the executed case ids for the cross-language
+// coverage gate (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set.
+// Same report shape as the validation runner; id-token declares no
+// execution: "native" cases, so the native map is always empty.
+func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed map[string]bool) {
+	t.Helper()
+	out := os.Getenv("SPEC_COVERAGE_OUT")
+	if out == "" {
+		return
+	}
+	ids := make([]string, 0, len(executed))
+	for id := range executed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	report := map[string]any{
+		"language":   "go",
+		"capability": suite.Capability,
+		"executed":   ids,
+		"native":     map[string]string{},
+	}
+	b, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal id-token coverage report: %v", err)
+	}
+	if err := os.WriteFile(out, append(b, '\n'), 0o644); err != nil {
+		t.Fatalf("write id-token coverage report %s: %v", out, err)
 	}
 }
 

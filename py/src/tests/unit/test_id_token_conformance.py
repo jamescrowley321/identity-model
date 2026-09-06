@@ -28,7 +28,9 @@ language gate — adding the Go/Rust runners and flipping the marker to
 
 from __future__ import annotations
 
+import atexit
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -137,10 +139,9 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
 def test_every_id_token_case_is_executed() -> None:
     """Runner-internal coverage check: every vector case id runs.
 
-    The cross-language coverage gate (``tools/spec_coverage_gate.py``) does not
-    yet cover this capability (see the module docstring — Epic 23 story 23.2),
-    so this in-suite assertion is what guarantees no vector case is silently
-    dropped from the Python leg.
+    The cross-language gate (``tools/spec_coverage_gate.py``) checks that every
+    language *executed* every case; this asserts the Python leg *parametrized*
+    every case in the first place, which the gate cannot see.
     """
     executed = {p.values[0] for p in _PARAMS}
     declared = {c["id"] for c in _CASES}
@@ -151,16 +152,39 @@ def test_every_id_token_case_is_executed() -> None:
 
 
 @pytest.mark.unit
-def test_capability_stays_out_of_cross_language_gate() -> None:
-    """Guardrail: id-token.json must remain opted out of the shared gate.
+def test_capability_is_inside_the_cross_language_gate() -> None:
+    """Guardrail: id-token.json must stay gated across all three languages.
 
-    Until the Go and Rust runners exist (Epic 23 story 23.2), the vector file
-    MUST keep ``cross_language_coverage_gate: "pending"`` so
-    ``tools/spec_coverage_gate.py`` (which fails on a second executable
-    capability lacking polyglot runners) stays green. This asserts the marker
-    is present so a future edit that drops it is caught here rather than in CI.
+    Python, Go and Rust all execute these vectors, so the capability is checked
+    by ``tools/spec_coverage_gate.py``. Re-adding
+    ``cross_language_coverage_gate: "pending"`` would silently drop it from that
+    gate while leaving every runner green — the drift the gate exists to catch.
+    Fail here instead, where the reason is obvious.
     """
-    assert _CAPABILITY.get("cross_language_coverage_gate") == "pending", (
-        "id-token.json must stay opted out of the cross-language coverage gate "
-        "until Go/Rust runners land (Epic 23 story 23.2)"
+    assert "cross_language_coverage_gate" not in _CAPABILITY, (
+        "id-token.json is gated across python/go/rust — remove the "
+        "cross_language_coverage_gate marker, or add the capability back to "
+        "tools/spec_coverage_gate.py RUNNERS if a language legitimately drops out"
     )
+
+
+def _write_coverage_report() -> None:
+    """Emit this leg's executed case ids for the cross-language gate.
+
+    Same shape as the validation runner (test_spec_conformance.py) and the Go
+    and Rust legs: the gate reads one report per (language, capability) pair.
+    id-token has no ``execution: "native"`` cases, so ``native`` is always empty.
+    """
+    out = os.environ.get("SPEC_COVERAGE_OUT")
+    if not out or not _EXECUTED:
+        return
+    report = {
+        "language": "python",
+        "capability": _CAPABILITY["capability"],
+        "executed": sorted(_EXECUTED),
+        "native": {},
+    }
+    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+
+
+atexit.register(_write_coverage_report)

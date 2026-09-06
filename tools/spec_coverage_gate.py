@@ -16,9 +16,15 @@ Usage:
     uv run python tools/spec_coverage_gate.py            # run runners + gate
     uv run python tools/spec_coverage_gate.py --check-only <reports-dir>
 
-Today ``validation.json`` is the only capability with executable vectors; as
-more capabilities gain vectors, extend RUNNERS' report emission to one file
-per capability and this inventory loop picks them up.
+Reports are per **(language, capability)** pair — ``<language>.<capability>.json``
+— so a capability is gated independently in each language. ``RUNNERS`` lists one
+entry per pair, and any capability with executable vectors that lacks an entry
+for some language fails the gate: a vector file nobody runs is worse than none,
+because the spec then claims coverage that is never checked.
+
+A capability can opt out while its runners are being built by setting
+``cross_language_coverage_gate: "pending"`` in its vector file. That is a
+temporary state — the marker means "not yet gated", never "not required".
 """
 
 from __future__ import annotations
@@ -35,10 +41,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SPEC_DIR = REPO_ROOT / "spec" / "vectors"
 DEFAULT_REPORT_DIR = REPO_ROOT / "build" / "spec-coverage"
 
-# (language, working dir, command) — each runner writes SPEC_COVERAGE_OUT.
-RUNNERS: list[tuple[str, Path, list[str]]] = [
+# (language, capability, working dir, command) — each entry runs ONE language's
+# runner for ONE capability and writes its report to SPEC_COVERAGE_OUT. A
+# capability that carries executable vectors MUST have an entry here for every
+# language, or the gate fails closed (see check_reports): a vector file nobody
+# runs is worse than no vector file, because it looks covered.
+RUNNERS: list[tuple[str, str, Path, list[str]]] = [
     (
         "python",
+        "validation",
         REPO_ROOT / "py",
         [
             "uv",
@@ -55,7 +66,26 @@ RUNNERS: list[tuple[str, Path, list[str]]] = [
         ],
     ),
     (
+        "python",
+        "id-token",
+        REPO_ROOT / "py",
+        [
+            "uv",
+            "run",
+            "pytest",
+            "src/tests/unit/test_id_token_conformance.py",
+            "-m",
+            "unit",
+            "-n",
+            "0",
+            "-p",
+            "no:benchmark",
+            "-q",
+        ],
+    ),
+    (
         "go",
+        "validation",
         REPO_ROOT / "go",
         [
             "go",
@@ -67,11 +97,39 @@ RUNNERS: list[tuple[str, Path, list[str]]] = [
         ],
     ),
     (
+        "go",
+        "id-token",
+        REPO_ROOT / "go",
+        [
+            "go",
+            "test",
+            "./internal/conformance/",
+            "-run",
+            "TestIDTokenConformance",
+            "-count=1",
+        ],
+    ),
+    (
         "rust",
+        "validation",
         REPO_ROOT / "rust",
         ["cargo", "test", "--test", "spec_conformance"],
     ),
+    (
+        "rust",
+        "id-token",
+        REPO_ROOT / "rust",
+        ["cargo", "test", "--test", "spec_conformance_id_token"],
+    ),
 ]
+
+#: Languages that must cover every gated capability.
+LANGUAGES = ["python", "go", "rust"]
+
+
+def report_name(language: str, capability: str) -> str:
+    """Report filename for one (language, capability) pair."""
+    return f"{language}.{capability}.json"
 
 
 def spec_inventory() -> dict[str, dict[str, set[str]]]:
@@ -106,15 +164,19 @@ def spec_inventory() -> dict[str, dict[str, set[str]]]:
 
 def run_runners(report_dir: Path) -> None:
     report_dir.mkdir(parents=True, exist_ok=True)
-    for language, cwd, command in RUNNERS:
-        out = report_dir / f"{language}.json"
+    for language, capability, cwd, command in RUNNERS:
+        out = report_dir / report_name(language, capability)
         out.unlink(missing_ok=True)
-        print(f"[spec-coverage] running {language} runner: {' '.join(command)}")
+        print(
+            f"[spec-coverage] running {language}/{capability} runner: "
+            f"{' '.join(command)}"
+        )
         env = dict(os.environ, SPEC_COVERAGE_OUT=str(out))
         result = subprocess.run(command, cwd=cwd, env=env, check=False)  # noqa: S603
         if result.returncode != 0:
             sys.exit(
-                f"[spec-coverage] {language} runner FAILED (exit {result.returncode})"
+                f"[spec-coverage] {language}/{capability} runner FAILED "
+                f"(exit {result.returncode})"
             )
 
 
@@ -123,41 +185,60 @@ def check_reports(report_dir: Path) -> int:
     if not inventory:
         sys.exit("[spec-coverage] no capability with executable vectors found in spec/")
 
-    # Each language runner writes ONE report keyed to a single capability today
-    # (only validation.json has executable vectors). If a second capability
-    # gains vectors, this one-report-per-language shape would silently stop
-    # gating it — so fail loudly and force the runners to emit per-capability
-    # reports before that can happen, rather than pass covering only some.
-    if len(inventory) > 1:
-        sys.exit(
-            "[spec-coverage] GATE FAILED — multiple capabilities now carry "
-            f"executable vectors ({sorted(inventory)}), but each language runner "
-            "reports only one. Extend the runners to emit a per-capability "
-            "coverage report and update this gate to check every (language, "
-            "capability) pair before landing new vectors."
-        )
+    # Fail closed on a capability nobody runs. A vector file that carries
+    # executable cases but has no runner entry for some language is worse than
+    # no vector file at all: the spec claims cross-language coverage the gate
+    # never checks. This replaces the older single-capability guard, which
+    # bailed out entirely as soon as a second capability gained vectors.
+    configured = {(language, capability) for language, capability, _, _ in RUNNERS}
+    missing_runners = [
+        f"({language}, {capability}): capability has executable vectors but no "
+        f"runner is configured in RUNNERS"
+        for capability in sorted(inventory)
+        for language in LANGUAGES
+        if (language, capability) not in configured
+    ]
+    if missing_runners:
+        print("\n[spec-coverage] GATE FAILED — capabilities with no runner:")
+        for line in missing_runners:
+            print(f"  - {line}")
+        return 1
 
     failures: list[str] = []
-    for language, _, _ in RUNNERS:
-        report_path = report_dir / f"{language}.json"
-        if not report_path.is_file():
-            failures.append(f"{language}: no coverage report produced at {report_path}")
-            continue
-        report = json.loads(report_path.read_text())
-        capability = report["capability"]
+    for language, capability, _, _ in RUNNERS:
         want = inventory.get(capability)
         if want is None:
-            failures.append(f"{language}: reported unknown capability {capability!r}")
+            # Runner configured for a capability that is opted out ("pending")
+            # or carries no executable vectors: nothing to gate, and not an
+            # error — the runner still ran, its own suite asserts its coverage.
             continue
+
+        report_path = report_dir / report_name(language, capability)
+        if not report_path.is_file():
+            failures.append(
+                f"({language}, {capability}): no coverage report produced at "
+                f"{report_path}"
+            )
+            continue
+        report = json.loads(report_path.read_text())
+        reported = report["capability"]
+        if reported != capability:
+            failures.append(
+                f"({language}, {capability}): report declares capability "
+                f"{reported!r} — runner and gate disagree"
+            )
+            continue
+
         executed = set(report.get("executed", []))
         native = report.get("native", {})
 
         failures.extend(
-            f"({language}, {case_id}): vector case not executed"
+            f"({language}, {capability}, {case_id}): vector case not executed"
             for case_id in sorted(want["executable"] - executed)
         )
         failures.extend(
-            f"({language}, {case_id}): native case has no native-test anchor"
+            f"({language}, {capability}, {case_id}): native case has no "
+            f"native-test anchor"
             for case_id in sorted(want["native"])
             if not native.get(case_id)
         )
@@ -166,21 +247,24 @@ def check_reports(report_dir: Path) -> int:
         total = len(want["executable"])
         pct = 100.0 * covered / total if total else 0.0
         print(
-            f"[spec-coverage] {language:<7} {capability}: "
+            f"[spec-coverage] {language:<7} {capability:<12} "
             f"{covered}/{total} vector cases ({pct:.0f}%), "
             f"{len(want['native'])} native (anchored: "
             f"{sum(1 for c in want['native'] if native.get(c))})"
         )
 
-    # A capability every language must cover: also fail if a language's report
-    # is missing a capability that has executable vectors (single-capability
-    # today; the per-language file becomes per-capability when more land).
     if failures:
-        print("\n[spec-coverage] GATE FAILED — missing (language, vector-id) pairs:")
+        print(
+            "\n[spec-coverage] GATE FAILED — missing (language, capability, vector-id):"
+        )
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("[spec-coverage] GATE PASSED — 100% vector coverage in every language")
+    gated = ", ".join(sorted(inventory))
+    print(
+        f"[spec-coverage] GATE PASSED — 100% vector coverage in every language "
+        f"for: {gated}"
+    )
     return 0
 
 
