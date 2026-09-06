@@ -47,6 +47,8 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors, and hard-fails if a second such capability appears before the runners emit per-capability coverage reports. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >
 > **Known cross-language divergences** the plan reconciles: Go and Rust support `client_secret_post`, id-token `nonce` validation, and the RFC 8414 issuer-identifier match, none of which Python does yet; Rust validates `azp`, which Python and Go do not.
+>
+> **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 
 ## Capability Definitions (Core Tier)
 
