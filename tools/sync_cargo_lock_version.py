@@ -11,7 +11,7 @@ whose checkout dirties itself and fails to publish (exit 101,
 0.3.1 failed that way.
 
 This script is python-semantic-release's ``build_command`` for the Rust track
-(``py/tools/semantic-release-rust.toml``): PSR runs it after writing the new
+(``tools/semantic-release-rust.toml``): PSR runs it after writing the new
 version into ``rust/Cargo.toml`` but before creating the release commit, and
 ``rust/Cargo.lock`` is listed in ``assets`` so the synced lock lands in that
 same commit. The tag therefore points at a tree cargo already agrees with.
