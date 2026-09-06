@@ -32,14 +32,17 @@ const SPEC_FILE: &str = "../spec/vectors/id-token.json";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capability {
-    #[allow(dead_code)]
     capability: String,
     #[allow(dead_code)]
     spec: String,
     #[allow(dead_code)]
     spec_url: String,
+    /// Absent now that this capability is gated across python/go/rust. It
+    /// stays deserializable so a future capability can opt out again with
+    /// `"pending"` without breaking this runner.
     #[allow(dead_code)]
-    cross_language_coverage_gate: String,
+    #[serde(default)]
+    cross_language_coverage_gate: Option<String>,
     #[allow(dead_code)]
     #[serde(default)]
     notes: String,
@@ -158,6 +161,7 @@ fn spec_id_token_conformance() {
     let capability: Capability = serde_json::from_str(&raw).expect("parse id-token.json");
 
     let mut executed = 0usize;
+    let mut executed_ids: Vec<String> = Vec::new();
     for case in &capability.tests {
         assert!(!case.vectors.is_empty(), "{}: no vectors", case.id);
         for (idx, vector) in case.vectors.iter().enumerate() {
@@ -203,6 +207,7 @@ fn spec_id_token_conformance() {
             }
             executed += 1;
         }
+        executed_ids.push(case.id.clone());
     }
 
     // Cross-language parity: every shared vector must have executed. The Python
@@ -212,4 +217,28 @@ fn spec_id_token_conformance() {
         executed, 30,
         "expected all 30 shared id-token vectors to execute, ran {executed}"
     );
+
+    executed_ids.sort();
+    write_coverage_report(&capability.capability, &executed_ids);
+}
+
+/// Emits the executed case ids for the cross-language coverage gate
+/// (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set. Same report
+/// shape as the Python and Go legs; id-token declares no `execution: "native"`
+/// cases, so `native` is always empty.
+fn write_coverage_report(capability: &str, executed: &[String]) {
+    let Ok(out) = std::env::var("SPEC_COVERAGE_OUT") else {
+        return;
+    };
+    let report = serde_json::json!({
+        "language": "rust",
+        "capability": capability,
+        "executed": executed,
+        "native": serde_json::Map::new(),
+    });
+    std::fs::write(
+        &out,
+        format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
+    )
+    .unwrap_or_else(|e| panic!("write coverage report {out}: {e}"));
 }
