@@ -1,0 +1,25 @@
+# Equivalent-mutant allowlist for `make mutation-security-rust` (issue #638).
+#
+# cargo-mutants occasionally emits an *equivalent* mutant: a syntactic change
+# that is semantically identical to the original and therefore impossible to
+# kill with any test. Waive one with a line of the form
+#
+#     <file>:<function> <16-hex content hash>   # justification
+#
+# e.g. `src/jwt/claims_validation.rs:combine_claims_validators a1b2c3d4e5f60718`.
+# A failing gate run prints the exact `<name> <hash>` line to paste for each
+# survivor, so the hash never needs computing by hand.
+#
+# WHY the hash: cargo-mutants names mutants by file:line:col, which is NOT
+# stable — any edit above the mutant renumbers it, and a position-keyed waiver
+# would silently rebind to a DIFFERENT mutant (in a security gate that is a
+# fail-open: a real, killable survivor inherits a stale waiver and the gate
+# passes green — the Python gate's issue #615). The hash instead covers the
+# mutant's diff content with the volatile `---`/`+++`/`@@` header lines
+# stripped — the transformation itself, exactly as the Python gate hashes
+# mutmut diffs. The gate waives a survivor only when BOTH its
+# (file, function) and its current diff hash match an entry here; if the
+# surrounding code changes, the hash changes and the waiver must be
+# re-authored. A name with no hash is a hard error, never a silent pass.
+#
+# Every entry weakens the gate, so keep the justification concrete and specific.
