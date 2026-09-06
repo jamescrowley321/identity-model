@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v0.3.2 (2026-09-06)
+
+### Bug Fixes
+
+- **rust**: Sync Cargo.lock inside the release commit so the crate publishes
+  ([#648](https://github.com/jamescrowley321/identity-model/pull/648),
+  [`bae9d4f`](https://github.com/jamescrowley321/identity-model/commit/bae9d4ff4d34965ac62afc2b347703e4bf2af814))
+
+### Chores
+
+- **rust**: Sync Cargo.lock with 0.3.1
+  ([`0df31b0`](https://github.com/jamescrowley321/identity-model/commit/0df31b0c5a6b52a6ea76c7b8c12bb8f36eca7877))
+
+### Testing
+
+- **rust**: Drop stale decode-layer fallback in claims conformance runner
+  ([#640](https://github.com/jamescrowley321/identity-model/pull/640),
+  [`bb4b0b7`](https://github.com/jamescrowley321/identity-model/commit/bb4b0b706f71653d0ea4cdba1d72d47f916bb2ac))
+
+
 ## v0.3.1 (2026-09-05)
 
 ### Bug Fixes
