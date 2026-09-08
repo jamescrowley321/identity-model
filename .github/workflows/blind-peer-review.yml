@@ -27,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
-      csv: ${{ steps.pick.outputs.csv }}
     steps:
       - id: pick
         shell: node {0}
@@ -54,7 +53,6 @@ jobs:
           const include = keys.map((k) => ({ lens: k, name: NAMES[k] || k }));
           const fs = require("fs");
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `csv=${keys.join(",")}\n`);
 
   preflight:
     name: Preflight
@@ -69,7 +67,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Wait for deterministic checks
-        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -81,7 +79,9 @@ jobs:
           # preflight time out and skip every lens (Merge Gate then failed
           # closed). It stays enforced independently via the required
           # ci / ci-complete check, which aggregates security-gate.
-          required_checks: "ci / lint, ci / unit-tests"
+          required_checks: |
+            Full CI (all integrations) / lint
+            Full CI (all integrations) / unit-tests
 
   review:
     name: ${{ matrix.name }}
@@ -93,7 +93,7 @@ jobs:
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: ${{ matrix.name }}
-        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: lens
           lens: ${{ matrix.lens }}
@@ -141,8 +141,8 @@ jobs:
           exit 1
       - name: Adjudicate lenses
         if: needs.review.result == 'success'
-        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: gate
-          lenses: ${{ needs.config.outputs.csv }}
+          lenses: ${{ needs.config.outputs.matrix }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
