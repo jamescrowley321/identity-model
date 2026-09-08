@@ -1,11 +1,11 @@
-# Adversarial Review — fresh-context, diff-only AI PR review that fails the merge
-# on real defects. https://github.com/jamescrowley321/adversarial-review
+# Blind Peer Review — fresh-context, diff-only AI PR review that fails the merge
+# on real defects. https://github.com/jamescrowley321/blind-peer-review
 #
 # Setup: add repo secret OPENROUTER_API_KEY; then require the "Merge Gate" check
 # in branch protection. Toggle lenses in the ENABLED list below (one source of
 # truth for the matrix + gate). Action pinned to a commit SHA (v1.6.0).
 
-name: Adversarial Review
+name: Blind Peer Review
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: adversarial-review-${{ github.ref }}
+  group: blind-peer-review-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -33,17 +33,17 @@ jobs:
         shell: node {0}
         env:
           ENABLED: |
-            blind          # logic bugs, footguns (zero context)
-            edge-case      # unhandled branches / boundaries
-            acceptance     # PR acceptance criteria met + tested
-            sentinel       # exploitable security vulnerabilities
-            viper          # red-team attack paths (auth/infra)
-            compliance     # AI-provenance policy + repo rules
+            cold_read  # logic bugs, footguns (zero context)
+            edge_case  # unhandled branches / boundaries
+            acceptance # PR acceptance criteria met + tested
+            security   # exploitable security vulnerabilities
+            red_team   # red-team attack paths (auth/infra)
+            policy     # AI-provenance policy + repo rules
         run: |
           const NAMES = {
-            blind: "Blind Hunter", "edge-case": "Edge Case Hunter",
-            acceptance: "Acceptance Auditor", sentinel: "Sentinel", viper: "Viper",
-            compliance: "Compliance Auditor",
+            cold_read: "Cold Read", "edge_case": "Edge Cases",
+            acceptance: "Acceptance Criteria", security: "Security Review", red_team: "Red Team",
+            policy: "Policy & Provenance",
           };
           const keys = (process.env.ENABLED || "").split("\n")
             .map((l) => l.replace(/#.*/, "").trim()).filter(Boolean);
@@ -69,7 +69,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Wait for deterministic checks
-        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +93,7 @@ jobs:
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: ${{ matrix.name }}
-        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
         with:
           mode: lens
           lens: ${{ matrix.lens }}
@@ -141,7 +141,7 @@ jobs:
           exit 1
       - name: Adjudicate lenses
         if: needs.review.result == 'success'
-        uses: jamescrowley321/adversarial-review@85b6ccc81380ae8076d5582a8de933d34f2fc922 # v1.7.1
+        uses: jamescrowley321/blind-peer-review@b17dc0c0de28ef42595498f03074353d89475785 # v2.0.0
         with:
           mode: gate
           lenses: ${{ needs.config.outputs.csv }}
