@@ -69,7 +69,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Wait for deterministic checks
-        uses: jamescrowley321/adversarial-review@0e5a06a85e95d1ef0e05e3c6f9010d002ea21565 # v1.8.0
+        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -93,7 +93,7 @@ jobs:
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: ${{ matrix.name }}
-        uses: jamescrowley321/adversarial-review@0e5a06a85e95d1ef0e05e3c6f9010d002ea21565 # v1.8.0
+        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: lens
           lens: ${{ matrix.lens }}
@@ -141,7 +141,7 @@ jobs:
           exit 1
       - name: Adjudicate lenses
         if: needs.review.result == 'success'
-        uses: jamescrowley321/adversarial-review@0e5a06a85e95d1ef0e05e3c6f9010d002ea21565 # v1.8.0
+        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: gate
           lenses: ${{ needs.config.outputs.csv }}
