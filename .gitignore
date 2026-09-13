@@ -157,10 +157,16 @@ token_characterization_*.md
 .claude/review-*.patch
 .claude/pre-review-sha.txt
 
-# Conformance plan export zips + per-test RP logs (binary evidence artifacts;
-# preserved via CI upload-artifact, not committed)
+# Conformance plan export zips, certification packages, and per-test RP logs
+# (binary evidence artifacts; preserved via CI upload-artifact and retained by
+# the OIDF portal, not committed). The parent-directory patterns matter because
+# browser downloads of certification packages land in conformance/results/
+# rather than hosted/, which previously left them as untracked noise.
 conformance/results/hosted/*.zip
+conformance/results/hosted/*.pdf
 conformance/results/hosted/rp-logs/
+conformance/results/*.zip
+conformance/results/*.pdf
 
 # Ralph orchestrator runtime state
 .ralph/

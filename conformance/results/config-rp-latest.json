@@ -1,48 +1,48 @@
 {
   "plan": "config-rp",
-  "plan_id": "2EX2sH1jc93Dn",
+  "plan_id": "lcSJ8jMSryM4c",
   "suite_url": "https://localhost.emobix.co.uk:8443",
   "results": [
     {
       "test": "oidcc-client-test-discovery-openid-config",
       "status": "PASSED",
-      "test_id": "phgO6K1qNDKmmVA",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=phgO6K1qNDKmmVA",
+      "test_id": "odpSNxLTv807Zmk",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=odpSNxLTv807Zmk",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-discovery-jwks-uri-keys",
       "status": "PASSED",
-      "test_id": "yk1u5doepdxZ60C",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=yk1u5doepdxZ60C",
+      "test_id": "Gr4z52F7DNQay8Q",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=Gr4z52F7DNQay8Q",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-discovery-issuer-mismatch",
       "status": "PASSED",
-      "test_id": "QEDJ90IO3nNXT9K",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=QEDJ90IO3nNXT9K",
+      "test_id": "GY4Mm1QF7FVEU7F",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=GY4Mm1QF7FVEU7F",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-idtoken-sig-none",
       "status": "SKIPPED",
-      "test_id": "QLXqEksoIgaonFZ",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=QLXqEksoIgaonFZ",
+      "test_id": "h4yijRpzJyfzjYm",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=h4yijRpzJyfzjYm",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-signing-key-rotation-just-before-signing",
       "status": "PASSED",
-      "test_id": "PjlP765EZC2q8C2",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=PjlP765EZC2q8C2",
+      "test_id": "a3jAfGHPZCIM7Hz",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=a3jAfGHPZCIM7Hz",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-signing-key-rotation",
       "status": "PASSED",
-      "test_id": "MUyDvJwoNrZ4dyH",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=MUyDvJwoNrZ4dyH",
+      "test_id": "U7slIjmKqWYKUZv",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=U7slIjmKqWYKUZv",
       "detail": ""
     }
   ],
