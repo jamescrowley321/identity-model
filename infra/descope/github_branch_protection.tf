@@ -1,4 +1,4 @@
-# Branch protection for py-identity-model/main.
+# Branch protection for identity-model/main.
 #
 # Gated behind `var.enable_branch_protection` so it can be applied in a
 # second pass — the intended sequence is:
