@@ -269,6 +269,23 @@ def check_reports(report_dir: Path) -> int:
                 f"map of case id to the number of vectors that ran"
             )
             continue
+        # The counts are arithmetic below (min(), sum()), so a non-integer count
+        # raises TypeError there and aborts the whole check — which would hide
+        # every later language's real gap behind a traceback, the exact failure
+        # mode the malformed-report guard above exists to prevent. Name it here
+        # instead. bool is an int in Python; a True vector count is nonsense, so
+        # it is rejected rather than silently counted as 1.
+        bad_counts = sorted(
+            case_id
+            for case_id, ran in executed_vectors.items()
+            if isinstance(ran, bool) or not isinstance(ran, int)
+        )
+        if bad_counts:
+            failures.append(
+                f"({language}, {capability}): 'executed_vectors' has "
+                f"non-integer vector counts for {', '.join(bad_counts)}"
+            )
+            continue
 
         failures.extend(
             f"({language}, {capability}, {case_id}): vector case not executed"

@@ -307,6 +307,66 @@ def test_a_case_that_runs_fewer_vectors_than_the_spec_carries_fails(
     assert "(go, validation, V-001): ran 1 of 5 vectors" in out
 
 
+def test_a_non_integer_vector_count_is_a_named_failure(gate, capsys) -> None:
+    """A bad count must not crash the stats arithmetic and abort the whole check.
+
+    `min()` and `sum()` run over these counts, so a string count raises TypeError
+    there and every not-yet-checked pair goes unreported behind a traceback — the
+    same failure mode the malformed-JSON guard exists to prevent.
+    """
+    _all_green(gate, "id-token", ["IDT-001", "IDT-004"])
+    gate.write_raw_report(
+        "python",
+        "id-token",
+        json.dumps(
+            {
+                "language": "python",
+                "capability": "id-token",
+                "executed": ["IDT-001", "IDT-004"],
+                "executed_vectors": {"IDT-001": "one", "IDT-004": 1},
+                "native": {},
+            }
+        ),
+    )
+    gate.write_report(
+        "go",
+        "id-token",
+        ["IDT-001"],
+        executed_vectors={"IDT-001": 1},
+    )  # real gap, checked after python
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "(python, id-token): 'executed_vectors' has non-integer" in out
+    assert "IDT-001" in out
+    # The point of not raising: the Go gap is still reported in the same run.
+    assert "(go, id-token, IDT-004): vector case not executed" in out
+
+
+def test_a_boolean_vector_count_is_rejected(gate, capsys) -> None:
+    """bool is an int in Python; True must not be counted as one vector."""
+    _all_green(gate, "id-token", ["IDT-001"])
+    gate.write_raw_report(
+        "rust",
+        "id-token",
+        json.dumps(
+            {
+                "language": "rust",
+                "capability": "id-token",
+                "executed": ["IDT-001"],
+                "executed_vectors": {"IDT-001": True},
+                "native": {},
+            }
+        ),
+    )
+
+    assert gate.run() == GATE_FAILED
+    assert (
+        "(rust, id-token): 'executed_vectors' has non-integer"
+        in capsys.readouterr().out
+    )
+
+
 def test_a_report_without_vector_counts_fails(gate, capsys) -> None:
     """A runner that reports only case ids cannot prove it ran every vector."""
     gate.write_capability("validation", ["V-001"])
