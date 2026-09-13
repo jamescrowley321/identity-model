@@ -14,9 +14,10 @@
 //! here (`reason_marker`); the inputs and expected outcomes are the shared
 //! oracle.
 //!
-//! Deliberately NOT wired into `tools/spec_coverage_gate.py`: `id-token.json`
-//! carries `cross_language_coverage_gate: "pending"`, so promotion into the
-//! enforcement gate is Epic 23 §23.2. This runs as an ordinary Rust test.
+//! Wired into `tools/spec_coverage_gate.py`: when `SPEC_COVERAGE_OUT` is set
+//! this run emits the executed case ids the cross-language gate reads, and the
+//! gate fails by name if any language skipped a vector. With the variable unset
+//! it runs as an ordinary Rust test.
 
 use rs_identity_model::{
     Claims, IdTokenValidationOptions, IdentityError, validate_id_token_claims,

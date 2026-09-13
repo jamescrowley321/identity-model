@@ -136,15 +136,17 @@ def spec_inventory() -> dict[str, dict[str, set[str]]]:
     """Executable + native case ids per capability that carries vectors."""
     inventory: dict[str, dict[str, set[str]]] = {}
     for path in sorted(SPEC_DIR.glob("*.json")):
-        capability = json.loads(path.read_text())
+        try:
+            capability = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            sys.exit(f"[spec-coverage] {path} is not valid JSON: {exc}")
         # A capability can opt OUT of the cross-language gate while its polyglot
-        # runners are still being built (e.g. id-token.json — Python already
-        # executes every vector, but the Go/Rust runners land in Epic 23 story
-        # 23.2). Such a file carries executable vectors that would otherwise
-        # trip the single-capability invariant below; skipping it here keeps the
-        # gate green without silently dropping the enforced capabilities. Flip
-        # the marker to any non-"pending" value (or drop it) once every language
-        # ships a runner and this gate is extended to per-capability reports.
+        # runners are still being built. Skipping it here keeps the gate green
+        # without silently dropping the capabilities that ARE enforced, and
+        # without tripping the no-runner check below (which would otherwise fire
+        # for every language on a capability nobody runs yet). Drop the marker
+        # once every language ships a runner and add the pairs to RUNNERS; the
+        # marker means "not yet gated", never "not required".
         if capability.get("cross_language_coverage_gate") == "pending":
             continue
         cases = capability.get("tests", [])
@@ -220,7 +222,26 @@ def check_reports(report_dir: Path) -> int:
                 f"{report_path}"
             )
             continue
-        report = json.loads(report_path.read_text())
+        # A runner that half-wrote its report (killed mid-write, out of disk)
+        # leaves malformed JSON behind. Report that as a named gate failure
+        # rather than letting json.loads raise: an uncaught JSONDecodeError
+        # aborts the whole check, so one bad report would hide every other
+        # language's real coverage gap behind a traceback.
+        try:
+            report = json.loads(report_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            failures.append(
+                f"({language}, {capability}): coverage report {report_path} is "
+                f"unreadable or malformed — {exc}"
+            )
+            continue
+        if not isinstance(report, dict) or "capability" not in report:
+            failures.append(
+                f"({language}, {capability}): coverage report {report_path} is "
+                f"not a report object with a 'capability' key"
+            )
+            continue
+
         reported = report["capability"]
         if reported != capability:
             failures.append(

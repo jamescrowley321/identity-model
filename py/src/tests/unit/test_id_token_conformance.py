@@ -3,9 +3,9 @@
 Drives every vector in ``spec/vectors/id-token.json`` — the language-neutral
 source of truth for the OpenID Connect ID-Token *profile* rules (OIDC Core 1.0
 §2 / §3.1.3.7 / §3.3.2.11) — through py-identity-model's pure claim validator
-``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners will
-execute the SAME vector set in later stack PRs, so the "build the conformance
-vectors once" constraint holds across languages.
+``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners
+execute the SAME vector set, so the "build the conformance vectors once"
+constraint holds across languages.
 
 The vectors are fully self-contained decoded claim sets plus caller inputs and a
 fixed ``now`` — no network, no signing, no fixtures — so this suite is a plain,
@@ -17,13 +17,11 @@ model's exception surface lives here (``_REASON_MESSAGE``). Every reject path in
 the pure validator raises :class:`IdTokenValidationException`; the ``reason``
 label pins *which* profile rule fired.
 
-NOT wired into ``tools/spec_coverage_gate.py``: that gate enforces 100% vector
-coverage *per language* and would fail the moment a second executable capability
-appears without Go/Rust runners to match. ``id-token.json`` therefore carries
-``cross_language_coverage_gate: "pending"`` (the gate skips it) and this file
-runs as an ordinary unit test. Promoting ID-Token vectors into the cross-
-language gate — adding the Go/Rust runners and flipping the marker to
-``enforced`` — is Epic 23 story 23.2 follow-up.
+Wired into ``tools/spec_coverage_gate.py``: that gate enforces 100% vector
+coverage per (language, capability) pair, and Python, Go and Rust all ship an
+id-token runner. When ``SPEC_COVERAGE_OUT`` is set this suite emits the executed
+case ids the gate reads, and the gate fails by name if any language skipped a
+vector. With the variable unset it runs as an ordinary unit test.
 """
 
 from __future__ import annotations
@@ -32,6 +30,7 @@ import atexit
 import json
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -184,7 +183,20 @@ def _write_coverage_report() -> None:
         "executed": sorted(_EXECUTED),
         "native": {},
     }
-    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+    try:
+        Path(out).write_text(json.dumps(report, indent=2) + "\n")
+    except OSError as exc:
+        # An exception raised inside an atexit callback is printed but does NOT
+        # change the process exit code, so a failed write would leave pytest
+        # green and surface downstream only as the gate's generic "no coverage
+        # report produced" — with the real cause (permissions, missing parent,
+        # full disk) nowhere in the logs. The Go and Rust legs fail loudly on
+        # write errors; say the same thing here, on the stream the gate shows.
+        print(
+            f"[spec-coverage] python/{report['capability']}: FAILED to write "
+            f"coverage report {out}: {exc}",
+            file=sys.stderr,
+        )
 
 
 atexit.register(_write_coverage_report)
