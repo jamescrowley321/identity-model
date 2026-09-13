@@ -39,12 +39,22 @@ GATE_PASSED = 0
 GATE_FAILED = 1
 
 
-def _capability(name: str, case_ids: list[str], **extra: object) -> dict[str, object]:
-    """A vector file with one executable case per id."""
+def _capability(
+    name: str,
+    case_ids: list[str],
+    vectors_per_case: int = 1,
+    **extra: object,
+) -> dict[str, object]:
+    """A vector file with one executable case per id, each carrying N vectors."""
     return {
         "capability": name,
         "tests": [
-            {"id": case_id, "vectors": [{"name": f"{case_id} vector"}]}
+            {
+                "id": case_id,
+                "vectors": [
+                    {"name": f"{case_id} vector {i}"} for i in range(vectors_per_case)
+                ],
+            }
             for case_id in case_ids
         ],
         **extra,
@@ -67,10 +77,14 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             self.report_dir = report_dir
 
         def write_capability(
-            self, name: str, case_ids: list[str], **extra: object
+            self,
+            name: str,
+            case_ids: list[str],
+            vectors_per_case: int = 1,
+            **extra: object,
         ) -> None:
             (spec_dir / f"{name}.json").write_text(
-                json.dumps(_capability(name, case_ids, **extra))
+                json.dumps(_capability(name, case_ids, vectors_per_case, **extra))
             )
 
         def configure_runners(self, pairs: list[tuple[str, str]]) -> None:
@@ -81,18 +95,25 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             )
 
         def write_report(
-            self, language: str, capability: str, executed: list[str], **extra: object
+            self,
+            language: str,
+            capability: str,
+            executed: list[str],
+            vectors_per_case: int = 1,
+            **extra: object,
         ) -> None:
+            # Reports must declare how many vectors each case ran, so the default
+            # mirrors the default capability shape: one vector per case.
+            body: dict[str, object] = {
+                "language": language,
+                "capability": capability,
+                "executed": executed,
+                "executed_vectors": {c: vectors_per_case for c in executed},
+                "native": {},
+            }
+            body.update(extra)
             (report_dir / report_name(language, capability)).write_text(
-                json.dumps(
-                    {
-                        "language": language,
-                        "capability": capability,
-                        "executed": executed,
-                        "native": {},
-                        **extra,
-                    }
-                )
+                json.dumps(body)
             )
 
         def write_raw_report(self, language: str, capability: str, body: str) -> None:
@@ -132,7 +153,7 @@ def test_two_capabilities_are_gated_independently(gate, capsys) -> None:
     assert gate.run() == GATE_PASSED
     out = capsys.readouterr().out
     assert "GATE PASSED" in out
-    assert "id-token, validation" in out
+    assert "id-token (1 vector), validation (1 vector)" in out
 
 
 def test_one_language_skipping_one_case_fails_by_name(gate, capsys) -> None:
@@ -232,10 +253,11 @@ def test_native_case_without_an_anchor_fails(gate, capsys) -> None:
     assert "(python, validation, V-NAT): native case has no native-test anchor" in out
 
 
-def test_pending_marker_keeps_a_capability_out_of_the_gate(gate, capsys) -> None:
+def test_opted_out_capability_stays_out_of_the_gate(gate, capsys, monkeypatch) -> None:
     """The opt-out is honoured — and does not trip the no-runner check."""
+    monkeypatch.setattr(spec_coverage_gate, "OPTED_OUT", frozenset({"dpop"}))
     gate.write_capability("validation", ["V-001"])
-    gate.write_capability("dpop", ["DPOP-001"], cross_language_coverage_gate="pending")
+    gate.write_capability("dpop", ["DPOP-001"])
     gate.configure_runners([(lang, "validation") for lang in LANGUAGES])
     for lang in LANGUAGES:
         gate.write_report(lang, "validation", ["V-001"])
@@ -246,11 +268,67 @@ def test_pending_marker_keeps_a_capability_out_of_the_gate(gate, capsys) -> None
     assert "GATE PASSED" in out
 
 
-def test_pending_marker_is_only_honoured_for_that_exact_value(gate) -> None:
-    """ "enforced", "true", "" — anything but "pending" leaves the capability gated."""
-    gate.write_capability("dpop", ["DPOP-001"], cross_language_coverage_gate="enforced")
+def test_a_vector_file_cannot_exempt_itself_from_the_gate(gate, capsys) -> None:
+    """The old in-file marker is data the gate reads, so it must not be honoured.
 
-    assert "dpop" in spec_inventory()
+    A capability that could exempt itself by editing its own vector file left the
+    gate printing GATE PASSED over a capability nobody ran: the no-runner check
+    iterates the same inventory the marker emptied, so it could not see the
+    exclusion either. Opting out is now a diff to the gate, not to the data.
+    """
+    gate.write_capability("validation", ["V-001"])
+    gate.write_capability("dpop", ["DPOP-001"], cross_language_coverage_gate="pending")
+    gate.configure_runners([(lang, "validation") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "validation", ["V-001"])
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "capabilities with no runner" in out
+    assert "dpop" in out
+
+
+def test_a_case_that_runs_fewer_vectors_than_the_spec_carries_fails(
+    gate, capsys
+) -> None:
+    """Executing one of a case's five vectors is not executing the case.
+
+    The gate verified case ids only, so four of IDT-003's five vectors could be
+    deleted and every language still reported the case executed.
+    """
+    gate.write_capability("validation", ["V-001"], vectors_per_case=5)
+    gate.configure_runners([(lang, "validation") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "validation", ["V-001"], vectors_per_case=5)
+    gate.write_report("go", "validation", ["V-001"], vectors_per_case=1)
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "(go, validation, V-001): ran 1 of 5 vectors" in out
+
+
+def test_a_report_without_vector_counts_fails(gate, capsys) -> None:
+    """A runner that reports only case ids cannot prove it ran every vector."""
+    gate.write_capability("validation", ["V-001"])
+    gate.configure_runners([(lang, "validation") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "validation", ["V-001"])
+    gate.write_raw_report(
+        "rust",
+        "validation",
+        json.dumps(
+            {
+                "language": "rust",
+                "capability": "validation",
+                "executed": ["V-001"],
+                "native": {},
+            }
+        ),
+    )
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "(rust, validation): report has no 'executed_vectors'" in out
 
 
 def test_malformed_vector_file_names_itself(gate) -> None:
@@ -259,6 +337,20 @@ def test_malformed_vector_file_names_itself(gate) -> None:
     with pytest.raises(SystemExit) as excinfo:
         spec_inventory()
     assert "broken.json is not valid JSON" in str(excinfo.value)
+
+
+def test_no_capability_is_currently_opted_out_of_the_gate() -> None:
+    """Guards the live constant: OPTED_OUT is a debt register, not a setting.
+
+    Every entry is a capability nobody gates. Adding one has to be a deliberate,
+    reviewed change to this file — which is the whole reason the opt-out moved
+    here out of the vector files, where a capability could exempt itself.
+    """
+    assert spec_coverage_gate.OPTED_OUT == frozenset(), (
+        f"capabilities outside the cross-language gate: "
+        f"{sorted(spec_coverage_gate.OPTED_OUT)} — each one is a coverage claim "
+        f"nothing checks"
+    )
 
 
 def test_the_real_spec_tree_has_a_runner_for_every_gated_capability() -> None:

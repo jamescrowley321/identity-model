@@ -41,7 +41,11 @@ func TestValidationConformance(t *testing.T) {
 	signingKey := mustSigningKey(t)
 	keySet := mustFixtureKeySet(t)
 
-	executed := make(map[string]bool, len(suite.Tests))
+	// Counted per VECTOR and only after each one passes: runVector calls
+	// t.Fatalf, which ends the subtest, so a failing vector never reaches the
+	// increment. Stamping the case up front reported full coverage for a case
+	// whose vectors failed. Subtests are sequential, so a plain map is safe.
+	executed := make(map[string]int, len(suite.Tests))
 	for _, tc := range suite.Tests {
 		t.Run(tc.ID, func(t *testing.T) {
 			if tc.IsNative() {
@@ -53,27 +57,27 @@ func TestValidationConformance(t *testing.T) {
 			if len(tc.Vectors) == 0 {
 				t.Fatalf("%s: no vectors and not marked native", tc.ID)
 			}
-			executed[tc.ID] = true
 			for i, v := range tc.Vectors {
 				runVector(t, tc.ID, i, v, signingKey, keySet)
+				executed[tc.ID]++
 			}
 		})
 	}
 
-	// Coverage gate: every non-native case must have been executed.
+	// Coverage gate: every non-native case must have run every vector it declares.
 	for _, tc := range suite.Tests {
-		if !tc.IsNative() && !executed[tc.ID] {
-			t.Errorf("case %s is defined but was not executed by the Go runner", tc.ID)
+		if !tc.IsNative() && executed[tc.ID] != len(tc.Vectors) {
+			t.Errorf("case %s: Go runner executed %d of %d vectors", tc.ID, executed[tc.ID], len(tc.Vectors))
 		}
 	}
 
 	writeCoverageReport(t, suite, executed)
 }
 
-// writeCoverageReport emits the executed/native case ids for the
-// cross-language coverage gate (tools/spec_coverage_gate.py) when
+// writeCoverageReport emits the executed/native case ids and the per-case vector
+// counts for the cross-language coverage gate (tools/spec_coverage_gate.py) when
 // SPEC_COVERAGE_OUT is set. Same shape as the Python and Rust runners.
-func writeCoverageReport(t *testing.T, suite *Capability, executed map[string]bool) {
+func writeCoverageReport(t *testing.T, suite *Capability, executed map[string]int) {
 	t.Helper()
 	out := os.Getenv("SPEC_COVERAGE_OUT")
 	if out == "" {
@@ -91,10 +95,11 @@ func writeCoverageReport(t *testing.T, suite *Capability, executed map[string]bo
 	}
 	sort.Strings(ids)
 	report := map[string]any{
-		"language":   "go",
-		"capability": suite.Capability,
-		"executed":   ids,
-		"native":     native,
+		"language":         "go",
+		"capability":       suite.Capability,
+		"executed":         ids,
+		"executed_vectors": executed,
+		"native":           native,
 	}
 	b, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

@@ -32,35 +32,42 @@ func TestIDTokenConformance(t *testing.T) {
 		t.Fatal("id-token capability defines no tests")
 	}
 
-	executed := make(map[string]bool, len(suite.Tests))
+	// Counted per VECTOR and only after each one passes. Stamping the case as
+	// executed before its vectors ran reported full coverage for a case whose
+	// vectors failed — runIDTokenVector calls t.Fatalf, which ends the subtest,
+	// so the increment below is simply never reached for a failing vector.
+	// Subtests here are sequential (no t.Parallel), so a plain map is safe.
+	executed := make(map[string]int, len(suite.Tests))
 	for _, tc := range suite.Tests {
 		t.Run(tc.ID, func(t *testing.T) {
 			if len(tc.Vectors) == 0 {
 				t.Fatalf("%s: no vectors", tc.ID)
 			}
-			executed[tc.ID] = true
 			for i, v := range tc.Vectors {
 				runIDTokenVector(t, tc.ID, i, v)
+				executed[tc.ID]++
 			}
 		})
 	}
 
-	// Coverage gate: every case must have been executed. The id-token capability
-	// has no native-executed cases, so any unexecuted id is a silent skip.
+	// Coverage gate: every case must have run every vector it declares. The
+	// id-token capability has no native-executed cases, so a short count is a
+	// silent skip.
 	for _, tc := range suite.Tests {
-		if !executed[tc.ID] {
-			t.Errorf("case %s is defined but was not executed by the Go id-token runner", tc.ID)
+		if executed[tc.ID] != len(tc.Vectors) {
+			t.Errorf("case %s: Go id-token runner executed %d of %d vectors", tc.ID, executed[tc.ID], len(tc.Vectors))
 		}
 	}
 
 	writeIDTokenCoverageReport(t, suite, executed)
 }
 
-// writeIDTokenCoverageReport emits the executed case ids for the cross-language
-// coverage gate (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set.
+// writeIDTokenCoverageReport emits the executed case ids and the per-case vector
+// counts for the cross-language coverage gate (tools/spec_coverage_gate.py) when
+// SPEC_COVERAGE_OUT is set.
 // Same report shape as the validation runner; id-token declares no
 // execution: "native" cases, so the native map is always empty.
-func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed map[string]bool) {
+func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed map[string]int) {
 	t.Helper()
 	out := os.Getenv("SPEC_COVERAGE_OUT")
 	if out == "" {
@@ -72,10 +79,11 @@ func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed
 	}
 	sort.Strings(ids)
 	report := map[string]any{
-		"language":   "go",
-		"capability": suite.Capability,
-		"executed":   ids,
-		"native":     map[string]string{},
+		"language":         "go",
+		"capability":       suite.Capability,
+		"executed":         ids,
+		"executed_vectors": executed,
+		"native":           map[string]string{},
 	}
 	b, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

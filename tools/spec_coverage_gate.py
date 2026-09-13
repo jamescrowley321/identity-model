@@ -3,9 +3,9 @@
 
 Runs each language's thin conformance runner (Python, Go, Rust) against the
 shared ``spec/vectors`` vectors with ``SPEC_COVERAGE_OUT`` set, then
-verifies every language executed every executable vector case id. Any missing
-(language, vector-id) pair fails the gate by name; success prints a 100%
-per-language coverage report.
+verifies every language executed every vector of every executable case — not
+merely that the case id appeared. Any missing (language, case) pair, and any
+case that ran fewer vectors than the spec carries, fails the gate by name.
 
 Native-executed cases (``execution: "native"`` in the spec — behaviours a
 static vector cannot express) must carry a per-language native-test anchor in
@@ -22,9 +22,14 @@ entry per pair, and any capability with executable vectors that lacks an entry
 for some language fails the gate: a vector file nobody runs is worse than none,
 because the spec then claims coverage that is never checked.
 
-A capability can opt out while its runners are being built by setting
-``cross_language_coverage_gate: "pending"`` in its vector file. That is a
-temporary state — the marker means "not yet gated", never "not required".
+A capability can opt out while its runners are being built, by name, in the
+``OPTED_OUT`` set below. It is deliberately NOT a marker in the vector file:
+the gate reads those files, so a file that could exempt itself would let any
+capability leave enforcement by editing the data the gate is reading — the
+no-runner check iterates the same inventory the marker empties, so it cannot
+see the exclusion either, and the gate still prints GATE PASSED. Dropping a
+capability has to be a diff to this file. Opting out is a temporary state:
+it means "not yet gated", never "not required".
 """
 
 from __future__ import annotations
@@ -123,6 +128,12 @@ RUNNERS: list[tuple[str, str, Path, list[str]]] = [
     ),
 ]
 
+#: Capabilities temporarily outside the cross-language gate while their runners
+#: are built. Listed here — in the gate — and never in a vector file, so removing
+#: a capability from enforcement is a change to the enforcement code rather than
+#: to the data that code reads. Every entry is a debt to be paid, not a setting.
+OPTED_OUT: frozenset[str] = frozenset()
+
 #: Languages that must cover every gated capability.
 LANGUAGES = ["python", "go", "rust"]
 
@@ -140,27 +151,23 @@ def spec_inventory() -> dict[str, dict[str, set[str]]]:
             capability = json.loads(path.read_text())
         except json.JSONDecodeError as exc:
             sys.exit(f"[spec-coverage] {path} is not valid JSON: {exc}")
-        # A capability can opt OUT of the cross-language gate while its polyglot
-        # runners are still being built. Skipping it here keeps the gate green
-        # without silently dropping the capabilities that ARE enforced, and
-        # without tripping the no-runner check below (which would otherwise fire
-        # for every language on a capability nobody runs yet). Drop the marker
-        # once every language ships a runner and add the pairs to RUNNERS; the
-        # marker means "not yet gated", never "not required".
-        if capability.get("cross_language_coverage_gate") == "pending":
+        name = capability["capability"]
+        # The opt-out lives in OPTED_OUT, in this file. A vector file cannot
+        # exempt itself: see the module docstring.
+        if name in OPTED_OUT:
             continue
         cases = capability.get("tests", [])
+        # Per case, how many vectors it carries — not merely that it has some.
+        # The gate used to verify case ids only, so a case could drop four of
+        # its five vectors and every language still reported it executed.
         executable = {
-            c["id"]
+            c["id"]: len(c["vectors"])
             for c in cases
             if c.get("vectors") and c.get("execution") != "native"
         }
         native = {c["id"] for c in cases if c.get("execution") == "native"}
         if executable:
-            inventory[capability["capability"]] = {
-                "executable": executable,
-                "native": native,
-            }
+            inventory[name] = {"executable": executable, "native": native}
     return inventory
 
 
@@ -252,11 +259,30 @@ def check_reports(report_dir: Path) -> int:
 
         executed = set(report.get("executed", []))
         native = report.get("native", {})
+        # Per-case vector counts. A runner that reports only case ids cannot
+        # prove it ran every vector in a case, so its absence is a gate failure
+        # rather than something to infer from `executed`.
+        executed_vectors = report.get("executed_vectors")
+        if not isinstance(executed_vectors, dict):
+            failures.append(
+                f"({language}, {capability}): report has no 'executed_vectors' "
+                f"map of case id to the number of vectors that ran"
+            )
+            continue
 
         failures.extend(
             f"({language}, {capability}, {case_id}): vector case not executed"
-            for case_id in sorted(want["executable"] - executed)
+            for case_id in sorted(set(want["executable"]) - executed)
         )
+        for case_id, expected_vectors in sorted(want["executable"].items()):
+            if case_id not in executed:
+                continue  # already reported as not executed at all
+            ran = executed_vectors.get(case_id)
+            if ran != expected_vectors:
+                failures.append(
+                    f"({language}, {capability}, {case_id}): ran {ran} of "
+                    f"{expected_vectors} vectors"
+                )
         failures.extend(
             f"({language}, {capability}, {case_id}): native case has no "
             f"native-test anchor"
@@ -264,13 +290,17 @@ def check_reports(report_dir: Path) -> int:
             if not native.get(case_id)
         )
 
-        covered = len(want["executable"] & executed)
+        covered = len(set(want["executable"]) & executed)
         total = len(want["executable"])
-        pct = 100.0 * covered / total if total else 0.0
+        vectors_ran = sum(
+            min(executed_vectors.get(c, 0), n) for c, n in want["executable"].items()
+        )
+        vectors_total = sum(want["executable"].values())
+        pct = 100.0 * vectors_ran / vectors_total if vectors_total else 0.0
         print(
             f"[spec-coverage] {language:<7} {capability:<12} "
-            f"{covered}/{total} vector cases ({pct:.0f}%), "
-            f"{len(want['native'])} native (anchored: "
+            f"{covered}/{total} cases, {vectors_ran}/{vectors_total} vectors "
+            f"({pct:.0f}%), {len(want['native'])} native (anchored: "
             f"{sum(1 for c in want['native'] if native.get(c))})"
         )
 
@@ -281,9 +311,15 @@ def check_reports(report_dir: Path) -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    gated = ", ".join(sorted(inventory))
+    gated = ", ".join(
+        f"{name} ({n} vector{'' if n == 1 else 's'})"
+        for name, n in (
+            (name, sum(want["executable"].values()))
+            for name, want in sorted(inventory.items())
+        )
+    )
     print(
-        f"[spec-coverage] GATE PASSED — 100% vector coverage in every language "
+        f"[spec-coverage] GATE PASSED — every vector executed in every language "
         f"for: {gated}"
     )
     return 0

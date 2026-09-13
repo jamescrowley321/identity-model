@@ -27,6 +27,7 @@ vector. With the variable unset it runs as an ordinary unit test.
 from __future__ import annotations
 
 import atexit
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -103,13 +104,16 @@ def _vector_params() -> list:
 
 
 _PARAMS = _vector_params()
-_EXECUTED: set[str] = set()
+#: Vectors that ran AND passed, per case id. Counted per vector, not per case:
+#: the gate verifies each case ran every vector the spec carries for it, so a
+#: case that quietly lost four of its five vectors fails by name. Recorded at
+#: the END of the test so a red vector is never reported as covered.
+_EXECUTED: Counter[str] = Counter()
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(("case_id", "vector"), _PARAMS)
 def test_id_token_vector(case_id: str, vector: dict) -> None:
-    _EXECUTED.add(case_id)
     expect = vector["expect"]
     outcome = expect["outcome"]
     if outcome == "accept":
@@ -132,6 +136,7 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
         )
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {outcome!r}")
+    _EXECUTED[case_id] += 1
 
 
 @pytest.mark.unit
@@ -150,25 +155,8 @@ def test_every_id_token_case_is_executed() -> None:
     )
 
 
-@pytest.mark.unit
-def test_capability_is_inside_the_cross_language_gate() -> None:
-    """Guardrail: id-token.json must stay gated across all three languages.
-
-    Python, Go and Rust all execute these vectors, so the capability is checked
-    by ``tools/spec_coverage_gate.py``. Re-adding
-    ``cross_language_coverage_gate: "pending"`` would silently drop it from that
-    gate while leaving every runner green — the drift the gate exists to catch.
-    Fail here instead, where the reason is obvious.
-    """
-    assert "cross_language_coverage_gate" not in _CAPABILITY, (
-        "id-token.json is gated across python/go/rust — remove the "
-        "cross_language_coverage_gate marker, or add the capability back to "
-        "tools/spec_coverage_gate.py RUNNERS if a language legitimately drops out"
-    )
-
-
 def _write_coverage_report() -> None:
-    """Emit this leg's executed case ids for the cross-language gate.
+    """Emit this leg's executed case ids and per-case vector counts for the gate.
 
     Same shape as the validation runner (test_spec_conformance.py) and the Go
     and Rust legs: the gate reads one report per (language, capability) pair.
@@ -181,6 +169,7 @@ def _write_coverage_report() -> None:
         "language": "python",
         "capability": _CAPABILITY["capability"],
         "executed": sorted(_EXECUTED),
+        "executed_vectors": dict(sorted(_EXECUTED.items())),
         "native": {},
     }
     try:

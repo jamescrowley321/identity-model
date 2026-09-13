@@ -121,5 +121,6 @@ free-text annotation; it is never load-bearing.
   `legacy-ssl-chain`, `legacy-cache-entries-divergence`, `legacy-disco-cache-entries-divergence`.
 
 Fixtures are illustrative reference inputs, not a wire format; a language runner that later
-executes these promotes the relevant cases to `vectors` in `config.json` (and must extend
-`tools/spec_coverage_gate.py` + every runner to per-capability coverage in the same change).
+executes these promotes the relevant cases to `vectors` in `config.json` (and must add a
+`(language, config)` entry to `tools/spec_coverage_gate.py`'s `RUNNERS` for every language in
+the same change — the gate fails on a capability with vectors that no runner covers).
