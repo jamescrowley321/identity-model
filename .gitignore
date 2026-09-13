@@ -188,5 +188,3 @@ mutmut-stats.json
 # moon build cache — never commit (tracked cache poisons affected-detection)
 .moon/cache/
 
-# Locally captured OIDF token (see make conformance-token ACTION=show)
-conformance-token

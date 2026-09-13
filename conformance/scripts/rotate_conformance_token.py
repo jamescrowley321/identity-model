@@ -54,11 +54,10 @@ Preview what the script will do without writing the secret:
 
       uv run conformance/scripts/rotate_conformance_token.py --dry-run
 
-GitHub secrets cannot be read back once written. If you also need the token
-locally, capture it at rotation time — it is written 0600, never printed, so it
-stays out of terminal scrollback, shell history and CI logs:
-
-      uv run conformance/scripts/rotate_conformance_token.py --out-file ~/.config/oidf-token
+The token is never printed and never written to disk. It goes from the browser
+straight into the repository secret and is then discarded. GitHub secrets cannot
+be read back, so if a local copy is ever genuinely needed that should be a
+deliberate decision rather than a side effect of rotating.
 
 Environment variables
 ---------------------
@@ -112,7 +111,6 @@ import logging
 import os
 from pathlib import Path
 import shutil
-import stat
 import subprocess
 import sys
 
@@ -148,7 +146,6 @@ class RotateConfig:
     profile_dir: Path
     headless: bool
     dry_run: bool
-    out_file: Path | None
     repo: str
     secret_name: str
     token_description: str
@@ -175,18 +172,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Create the token but do not write the GitHub secret.",
-    )
-    parser.add_argument(
-        "--out-file",
-        type=Path,
-        default=None,
-        help=(
-            "Also write the token to this file, created 0600. GitHub secrets "
-            "cannot be read back, so rotation is the only chance to capture "
-            "the value for local use. Writing to a file rather than stdout "
-            "keeps a permanent credential out of terminal scrollback, shell "
-            "history and CI logs."
-        ),
     )
     parser.add_argument(
         "--profile-dir",
@@ -220,7 +205,6 @@ def build_config(ns: argparse.Namespace) -> RotateConfig:
         profile_dir=profile_dir,
         headless=ns.headless,
         dry_run=ns.dry_run,
-        out_file=ns.out_file,
         repo=ns.repo,
         secret_name=ns.secret_name,
         token_description=ns.description,
@@ -424,20 +408,6 @@ def push_to_github_secret(token: str, repo: str, secret_name: str) -> None:
         )
 
 
-def _write_secret_file(token: str, path: Path) -> None:
-    """Write the token to disk, readable only by the current user.
-
-    Created with O_EXCL and mode 0600 so the value is never briefly
-    world-readable and an existing file is never silently clobbered.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(
-        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR
-    )
-    with os.fdopen(fd, "w") as handle:
-        handle.write(token)
-
-
 def _ensure_gh_cli_available() -> str:
     """Verify the `gh` CLI is installed and authenticated, return its resolved path.
 
@@ -487,21 +457,12 @@ def rotate_token(cfg: RotateConfig) -> None:
     token = create_token_in_browser(cfg)
     print("Token created successfully.", file=sys.stderr)
 
-    # GitHub secrets are write-only, so this is the only moment the value
-    # exists anywhere. Persist it before the push, which can fail.
-    if cfg.out_file:
-        _write_secret_file(token, cfg.out_file)
-        print(f"Token written to {cfg.out_file} (mode 0600)", file=sys.stderr)
-
     if cfg.dry_run:
         print(
-            "--dry-run set; the repository secret was left unchanged.", file=sys.stderr
+            "--dry-run set; the repository secret was left unchanged and the "
+            "token was discarded.",
+            file=sys.stderr,
         )
-        if not cfg.out_file:
-            print(
-                "The token was not saved anywhere. Re-run with --out-file to keep it.",
-                file=sys.stderr,
-            )
         return
 
     push_to_github_secret(token, cfg.repo, cfg.secret_name)
