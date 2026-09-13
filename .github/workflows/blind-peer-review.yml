@@ -1,11 +1,11 @@
-# Adversarial Review — fresh-context, diff-only AI PR review that fails the merge
-# on real defects. https://github.com/jamescrowley321/adversarial-review
+# Blind Peer Review — fresh-context, diff-only AI PR review that fails the merge
+# on real defects. https://github.com/jamescrowley321/blind-peer-review
 #
 # Setup: add repo secret OPENROUTER_API_KEY; then require the "Merge Gate" check
 # in branch protection. Toggle lenses in the ENABLED list below (one source of
-# truth for the matrix + gate). Action pinned to a commit SHA (v1.6.0).
+# truth for the matrix + gate). Action pinned to a commit SHA (v3.0.0).
 
-name: Adversarial Review
+name: Blind Peer Review
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: adversarial-review-${{ github.ref }}
+  group: blind-peer-review-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -27,23 +27,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.pick.outputs.matrix }}
-      csv: ${{ steps.pick.outputs.csv }}
     steps:
       - id: pick
         shell: node {0}
         env:
           ENABLED: |
-            blind          # logic bugs, footguns (zero context)
-            edge-case      # unhandled branches / boundaries
-            acceptance     # PR acceptance criteria met + tested
-            sentinel       # exploitable security vulnerabilities
-            viper          # red-team attack paths (auth/infra)
-            compliance     # AI-provenance policy + repo rules
+            cold_read  # logic bugs, footguns (zero context)
+            edge_case  # unhandled branches / boundaries
+            acceptance # PR acceptance criteria met + tested
+            security   # exploitable security vulnerabilities
+            red_team   # red-team attack paths (auth/infra)
+            policy     # AI-provenance policy + repo rules
         run: |
           const NAMES = {
-            blind: "Blind Hunter", "edge-case": "Edge Case Hunter",
-            acceptance: "Acceptance Auditor", sentinel: "Sentinel", viper: "Viper",
-            compliance: "Compliance Auditor",
+            cold_read: "Cold Read", "edge_case": "Edge Cases",
+            acceptance: "Acceptance Criteria", security: "Security Review", red_team: "Red Team",
+            policy: "Policy & Provenance",
           };
           const keys = (process.env.ENABLED || "").split("\n")
             .map((l) => l.replace(/#.*/, "").trim()).filter(Boolean);
@@ -54,7 +53,6 @@ jobs:
           const include = keys.map((k) => ({ lens: k, name: NAMES[k] || k }));
           const fs = require("fs");
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `csv=${keys.join(",")}\n`);
 
   preflight:
     name: Preflight
@@ -69,7 +67,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Wait for deterministic checks
-        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -81,7 +79,24 @@ jobs:
           # preflight time out and skip every lens (Merge Gate then failed
           # closed). It stays enforced independently via the required
           # ci / ci-complete check, which aggregates security-gate.
-          required_checks: "ci / lint, ci / unit-tests"
+          #
+          # One check name per line — v3.0.0 stopped splitting this input on
+          # commas (a check name may legally contain one). The old comma form
+          # parsed as a SINGLE check literally named "ci / lint, ci / unit-tests",
+          # which never reports, so preflight could only end in its 600s timeout
+          # and the Merge Gate then failed closed on every PR.
+          #
+          # The prefix is the CALLING job's name, not the workflow's. ci.yml is
+          # a reusable workflow invoked as job id `ci` by both build.yml and
+          # publish-prerelease.yml, so on a pull request the checks report as
+          # `ci / lint` and `ci / unit-tests` (twice each — harmless, the action
+          # takes the latest by started_at). "Full CI (all integrations)" is
+          # nightly.yml's job name; it is schedule/dispatch-only and never runs
+          # on a PR, so naming it here would wait out the timeout just as surely
+          # as the comma did.
+          required_checks: |
+            ci / lint
+            ci / unit-tests
 
   review:
     name: ${{ matrix.name }}
@@ -93,7 +108,7 @@ jobs:
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: ${{ matrix.name }}
-        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: lens
           lens: ${{ matrix.lens }}
@@ -103,7 +118,7 @@ jobs:
           # carries, with strong JSON adherence. Anthropic Sonnet-5 is unusable
           # via openrouter+pi right now — OpenRouter retired the undated alias
           # (404) while pi's catalog lacks the dated snapshot. This matches the
-          # action's v1.7.1 default; kept explicit here for clarity. No
+          # action's v3.0.0 default; kept explicit here for clarity. No
           # models_config: the account/default routing is used (the proven-green
           # self-review config), avoiding a zdr-no-endpoint failure mode.
           model: google/gemini-2.5-pro
@@ -137,12 +152,12 @@ jobs:
       - name: Fail closed when review did not complete
         if: needs.review.result != 'success'
         run: |
-          echo "::error::Adversarial review did not complete cleanly (fork/bot PR, or one or more lenses failed: review=${{ needs.review.result }}). The Merge Gate fails closed — a maintainer must review and merge manually, or re-run the lenses."
+          echo "::error::Blind peer review did not complete cleanly (fork/bot PR, or one or more lenses failed: review=${{ needs.review.result }}). The Merge Gate fails closed — a maintainer must review and merge manually, or re-run the lenses."
           exit 1
       - name: Adjudicate lenses
         if: needs.review.result == 'success'
-        uses: jamescrowley321/adversarial-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
+        uses: jamescrowley321/blind-peer-review@9cf7e5a77cb7372122571feb9741049d7b5f94dc # v3.0.0
         with:
           mode: gate
-          lenses: ${{ needs.config.outputs.csv }}
+          lenses: ${{ needs.config.outputs.matrix }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
