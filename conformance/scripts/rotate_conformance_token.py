@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["playwright>=1.40"]
 # ///
-"""Rotate the OIDC conformance-suite API token and push it to HCP Vault Secrets.
+"""Rotate the OIDC conformance-suite API token and push it to the GitHub repo secret.
 
 Target service: https://www.certification.openid.net/
 
@@ -18,8 +18,8 @@ plans, publishing the certification package) is plain HTTP against the REST
 API using the Bearer token.
 
 This script automates the token creation + storage half of that workflow so
-token rotation is reproducible and the resulting secret lives in HCP Vault
-Secrets instead of a `.env` file on someone's laptop.
+token rotation is reproducible and the resulting secret lands in the GitHub
+Actions secret CI actually reads, instead of a `.env` file on someone's laptop.
 
 Flow
 ----
@@ -29,7 +29,7 @@ Flow
    interactively (Google/GitLab). First run is always headful.
 4. Navigate to the token management page and create a new API token.
 5. Capture the token value from the UI.
-6. Push the value to HCP Vault Secrets via `hcp vault-secrets secrets create`.
+6. Push the value to the repo's GitHub Actions secret via `gh secret set`.
 
 Prerequisites
 -------------
@@ -37,9 +37,8 @@ Prerequisites
 - uv (https://docs.astral.sh/uv/) for the PEP 723 inline script runner
 - Playwright Chromium browser binary:
       uv run --with playwright playwright install chromium
-- HCP CLI (https://developer.hashicorp.com/hcp/docs/cli/install) already
-  authenticated via `hcp auth login` and scoped to the target org/project
-  via `hcp profile init`.
+- GitHub CLI (https://cli.github.com/) authenticated as a repo admin
+  (`gh auth login`) on the target repository.
 
 Usage
 -----
@@ -51,16 +50,21 @@ Subsequent runs (persistent profile keeps you logged in, can be headless):
 
       uv run conformance/scripts/rotate_conformance_token.py --headless
 
-Preview what the script will do without pushing to Vault:
+Preview what the script will do without writing the secret:
 
       uv run conformance/scripts/rotate_conformance_token.py --dry-run
 
+The token is never printed and never written to disk. It goes from the browser
+straight into the repository secret and is then discarded. GitHub secrets cannot
+be read back, so if a local copy is ever genuinely needed that should be a
+deliberate decision rather than a side effect of rotating.
+
 Environment variables
 ---------------------
-HCP_VAULT_APP_NAME     HCP Vault Secrets app to push to
-                       (default: py-identity-model)
-HCP_VAULT_SECRET_NAME  Secret name inside the app
-                       (default: CONFORMANCE_TOKEN)
+CONFORMANCE_TOKEN_REPO  GitHub repository (owner/name) to write the secret to
+                        (default: jamescrowley321/identity-model)
+CONFORMANCE_TOKEN_NAME  Secret name within the repository
+                        (default: CONFORMANCE_TOKEN)
 PLAYWRIGHT_PROFILE_DIR Override the persistent browser profile directory
                        (default: ~/.cache/py-identity-model/playwright-profile)
 
@@ -82,10 +86,16 @@ Design notes
   ``access_token``) and falling back to heuristic extraction if the field
   name changes.
 
-- **Push via the hcp CLI, not the REST API**: HCP Vault Secrets has an HTTP
-  API, but the `hcp` CLI is the easier surface — it handles auth token
-  refresh, org/project scoping, and error reporting. Shelling out is fine
-  for a script that runs occasionally under human supervision.
+- **Push via the gh CLI, not the REST API**: writing a GitHub secret over
+  the REST API means fetching the repo public key and sealing the value with
+  libsodium. The `gh` CLI does that, plus auth, in one command. Shelling out
+  is fine for a script that runs occasionally under human supervision.
+
+- **Why not a secret store**: this previously pushed to HCP Vault Secrets,
+  which HashiCorp has since end-of-lifed — the `hcp vault-secrets` commands
+  and the provider resources backing them are gone. Writing straight to the
+  GitHub secret removes a hop and targets the thing CI actually reads. If a
+  secret store is introduced later, it fronts this rather than replacing it.
 
 - **No credentials in the script**: The script never reads Google/GitLab
   passwords from environment variables. All user auth happens in the
@@ -115,7 +125,7 @@ HTTP_FORBIDDEN = 403
 DEFAULT_PROFILE_DIR = (
     Path.home() / ".cache" / "py-identity-model" / "playwright-profile"
 )
-DEFAULT_APP_NAME = "py-identity-model"
+DEFAULT_REPO = "jamescrowley321/identity-model"
 DEFAULT_SECRET_NAME = "CONFORMANCE_TOKEN"
 DEFAULT_TOKEN_DESCRIPTION = "py-identity-model automation (Playwright-rotated)"
 
@@ -136,7 +146,7 @@ class RotateConfig:
     profile_dir: Path
     headless: bool
     dry_run: bool
-    app_name: str
+    repo: str
     secret_name: str
     token_description: str
 
@@ -144,7 +154,8 @@ class RotateConfig:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Rotate the OIDC conformance suite API token and push it to HCP Vault Secrets."
+            "Rotate the OIDC conformance suite API token and push it to the "
+            "repository's GitHub Actions secret."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -160,7 +171,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Create the token but print it instead of pushing to HCP Vault Secrets.",
+        help="Create the token but do not write the GitHub secret.",
     )
     parser.add_argument(
         "--profile-dir",
@@ -169,14 +180,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Playwright profile dir override (default: {DEFAULT_PROFILE_DIR}).",
     )
     parser.add_argument(
-        "--app-name",
-        default=os.environ.get("HCP_VAULT_APP_NAME", DEFAULT_APP_NAME),
-        help=f"HCP Vault Secrets app name (default: {DEFAULT_APP_NAME}).",
+        "--repo",
+        default=os.environ.get("CONFORMANCE_TOKEN_REPO", DEFAULT_REPO),
+        help=f"Target GitHub repository, owner/name (default: {DEFAULT_REPO}).",
     )
     parser.add_argument(
         "--secret-name",
-        default=os.environ.get("HCP_VAULT_SECRET_NAME", DEFAULT_SECRET_NAME),
-        help=f"Secret name inside the HCP app (default: {DEFAULT_SECRET_NAME}).",
+        default=os.environ.get("CONFORMANCE_TOKEN_NAME", DEFAULT_SECRET_NAME),
+        help=f"Secret name within the repository (default: {DEFAULT_SECRET_NAME}).",
     )
     parser.add_argument(
         "--description",
@@ -194,7 +205,7 @@ def build_config(ns: argparse.Namespace) -> RotateConfig:
         profile_dir=profile_dir,
         headless=ns.headless,
         dry_run=ns.dry_run,
-        app_name=ns.app_name,
+        repo=ns.repo,
         secret_name=ns.secret_name,
         token_description=ns.description,
     )
@@ -359,28 +370,28 @@ def _create_api_token(page: Page, description: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# HCP Vault Secrets push
+# GitHub secret push
 # ---------------------------------------------------------------------------
 
 
-def push_to_hcp_vault_secrets(token: str, app_name: str, secret_name: str) -> None:
-    """Store the token in HCP Vault Secrets via the `hcp` CLI.
+def push_to_github_secret(token: str, repo: str, secret_name: str) -> None:
+    """Store the token as a GitHub Actions secret via the `gh` CLI.
 
-    Uses ``hcp vault-secrets secrets create`` with the value on stdin so the
-    token never appears on the process's command line (which would be visible
-    to other users via ``ps`` on shared systems).
+    Passes the value on stdin so the token never appears on the process's
+    command line (which would be visible to other users via ``ps`` on shared
+    systems).
     """
-    hcp_path = _ensure_hcp_cli_available()
+    gh_path = _ensure_gh_cli_available()
 
     cmd = [
-        hcp_path,
-        "vault-secrets",
-        "secrets",
-        "create",
+        gh_path,
+        "secret",
+        "set",
         secret_name,
-        "--app",
-        app_name,
-        "--data-file=-",
+        "--repo",
+        repo,
+        "--body-file",
+        "-",
     ]
     result = subprocess.run(  # noqa: S603 — CLI invocation, argv is fully controlled above
         cmd,
@@ -391,32 +402,31 @@ def push_to_hcp_vault_secrets(token: str, app_name: str, secret_name: str) -> No
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"hcp CLI failed (exit {result.returncode}).\n"
+            f"gh CLI failed (exit {result.returncode}).\n"
             f"  stderr: {result.stderr.strip()}\n"
             f"  stdout: {result.stdout.strip()}"
         )
 
 
-def _ensure_hcp_cli_available() -> str:
-    """Verify the `hcp` CLI is installed and authenticated, return its resolved path.
+def _ensure_gh_cli_available() -> str:
+    """Verify the `gh` CLI is installed and authenticated, return its resolved path.
 
-    Returns the absolute path to the ``hcp`` binary as resolved by
+    Returns the absolute path to the ``gh`` binary as resolved by
     :func:`shutil.which` so subsequent ``subprocess.run`` calls pass an
     absolute argv[0] and don't rely on PATH lookups at the subprocess
     boundary. Raises RuntimeError with an actionable message if the CLI is
-    missing. We do not attempt to run ``hcp auth login`` automatically
-    because that would itself require an interactive flow and is out of
-    scope for this script.
+    missing or unauthenticated. We do not attempt to run ``gh auth login``
+    automatically because that would itself require an interactive flow and
+    is out of scope for this script.
     """
-    hcp_path = shutil.which("hcp")
-    if hcp_path is None:
+    gh_path = shutil.which("gh")
+    if gh_path is None:
         raise RuntimeError(
-            "hcp CLI not found on PATH. Install it from "
-            "https://developer.hashicorp.com/hcp/docs/cli/install."
+            "gh CLI not found on PATH. Install it from https://cli.github.com/."
         )
     try:
         subprocess.run(  # noqa: S603 — argv is fully controlled above
-            [hcp_path, "--version"],
+            [gh_path, "auth", "status"],
             check=True,
             capture_output=True,
         )
@@ -428,8 +438,10 @@ def _ensure_hcp_cli_available() -> str:
         # and main()'s RuntimeError catch, crashing with a traceback
         # instead of a clean error message.
         stderr_text = exc.stderr.decode("utf-8", errors="replace")
-        raise RuntimeError(f"hcp CLI version check failed: {stderr_text}") from exc
-    return hcp_path
+        raise RuntimeError(
+            f"gh CLI is not authenticated. Run `gh auth login`.\n  {stderr_text}"
+        ) from exc
+    return gh_path
 
 
 # ---------------------------------------------------------------------------
@@ -438,22 +450,23 @@ def _ensure_hcp_cli_available() -> str:
 
 
 def rotate_token(cfg: RotateConfig) -> None:
-    print(f"Rotating CONFORMANCE_TOKEN via {SUITE_URL}", file=sys.stderr)
+    print(f"Rotating the conformance token via {SUITE_URL}", file=sys.stderr)
     print(f"  profile dir: {cfg.profile_dir}", file=sys.stderr)
-    print(f"  target: {cfg.app_name}", file=sys.stderr)
+    print(f"  target repo: {cfg.repo}", file=sys.stderr)
 
     token = create_token_in_browser(cfg)
-    print("Token created successfully", file=sys.stderr)
+    print("Token created successfully.", file=sys.stderr)
 
     if cfg.dry_run:
-        print("--dry-run set; not pushing to HCP Vault Secrets.", file=sys.stderr)
+        print(
+            "--dry-run set; the repository secret was left unchanged and the "
+            "token was discarded.",
+            file=sys.stderr,
+        )
         return
 
-    push_to_hcp_vault_secrets(token, cfg.app_name, cfg.secret_name)
-    print(
-        f"Pushed token to HCP Vault Secrets: {cfg.app_name}",
-        file=sys.stderr,
-    )
+    push_to_github_secret(token, cfg.repo, cfg.secret_name)
+    print("Repository secret updated.", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------

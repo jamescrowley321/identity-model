@@ -353,12 +353,18 @@ conformance-test-harness: ## Run conformance harness unit tests (parser + callba
 	$(UVROOT) --with fastapi --with httpx --with python-multipart --with respx pytest conformance/tests/ -v
 
 .PHONY: conformance-token
-conformance-token: ## Manage OIDF API token (ACTION=create|show|env)
+conformance-token: ## Rotate the OIDF API token into the repository secret
 ifeq ($(ACTION),show)
-	$(UVROOT) conformance/scripts/rotate_conformance_token.py --dry-run --show-token
+	@echo "ACTION=show is gone: it printed the token, which 4728e4b removed on" >&2
+	@echo "purpose — this script never writes the token to console or disk." >&2
+	@echo "Run without ACTION to rotate; the value goes straight to the secret." >&2
+	@exit 1
 else ifeq ($(ACTION),env)
-	@echo "export CONFORMANCE_TOKEN=$$(hcp vault-secrets secrets open CONFORMANCE_TOKEN --app py-identity-model --format json | jq -r '.static_version.value')"
-	@echo "# Run the above command, or: eval \$$(make conformance-token ACTION=env)"
+	@echo "ACTION=env is gone: it read the token back from HCP Vault Secrets," >&2
+	@echo "which HashiCorp end-of-lifed. GitHub secrets cannot be read back at" >&2
+	@echo "all, so no equivalent exists. Use ACTION=show to mint a fresh token" >&2
+	@echo "and print it, then export it yourself." >&2
+	@exit 1
 else
 	@echo "Launching browser for certification.openid.net login..."
 	@echo "First run: sign in via Google/GitLab in the browser window."

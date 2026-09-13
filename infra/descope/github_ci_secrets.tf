@@ -9,12 +9,11 @@
 #    CI secret into the Dependabot event scope. Dependabot-authored PRs run
 #    under a separate secret scope from regular workflow_dispatch/pull_request
 #    events, and without these mirrors the Ory + Descope integration tests
-#    (and SonarCloud) fail every dependabot PR, which blocks auto-merge.
+#    fail every dependabot PR, which blocks auto-merge.
 #
-# 2. The Ory integration test credentials (`TEST_*`) and `SONAR_TOKEN`,
-#    which previously had no declarative source. `TEST_*` values live in
-#    the local `.env` at the repo root (provisioned once via the Ory
-#    dashboard); SONAR_TOKEN comes from a Terraform variable.
+# 2. The Ory integration test credentials (`TEST_*`), which previously had
+#    no declarative source. These values live in the local `.env` at the
+#    repo root (provisioned once via the Ory dashboard).
 
 locals {
   # Parse ../../.env (repo root) into a map of VAR => value. Handles the
@@ -60,11 +59,9 @@ locals {
 
   # Full set of secrets that must exist in BOTH the actions and dependabot
   # scopes for every CI stage to pass on a dependabot-authored PR.
-  # SONAR_TOKEN is only included when the variable is non-empty.
   dependabot_mirrored_secrets = merge(
     local.ory_test_secrets,
     local.descope_ci_secrets,
-    var.sonar_token != "" ? { SONAR_TOKEN = var.sonar_token } : {},
   )
 }
 
@@ -79,16 +76,9 @@ resource "github_actions_secret" "ory_test" {
   plaintext_value = each.value
 }
 
-resource "github_actions_secret" "sonar_token" {
-  count           = var.sonar_token != "" ? 1 : 0
-  repository      = var.github_repository
-  secret_name     = "SONAR_TOKEN"
-  plaintext_value = var.sonar_token
-}
-
 # --------------------------------------------------------------------------
-# Dependabot scope: mirror everything — Descope, Ory, SonarCloud — so the
-# full CI matrix passes on dependabot PRs and auto-merge can actually fire.
+# Dependabot scope: mirror everything — Descope and Ory — so the full CI
+# matrix passes on dependabot PRs and auto-merge can actually fire.
 # --------------------------------------------------------------------------
 
 # nonsensitive() is required because the merged map contains values derived
