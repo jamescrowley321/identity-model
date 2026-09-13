@@ -196,7 +196,7 @@ test-all: test test-examples ## Run all tests including examples
 .PHONY: test-tools
 test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outside the library suite
 	$(UVROOT) --with "python-semantic-release==10.6.1" pyrefly check tools
-	$(UVROOT) pytest tools/tests/ -v
+	$(UVROOT) --with "python-semantic-release==10.6.1" pytest tools/tests/ -v
 
 # ── fastapi-identity-model package ───────────────────────────────────
 
@@ -362,8 +362,9 @@ ifeq ($(ACTION),show)
 else ifeq ($(ACTION),env)
 	@echo "ACTION=env is gone: it read the token back from HCP Vault Secrets," >&2
 	@echo "which HashiCorp end-of-lifed. GitHub secrets cannot be read back at" >&2
-	@echo "all, so no equivalent exists. Use ACTION=show to mint a fresh token" >&2
-	@echo "and print it, then export it yourself." >&2
+	@echo "all, so nothing can hand you the current token — not this target, and" >&2
+	@echo "not ACTION=show, which is gone for printing it. Run without ACTION to" >&2
+	@echo "rotate; if you need a local copy, mint your own token in the suite UI." >&2
 	@exit 1
 else
 	@echo "Launching browser for certification.openid.net login..."

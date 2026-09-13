@@ -30,7 +30,8 @@ pipeline only sees its own history:
 
 The split is scope-based, not path-based: an unscoped ``fix:`` that touches
 only ``go/`` still bumps the core. Scoping cross-track commits (``(fastapi)``,
-``(go)``, ``(rust)``, ``(spec)``, ``(infra)``, ``(node)``) is therefore
+``(go)``, ``(rust)``, ``(spec)``, ``(infra)``, ``(node)``, ``(conformance)``,
+``(tools)``) is therefore
 load-bearing — see CLAUDE.md "Workspace Packages". The release workflow also
 path-guards on those directories as a second line of defence.
 """
@@ -48,9 +49,20 @@ from semantic_release.commit_parser.token import (
 PACKAGE_SCOPE = "fastapi"
 
 #: Scopes that belong to a release track OTHER than the core Python library:
-#: the fastapi package, the Go/Rust/Node native libraries, and the shared
-#: spec/infra. A commit carrying one of these must not bump py-identity-model.
-NON_CORE_SCOPES = frozenset({PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra"})
+#: the fastapi package, the Go/Rust/Node native libraries, the shared
+#: spec/infra, and the repo-only trees that ship nothing — ``conformance/``
+#: (the OIDF certification harness) and ``tools/`` (the gates and release
+#: machinery). A commit carrying one of these must not bump py-identity-model.
+#:
+#: ``conformance`` was missing, and it is not a hypothetical: two
+#: ``fix(conformance):`` commits about a token-rotation *script* cut
+#: py-identity-model 3.18.1, whose changelog then read "Stop the rotation
+#: script disclosing the token" under Bug Fixes — in the published changelog
+#: of an auth library, where it looks like a token-disclosure fix in the
+#: library itself. Nothing in either commit touches shipped code.
+NON_CORE_SCOPES = frozenset(
+    {PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra", "conformance", "tools"}
+)
 
 
 def _is_scope_commit(result: ParseResult, scope: str) -> bool:
