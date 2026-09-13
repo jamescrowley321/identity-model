@@ -54,10 +54,11 @@ Preview what the script will do without writing the secret:
 
       uv run conformance/scripts/rotate_conformance_token.py --dry-run
 
-GitHub secrets cannot be read back once written. If you also need the token in
-your shell for a local conformance run, capture it at rotation time:
+GitHub secrets cannot be read back once written. If you also need the token
+locally, capture it at rotation time — it is written 0600, never printed, so it
+stays out of terminal scrollback, shell history and CI logs:
 
-      uv run conformance/scripts/rotate_conformance_token.py --show-token
+      uv run conformance/scripts/rotate_conformance_token.py --out-file ~/.config/oidf-token
 
 Environment variables
 ---------------------
@@ -111,6 +112,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -138,9 +140,6 @@ UI_INTERACTION_TIMEOUT_MS = 30 * 1000  # 30 seconds
 # in the extraction path rather than a real secret.
 MIN_MASKABLE_TOKEN_LEN = 12
 
-# Characters of a token shown at each end when masking.
-MASK_EDGE_LEN = 4
-
 
 @dataclass
 class RotateConfig:
@@ -149,7 +148,7 @@ class RotateConfig:
     profile_dir: Path
     headless: bool
     dry_run: bool
-    show_token: bool
+    out_file: Path | None
     repo: str
     secret_name: str
     token_description: str
@@ -178,12 +177,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Create the token but do not write the GitHub secret.",
     )
     parser.add_argument(
-        "--show-token",
-        action="store_true",
+        "--out-file",
+        type=Path,
+        default=None,
         help=(
-            "Print the full token to stdout. GitHub secrets cannot be read "
-            "back, so this is the only chance to capture the value for local "
-            "use. Without it the token is masked."
+            "Also write the token to this file, created 0600. GitHub secrets "
+            "cannot be read back, so rotation is the only chance to capture "
+            "the value for local use. Writing to a file rather than stdout "
+            "keeps a permanent credential out of terminal scrollback, shell "
+            "history and CI logs."
         ),
     )
     parser.add_argument(
@@ -218,7 +220,7 @@ def build_config(ns: argparse.Namespace) -> RotateConfig:
         profile_dir=profile_dir,
         headless=ns.headless,
         dry_run=ns.dry_run,
-        show_token=ns.show_token,
+        out_file=ns.out_file,
         repo=ns.repo,
         secret_name=ns.secret_name,
         token_description=ns.description,
@@ -422,6 +424,20 @@ def push_to_github_secret(token: str, repo: str, secret_name: str) -> None:
         )
 
 
+def _write_secret_file(token: str, path: Path) -> None:
+    """Write the token to disk, readable only by the current user.
+
+    Created with O_EXCL and mode 0600 so the value is never briefly
+    world-readable and an existing file is never silently clobbered.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR
+    )
+    with os.fdopen(fd, "w") as handle:
+        handle.write(token)
+
+
 def _ensure_gh_cli_available() -> str:
     """Verify the `gh` CLI is installed and authenticated, return its resolved path.
 
@@ -458,51 +474,38 @@ def _ensure_gh_cli_available() -> str:
     return gh_path
 
 
-def _mask(token: str) -> str:
-    """Render a token for human eyes without disclosing it.
-
-    Tokens shorter than :data:`MIN_MASKABLE_TOKEN_LEN` are not partially
-    revealed at all — at that length the visible edges would be most of the
-    value, and such a token almost certainly indicates an extraction bug
-    rather than a real credential.
-    """
-    if len(token) < MIN_MASKABLE_TOKEN_LEN:
-        return "<too short to mask — check the extraction path>"
-    return f"{token[:MASK_EDGE_LEN]}...{token[-MASK_EDGE_LEN:]} ({len(token)} chars)"
-
-
 # ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
 
 
 def rotate_token(cfg: RotateConfig) -> None:
-    print(f"Rotating {cfg.secret_name} via {SUITE_URL}", file=sys.stderr)
+    print(f"Rotating the conformance token via {SUITE_URL}", file=sys.stderr)
     print(f"  profile dir: {cfg.profile_dir}", file=sys.stderr)
-    print(f"  target: {cfg.repo} ({cfg.secret_name})", file=sys.stderr)
+    print(f"  target repo: {cfg.repo}", file=sys.stderr)
 
     token = create_token_in_browser(cfg)
-    print(f"Token created successfully: {_mask(token)}", file=sys.stderr)
+    print("Token created successfully.", file=sys.stderr)
 
-    # GitHub secrets are write-only. This is the only moment the value is
-    # available, so honour --show-token before the push can fail.
-    if cfg.show_token:
-        print(token)
+    # GitHub secrets are write-only, so this is the only moment the value
+    # exists anywhere. Persist it before the push, which can fail.
+    if cfg.out_file:
+        _write_secret_file(token, cfg.out_file)
+        print(f"Token written to {cfg.out_file} (mode 0600)", file=sys.stderr)
 
     if cfg.dry_run:
         print(
-            f"--dry-run set; {cfg.secret_name} on {cfg.repo} left unchanged.",
-            file=sys.stderr,
+            "--dry-run set; the repository secret was left unchanged.", file=sys.stderr
         )
-        if not cfg.show_token:
+        if not cfg.out_file:
             print(
-                "Re-run with --show-token to print the value instead.",
+                "The token was not saved anywhere. Re-run with --out-file to keep it.",
                 file=sys.stderr,
             )
         return
 
     push_to_github_secret(token, cfg.repo, cfg.secret_name)
-    print(f"Wrote {cfg.secret_name} to {cfg.repo}", file=sys.stderr)
+    print("Repository secret updated.", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------

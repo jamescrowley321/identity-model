@@ -355,8 +355,8 @@ conformance-test-harness: ## Run conformance harness unit tests (parser + callba
 .PHONY: conformance-token
 conformance-token: ## Manage OIDF API token (ACTION=create|show)
 ifeq ($(ACTION),show)
-	@echo "Creating a token and printing it WITHOUT writing the GitHub secret..."
-	$(UVROOT) conformance/scripts/rotate_conformance_token.py --dry-run --show-token
+	@echo "Creating a token and saving it to ./conformance-token (0600), WITHOUT writing the GitHub secret..."
+	$(UVROOT) conformance/scripts/rotate_conformance_token.py --dry-run --out-file ./conformance-token
 else ifeq ($(ACTION),env)
 	@echo "ACTION=env is gone: it read the token back from HCP Vault Secrets," >&2
 	@echo "which HashiCorp end-of-lifed. GitHub secrets cannot be read back at" >&2
