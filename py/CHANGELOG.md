@@ -2,6 +2,70 @@
 
 <!-- version list -->
 
+## v3.18.1 (2026-09-13)
+
+### Bug Fixes
+
+- **conformance**: Restore the no-token-output rule this PR had broken
+  ([#659](https://github.com/jamescrowley321/identity-model/pull/659),
+  [`674050d`](https://github.com/jamescrowley321/identity-model/commit/674050de467dbf0c2a41e33f2ac20ed3d96f2512))
+
+- **conformance**: Stop the rotation script disclosing the token
+  ([#659](https://github.com/jamescrowley321/identity-model/pull/659),
+  [`674050d`](https://github.com/jamescrowley321/identity-model/commit/674050de467dbf0c2a41e33f2ac20ed3d96f2512))
+
+### Chores
+
+- Sync uv.lock with 3.18.0
+  ([`61a5e3d`](https://github.com/jamescrowley321/identity-model/commit/61a5e3d7c9ee8b4699e8495c557b82a10377b0f6))
+
+- **conformance**: Ignore certification packages and record the latest run
+  ([#660](https://github.com/jamescrowley321/identity-model/pull/660),
+  [`3f08a36`](https://github.com/jamescrowley321/identity-model/commit/3f08a364a425fb0c0c292efc5a97c7b2ee16b070))
+
+- **deps)(deps**: Update idna requirement
+  ([#655](https://github.com/jamescrowley321/identity-model/pull/655),
+  [`2e6a4c5`](https://github.com/jamescrowley321/identity-model/commit/2e6a4c50a100be40660d0397d6850ecfda5bb319))
+
+### Continuous Integration
+
+- Add diff-scoped Go/Rust mutation gates mirroring the Python security-gate (#638)
+  ([#647](https://github.com/jamescrowley321/identity-model/pull/647),
+  [`0266cc1`](https://github.com/jamescrowley321/identity-model/commit/0266cc1c4699f96586432e4292aee70e1070ef8b))
+
+- Re-enable adversarial review (v1.7.1, gemini-2.5-pro)
+  ([#595](https://github.com/jamescrowley321/identity-model/pull/595),
+  [`773578d`](https://github.com/jamescrowley321/identity-model/commit/773578d5998c2753412fda4cfdd2ebe3930fee97))
+
+- Wire Go lint + reachability-vuln gates (parity with Python)
+  ([#635](https://github.com/jamescrowley321/identity-model/pull/635),
+  [`b7c39a9`](https://github.com/jamescrowley321/identity-model/commit/b7c39a9fe1e2cbfa21e9eb459490a8541e36b8fc))
+
+- Wire Rust lint + supply-chain gates (parity with Python)
+  ([#636](https://github.com/jamescrowley321/identity-model/pull/636),
+  [`eb7969d`](https://github.com/jamescrowley321/identity-model/commit/eb7969d65a417c9a17edaa2ee7ddbce4cd7cb6f8))
+
+- **deps)(deps**: Bump jamescrowley321/adversarial-review
+  ([#658](https://github.com/jamescrowley321/identity-model/pull/658),
+  [`c373661`](https://github.com/jamescrowley321/identity-model/commit/c373661211ece18fbd7c91ddfc1fd5a57efaa8fb))
+
+- **deps)(deps**: Bump jamescrowley321/adversarial-review
+  ([#657](https://github.com/jamescrowley321/identity-model/pull/657),
+  [`dfaafd6`](https://github.com/jamescrowley321/identity-model/commit/dfaafd6c4e93bc943065e1ee9de94865dc6391ea))
+
+### Documentation
+
+- Overhaul stale docs — contributing, publish status, API reference
+  ([#640](https://github.com/jamescrowley321/identity-model/pull/640),
+  [`bb4b0b7`](https://github.com/jamescrowley321/identity-model/commit/bb4b0b706f71653d0ea4cdba1d72d47f916bb2ac))
+
+### Refactoring
+
+- **tooling**: Separate repo infrastructure from the Python package
+  ([#648](https://github.com/jamescrowley321/identity-model/pull/648),
+  [`bae9d4f`](https://github.com/jamescrowley321/identity-model/commit/bae9d4ff4d34965ac62afc2b347703e4bf2af814))
+
+
 ## v3.18.0 (2026-09-05)
 
 ### Bug Fixes
