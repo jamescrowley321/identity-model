@@ -19,14 +19,14 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json` | implemented | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json` | implemented | implemented | implemented |
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json` | implemented | implemented | implemented |
-| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | implemented | implemented | implemented |
+| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | in-progress‡ | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | implemented | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
 | Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
-| Extended | Token Introspection | RFC 7662 | `introspection.json` | implemented | implemented | implemented |
-| Extended | Token Revocation | RFC 7009 | `revocation.json` | implemented | implemented | planned |
-| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | implemented | implemented | planned |
+| Extended | Token Introspection | RFC 7662 | `introspection.json` | in-progress‡ | implemented | implemented |
+| Extended | Token Revocation | RFC 7009 | `revocation.json` | in-progress‡ | implemented | planned |
+| Extended | Token Exchange | RFC 8693 | `token-exchange.json` | in-progress‡ | implemented | planned |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
@@ -42,11 +42,29 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-reconciliation-plan.md` (and the parity report beside it) for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
-> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors, and hard-fails if a second such capability appears before the runners emit per-capability coverage reports. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
+> ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
+> MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
+> each require support for **both** `client_secret_basic` *and* `client_secret_post`. Python implements
+> `private_key_jwt`, mTLS and Basic only — there is no `client_secret_post` path in
+> `core/token_client_logic.py`, `introspection_logic.py` or `revocation_logic.py`. Go and Rust both ship it.
+> The cells were previously marked `implemented`, which contradicted the requirements a few screens below
+> them. Rather than soften a MUST that two of three languages already meet, the status now reflects
+> reality; it flips back to `implemented` when
+> [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574) lands.
 >
-> **Known cross-language divergences** the plan reconciles: Go and Rust support `client_secret_post`, id-token `nonce` validation, and the RFC 8414 issuer-identifier match, none of which Python does yet; Rust validates `azp`, which Python and Go do not.
+> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors. It gates each (language, capability) pair independently, and fails closed on any capability that has executable vectors but no runner configured for some language. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
+>
+> **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
+> Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
+> neither. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
+> A third divergence is deliberate and is not being reconciled: Rust enforces `azp` on base token
+> validation whenever an expected audience is set, while Python and Go enforce it in the narrower
+> id-token profile. Rust stays strict.
+>
+> Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
+> Go gained with the id-token profile (#629–#632).
 >
 > **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 
@@ -88,6 +106,16 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ## Capability Definitions (Extended Tier)
 
 ### Token Introspection
+
+> **Vector-id anchoring.** `introspection.json`'s `INTR-001`…`INTR-006` are descriptive-only — they carry no
+> executable vectors, so `spec-vector-coverage` does not enforce them and each language anchors them by naming
+> the id in the covering test. Current state: Go (`pkg/introspection/introspection_test.go`) and Rust
+> (`tests/introspection.rs`) anchor all six; Python anchors `INTR-001`, `-002`, `-004` and `-005` in
+> `test_introspection.py` / `test_aio_introspection.py`, and half of `-003` — it has no `client_secret_post`
+> path to anchor (see ‡ above). **`INTR-006` (resolving the endpoint from the discovery document) has no Python
+> anchor**: Python's `introspect_token` takes the endpoint on the request, so discovery resolution is a caller
+> step rather than library behaviour. Recorded here as a real asymmetry rather than left silently missing.
+
 
 - Implementations MUST POST to the introspection endpoint as
   `application/x-www-form-urlencoded` with the `token` parameter (REQUIRED) and
