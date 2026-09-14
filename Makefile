@@ -19,9 +19,12 @@ UVROOT := uv run --project py
 # real `git.Commit` objects, and a different GitPython tests a different pipeline.
 #
 # Deliberately NOT a uv dependency group: PSR requires `click<8.5.0,~=8.1.0`, so
-# locking it would drag the whole py/ resolution down to click 8.1.x — which is
-# CVE-2026-7246 (command injection in click.edit(), fixed in 8.3.3) — for flask,
-# uvicorn, mkdocs and mutmut alike. Release tooling runs in an ephemeral uvx/uv
+# locking it would drag the whole py/ resolution down to click 8.1.x — for flask,
+# uvicorn, mkdocs and mutmut alike — from the 8.4.x py/ resolves today. The 8.1.x
+# range is covered by GHSA-47fr-3ffg-hgmw / CVE-2026-7246 (click.edit() command
+# injection, fixed in 8.3.3). Pallets disputes that record; the advisory databases
+# still carry it and this repo's scanners gate on the databases, so a downgrade
+# into that range fails CI whatever the dispute settles as. Release tooling runs in an ephemeral uvx/uv
 # env and is not a project dependency; keeping it out of uv.lock keeps that
 # constraint out of the project's dependency graph.
 #
