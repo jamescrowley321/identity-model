@@ -34,6 +34,7 @@ from pathlib import Path
 
 import git
 import pytest
+import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
@@ -51,8 +52,32 @@ _PSR_PIN = re.compile(r"""python-semantic-release\s*==\s*([0-9][^"'\s\\]*)""")
 _GITPYTHON_PIN = re.compile(
     r"""gitpython\s*(>=|<=|==|<|>)\s*([0-9][^"',\s\\]*)""", re.IGNORECASE
 )
-# Every uvx line that runs PSR, so each can be checked for the bound.
-_UVX_PSR_LINE = re.compile(r"^.*uvx\s+.*python-semantic-release.*$", re.MULTILINE)
+#: Matches a `uvx` invocation of PSR inside one shell command, however it is
+#: wrapped. A previous line-based regex missed any invocation split across lines
+#: with a backslash — and because the bound check only inspects what it matched,
+#: a reformatted job would have escaped it silently while the others still
+#: matched. Line continuations are folded away before this is applied.
+_UVX_PSR = re.compile(r"uvx\s[^;&|]*?python-semantic-release", re.DOTALL)
+_LINE_CONTINUATION = re.compile(r"\\\s*\n\s*")
+
+
+def _run_blocks(workflow_text: str) -> list[str]:
+    """Every `run:` script in the workflow, as whole commands.
+
+    Parsed as YAML rather than scanned line by line, so a `run:` block is read
+    as the shell script it is. Line continuations are folded, so an invocation
+    wrapped across several lines is one command here — which is the point: the
+    checks below inspect what they match, so anything they fail to match is
+    silently exempt from them.
+    """
+    doc = yaml.safe_load(workflow_text)
+    blocks: list[str] = []
+    for job in (doc.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            run = step.get("run")
+            if isinstance(run, str):
+                blocks.append(_LINE_CONTINUATION.sub(" ", run))
+    return blocks
 
 
 @pytest.fixture(scope="module")
@@ -146,43 +171,60 @@ class TestTheWorkflowAgreesWithTheMakefile:
     def workflow(self) -> str:
         return _RELEASE_WORKFLOW.read_text()
 
-    def test_the_workflow_still_invokes_psr(self, workflow):
+    @pytest.fixture(scope="class")
+    def psr_commands(self, workflow) -> list[str]:
+        """Every shell command in release.yml that runs PSR through uvx."""
+        return [b for b in _run_blocks(workflow) if _UVX_PSR.search(b)]
+
+    def test_the_workflow_still_invokes_psr(self, psr_commands):
         """Guards the rest of the class against passing vacuously."""
-        assert _UVX_PSR_LINE.findall(workflow), (
+        assert psr_commands, (
             "release.yml no longer runs python-semantic-release via uvx; these "
             "pin-parity assertions would pass vacuously — update them."
         )
 
-    def test_every_psr_pin_matches_the_makefile(self, workflow, psr_pin):
-        found = _PSR_PIN.findall(workflow)
+    def test_every_psr_invocation_is_accounted_for(self, workflow, psr_commands):
+        """Nothing mentioning PSR may sit outside the set the checks inspect.
+
+        The checks below only constrain `psr_commands`. If a `run:` block names
+        PSR but this fixture does not classify it as a uvx invocation, that block
+        would be exempt from every assertion without anyone noticing.
+        """
+        mentions = [b for b in _run_blocks(workflow) if "python-semantic-release" in b]
+        unmatched = [b.strip()[:120] for b in mentions if b not in psr_commands]
+        assert not unmatched, (
+            "these release.yml run-blocks mention python-semantic-release but were "
+            f"not recognised as uvx invocations, so nothing checks them: {unmatched}"
+        )
+
+    def test_every_psr_pin_matches_the_makefile(self, psr_commands, psr_pin):
+        found = [v for cmd in psr_commands for v in _PSR_PIN.findall(cmd)]
         assert found, "release.yml pins no python-semantic-release version"
         drifted = sorted({v for v in found if v != psr_pin})
         assert not drifted, (
-            f"release.yml pins python-semantic-release {drifted}, but the `tools` "
-            f"group pins {psr_pin}. `make test-tools` would validate the release "
-            "parsers against a PSR the release job never runs."
+            f"release.yml pins python-semantic-release {drifted}, but PSR_TOOLING "
+            f"pins {psr_pin}. `make test-tools` would validate the release parsers "
+            "against a PSR the release job never runs."
         )
 
     def test_every_gitpython_pin_matches_the_makefile(
-        self, workflow, gitpython_specifier
+        self, psr_commands, gitpython_specifier
     ):
-        found = _GITPYTHON_PIN.findall(workflow)
+        found = [v for cmd in psr_commands for v in _GITPYTHON_PIN.findall(cmd)]
         assert found, "release.yml no longer constrains GitPython"
-        expected = {(s.operator, s.version) for s in gitpython_specifier}
+        expected = {(sp.operator, sp.version) for sp in gitpython_specifier}
         drifted = sorted(
             {f"{op}{ver}" for op, ver in found if (op, ver) not in expected}
         )
         assert not drifted, (
-            f"release.yml constrains GitPython {drifted}, but the `tools` group "
-            f"says {gitpython_specifier}."
+            f"release.yml constrains GitPython {drifted}, but PSR_TOOLING says "
+            f"{gitpython_specifier}."
         )
 
-    def test_no_psr_invocation_omits_the_gitpython_bound(self, workflow):
+    def test_no_psr_invocation_omits_the_gitpython_bound(self, psr_commands):
         """One unconstrained job is enough to resolve a vulnerable GitPython."""
         unconstrained = [
-            line.strip()
-            for line in _UVX_PSR_LINE.findall(workflow)
-            if not _GITPYTHON_PIN.search(line)
+            cmd.strip()[:120] for cmd in psr_commands if not _GITPYTHON_PIN.search(cmd)
         ]
         assert not unconstrained, (
             "these release.yml invocations run python-semantic-release without the "
