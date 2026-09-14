@@ -18,6 +18,7 @@ INTROSPECT_URL = "https://auth.example.com/introspect"
 class TestAsyncIntrospection:
     @respx.mock
     async def test_active_token(self):
+        """INTR-001: introspecting an active token returns active=true plus the standard claims."""
         respx.post(INTROSPECT_URL).mock(
             return_value=httpx.Response(
                 200,
@@ -53,6 +54,7 @@ class TestAsyncIntrospection:
 
     @respx.mock
     async def test_inactive_token(self):
+        """INTR-002: an inactive/expired/revoked token returns active=false and no other claims."""
         respx.post(INTROSPECT_URL).mock(
             return_value=httpx.Response(200, json={"active": False})
         )
@@ -72,6 +74,7 @@ class TestAsyncIntrospection:
 
     @respx.mock
     async def test_error_response(self):
+        """INTR-005: an error response from the introspection endpoint surfaces as a typed error."""
         respx.post(INTROSPECT_URL).mock(
             return_value=httpx.Response(401, content=b"Unauthorized")
         )
@@ -92,6 +95,7 @@ class TestAsyncIntrospection:
 
     @respx.mock
     async def test_with_token_type_hint(self):
+        """INTR-004: token_type_hint is sent on the request when configured."""
         respx.post(INTROSPECT_URL).mock(
             return_value=httpx.Response(200, json={"active": True})
         )
@@ -110,6 +114,9 @@ class TestAsyncIntrospection:
 
     @respx.mock
     async def test_public_client_no_auth_header(self):
+        """INTR-003 (partial): client authentication on the introspection request. Python covers the
+        no-credentials and client_secret_basic halves; there is no client_secret_post path
+        (identity-model#574), so that half of INTR-003 is deliberately unanchored, not overlooked."""
         respx.post(INTROSPECT_URL).mock(
             return_value=httpx.Response(200, json={"active": True})
         )

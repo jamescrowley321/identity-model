@@ -371,6 +371,9 @@ fn spec_validation_conformance() {
     let native_anchors = rust_native_tests();
 
     let mut executed: Vec<String> = Vec::new();
+    // Per-case vector counts, incremented only after a vector passes: a panic
+    // ends the test, so a red vector is never reported as covered.
+    let mut executed_vectors: BTreeMap<String, usize> = BTreeMap::new();
     for case in &capability.tests {
         if case.is_native() {
             assert!(
@@ -429,7 +432,16 @@ fn spec_validation_conformance() {
                 }
                 other => panic!("{label}: unknown expected outcome {other:?}"),
             }
+            *executed_vectors.entry(case.id.clone()).or_insert(0) += 1;
         }
+        assert_eq!(
+            executed_vectors.get(&case.id).copied().unwrap_or(0),
+            case.vectors.len(),
+            "{}: ran {} of {} vectors",
+            case.id,
+            executed_vectors.get(&case.id).copied().unwrap_or(0),
+            case.vectors.len()
+        );
         executed.push(case.id.clone());
     }
 
@@ -445,15 +457,21 @@ fn spec_validation_conformance() {
         "vector cases not executed by the Rust runner: {missing:?}"
     );
 
-    write_coverage_report(&capability.capability, &executed, &native_anchors);
+    write_coverage_report(
+        &capability.capability,
+        &executed,
+        &executed_vectors,
+        &native_anchors,
+    );
 }
 
-/// Emits the executed/native case ids for the cross-language coverage gate
+/// Emits the executed/native case ids and per-case vector counts for the cross-language coverage gate
 /// (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set. Same shape as
 /// the Python and Go runners.
 fn write_coverage_report(
     capability: &str,
     executed: &[String],
+    executed_vectors: &BTreeMap<String, usize>,
     native: &BTreeMap<&'static str, &'static str>,
 ) {
     let Ok(out) = std::env::var("SPEC_COVERAGE_OUT") else {
@@ -463,6 +481,7 @@ fn write_coverage_report(
         "language": "rust",
         "capability": capability,
         "executed": executed,
+        "executed_vectors": executed_vectors,
         "native": native,
     });
     std::fs::write(

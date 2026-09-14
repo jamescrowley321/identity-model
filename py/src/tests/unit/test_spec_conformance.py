@@ -32,6 +32,7 @@ single-process), the executed ids are written there at interpreter exit.
 """
 
 import atexit
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 import json
 import os
@@ -100,7 +101,10 @@ _SIGNING_JWK = json.loads(
 )
 _PUBLIC_JWKS = json.loads((_FIXTURE_ROOT / "validation" / "jwks.json").read_text())
 
-_EXECUTED: set[str] = set()
+#: Vectors that ran AND passed, per case id — counted per vector so the gate can
+#: verify each case ran every vector the spec carries, not merely that its id
+#: appeared. Recorded at the END of the test so a red vector is never covered.
+_EXECUTED: Counter[str] = Counter()
 
 _TIME_CLAIMS = frozenset({"exp", "nbf", "iat"})
 
@@ -291,7 +295,6 @@ def _vector_params() -> list:
 
 @pytest.mark.parametrize(("case_id", "vector"), _vector_params())
 def test_spec_vector(case_id: str, vector: dict) -> None:
-    _EXECUTED.add(case_id)
     expect = vector["expect"]
     if expect["outcome"] == "accept":
         decoded = _execute(vector)
@@ -302,6 +305,7 @@ def test_spec_vector(case_id: str, vector: dict) -> None:
         _assert_canonical_reject(exc_info.value, expect)
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {expect['outcome']!r}")
+    _EXECUTED[case_id] += 1
 
 
 def test_every_vector_case_is_parametrized() -> None:
@@ -334,6 +338,7 @@ def _write_coverage_report() -> None:
         "language": "python",
         "capability": _CAPABILITY["capability"],
         "executed": sorted(_EXECUTED),
+        "executed_vectors": dict(sorted(_EXECUTED.items())),
         "native": _PYTHON_NATIVE_TESTS,
     }
     Path(out).write_text(json.dumps(report, indent=2) + "\n")

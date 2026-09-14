@@ -3,9 +3,9 @@
 Drives every vector in ``spec/vectors/id-token.json`` — the language-neutral
 source of truth for the OpenID Connect ID-Token *profile* rules (OIDC Core 1.0
 §2 / §3.1.3.7 / §3.3.2.11) — through py-identity-model's pure claim validator
-``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners will
-execute the SAME vector set in later stack PRs, so the "build the conformance
-vectors once" constraint holds across languages.
+``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners
+execute the SAME vector set, so the "build the conformance vectors once"
+constraint holds across languages.
 
 The vectors are fully self-contained decoded claim sets plus caller inputs and a
 fixed ``now`` — no network, no signing, no fixtures — so this suite is a plain,
@@ -17,19 +17,21 @@ model's exception surface lives here (``_REASON_MESSAGE``). Every reject path in
 the pure validator raises :class:`IdTokenValidationException`; the ``reason``
 label pins *which* profile rule fired.
 
-NOT wired into ``tools/spec_coverage_gate.py``: that gate enforces 100% vector
-coverage *per language* and would fail the moment a second executable capability
-appears without Go/Rust runners to match. ``id-token.json`` therefore carries
-``cross_language_coverage_gate: "pending"`` (the gate skips it) and this file
-runs as an ordinary unit test. Promoting ID-Token vectors into the cross-
-language gate — adding the Go/Rust runners and flipping the marker to
-``enforced`` — is Epic 23 story 23.2 follow-up.
+Wired into ``tools/spec_coverage_gate.py``: that gate enforces 100% vector
+coverage per (language, capability) pair, and Python, Go and Rust all ship an
+id-token runner. When ``SPEC_COVERAGE_OUT`` is set this suite emits the executed
+case ids the gate reads, and the gate fails by name if any language skipped a
+vector. With the variable unset it runs as an ordinary unit test.
 """
 
 from __future__ import annotations
 
+import atexit
+from collections import Counter
 import json
+import os
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -102,13 +104,16 @@ def _vector_params() -> list:
 
 
 _PARAMS = _vector_params()
-_EXECUTED: set[str] = set()
+#: Vectors that ran AND passed, per case id. Counted per vector, not per case:
+#: the gate verifies each case ran every vector the spec carries for it, so a
+#: case that quietly lost four of its five vectors fails by name. Recorded at
+#: the END of the test so a red vector is never reported as covered.
+_EXECUTED: Counter[str] = Counter()
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(("case_id", "vector"), _PARAMS)
 def test_id_token_vector(case_id: str, vector: dict) -> None:
-    _EXECUTED.add(case_id)
     expect = vector["expect"]
     outcome = expect["outcome"]
     if outcome == "accept":
@@ -131,16 +136,16 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
         )
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {outcome!r}")
+    _EXECUTED[case_id] += 1
 
 
 @pytest.mark.unit
 def test_every_id_token_case_is_executed() -> None:
     """Runner-internal coverage check: every vector case id runs.
 
-    The cross-language coverage gate (``tools/spec_coverage_gate.py``) does not
-    yet cover this capability (see the module docstring — Epic 23 story 23.2),
-    so this in-suite assertion is what guarantees no vector case is silently
-    dropped from the Python leg.
+    The cross-language gate (``tools/spec_coverage_gate.py``) checks that every
+    language *executed* every case; this asserts the Python leg *parametrized*
+    every case in the first place, which the gate cannot see.
     """
     executed = {p.values[0] for p in _PARAMS}
     declared = {c["id"] for c in _CASES}
@@ -150,17 +155,37 @@ def test_every_id_token_case_is_executed() -> None:
     )
 
 
-@pytest.mark.unit
-def test_capability_stays_out_of_cross_language_gate() -> None:
-    """Guardrail: id-token.json must remain opted out of the shared gate.
+def _write_coverage_report() -> None:
+    """Emit this leg's executed case ids and per-case vector counts for the gate.
 
-    Until the Go and Rust runners exist (Epic 23 story 23.2), the vector file
-    MUST keep ``cross_language_coverage_gate: "pending"`` so
-    ``tools/spec_coverage_gate.py`` (which fails on a second executable
-    capability lacking polyglot runners) stays green. This asserts the marker
-    is present so a future edit that drops it is caught here rather than in CI.
+    Same shape as the validation runner (test_spec_conformance.py) and the Go
+    and Rust legs: the gate reads one report per (language, capability) pair.
+    id-token has no ``execution: "native"`` cases, so ``native`` is always empty.
     """
-    assert _CAPABILITY.get("cross_language_coverage_gate") == "pending", (
-        "id-token.json must stay opted out of the cross-language coverage gate "
-        "until Go/Rust runners land (Epic 23 story 23.2)"
-    )
+    out = os.environ.get("SPEC_COVERAGE_OUT")
+    if not out or not _EXECUTED:
+        return
+    report = {
+        "language": "python",
+        "capability": _CAPABILITY["capability"],
+        "executed": sorted(_EXECUTED),
+        "executed_vectors": dict(sorted(_EXECUTED.items())),
+        "native": {},
+    }
+    try:
+        Path(out).write_text(json.dumps(report, indent=2) + "\n")
+    except OSError as exc:
+        # An exception raised inside an atexit callback is printed but does NOT
+        # change the process exit code, so a failed write would leave pytest
+        # green and surface downstream only as the gate's generic "no coverage
+        # report produced" — with the real cause (permissions, missing parent,
+        # full disk) nowhere in the logs. The Go and Rust legs fail loudly on
+        # write errors; say the same thing here, on the stream the gate shows.
+        print(
+            f"[spec-coverage] python/{report['capability']}: FAILED to write "
+            f"coverage report {out}: {exc}",
+            file=sys.stderr,
+        )
+
+
+atexit.register(_write_coverage_report)

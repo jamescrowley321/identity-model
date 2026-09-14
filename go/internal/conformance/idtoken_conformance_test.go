@@ -1,8 +1,11 @@
 package conformance
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -15,11 +18,11 @@ import (
 // parity: it MUST agree with the Python reference runner
 // (py/src/tests/unit/test_id_token_conformance.py) on all vectors.
 //
-// This capability is marked cross_language_coverage_gate: "pending" in the spec,
-// so it is deliberately NOT wired into the enforcement gate
-// (tools/spec_coverage_gate.py, which runs only TestValidationConformance) and
-// writes no coverage report. The in-test coverage assertion below still guards
-// against silently skipping a case.
+// This capability IS wired into the cross-language enforcement gate
+// (tools/spec_coverage_gate.py): when SPEC_COVERAGE_OUT is set the run writes a
+// per-capability coverage report the gate reads, and the gate fails if any
+// language skipped a vector. The in-test coverage assertion below is the
+// belt-and-braces check that every case ran at all.
 func TestIDTokenConformance(t *testing.T) {
 	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
@@ -29,25 +32,65 @@ func TestIDTokenConformance(t *testing.T) {
 		t.Fatal("id-token capability defines no tests")
 	}
 
-	executed := make(map[string]bool, len(suite.Tests))
+	// Counted per VECTOR and only after each one passes. Stamping the case as
+	// executed before its vectors ran reported full coverage for a case whose
+	// vectors failed — runIDTokenVector calls t.Fatalf, which ends the subtest,
+	// so the increment below is simply never reached for a failing vector.
+	// Subtests here are sequential (no t.Parallel), so a plain map is safe.
+	executed := make(map[string]int, len(suite.Tests))
 	for _, tc := range suite.Tests {
 		t.Run(tc.ID, func(t *testing.T) {
 			if len(tc.Vectors) == 0 {
 				t.Fatalf("%s: no vectors", tc.ID)
 			}
-			executed[tc.ID] = true
 			for i, v := range tc.Vectors {
 				runIDTokenVector(t, tc.ID, i, v)
+				executed[tc.ID]++
 			}
 		})
 	}
 
-	// Coverage gate: every case must have been executed. The id-token capability
-	// has no native-executed cases, so any unexecuted id is a silent skip.
+	// Coverage gate: every case must have run every vector it declares. The
+	// id-token capability has no native-executed cases, so a short count is a
+	// silent skip.
 	for _, tc := range suite.Tests {
-		if !executed[tc.ID] {
-			t.Errorf("case %s is defined but was not executed by the Go id-token runner", tc.ID)
+		if executed[tc.ID] != len(tc.Vectors) {
+			t.Errorf("case %s: Go id-token runner executed %d of %d vectors", tc.ID, executed[tc.ID], len(tc.Vectors))
 		}
+	}
+
+	writeIDTokenCoverageReport(t, suite, executed)
+}
+
+// writeIDTokenCoverageReport emits the executed case ids and the per-case vector
+// counts for the cross-language coverage gate (tools/spec_coverage_gate.py) when
+// SPEC_COVERAGE_OUT is set.
+// Same report shape as the validation runner; id-token declares no
+// execution: "native" cases, so the native map is always empty.
+func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed map[string]int) {
+	t.Helper()
+	out := os.Getenv("SPEC_COVERAGE_OUT")
+	if out == "" {
+		return
+	}
+	ids := make([]string, 0, len(executed))
+	for id := range executed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	report := map[string]any{
+		"language":         "go",
+		"capability":       suite.Capability,
+		"executed":         ids,
+		"executed_vectors": executed,
+		"native":           map[string]string{},
+	}
+	b, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal id-token coverage report: %v", err)
+	}
+	if err := os.WriteFile(out, append(b, '\n'), 0o644); err != nil {
+		t.Fatalf("write id-token coverage report %s: %v", out, err)
 	}
 }
 

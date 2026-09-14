@@ -68,13 +68,19 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | JWKS | `vectors/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 
-Validation is the first capability with executable vectors and a runner in
-**every language**: Go `go/internal/conformance`, Python
-`src/tests/unit/test_spec_conformance.py`, Rust `rust/tests/spec_conformance.rs`
-— 12 executable cases + 1 native case each. Each runner asserts full coverage
-internally, and the **cross-language coverage gate**
-(`tools/spec_coverage_gate.py`, `make spec-coverage`, CI job
-`spec-vector-coverage`) fails naming any missing `(language, vector-id)` pair —
-no language can silently skip a case another executes. The remaining capability
-files (client-credentials, authorization-code, userinfo, etc.) are prose
-contracts today and gain vectors + per-language runners as each is adopted.
+Two capabilities carry executable vectors and a runner in **every language**:
+
+| capability | cases | vectors | Go | Python | Rust |
+| --- | --- | --- | --- | --- | --- |
+| validation | 12 + 1 native | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
+| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
+
+Each runner asserts full coverage internally, and the **cross-language coverage
+gate** (`tools/spec_coverage_gate.py`, `make spec-coverage`, CI job
+`spec-vector-coverage`) fails by name on any missing `(language, case)` pair —
+and on any case that ran *fewer vectors than the spec carries for it*, since a
+case id appearing in a report says nothing about how many of its vectors ran.
+A capability leaves the gate only via the gate's own `OPTED_OUT` set, never
+through a marker in its vector file. The remaining capability files
+(client-credentials, authorization-code, userinfo, etc.) are prose contracts
+today and gain vectors + per-language runners as each is adopted.
