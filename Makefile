@@ -13,6 +13,23 @@ ACTION ?= create
 UVPY := uv run --directory py
 UVROOT := uv run --project py
 
+# The release tooling, as ONE definition. `tools/` holds the drivers that decide
+# what gets released, so their tests must run against the same python-semantic-
+# release and GitPython the release jobs use — test_release_parsers.py builds
+# real `git.Commit` objects, and a different GitPython tests a different pipeline.
+#
+# Deliberately NOT a uv dependency group: PSR requires `click<8.5.0,~=8.1.0`, so
+# locking it would drag the whole py/ resolution down to click 8.1.x — which is
+# CVE-2026-7246 (command injection in click.edit(), fixed in 8.3.3) — for flask,
+# uvicorn, mkdocs and mutmut alike. Release tooling runs in an ephemeral uvx/uv
+# env and is not a project dependency; keeping it out of uv.lock keeps that
+# constraint out of the project's dependency graph.
+#
+# gitpython is a FLOOR, not the old `<3.1.60` ceiling: <=3.1.58 carries a
+# critical RCE advisory (GHSA-284h-m62q-gf8w). See .github/workflows/release.yml.
+# tools/tests/test_release_tooling_pins.py fails if this and the workflow drift.
+PSR_TOOLING := --with "python-semantic-release==10.6.2" --with "gitpython>=3.1.59"
+
 # ── Build ────────────────────────────────────────────────────────────
 
 .PHONY: build-dist
@@ -195,8 +212,8 @@ test-all: test test-examples ## Run all tests including examples
 
 .PHONY: test-tools
 test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outside the library suite
-	$(UVROOT) --group tools pyrefly check tools
-	$(UVROOT) --group tools pytest tools/tests/ -v
+	$(UVROOT) $(PSR_TOOLING) pyrefly check tools
+	$(UVROOT) $(PSR_TOOLING) pytest tools/tests/ -v
 
 # ── fastapi-identity-model package ───────────────────────────────────
 

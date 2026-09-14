@@ -14,31 +14,31 @@ range.
 
 The same pins have to bind `make test-tools`, because the drivers under tools/
 are *release* code: `tools/tests/test_release_parsers.py` builds real
-`git.Commit` objects, so running it against an unconstrained GitPython exercises
-a resolution the release pipeline does not use. That is exactly what happened
-when `make test-tools` passed the pin inline with `--with` and no bound at all:
-nothing was locked, and the version was repeated in eight places.
+`git.Commit` objects, so running it against a different GitPython exercises a
+resolution the release pipeline does not use. When the Makefile passed the pin
+inline per-recipe-line with no GitPython bound at all, it resolved 3.1.62 while
+the release jobs were on <=3.1.59, and the version was repeated in eight places
+across the repo with nothing tying them together.
 
-These tests are the gate on that. `test_the_running_gitpython_satisfies_the_pin`
-is the behavioural one — it reads the interpreter actually running the tools
-suite, and fails under the old inline `--with` form.
+The Makefile's `PSR_TOOLING` is now the single definition, and these tests are
+what stop the other seven copies drifting from it. It is deliberately not a uv
+dependency group: PSR requires `click<8.5.0,~=8.1.0`, so locking it would pull
+the whole py/ resolution down to click 8.1.x (CVE-2026-7246) for flask, uvicorn,
+mkdocs and mutmut alike.
 """
 
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 import git
 import pytest
-from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_PYPROJECT = _REPO_ROOT / "py" / "pyproject.toml"
 _MAKEFILE = _REPO_ROOT / "Makefile"
 _RELEASE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "release.yml"
 _SR_CONFIGS = (
@@ -56,32 +56,35 @@ _UVX_PSR_LINE = re.compile(r"^.*uvx\s+.*python-semantic-release.*$", re.MULTILIN
 
 
 @pytest.fixture(scope="module")
-def tools_group() -> list[Requirement]:
-    """The `tools` dependency group — the single source of truth for both pins."""
-    groups = tomllib.loads(_PYPROJECT.read_text())["dependency-groups"]
-    assert "tools" in groups, (
-        "py/pyproject.toml lost its `tools` dependency group. `make test-tools` "
-        "depends on it; do not reintroduce an inline `--with` pin in the Makefile."
+def psr_tooling() -> str:
+    """The Makefile's `PSR_TOOLING` — the single definition of the release tooling."""
+    body = _MAKEFILE.read_text()
+    match = re.search(r"^PSR_TOOLING\s*:?=\s*(.+)$", body, re.MULTILINE)
+    assert match is not None, (
+        "Makefile lost its PSR_TOOLING definition. `make test-tools` depends on "
+        "it, and it is the single source of truth these tests compare against."
     )
-    return [Requirement(spec) for spec in groups["tools"]]
+    return match.group(1)
 
 
 @pytest.fixture(scope="module")
-def psr_pin(tools_group: list[Requirement]) -> str:
-    (req,) = [r for r in tools_group if r.name == "python-semantic-release"]
-    (spec,) = list(req.specifier)
-    assert spec.operator == "==", (
-        f"python-semantic-release must be pinned exactly, not {req.specifier}: the "
-        "release workflow pins an exact version and these must be comparable."
+def psr_pin(psr_tooling: str) -> str:
+    found = _PSR_PIN.findall(psr_tooling)
+    assert len(found) == 1, (
+        f"PSR_TOOLING must pin exactly one python-semantic-release version, "
+        f"got {found}: the release workflow pins one and these must be comparable."
     )
-    return spec.version
+    return found[0]
 
 
 @pytest.fixture(scope="module")
-def gitpython_specifier(tools_group: list[Requirement]) -> SpecifierSet:
-    (req,) = [r for r in tools_group if r.name.lower() == "gitpython"]
-    assert str(req.specifier), "GitPython must carry the release job's bound."
-    return req.specifier
+def gitpython_specifier(psr_tooling: str) -> SpecifierSet:
+    found = _GITPYTHON_PIN.findall(psr_tooling)
+    assert found, (
+        "PSR_TOOLING must bound GitPython. Unbounded, PSR's loose `gitpython~=3.0` "
+        "admits <=3.1.58, which carries a critical RCE advisory."
+    )
+    return SpecifierSet(",".join(f"{op}{ver}" for op, ver in found))
 
 
 class TestTheEnvironmentToolsTestsRunIn:
@@ -103,11 +106,11 @@ class TestTheEnvironmentToolsTestsRunIn:
 
         assert semantic_release.__version__ == psr_pin, (
             f"tools/tests/ is running python-semantic-release "
-            f"{semantic_release.__version__}, but the `tools` group pins {psr_pin}."
+            f"{semantic_release.__version__}, but PSR_TOOLING pins {psr_pin}."
         )
 
 
-class TestTheMakefileUsesTheLockedGroup:
+class TestTheMakefileUsesTheSingleDefinition:
     @pytest.fixture(scope="class")
     def test_tools_recipe(self) -> str:
         body = _MAKEFILE.read_text()
@@ -115,29 +118,30 @@ class TestTheMakefileUsesTheLockedGroup:
         assert match is not None, "the `test-tools` target vanished from the Makefile"
         return match.group(1)
 
-    def test_every_line_selects_the_tools_group(self, test_tools_recipe):
+    def test_every_line_uses_the_shared_definition(self, test_tools_recipe):
         lines = [ln for ln in test_tools_recipe.splitlines() if ln.strip()]
         assert lines, "the `test-tools` recipe is empty"
         for line in lines:
-            assert "--group tools" in line, (
-                f"`test-tools` line does not select the locked group: {line.strip()}"
+            assert "$(PSR_TOOLING)" in line, (
+                f"`test-tools` line does not use $(PSR_TOOLING): {line.strip()}"
             )
 
-    def test_no_inline_pin_is_reintroduced(self, test_tools_recipe):
-        """An inline `--with` is unlocked, unseen by dependabot, and drifts."""
-        assert "--with" not in test_tools_recipe, (
-            "`test-tools` passes a dependency inline again. Put it in the `tools` "
-            "dependency group in py/pyproject.toml so uv.lock pins its closure."
+    def test_no_second_copy_of_the_pin_is_introduced(self, test_tools_recipe):
+        """Two copies drift; that is how the Makefile lost the GitPython bound."""
+        assert not _PSR_PIN.search(test_tools_recipe), (
+            "the `test-tools` recipe pins python-semantic-release inline again. "
+            "PSR_TOOLING is the one definition — use $(PSR_TOOLING)."
         )
 
-    def test_the_makefile_pins_no_psr_version_of_its_own(self):
-        assert not _PSR_PIN.search(_MAKEFILE.read_text()), (
-            "the Makefile carries its own python-semantic-release pin again; the "
-            "`tools` dependency group is the only place that version belongs."
+    def test_the_makefile_defines_the_pin_exactly_once(self):
+        body = _MAKEFILE.read_text()
+        assert len(_PSR_PIN.findall(body)) == 1, (
+            "python-semantic-release is pinned more than once in the Makefile; "
+            "PSR_TOOLING must be the only definition."
         )
 
 
-class TestTheWorkflowAgreesWithTheGroup:
+class TestTheWorkflowAgreesWithTheMakefile:
     @pytest.fixture(scope="class")
     def workflow(self) -> str:
         return _RELEASE_WORKFLOW.read_text()
@@ -149,7 +153,7 @@ class TestTheWorkflowAgreesWithTheGroup:
             "pin-parity assertions would pass vacuously — update them."
         )
 
-    def test_every_psr_pin_matches_the_group(self, workflow, psr_pin):
+    def test_every_psr_pin_matches_the_makefile(self, workflow, psr_pin):
         found = _PSR_PIN.findall(workflow)
         assert found, "release.yml pins no python-semantic-release version"
         drifted = sorted({v for v in found if v != psr_pin})
@@ -159,7 +163,9 @@ class TestTheWorkflowAgreesWithTheGroup:
             "parsers against a PSR the release job never runs."
         )
 
-    def test_every_gitpython_pin_matches_the_group(self, workflow, gitpython_specifier):
+    def test_every_gitpython_pin_matches_the_makefile(
+        self, workflow, gitpython_specifier
+    ):
         found = _GITPYTHON_PIN.findall(workflow)
         assert found, "release.yml no longer constrains GitPython"
         expected = {(s.operator, s.version) for s in gitpython_specifier}
@@ -189,7 +195,7 @@ class TestTheSemanticReleaseConfigsDocumentTheSamePins:
     human copies when running a release by hand, so it drifts silently."""
 
     @pytest.mark.parametrize("config", _SR_CONFIGS, ids=lambda p: p.name)
-    def test_the_documented_invocation_matches_the_group(
+    def test_the_documented_invocation_matches_the_makefile(
         self, config, psr_pin, gitpython_specifier
     ):
         text = config.read_text()
@@ -197,7 +203,7 @@ class TestTheSemanticReleaseConfigsDocumentTheSamePins:
         assert psr_found, f"{config.name} documents no PSR version to check"
         assert set(psr_found) == {psr_pin}, (
             f"{config.name} documents python-semantic-release {sorted(set(psr_found))}, "
-            f"but the `tools` group pins {psr_pin}."
+            f"but PSR_TOOLING pins {psr_pin}."
         )
         expected = {(s.operator, s.version) for s in gitpython_specifier}
         gp_found = _GITPYTHON_PIN.findall(text)
@@ -208,6 +214,6 @@ class TestTheSemanticReleaseConfigsDocumentTheSamePins:
         )
         assert set(gp_found) <= expected, (
             f"{config.name} documents GitPython "
-            f"{sorted({f'{o}{v}' for o, v in gp_found})}, but the `tools` group says "
+            f"{sorted({f'{o}{v}' for o, v in gp_found})}, but PSR_TOOLING says "
             f"{gitpython_specifier}."
         )
