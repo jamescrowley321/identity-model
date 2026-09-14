@@ -195,8 +195,8 @@ test-all: test test-examples ## Run all tests including examples
 
 .PHONY: test-tools
 test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outside the library suite
-	$(UVROOT) --with "python-semantic-release==10.6.1" pyrefly check tools
-	$(UVROOT) --with "python-semantic-release==10.6.1" pytest tools/tests/ -v
+	$(UVROOT) --group tools pyrefly check tools
+	$(UVROOT) --group tools pytest tools/tests/ -v
 
 # ── fastapi-identity-model package ───────────────────────────────────
 

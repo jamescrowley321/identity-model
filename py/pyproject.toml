@@ -53,6 +53,20 @@ docs = [
 load = [
     "locust>=2.31,<3",
 ]
+# Release-pipeline tooling for the drivers under tools/ (see `make test-tools`).
+# NOT in `dev`: python-semantic-release is a release dependency, not a library
+# one, and folding it into the default env would put GitPython in every unit-test
+# run. Opt-in via `uv run --group tools`, same as `load` and `docs`.
+#
+# Both pins mirror .github/workflows/release.yml, which is the environment these
+# drivers actually run in — PSR 10.6.1 with GitPython >=3.1.60 breaks the release
+# job, and tools/tests/test_release_parsers.py builds real `git.Commit` objects,
+# so testing them against an unconstrained GitPython tests the wrong pipeline.
+# tools/tests/test_release_tooling_pins.py fails if these drift from the workflow.
+tools = [
+    "python-semantic-release==10.6.1",
+    "gitpython<3.1.60",
+]
 
 [build-system]
 requires = ["uv_build>=0.6,<0.12"]
