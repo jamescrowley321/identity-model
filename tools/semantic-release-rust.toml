@@ -2,7 +2,7 @@
 #
 # Invoked from the REPO ROOT (not py/, unlike the core and fastapi configs) so
 # the sibling `rust/` and `tools/` paths below resolve directly:
-#   uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" \
+#   uvx --from python-semantic-release==10.6.2 --with "gitpython>=3.1.59" \
 #     semantic-release -c tools/semantic-release-rust.toml version
 # (the `release-rust-version` job in release.yml, after the core + fastapi + go
 # version jobs, so the release pipelines never push to main concurrently).

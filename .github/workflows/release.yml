@@ -86,12 +86,25 @@ jobs:
           fi
 
       # Run python-semantic-release via uvx (not the Docker action) so we can
-      # constrain GitPython. PSR 10.6.1 declares `gitpython~=3.0`, so a fresh
-      # install pulls GitPython 3.1.60, which removed `Actor.name_email_regex`
-      # and crashes the release (green at gitpython 3.1.59 on 2026-08-22; broke
-      # on 3.1.60 by 2026-08-28). Pinning `<3.1.60` restores the last-good line
-      # until PSR caps it upstream. Config (pyproject.toml, release_parsers.py,
-      # CHANGELOG.md, tag_format `py-v{version}`) resolves from working-dir py/.
+      # constrain GitPython. PSR declares a loose `gitpython~=3.0`, so without a
+      # bound here the release resolves it freely.
+      #
+      # The bound is a FLOOR. It used to be the ceiling `<3.1.60`, because PSR
+      # 10.6.1 called `Actor.name_email_regex` and GitPython removed it in
+      # 3.1.60 (green at 3.1.59 on 2026-08-22; broke by 2026-08-28). That is
+      # obsolete twice over: PSR 10.6.2 no longer references the attribute, and
+      # GitPython restored it (deprecated) by 3.1.62. Keeping the ceiling had
+      # become the bigger risk — it held GitPython at <=3.1.59, one resolver
+      # preference away from <=3.1.58, which carries a CRITICAL RCE advisory
+      # (GHSA-284h-m62q-gf8w) and two highs (GHSA-7833-fr7j-v32q,
+      # GHSA-8mcc-hrx5-hvxc), all first patched in 3.1.59. Hence `>=3.1.59`.
+      #
+      # The same pins live in py/pyproject.toml's `tools` dependency group, which
+      # is what `make test-tools` runs against; tools/tests/test_release_tooling_pins.py
+      # fails if this file and that group ever disagree.
+      #
+      # Config (pyproject.toml, release_parsers.py, CHANGELOG.md, tag_format
+      # `py-v{version}`) resolves from working-dir py/.
       - name: Semantic Version Release
         id: release
         working-directory: py
@@ -101,7 +114,7 @@ jobs:
           git config --global user.name "github-actions"
           git config --global user.email "actions@users.noreply.github.com"
           before="$(git tag -l 'py-v*' | sort -V | tail -1)"
-          uvx --from "python-semantic-release==10.6.1" --with "gitpython<3.1.60" \
+          uvx --from "python-semantic-release==10.6.2" --with "gitpython>=3.1.59" \
             semantic-release -v version
           after="$(git tag -l 'py-v*' | sort -V | tail -1)"
           if [ -n "$after" ] && [ "$before" != "$after" ]; then
@@ -233,10 +246,10 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           # Run from py/ so the package config, its commit parser
           # (tools/release_parsers.py) and version_toml resolve under py/ (CONS-2.1).
-          # Pin gitpython<3.1.60 (same as the core release job): PSR 10.6.1's
-          # loose gitpython~=3.0 otherwise pulls 3.1.60, which removed
-          # Actor.name_email_regex and crashes semantic-release.
-          cd py && uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
+          # Floor gitpython>=3.1.59 (same as the core release job): PSR's loose
+          # gitpython~=3.0 otherwise allows <=3.1.58, which carries a critical
+          # RCE advisory. See the core job for the full rationale.
+          cd py && uvx --from python-semantic-release==10.6.2 --with "gitpython>=3.1.59" semantic-release \
             -c packages/fastapi-identity-model/pyproject.toml version
 
   # Version the Go library (identity-model/go) from "(go)"-scoped commits. A Go
@@ -286,10 +299,10 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@users.noreply.github.com"
           # Run from the repo ROOT (not py/) so the go/ and tools/ paths in
-          # the config resolve directly. Pin gitpython<3.1.60 (same reason as the
-          # core job): PSR 10.6.1's loose gitpython~=3.0 otherwise pulls 3.1.60,
-          # which removed Actor.name_email_regex and crashes semantic-release.
-          uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
+          # the config resolve directly. Floor gitpython>=3.1.59 (same reason as
+          # the core job): PSR's loose gitpython~=3.0 otherwise allows <=3.1.58,
+          # which carries a critical RCE advisory.
+          uvx --from python-semantic-release==10.6.2 --with "gitpython>=3.1.59" semantic-release \
             -c tools/semantic-release-go.toml version --no-vcs-release
 
   # Version the Rust crate (rs-identity-model) from "(rust)"-scoped commits:
@@ -339,8 +352,8 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           before="$(git tag -l 'rust-v*' | sort -V | tail -1)"
           # Run from the repo ROOT so the rust/ and tools/ paths resolve.
-          # Pin gitpython<3.1.60 (see the core job for the rationale).
-          uvx --from python-semantic-release==10.6.1 --with "gitpython<3.1.60" semantic-release \
+          # Floor gitpython>=3.1.59 (see the core job for the rationale).
+          uvx --from python-semantic-release==10.6.2 --with "gitpython>=3.1.59" semantic-release \
             -c tools/semantic-release-rust.toml version --no-vcs-release
           after="$(git tag -l 'rust-v*' | sort -V | tail -1)"
           if [ -n "$after" ] && [ "$before" != "$after" ]; then

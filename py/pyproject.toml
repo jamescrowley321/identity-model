@@ -59,13 +59,20 @@ load = [
 # run. Opt-in via `uv run --group tools`, same as `load` and `docs`.
 #
 # Both pins mirror .github/workflows/release.yml, which is the environment these
-# drivers actually run in — PSR 10.6.1 with GitPython >=3.1.60 breaks the release
-# job, and tools/tests/test_release_parsers.py builds real `git.Commit` objects,
-# so testing them against an unconstrained GitPython tests the wrong pipeline.
-# tools/tests/test_release_tooling_pins.py fails if these drift from the workflow.
+# drivers actually run in — tools/tests/test_release_parsers.py builds real
+# `git.Commit` objects, so testing them against a different GitPython tests the
+# wrong pipeline. tools/tests/test_release_tooling_pins.py fails on any drift.
+#
+# The GitPython bound is a FLOOR, not the old `<3.1.60` ceiling. That ceiling
+# existed because PSR 10.6.1 called `Actor.name_email_regex`, which GitPython
+# removed in 3.1.60. It is obsolete twice over: PSR 10.6.2 no longer references
+# that attribute at all, and GitPython restored it (deprecated) by 3.1.62. The
+# ceiling had become actively harmful — it held GitPython at <=3.1.59, and
+# <=3.1.58 carries a CRITICAL RCE advisory (GHSA-284h-m62q-gf8w) plus two highs
+# (GHSA-7833-fr7j-v32q, GHSA-8mcc-hrx5-hvxc), all first patched in 3.1.59.
 tools = [
-    "python-semantic-release==10.6.1",
-    "gitpython<3.1.60",
+    "python-semantic-release==10.6.2",
+    "gitpython>=3.1.59",
 ]
 
 [build-system]

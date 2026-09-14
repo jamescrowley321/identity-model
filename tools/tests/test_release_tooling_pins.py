@@ -1,17 +1,23 @@
 """The release tooling's pins must agree everywhere, and bind where tools/ runs.
 
-`python-semantic-release` cuts every release in this repo, and PSR 10.6.1
-declares a loose `gitpython~=3.0`. GitPython 3.1.60 removed an API PSR calls, so
-an unconstrained resolve crashes the release job — hence the `gitpython<3.1.60`
-ceiling on every `uvx` invocation in `.github/workflows/release.yml`.
+`python-semantic-release` cuts every release in this repo, and PSR declares a
+loose `gitpython~=3.0`, so an unconstrained resolve can land on any GitPython.
+GitPython <=3.1.58 carries a critical RCE advisory (GHSA-284h-m62q-gf8w) and two
+highs, all first patched in 3.1.59 — hence the `gitpython>=3.1.59` floor on every
+`uvx` invocation in `.github/workflows/release.yml`.
+
+That bound used to be the ceiling `<3.1.60`, because PSR 10.6.1 called
+`Actor.name_email_regex` and GitPython removed it in 3.1.60. PSR 10.6.2 no longer
+references the attribute and GitPython restored it (deprecated) by 3.1.62, so the
+ceiling was obsolete — and while it stood it held GitPython inside the vulnerable
+range.
 
 The same pins have to bind `make test-tools`, because the drivers under tools/
 are *release* code: `tools/tests/test_release_parsers.py` builds real
 `git.Commit` objects, so running it against an unconstrained GitPython exercises
-a resolution the release pipeline deliberately excludes. That is exactly what
-happened when `make test-tools` passed the pin inline with `--with` and no
-ceiling: it tested the parsers at GitPython 3.1.62, above the release job's own
-limit, with nothing locked and the version repeated in eight places.
+a resolution the release pipeline does not use. That is exactly what happened
+when `make test-tools` passed the pin inline with `--with` and no bound at all:
+nothing was locked, and the version was repeated in eight places.
 
 These tests are the gate on that. `test_the_running_gitpython_satisfies_the_pin`
 is the behavioural one — it reads the interpreter actually running the tools
@@ -43,9 +49,9 @@ _SR_CONFIGS = (
 # `--from "python-semantic-release==10.6.1"` and the unquoted form both appear.
 _PSR_PIN = re.compile(r"""python-semantic-release\s*==\s*([0-9][^"'\s\\]*)""")
 _GITPYTHON_PIN = re.compile(
-    r"""gitpython\s*(<=?|==)\s*([0-9][^"'\s\\]*)""", re.IGNORECASE
+    r"""gitpython\s*(>=|<=|==|<|>)\s*([0-9][^"',\s\\]*)""", re.IGNORECASE
 )
-# Every uvx line that runs PSR, so each can be checked for the ceiling.
+# Every uvx line that runs PSR, so each can be checked for the bound.
 _UVX_PSR_LINE = re.compile(r"^.*uvx\s+.*python-semantic-release.*$", re.MULTILINE)
 
 
@@ -74,7 +80,7 @@ def psr_pin(tools_group: list[Requirement]) -> str:
 @pytest.fixture(scope="module")
 def gitpython_specifier(tools_group: list[Requirement]) -> SpecifierSet:
     (req,) = [r for r in tools_group if r.name.lower() == "gitpython"]
-    assert str(req.specifier), "GitPython must carry the release job's ceiling."
+    assert str(req.specifier), "GitPython must carry the release job's bound."
     return req.specifier
 
 
@@ -82,8 +88,8 @@ class TestTheEnvironmentToolsTestsRunIn:
     def test_the_running_gitpython_satisfies_the_pin(self, gitpython_specifier):
         """The interpreter running this suite must match the release job's resolve.
 
-        This is the check the inline `--with` form failed: it resolved GitPython
-        3.1.62, above the ceiling every release invocation carries.
+        With a floor rather than a ceiling, this also means the tools suite can
+        never run on a GitPython carrying the advisories the floor exists for.
         """
         assert Version(git.__version__) in gitpython_specifier, (
             f"tools/tests/ is running GitPython {git.__version__}, which violates "
@@ -165,8 +171,8 @@ class TestTheWorkflowAgreesWithTheGroup:
             f"says {gitpython_specifier}."
         )
 
-    def test_no_psr_invocation_omits_the_gitpython_ceiling(self, workflow):
-        """A single unconstrained job is enough to break the release."""
+    def test_no_psr_invocation_omits_the_gitpython_bound(self, workflow):
+        """One unconstrained job is enough to resolve a vulnerable GitPython."""
         unconstrained = [
             line.strip()
             for line in _UVX_PSR_LINE.findall(workflow)
@@ -174,7 +180,7 @@ class TestTheWorkflowAgreesWithTheGroup:
         ]
         assert not unconstrained, (
             "these release.yml invocations run python-semantic-release without the "
-            f"GitPython ceiling, so they resolve it freely: {unconstrained}"
+            f"GitPython bound, so they resolve it freely: {unconstrained}"
         )
 
 
@@ -196,8 +202,9 @@ class TestTheSemanticReleaseConfigsDocumentTheSamePins:
         expected = {(s.operator, s.version) for s in gitpython_specifier}
         gp_found = _GITPYTHON_PIN.findall(text)
         assert gp_found, (
-            f"{config.name} documents a PSR invocation with no GitPython ceiling; "
-            "copying it by hand resolves GitPython freely and breaks the release."
+            f"{config.name} documents a PSR invocation with no GitPython bound; "
+            "copying it by hand resolves GitPython freely, and <=3.1.58 carries "
+            "a critical RCE advisory."
         )
         assert set(gp_found) <= expected, (
             f"{config.name} documents GitPython "
