@@ -1272,10 +1272,10 @@ def main() -> None:
     if not _is_local_suite(args.suite_url) and not env_token:
         logger.error(
             "CONFORMANCE_TOKEN is required when targeting a hosted suite (%s).\n\n"
-            "To get a token:\n"
-            "  make conformance-token              # create + push to HCP Vault\n"
-            "  eval $(make conformance-token ACTION=env)  # pull from HCP into shell\n\n"
-            "Or set it manually:\n"
+            "To rotate the token CI uses:\n"
+            "  make conformance-token              # create + push to the repo secret\n\n"
+            "That secret cannot be read back — GitHub does not allow it — so for a\n"
+            "local run mint your own token in the suite UI and set it:\n"
             "  export CONFORMANCE_TOKEN=<your-token>",
             args.suite_url,
         )

@@ -50,7 +50,7 @@ Subsequent runs (persistent profile keeps you logged in, can be headless):
 
       uv run conformance/scripts/rotate_conformance_token.py --headless
 
-Preview what the script will do without writing the secret:
+Check the login/session without minting a token or writing the secret:
 
       uv run conformance/scripts/rotate_conformance_token.py --dry-run
 
@@ -171,7 +171,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Create the token but do not write the GitHub secret.",
+        help=(
+            "Check the authenticated session without creating a token or "
+            "writing the GitHub secret."
+        ),
     )
     parser.add_argument(
         "--profile-dir",
@@ -216,8 +219,14 @@ def build_config(ns: argparse.Namespace) -> RotateConfig:
 # ---------------------------------------------------------------------------
 
 
-def create_token_in_browser(cfg: RotateConfig) -> str:
-    """Launch Playwright, let the user log in if needed, create a token via the UI."""
+def create_token_in_browser(cfg: RotateConfig) -> str | None:
+    """Launch Playwright, let the user log in if needed, create a token via the UI.
+
+    Returns ``None`` under ``--dry-run``: the session is established and checked,
+    but no token is minted. Minting on a dry run left a *permanent* token on the
+    OIDF certification account every time — and because the token is never
+    printed (4728e4b), each one was unidentifiable and so unrevokable.
+    """
     cfg.profile_dir.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
@@ -244,8 +253,15 @@ def create_token_in_browser(cfg: RotateConfig) -> str:
                     file=sys.stderr,
                 )
                 _wait_until_logged_in(page, LOGIN_WAIT_TIMEOUT_MS)
-                print("Login detected. Creating API token...", file=sys.stderr)
+                print("Login detected.", file=sys.stderr)
 
+            if cfg.dry_run:
+                print(
+                    "--dry-run: authenticated session confirmed; no token minted.",
+                    file=sys.stderr,
+                )
+                return None
+            print("Creating API token...", file=sys.stderr)
             return _create_api_token(page, cfg.token_description)
         finally:
             context.close()
@@ -455,15 +471,14 @@ def rotate_token(cfg: RotateConfig) -> None:
     print(f"  target repo: {cfg.repo}", file=sys.stderr)
 
     token = create_token_in_browser(cfg)
-    print("Token created successfully.", file=sys.stderr)
-
-    if cfg.dry_run:
+    if token is None:
         print(
-            "--dry-run set; the repository secret was left unchanged and the "
-            "token was discarded.",
+            "--dry-run set; no token was created and the repository secret was "
+            "left unchanged.",
             file=sys.stderr,
         )
         return
+    print("Token created successfully.", file=sys.stderr)
 
     push_to_github_secret(token, cfg.repo, cfg.secret_name)
     print("Repository secret updated.", file=sys.stderr)

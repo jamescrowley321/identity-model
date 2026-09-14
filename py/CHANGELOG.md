@@ -4,6 +4,14 @@
 
 ## v3.18.1 (2026-09-13)
 
+> **Note:** the two `conformance` fixes below are about
+> `conformance/scripts/rotate_conformance_token.py`, a repository script used to
+> rotate this project's own OIDF certification token. Neither touches shipped
+> library code, and no token handled by `py-identity-model` was ever disclosed.
+> This release contains no library change; it was cut because the `conformance`
+> scope was missing from the release routing, which
+> [#662](https://github.com/jamescrowley321/identity-model/pull/662) fixes.
+
 ### Bug Fixes
 
 - **conformance**: Restore the no-token-output rule this PR had broken
