@@ -16,6 +16,25 @@
 # repository secrets, so "anyone who can comment" is the threat model. There are
 # two gates, and the order they run in is the whole point:
 #
+#   1. The `if:` on the job below requires the commenter's author_association to
+#      be OWNER, MEMBER or COLLABORATOR. GitHub evaluates that BEFORE scheduling
+#      anything, so an outsider's "@claude" never allocates a runner, never
+#      checks out the repo, and never reaches the model.
+#   2. claude-code-action then requires the commenter to hold write access and
+#      refuses bots (`allowed_non_write_users` and `allowed_bots` both unset).
+#      That check runs INSIDE the action — by the time it rejects someone, the
+#      job has already started.
+#
+# Gate 2 alone protects the subscription but not your inbox: every drive-by
+# "@claude" would still spawn a job run and a notification. Gate 1 is what stops
+# that, and it is the one carrying the weight.
+#
+# There is NO GitHub "approve this run" prompt for issue_comment, the way there
+# is for fork pull requests, so an outside contributor cannot queue a review for
+# a maintainer to approve. Their mention is simply ignored. To run the lenses on
+# someone else's PR, comment "@claude review this PR" yourself — a maintainer
+# asking IS the approval.
+#
 #   1. The `if:` on the job below requires author_association == 'OWNER'. GitHub
 #      evaluates that BEFORE scheduling anything, so a stranger's "@claude" never
 #      allocates a runner, never checks out the repo, and never reaches the model.
@@ -77,13 +96,13 @@ jobs:
   claude:
     name: Claude
     # Two conditions, and BOTH matter: an explicit @claude mention, and the person
-    # who wrote it being the repository OWNER. See "WHO CAN TRIGGER IT" above for
-    # why the owner test lives here rather than being left to the action.
+    # who wrote it being the owner, an org member, or a repo collaborator. See
+    # "WHO CAN TRIGGER IT" above for why that test lives here, not in the action.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.author_association == 'OWNER') ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.author_association == 'OWNER') ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.author_association == 'OWNER') ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && github.event.issue.author_association == 'OWNER')
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     # A default review is five lenses, so five subagents. Without a ceiling a
     # wedged review sits there spending subscription usage until the job's own
@@ -102,11 +121,11 @@ jobs:
       # back to something else and the lenses review the wrong bytes without
       # anything reporting an error. That is worse than no review at all, because
       # it still posts a verdict.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@bf38e86e58df9ebf3420326d019f955bb3be64dd # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 

@@ -389,16 +389,19 @@ CI and the laptop do not drift apart.
 It runs **only when asked**. There is no automatic review on every pull request;
 that was removed deliberately in #667.
 
-**Only the repository owner can trigger it.** The workflow runs with repository
-secrets on a public repo, so the job's `if:` condition requires the commenter's
-`author_association` to be `OWNER`. GitHub evaluates that before scheduling
-anything, so a mention from anyone else never starts a job at all — it is not
-merely rejected after the fact. (`claude-code-action` also requires write access
-and refuses bots, but that check runs inside the action, once the job is already
-running.)
+**Only maintainers can trigger it.** The workflow runs with repository secrets on
+a public repo, so the job's `if:` requires the commenter's `author_association`
+to be `OWNER`, `MEMBER` or `COLLABORATOR`. GitHub evaluates that before
+scheduling anything, so a mention from anyone else never starts a job at all — it
+is not merely rejected after the fact. (`claude-code-action` also requires write
+access and refuses bots, but that check runs inside the action, once the job is
+already running.)
 
-This means contributors cannot request a review themselves; ask a maintainer to
-run it on your PR.
+Outside contributors therefore cannot request a review themselves, and GitHub
+offers no "approve this run" prompt for comment-triggered workflows the way it
+does for pull requests from forks. Ask a maintainer to comment
+`@claude review this PR` on your pull request — a maintainer asking is the
+approval.
 
 **The verdict is advice, not sign-off.** Two limitations, stated plainly because a
 clean PASS is exactly when they matter most:
