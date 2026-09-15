@@ -12,12 +12,23 @@
 # API one. Never set both: the action prefers the API key, and you are billed per
 # token with nothing in the log saying so.
 #
-# WHO CAN TRIGGER IT. This repo is public and `issue_comment` runs with repo
-# secrets, so "anyone who can comment" would mean "anyone can spend the
-# subscription". claude-code-action gates on the commenter holding write
-# permission (`allowed_non_write_users` is unset, so no exceptions) and on bots
-# being disallowed (`allowed_bots` is unset). An outside contributor's @claude
-# is ignored. Keep both inputs unset unless you mean to widen that.
+# WHO CAN TRIGGER IT. This repo is public and `issue_comment` runs with
+# repository secrets, so "anyone who can comment" is the threat model. There are
+# two gates, and the order they run in is the whole point:
+#
+#   1. The `if:` on the job below requires author_association == 'OWNER'. GitHub
+#      evaluates that BEFORE scheduling anything, so a stranger's "@claude" never
+#      allocates a runner, never checks out the repo, and never reaches the model.
+#   2. claude-code-action then requires the commenter to hold write access and
+#      refuses bots (`allowed_non_write_users` and `allowed_bots` both unset).
+#      That check runs INSIDE the action — by the time it rejects someone, the
+#      job has already started.
+#
+# Gate 2 alone protects the subscription but not your inbox: every drive-by
+# "@claude" would still spawn a job run and a notification. Gate 1 is what stops
+# that, and it is the one carrying the weight. To let collaborators use it, add
+# 'MEMBER' and 'COLLABORATOR' to the association test — deliberately, not as a
+# side effect of editing something else.
 #
 # REVIEW PATH
 #
@@ -65,13 +76,14 @@ permissions: {}
 jobs:
   claude:
     name: Claude
-    # Only fires on an explicit @claude mention. Without this the job would start
-    # on every comment in the repo and burn subscription usage doing nothing.
+    # Two conditions, and BOTH matter: an explicit @claude mention, and the person
+    # who wrote it being the repository OWNER. See "WHO CAN TRIGGER IT" above for
+    # why the owner test lives here rather than being left to the action.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.author_association == 'OWNER') ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.author_association == 'OWNER') ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.author_association == 'OWNER') ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && github.event.issue.author_association == 'OWNER')
     runs-on: ubuntu-latest
     # A default review is five lenses, so five subagents. Without a ceiling a
     # wedged review sits there spending subscription usage until the job's own
