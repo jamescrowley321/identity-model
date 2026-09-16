@@ -2,6 +2,42 @@
 
 <!-- version list -->
 
+## v3.18.2 (2026-09-16)
+
+### Bug Fixes
+
+- **rust)(deps**: Bump rustls 0.23.41 -> 0.23.45 for the TLS 1.3 advisory
+  ([#672](https://github.com/jamescrowley321/identity-model/pull/672),
+  [`0eefb7c`](https://github.com/jamescrowley321/identity-model/commit/0eefb7ccf922e1f7d356bc5cfb4f878574b2444c))
+
+### Chores
+
+- Sync uv.lock with 3.18.1
+  ([`497f313`](https://github.com/jamescrowley321/identity-model/commit/497f3131f35f8d835075b5d339c3b5eb1501b518))
+
+### Continuous Integration
+
+- Let @claude run the blind-peer-review lenses on demand
+  ([#668](https://github.com/jamescrowley321/identity-model/pull/668),
+  [`1fa011f`](https://github.com/jamescrowley321/identity-model/commit/1fa011ff95aba04d540dab464f52cbe061cb4cfe))
+
+- Remove the cloud review workflow; review locally with the plugin
+  ([#667](https://github.com/jamescrowley321/identity-model/pull/667),
+  [`10ba9b1`](https://github.com/jamescrowley321/identity-model/commit/10ba9b166ccc91e360486dfcf027a6672af1cb6f))
+
+- Repair the review gate for blind-peer-review v3.0.0
+  ([#656](https://github.com/jamescrowley321/identity-model/pull/656),
+  [`e3b4f7d`](https://github.com/jamescrowley321/identity-model/commit/e3b4f7d59d758225a4892e4e2326cfc446c11331))
+
+- Run blind peer review on demand instead of on every PR
+  ([#664](https://github.com/jamescrowley321/identity-model/pull/664),
+  [`3d8aabe`](https://github.com/jamescrowley321/identity-model/commit/3d8aabe9299b21b24d4c65e4b1cccfaa6a949ff9))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#665](https://github.com/jamescrowley321/identity-model/pull/665),
+  [`0b86f18`](https://github.com/jamescrowley321/identity-model/commit/0b86f18a5925f8abd9968fcb21813521b6460ed9))
+
+
 ## v3.18.1 (2026-09-13)
 
 > **Note:** the two `conformance` fixes below are about
