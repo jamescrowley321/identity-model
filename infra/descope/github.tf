@@ -37,35 +37,19 @@ resource "github_actions_secret" "descope_audience" {
   plaintext_value = var.project_id
 }
 
-# Generate an expired access-key token for negative test cases.
-# The project's access_key_session_token_expiration is 3 minutes,
-# so any token created here will be expired by the time CI runs.
-resource "terraform_data" "expired_token" {
-  triggers_replace = [
-    descope_access_key.m2m.client_id,
-    descope_access_key.m2m.cleartext,
-  ]
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      TOKEN=$(curl -s -X POST https://api.descope.com/v1/auth/accesskey/exchange \
-        -H "Authorization: Bearer ${var.project_id}:${descope_access_key.m2m.cleartext}" \
-        -H "Content-Type: application/json" \
-        -d '{"loginId": "${descope_access_key.m2m.client_id}"}' \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('sessionJwt',''))")
-
-      echo "$TOKEN" > ${path.module}/expired_token.txt
-    EOT
-  }
-}
-
-data "local_file" "expired_token" {
-  depends_on = [terraform_data.expired_token]
-  filename   = "${path.module}/expired_token.txt"
-}
-
+# The expired token is an input, not something minted here.
+#
+# This was a `local-exec` provisioner that curled the access-key exchange,
+# wrote the JWT to ${path.module}/expired_token.txt, and read it back through
+# `data "local_file"`. The provisioner runs on APPLY and the data source is
+# read on PLAN, the file is gitignored, and HCP rebuilds its run environment
+# every run — so it only ever worked from one directory on one laptop.
+#
+# It also failed open: the command ended in `.get('sessionJwt','')`, so any API
+# error wrote an EMPTY token and the apply went green while blanking the
+# DESCOPE_EXPIRED_TOKEN secret. The variable has a non-empty validation instead.
 resource "github_actions_secret" "descope_expired_token" {
   repository      = var.github_repository
   secret_name     = "DESCOPE_EXPIRED_TOKEN"
-  plaintext_value = trimspace(data.local_file.expired_token.content)
+  plaintext_value = var.descope_expired_token
 }

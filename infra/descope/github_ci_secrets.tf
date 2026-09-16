@@ -12,36 +12,21 @@
 #    fail every dependabot PR, which blocks auto-merge.
 #
 # 2. The Ory integration test credentials (`TEST_*`), which previously had
-#    no declarative source. These values live in the local `.env` at the
-#    repo root (provisioned once via the Ory dashboard).
+#    no declarative source. They are workspace inputs — see variables.tf for
+#    why they are no longer read from the repo-root `.env`.
 
 locals {
-  # Parse ../../.env (repo root) into a map of VAR => value. Handles the
-  # common `KEY=value` and `KEY="value"` forms. Skips blanks and comments.
-  env_file_lines = [
-    for line in split("\n", file("${path.module}/../../.env")) :
-    line
-    if length(regexall("^[A-Z_][A-Z0-9_]*=", line)) > 0
-  ]
-
-  env_vars = {
-    for line in local.env_file_lines :
-    split("=", line)[0] => trim(
-      join("=", slice(split("=", line), 1, length(split("=", line)))),
-      "\"'"
-    )
-  }
-
   # Ory / local fixture credentials mirrored to CI. These map 1:1 to the
-  # `TEST_*` secret names referenced in .github/workflows/ci.yml.
+  # `TEST_*` secret names referenced in .github/workflows/ci.yml. They used to
+  # be parsed out of the repo-root `.env`, which no remote runner can see.
   ory_test_secrets = {
-    TEST_DISCO_ADDRESS = local.env_vars["TEST_DISCO_ADDRESS"]
-    TEST_JWKS_ADDRESS  = local.env_vars["TEST_JWKS_ADDRESS"]
-    TEST_CLIENT_ID     = local.env_vars["TEST_CLIENT_ID"]
-    TEST_CLIENT_SECRET = local.env_vars["TEST_CLIENT_SECRET"]
-    TEST_SCOPE         = local.env_vars["TEST_SCOPE"]
-    TEST_AUDIENCE      = lookup(local.env_vars, "TEST_AUDIENCE", "")
-    TEST_EXPIRED_TOKEN = lookup(local.env_vars, "TEST_EXPIRED_TOKEN", "")
+    TEST_DISCO_ADDRESS = var.test_disco_address
+    TEST_JWKS_ADDRESS  = var.test_jwks_address
+    TEST_CLIENT_ID     = var.test_client_id
+    TEST_CLIENT_SECRET = var.test_client_secret
+    TEST_SCOPE         = var.test_scope
+    TEST_AUDIENCE      = var.test_audience
+    TEST_EXPIRED_TOKEN = var.test_expired_token
   }
 
   # Descope-derived CI secrets — source of truth is the existing resources
@@ -54,7 +39,7 @@ locals {
     DESCOPE_CLIENT_SECRET = descope_access_key.m2m.cleartext
     DESCOPE_SCOPE         = "openid"
     DESCOPE_AUDIENCE      = var.project_id
-    DESCOPE_EXPIRED_TOKEN = trimspace(data.local_file.expired_token.content)
+    DESCOPE_EXPIRED_TOKEN = var.descope_expired_token
   }
 
   # Full set of secrets that must exist in BOTH the actions and dependabot
