@@ -356,6 +356,11 @@ async fn integration_revoke_invalid_client_live() {
             assert_eq!(error, "invalid_client", "unexpected OAuth error code");
             assert!((400..500).contains(status), "expected a 4xx, got {status}");
         }
+        // node-oidc-provider answers an RFC-shaped invalid_client, so the typed
+        // arm above is the expected outcome here. This arm stays only for
+        // providers with a non-RFC error body; accepting it unconditionally would
+        // let the test stay green even if the client stopped producing a typed
+        // revocation error at all.
         IdentityError::Http(msg) => {
             // The message embeds the endpoint and a server-controlled body
             // snippet, so a bare "40" substring would also be satisfied by a 404

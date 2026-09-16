@@ -77,7 +77,12 @@ impl std::fmt::Debug for RevocationClient {
             .field("client_id", &self.client_id)
             .field("client_secret", &REDACTED)
             .field("auth_method", &self.auth_method)
-            .field("extra_params", &self.extra_params)
+            // Keys only: a caller may park a client_assertion or other bearer
+            // material in an extra param, and Debug output reaches logs.
+            .field(
+                "extra_params",
+                &self.extra_params.keys().collect::<Vec<_>>(),
+            )
             .field("timeout", &self.timeout)
             .field("allow_http", &self.allow_http)
             .finish()
@@ -167,7 +172,18 @@ impl RevocationClient {
         // client-auth parameters (whether or not already present — on the Basic
         // path client_id is absent from the body yet must not be injectable).
         for (key, value) in &self.extra_params {
-            if RESERVED_PARAMS.contains(&key.as_str()) || form.iter().any(|(k, _)| k == key) {
+            // Case-insensitive on a trimmed key. An exact match would let
+            // `Token` or `token ` through, and a server whose form parser folds
+            // case (ASP.NET Core's IFormCollection is OrdinalIgnoreCase) then
+            // joins the duplicates into "<real>,x", matches no stored token, and
+            // returns the anti-scanning 200 — so every revocation silently stops
+            // revoking while still reporting success.
+            let normalised = key.trim().to_ascii_lowercase();
+            if RESERVED_PARAMS.contains(&normalised.as_str())
+                || form
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case(normalised.trim()))
+            {
                 continue;
             }
             form.push((key.clone(), value.clone()));
@@ -188,6 +204,25 @@ impl RevocationClient {
             .send()
             .await
             .map_err(|e| IdentityError::Http(format!("post {}: {e}", self.revocation_endpoint)))?;
+
+        // reqwest fixes its redirect policy at client-build time, so unlike the
+        // Go reference — which copies the caller's client and sets CheckRedirect
+        // per request — we cannot impose a policy on a client supplied via
+        // `http_client`. Compare the response's final URL against the configured
+        // endpoint instead: if they differ, a redirect was followed. On a
+        // 301/302/303 the body was dropped and this 2xx means nothing; on a
+        // 307/308 the token (and `client_secret` on the post path) has already
+        // been replayed to that host. Detection is all that is available at that
+        // point, and it is strictly better than returning Ok. The default client
+        // follows nothing, so this only fires for caller-supplied clients.
+        if response.url().as_str() != self.revocation_endpoint.as_str() {
+            return Err(IdentityError::Http(format!(
+                "revocation request to {} was redirected to a different URL; refusing to treat the result as a revocation. \
+                 The token travels in the request body, so a followed redirect either dropped it or replayed it to another host. \
+                 Supply a client with a no-redirect policy (the default client already has one).",
+                self.revocation_endpoint
+            )));
+        }
 
         let status = response.status();
 
@@ -251,7 +286,12 @@ impl std::fmt::Debug for RevocationClientBuilder {
                 &self.client_secret.as_ref().map(|_| REDACTED),
             )
             .field("auth_method", &self.auth_method)
-            .field("extra_params", &self.extra_params)
+            // Keys only: a caller may park a client_assertion or other bearer
+            // material in an extra param, and Debug output reaches logs.
+            .field(
+                "extra_params",
+                &self.extra_params.keys().collect::<Vec<_>>(),
+            )
             .field("timeout", &self.timeout)
             .field("allow_http", &self.allow_http)
             .finish()
@@ -359,6 +399,23 @@ impl RevocationClientBuilder {
                 "revocation_endpoint is required".to_string(),
             ));
         }
+        // Strip credentials carried in the URL. `https://id:secret@as/revoke` is a
+        // common way to pass basic auth as one config string, and the endpoint is
+        // interpolated into every transport-error message and printed by Debug —
+        // so leaving userinfo in place would publish the secret to the log store
+        // right beside the field this type carefully redacts.
+        let revocation_endpoint = match reqwest::Url::parse(&revocation_endpoint) {
+            Ok(mut url) => {
+                if !url.username().is_empty() || url.password().is_some() {
+                    let _ = url.set_username("");
+                    let _ = url.set_password(None);
+                }
+                url.to_string()
+            }
+            // Not parseable: leave as-is so the existing scheme check produces the
+            // configuration error rather than masking it here.
+            Err(_) => revocation_endpoint,
+        };
         Ok(RevocationClient {
             http: self.http.unwrap_or_else(crate::http::no_redirect_client),
             revocation_endpoint,
@@ -828,6 +885,87 @@ mod tests {
         assert!(
             upstream.received_requests().await.unwrap().is_empty(),
             "the redirect target must never be contacted — the token is in the body"
+        );
+    }
+
+    // A caller-supplied client that follows redirects must not be able to turn a
+    // replayed or dropped request into a reported success. Mirrors the Go
+    // reference's TestRevoke_RefusesInsecureRedirect, which passes a caller
+    // client deliberately.
+    #[tokio::test]
+    async fn caller_supplied_redirecting_client_is_still_refused() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&upstream)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&upstream)
+            .await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .append_header("location", format!("{}/elsewhere", upstream.uri()).as_str()),
+            )
+            .mount(&server)
+            .await;
+
+        // Default reqwest policy: follows redirects. This is what a caller who
+        // needs a proxy or a custom CA ends up with.
+        let permissive = reqwest::Client::builder()
+            .build()
+            .expect("build permissive client");
+
+        let endpoint = format!("{}/revoke", server.uri());
+        let err = client(&endpoint)
+            .http_client(permissive)
+            .build()
+            .unwrap()
+            .revoke("tok-1", None)
+            .await
+            .expect_err("a followed redirect must not be reported as a revocation");
+        assert!(matches!(err, IdentityError::Http(_)), "got {err:?}");
+    }
+
+    // Reserved parameters are matched case-insensitively: `Token` must not slip
+    // past and become a duplicate the server folds together.
+    #[tokio::test]
+    async fn reserved_params_are_case_insensitive() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200)).await;
+
+        let endpoint = format!("{}/revoke", server.uri());
+        client(&endpoint)
+            .extra_param("Token", "attacker")
+            .extra_param("TOKEN", "attacker")
+            .extra_param(" token ", "attacker")
+            .extra_param("Client_Secret", "attacker")
+            .build()
+            .unwrap()
+            .revoke("tok-1", None)
+            .await
+            .unwrap();
+
+        let form = form_of(&server.received_requests().await.unwrap()[0]);
+        let token_keys: Vec<_> = form
+            .keys()
+            .filter(|k| k.trim().eq_ignore_ascii_case("token"))
+            .collect();
+        assert_eq!(
+            token_keys.len(),
+            1,
+            "exactly one token parameter must reach the wire, got {form:?}"
+        );
+        assert_eq!(form.get("token").map(String::as_str), Some("tok-1"));
+        assert!(
+            !form
+                .keys()
+                .any(|k| k.trim().eq_ignore_ascii_case("client_secret")),
+            "client_secret must not be injectable on the Basic path: {form:?}"
         );
     }
 
