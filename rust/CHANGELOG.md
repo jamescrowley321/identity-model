@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-09-16)
+
+### Features
+
+- **rust**: Token revocation (RFC 7009)
+  ([#671](https://github.com/jamescrowley321/identity-model/pull/671),
+  [`7c6d453`](https://github.com/jamescrowley321/identity-model/commit/7c6d453b334f1e128814411bb08cf26f8096a847))
+
+
 ## v0.4.0 (2026-09-16)
 
 ### Features
