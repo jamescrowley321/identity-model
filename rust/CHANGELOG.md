@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-09-16)
+
+### Features
+
+- **rust**: Token exchange grant (RFC 8693)
+  ([#673](https://github.com/jamescrowley321/identity-model/pull/673),
+  [`70148c3`](https://github.com/jamescrowley321/identity-model/commit/70148c3beb518396baa24ceccbb2f51f8cf0c00b))
+
+
 ## v0.3.2 (2026-09-06)
 
 ### Bug Fixes
