@@ -1,8 +1,11 @@
-//! Token endpoint client: client credentials, authorization code, PKCE.
+//! Token endpoint client: client credentials, authorization code, PKCE,
+//! token exchange.
 //!
 //! [`TokenClient`] performs the OAuth 2.0 client credentials grant
-//! (RFC 6749 §4.4) and the authorization code grant (RFC 6749 §4.1.3), the
-//! latter with optional PKCE (RFC 7636). Client authentication is
+//! (RFC 6749 §4.4), the authorization code grant (RFC 6749 §4.1.3) — the
+//! latter with optional PKCE (RFC 7636) — and the token exchange grant
+//! (RFC 8693), whose per-call parameters are carried by
+//! [`TokenExchangeRequest`]. Client authentication is
 //! `client_secret_basic` (default) or `client_secret_post` (RFC 6749 §2.3).
 //! Successful responses decode into a typed [`TokenResponse`] (RFC 6749 §5.1);
 //! error responses become an [`IdentityError::TokenEndpoint`] (RFC 6749 §5.2).
@@ -11,8 +14,9 @@
 //! authorization request (RFC 7636 §4.1–§4.3).
 //!
 //! Behavioural contract: `spec/vectors/client-credentials.json`
-//! (`CC-001`..`CC-006`) and `spec/vectors/authorization-code.json`
-//! (`ACG-001`..`ACG-006`); see also `spec/capabilities.md`.
+//! (`CC-001`..`CC-006`), `spec/vectors/authorization-code.json`
+//! (`ACG-001`..`ACG-006`), and `spec/vectors/token-exchange.json`
+//! (`EXCH-001`..`EXCH-006`); see also `spec/capabilities.md`.
 //!
 //! ```no_run
 //! # async fn run() -> rs_identity_model::Result<()> {
@@ -29,6 +33,7 @@
 //! # }
 //! ```
 
+mod exchange;
 mod pkce;
 mod response;
 
@@ -41,6 +46,10 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use crate::client_auth::{OAuthErrorBody, basic_auth_header, body_snippet, read_capped_body};
 use crate::{IdentityError, Result};
 
+pub use exchange::{
+    TOKEN_TYPE_ACCESS_TOKEN, TOKEN_TYPE_ID_TOKEN, TOKEN_TYPE_JWT, TOKEN_TYPE_REFRESH_TOKEN,
+    TOKEN_TYPE_SAML1, TOKEN_TYPE_SAML2, TOKEN_TYPE_URIS, TokenExchangeRequest,
+};
 pub use pkce::{
     CHALLENGE_METHOD_S256, PkceChallenge, authorization_url, s256_challenge, valid_code_verifier,
 };
@@ -50,6 +59,8 @@ pub use response::TokenResponse;
 const GRANT_CLIENT_CREDENTIALS: &str = "client_credentials";
 /// The `authorization_code` grant type (RFC 6749 §4.1.3).
 const GRANT_AUTHORIZATION_CODE: &str = "authorization_code";
+/// The token exchange grant type URI (RFC 8693 §2.1).
+const GRANT_TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 
 /// Default per-request timeout so a hung endpoint cannot block indefinitely.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -61,6 +72,12 @@ const REDACTED: &str = "<redacted>";
 /// never be set or overridden via [`TokenClientBuilder::extra_param`], so that
 /// caller-supplied extras cannot contradict the request's identity or grant
 /// shape.
+/// Note: `resource`, `audience`, and `requested_token_type` are deliberately
+/// NOT reserved. They are non-identity target/output hints a caller may also
+/// want to supply on another grant (e.g. an RFC 8707 `resource` on the client
+/// credentials grant); the token exchange grant sets them from
+/// [`TokenExchangeRequest`], and the extra-params loop skips any key already
+/// present in the form.
 const RESERVED_PARAMS: &[&str] = &[
     "grant_type",
     "client_id",
@@ -69,6 +86,10 @@ const RESERVED_PARAMS: &[&str] = &[
     "redirect_uri",
     "code_verifier",
     "scope",
+    "subject_token",
+    "subject_token_type",
+    "actor_token",
+    "actor_token_type",
 ];
 
 /// How client credentials are presented to the token endpoint (RFC 6749 §2.3).
@@ -196,6 +217,103 @@ impl TokenClient {
             form.push(("code_verifier".to_string(), verifier.to_string()));
         }
         self.do_request(form, self.client_secret.as_deref()).await
+    }
+
+    /// Performs the OAuth 2.0 token exchange grant (RFC 8693 §2.1, EXCH-001):
+    /// POSTs `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with
+    /// the parameters of `request` to the token endpoint and returns the typed
+    /// [`TokenResponse`], including the RFC 8693 §2.2 `issued_token_type`.
+    ///
+    /// A [`TokenExchangeRequest`] carrying only a subject token requests an
+    /// **impersonation** token; one that also carries an actor token requests a
+    /// **delegation** token (RFC 8693 §1.1, EXCH-002). The type URIs are sent
+    /// verbatim (RFC 8693 §3, EXCH-003), and `resource` / `audience` are sent as
+    /// repeated parameters when more than one target is named (EXCH-004).
+    ///
+    /// Authentication uses the configured [`ClientAuthMethod`]
+    /// (`client_secret_basic` by default), exactly as for the other grants.
+    ///
+    /// ```no_run
+    /// # async fn run() -> rs_identity_model::Result<()> {
+    /// use rs_identity_model::{TOKEN_TYPE_ACCESS_TOKEN, TokenClient, TokenExchangeRequest};
+    ///
+    /// let client = TokenClient::builder()
+    ///     .client_id("my-client")
+    ///     .client_secret("my-secret")
+    ///     .token_endpoint("https://issuer.example.com/token")
+    ///     .build()?;
+    /// let issued = client
+    ///     .token_exchange(
+    ///         &TokenExchangeRequest::new("subject.tok", TOKEN_TYPE_ACCESS_TOKEN)
+    ///             .audience("https://api.example.com"),
+    ///     )
+    ///     .await?;
+    /// println!("issued a {:?}", issued.issued_token_type);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`IdentityError::Validation`] — `request` is missing a REQUIRED
+    ///   RFC 8693 §2.1 parameter. No request is sent.
+    /// - [`IdentityError::TokenEndpoint`] — a non-2xx OAuth error response
+    ///   (RFC 8693 §2.2.2, RFC 6749 §5.2, EXCH-006).
+    /// - [`IdentityError::Http`] — a transport failure, a non-OAuth error body,
+    ///   or a 2xx body missing the REQUIRED `access_token` or
+    ///   `issued_token_type`.
+    /// - [`IdentityError::Deserialization`] — a 2xx body that is not a valid
+    ///   token response.
+    pub async fn token_exchange(&self, request: &TokenExchangeRequest) -> Result<TokenResponse> {
+        request.validate()?;
+
+        let mut form: Vec<(String, String)> = vec![
+            ("grant_type".to_string(), GRANT_TOKEN_EXCHANGE.to_string()),
+            ("subject_token".to_string(), request.subject_token.clone()),
+            (
+                "subject_token_type".to_string(),
+                request.subject_token_type.clone(),
+            ),
+        ];
+        // validate() has already established that a non-empty actor token comes
+        // with a non-empty type, so the pair is sent together or not at all.
+        if let Some(actor_token) = request.actor_token.as_deref().filter(|t| !t.is_empty()) {
+            form.push(("actor_token".to_string(), actor_token.to_string()));
+            form.push((
+                "actor_token_type".to_string(),
+                request.actor_token_type.clone().unwrap_or_default(),
+            ));
+        }
+        if let Some(requested) = &request.requested_token_type {
+            form.push(("requested_token_type".to_string(), requested.clone()));
+        }
+        if let Some(scope) = &request.scope {
+            form.push(("scope".to_string(), scope.clone()));
+        }
+        // resource and audience MAY each appear more than once (RFC 8693 §2.1),
+        // which the ordered pair list preserves and a map would collapse.
+        for resource in &request.resources {
+            form.push(("resource".to_string(), resource.clone()));
+        }
+        for audience in &request.audiences {
+            form.push(("audience".to_string(), audience.clone()));
+        }
+
+        let token = self.do_request(form, self.client_secret.as_deref()).await?;
+        // issued_token_type is REQUIRED in a successful exchange response
+        // (RFC 8693 §2.2); a 200 that omits it is non-conformant and is
+        // rejected rather than handed back with the field silently empty.
+        if !token
+            .issued_token_type
+            .as_deref()
+            .is_some_and(|t| !t.is_empty())
+        {
+            return Err(IdentityError::Http(format!(
+                "token exchange response from {} is missing issued_token_type",
+                self.token_endpoint
+            )));
+        }
+        Ok(token)
     }
 
     /// Applies client authentication and extra parameters, POSTs `form` as
@@ -878,5 +996,516 @@ mod tests {
             .build()
             .unwrap();
         assert!(format!("{client:?}").contains("client_secret: None"));
+    }
+
+    // ---- RFC 8693 token exchange (EXCH-001..EXCH-006) --------------------
+    //
+    // These drive the same shared conformance fixtures the cross-language
+    // contract (spec/vectors/token-exchange.json) references and the Go
+    // reference replays, so the two implementations cannot drift apart on the
+    // wire format or the parsed response.
+
+    /// Reads a shared conformance fixture from
+    /// `spec/test-fixtures/token-exchange`. Unit tests run with `rust/` as the
+    /// working directory.
+    fn exchange_fixture(name: &str) -> String {
+        let path = format!("../spec/test-fixtures/token-exchange/{name}");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+    }
+
+    /// Parses a request's form body into ordered key/value pairs, preserving
+    /// the repeated `resource` / `audience` parameters a `HashMap` collapses.
+    fn form_pairs(req: &Request) -> Vec<(String, String)> {
+        url::form_urlencoded::parse(&req.body)
+            .into_owned()
+            .collect()
+    }
+
+    /// All values sent for `key`, in order.
+    fn form_all(pairs: &[(String, String)], key: &str) -> Vec<String> {
+        pairs
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+            .collect()
+    }
+
+    /// The single request the server received, for asserting what was sent.
+    async fn only_request(server: &MockServer) -> Request {
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "expected exactly one request");
+        requests.into_iter().next().unwrap()
+    }
+
+    /// A server replaying `fixture` with HTTP 200 and a client pointed at it.
+    async fn exchange_server(fixture: &str) -> MockServer {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(exchange_fixture(fixture)),
+        )
+        .await;
+        server
+    }
+
+    fn exchange_client(server: &MockServer) -> TokenClient {
+        client(&format!("{}/token", server.uri())).build().unwrap()
+    }
+
+    // EXCH-001: an impersonation exchange POSTs the token-exchange grant with
+    // only the subject token, and parses the issued-token trio from the 200.
+    #[tokio::test]
+    async fn token_exchange_impersonation_returns_issued_token_trio() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let issued = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        let form: HashMap<String, String> = pairs.iter().cloned().collect();
+        assert_eq!(form.get("grant_type").unwrap(), GRANT_TOKEN_EXCHANGE);
+        assert_eq!(form.get("subject_token").unwrap(), "subject-tok");
+        assert_eq!(
+            form.get("subject_token_type").unwrap(),
+            TOKEN_TYPE_ACCESS_TOKEN
+        );
+        // Impersonation carries no actor token (RFC 8693 §1.1).
+        assert!(!form.contains_key("actor_token"), "{form:?}");
+        assert!(!form.contains_key("actor_token_type"), "{form:?}");
+
+        assert!(!issued.access_token.is_empty());
+        assert_eq!(
+            issued.issued_token_type.as_deref(),
+            Some(TOKEN_TYPE_ACCESS_TOKEN)
+        );
+        assert_eq!(issued.token_type, "Bearer");
+        assert_eq!(issued.expires_in, 3600);
+    }
+
+    // EXCH-002: a delegation exchange sends both the subject and the actor
+    // token with their types (RFC 8693 §1.1, §2.1).
+    #[tokio::test]
+    async fn token_exchange_delegation_sends_actor_token() {
+        let server = exchange_server("exchange-delegation-success.json").await;
+
+        let issued = exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .actor_token("actor-tok", TOKEN_TYPE_JWT),
+            )
+            .await
+            .expect("delegation exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        let form: HashMap<String, String> = pairs.iter().cloned().collect();
+        assert_eq!(form.get("subject_token").unwrap(), "subject-tok");
+        assert_eq!(form.get("actor_token").unwrap(), "actor-tok");
+        assert_eq!(form.get("actor_token_type").unwrap(), TOKEN_TYPE_JWT);
+        assert!(!issued.access_token.is_empty());
+        assert!(issued.issued_token_type.is_some());
+    }
+
+    // EXCH-003: each of the six RFC 8693 §3 token type URIs is serialized
+    // verbatim as subject_token_type, with no abbreviation or normalisation.
+    #[tokio::test]
+    async fn token_exchange_serializes_all_token_type_uris_verbatim() {
+        for uri in TOKEN_TYPE_URIS {
+            let server = exchange_server("exchange-impersonation-success.json").await;
+            exchange_client(&server)
+                .token_exchange(&TokenExchangeRequest::new("subject-tok", uri))
+                .await
+                .unwrap_or_else(|e| panic!("exchange with {uri}: {e}"));
+
+            let pairs = form_pairs(&only_request(&server).await);
+            assert_eq!(
+                form_all(&pairs, "subject_token_type"),
+                vec![uri.to_string()],
+                "subject_token_type must be sent verbatim"
+            );
+        }
+    }
+
+    // EXCH-004: requested_token_type, audience, and resource all reach the
+    // request body.
+    #[tokio::test]
+    async fn token_exchange_sends_requested_type_audience_and_resource() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .requested_token_type(TOKEN_TYPE_ACCESS_TOKEN)
+                    .audience("https://api.example.com")
+                    .resource("https://rs.example.com")
+                    .scope("https://api.example.com/read"),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        let form: HashMap<String, String> = pairs.iter().cloned().collect();
+        assert_eq!(
+            form.get("requested_token_type").unwrap(),
+            TOKEN_TYPE_ACCESS_TOKEN
+        );
+        assert_eq!(form.get("audience").unwrap(), "https://api.example.com");
+        assert_eq!(form.get("resource").unwrap(), "https://rs.example.com");
+        assert_eq!(form.get("scope").unwrap(), "https://api.example.com/read");
+    }
+
+    // EXCH-004 (repeatable): resource and audience MAY each appear more than
+    // once (RFC 8693 §2.1); every value is sent as its own parameter rather
+    // than joined or collapsed to the last one.
+    #[tokio::test]
+    async fn token_exchange_repeats_resource_and_audience() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .resource("https://rs1.example.com")
+                    .resource("https://rs2.example.com")
+                    .audience("aud-a")
+                    .audience("aud-b"),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(
+            form_all(&pairs, "resource"),
+            ["https://rs1.example.com", "https://rs2.example.com"]
+        );
+        assert_eq!(form_all(&pairs, "audience"), ["aud-a", "aud-b"]);
+    }
+
+    // EXCH-005: a success whose token_type is N_A — the issued token is not
+    // usable as a bearer token (RFC 8693 §2.2.1) — parses without error.
+    #[tokio::test]
+    async fn token_exchange_accepts_n_a_token_type() {
+        let server = exchange_server("exchange-n_a-token-type.json").await;
+
+        let issued = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("N_A token type is accepted");
+
+        assert_eq!(issued.token_type, "N_A");
+        assert_eq!(issued.issued_token_type.as_deref(), Some(TOKEN_TYPE_SAML2));
+        assert!(!issued.access_token.is_empty());
+        assert_eq!(issued.expires_in, 60);
+    }
+
+    // EXCH-006: an HTTP 400 OAuth error body surfaces as a typed
+    // TokenEndpoint error carrying the code, description, and status
+    // (RFC 8693 §2.2.2, RFC 6749 §5.2).
+    #[tokio::test]
+    async fn token_exchange_error_maps_to_token_endpoint() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(400)
+                .set_body_string(exchange_fixture("exchange-error-invalid-grant.json")),
+        )
+        .await;
+
+        let err = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "expired-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect_err("an error response must fail");
+
+        match err {
+            IdentityError::TokenEndpoint {
+                error,
+                description,
+                status,
+                ..
+            } => {
+                assert_eq!(error, "invalid_grant");
+                assert!(description.is_some_and(|d| d.contains("subject_token")));
+                assert_eq!(status, 400);
+            }
+            other => panic!("expected TokenEndpoint, got {other:?}"),
+        }
+    }
+
+    // RFC 8693 §2.1 REQUIRED: an empty subject_token fails locally and no
+    // request reaches the endpoint.
+    #[tokio::test]
+    async fn token_exchange_missing_subject_token_sends_nothing() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let err = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new("", TOKEN_TYPE_ACCESS_TOKEN))
+            .await
+            .expect_err("empty subject_token must fail");
+
+        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no request may be sent for an invalid exchange"
+        );
+    }
+
+    // RFC 8693 §2.1 REQUIRED: an empty subject_token_type fails locally.
+    #[tokio::test]
+    async fn token_exchange_missing_subject_token_type_sends_nothing() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let err = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new("subject-tok", ""))
+            .await
+            .expect_err("empty subject_token_type must fail");
+
+        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    // RFC 8693 §2.1: actor_token_type is REQUIRED whenever actor_token is
+    // present, so a typeless actor token fails before the wire.
+    #[tokio::test]
+    async fn token_exchange_actor_token_requires_its_type() {
+        let server = exchange_server("exchange-delegation-success.json").await;
+
+        let err = exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .actor_token("actor-tok", ""),
+            )
+            .await
+            .expect_err("actor_token without a type must fail");
+
+        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    // Extra params must not be able to rewrite the exchange's identity: the
+    // subject and actor tokens, their types, and the grant itself are reserved.
+    #[tokio::test]
+    async fn token_exchange_extra_params_cannot_override_identity() {
+        let server = exchange_server("exchange-delegation-success.json").await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("subject_token", "evil-subject")
+            .extra_param("subject_token_type", "evil-type")
+            .extra_param("actor_token", "evil-actor")
+            .extra_param("actor_token_type", "evil-actor-type")
+            .extra_param("grant_type", "evil-grant")
+            .build()
+            .unwrap()
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .actor_token("actor-tok", TOKEN_TYPE_JWT),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "grant_type"), [GRANT_TOKEN_EXCHANGE]);
+        assert_eq!(form_all(&pairs, "subject_token"), ["subject-tok"]);
+        assert_eq!(
+            form_all(&pairs, "subject_token_type"),
+            [TOKEN_TYPE_ACCESS_TOKEN]
+        );
+        assert_eq!(form_all(&pairs, "actor_token"), ["actor-tok"]);
+        assert_eq!(form_all(&pairs, "actor_token_type"), [TOKEN_TYPE_JWT]);
+    }
+
+    // An extra param that is NOT reserved and not already set by the exchange
+    // still reaches the body — reserving the identity parameters must not
+    // disable the extension point (RFC 8707 resource on another grant, etc.).
+    #[tokio::test]
+    async fn token_exchange_passes_through_unreserved_extra_params() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("acr_values", "urn:example:loa2")
+            .build()
+            .unwrap()
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "acr_values"), ["urn:example:loa2"]);
+    }
+
+    // The default client authentication is client_secret_basic: credentials
+    // travel in the Authorization header, never in the exchange body.
+    #[tokio::test]
+    async fn token_exchange_uses_client_secret_basic_by_default() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("exchange succeeds");
+
+        let request = only_request(&server).await;
+        let header = request
+            .headers
+            .get("authorization")
+            .expect("Basic header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let encoded = header.strip_prefix("Basic ").expect("Basic scheme");
+        let decoded = String::from_utf8(BASE64_STANDARD.decode(encoded).unwrap()).unwrap();
+        assert_eq!(decoded, "client-1:s3cr3t");
+
+        let pairs = form_pairs(&request);
+        assert!(form_all(&pairs, "client_id").is_empty(), "{pairs:?}");
+        assert!(form_all(&pairs, "client_secret").is_empty(), "{pairs:?}");
+    }
+
+    // client_secret_post puts the credentials in the exchange body instead,
+    // with no Authorization header.
+    #[tokio::test]
+    async fn token_exchange_supports_client_secret_post() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        client(&format!("{}/token", server.uri()))
+            .auth_method(ClientAuthMethod::ClientSecretPost)
+            .build()
+            .unwrap()
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("exchange succeeds");
+
+        let request = only_request(&server).await;
+        assert!(request.headers.get("authorization").is_none());
+        let pairs = form_pairs(&request);
+        assert_eq!(form_all(&pairs, "client_id"), ["client-1"]);
+        assert_eq!(form_all(&pairs, "client_secret"), ["s3cr3t"]);
+    }
+
+    // An http:// endpoint is refused unless allow_http was set, and nothing is
+    // sent over the cleartext connection.
+    #[tokio::test]
+    async fn token_exchange_requires_https() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let err = TokenClient::builder()
+            .client_id("client-1")
+            .client_secret("s3cr3t")
+            .token_endpoint(format!("{}/token", server.uri()))
+            .build()
+            .unwrap()
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect_err("http endpoint must be refused");
+
+        assert!(matches!(err, IdentityError::Configuration(_)), "{err:?}");
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    // RFC 8693 §2.2 REQUIRED: a 200 that omits issued_token_type is
+    // non-conformant and is rejected, not returned with the field empty.
+    #[tokio::test]
+    async fn token_exchange_rejects_response_without_issued_token_type() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"access_token":"issued-tok","token_type":"Bearer"}"#),
+        )
+        .await;
+
+        let err = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect_err("a missing issued_token_type must fail");
+
+        match err {
+            IdentityError::Http(message) => {
+                assert!(message.contains("issued_token_type"), "{message}");
+            }
+            other => panic!("expected Http, got {other:?}"),
+        }
+    }
+
+    // RFC 8693 §2.2 REQUIRED: a 200 without access_token is rejected rather
+    // than returned as a success with no token. `access_token` is a required
+    // field of [`TokenResponse`], so an omitted one fails in deserialization;
+    // a present-but-empty one fails the explicit emptiness check in
+    // `do_request`. Both are rejections, and this asserts both paths.
+    #[tokio::test]
+    async fn token_exchange_rejects_response_without_access_token() {
+        let omitted =
+            format!(r#"{{"issued_token_type":"{TOKEN_TYPE_ACCESS_TOKEN}","token_type":"Bearer"}}"#);
+        let empty = format!(
+            r#"{{"access_token":"","issued_token_type":"{TOKEN_TYPE_ACCESS_TOKEN}","token_type":"Bearer"}}"#
+        );
+
+        for body in [omitted, empty] {
+            let server = MockServer::start().await;
+            mount_token(
+                &server,
+                ResponseTemplate::new(200).set_body_string(body.clone()),
+            )
+            .await;
+
+            let err = exchange_client(&server)
+                .token_exchange(&TokenExchangeRequest::new(
+                    "subject-tok",
+                    TOKEN_TYPE_ACCESS_TOKEN,
+                ))
+                .await
+                .expect_err("a missing access_token must fail");
+
+            match err {
+                IdentityError::Deserialization(message) | IdentityError::Http(message) => {
+                    assert!(message.contains("access_token"), "{body}: {message}");
+                }
+                other => panic!("{body}: expected a rejection naming access_token, got {other:?}"),
+            }
+        }
+    }
+
+    // The issued_token_type is a modelled field, so it must not also be left
+    // sitting in `extra` where a caller could read a stale duplicate.
+    #[tokio::test]
+    async fn token_exchange_issued_token_type_is_not_duplicated_in_extra() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let issued = exchange_client(&server)
+            .token_exchange(&TokenExchangeRequest::new(
+                "subject-tok",
+                TOKEN_TYPE_ACCESS_TOKEN,
+            ))
+            .await
+            .expect("exchange succeeds");
+
+        assert!(
+            !issued.extra.contains_key("issued_token_type"),
+            "{:?}",
+            issued.extra
+        );
     }
 }

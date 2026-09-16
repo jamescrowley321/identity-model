@@ -15,7 +15,7 @@ endpoints.
 | `discovery` | OIDC Discovery client | OIDC Discovery 1.0 |
 | `jwks` | JWKS fetch + key resolution | RFC 7517 / 7518 |
 | `jwt` | JWT signature + claims validation, ID token validation, plus injectable/composable claims validators | RFC 7519 / 7515, OIDC Core 1.0 §3.1.3.7 |
-| `token` | Client credentials, auth code, PKCE | RFC 6749 / 7636 |
+| `token` | Client credentials, auth code, PKCE, token exchange | RFC 6749 / 7636 / 8693 |
 | `introspection` | Token introspection client | RFC 7662 |
 | `userinfo` | UserInfo endpoint client | OIDC Core 1.0 §5.3 |
 | `error` | `IdentityError` — the crate error type | — |
@@ -72,7 +72,7 @@ driven by `tests/claims_validation_conformance.rs`.
 
 The Core tier (discovery, JWKS, JWT validation including the OIDC ID-token
 profile, client-credentials and authorization-code + PKCE, UserInfo) is
-implemented, as is Extended token introspection (RFC 7662). Revocation, token
-exchange, and DPoP are not yet implemented. Behavioral parity with the Python
-and Go libraries is enforced by the cross-language conformance vectors in
-[`../spec`](../spec).
+implemented, as are the Extended token introspection (RFC 7662) and token
+exchange (RFC 8693) capabilities. Revocation and DPoP are not yet implemented.
+Behavioral parity with the Python and Go libraries is enforced by the
+cross-language conformance vectors in [`../spec`](../spec).
