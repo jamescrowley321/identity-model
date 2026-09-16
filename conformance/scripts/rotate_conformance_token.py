@@ -114,8 +114,14 @@ import shutil
 import subprocess
 import sys
 
-from playwright.sync_api import Page, sync_playwright
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from playwright.sync_api import Page
+
+# playwright is a PEP 723 dependency of this script, not of the repo. Importing
+# it lazily keeps the pure helpers below importable by the unit tests, which run
+# in the repo's environment and never drive a browser.
 
 
 logger = logging.getLogger("conformance-token")
@@ -229,6 +235,8 @@ def create_token_in_browser(cfg: RotateConfig) -> str | None:
     """
     cfg.profile_dir.mkdir(parents=True, exist_ok=True)
 
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(cfg.profile_dir),
@@ -267,29 +275,81 @@ def create_token_in_browser(cfg: RotateConfig) -> str | None:
             context.close()
 
 
-def _needs_login(page: Page) -> bool:
-    """Return True if the suite is showing an unauthenticated landing page.
+AUTH_PROBE_PATH = "/api/plan"
 
-    The suite's front page renders a prominent "Login" link in the nav bar
-    when the session is unauthenticated and hides it once signed in. We use
-    that as the authentication heuristic.
+# Evaluated in the page so the browser profile's session cookies are used. The
+# suite answers 200 for an authenticated caller and 401 otherwise.
+_AUTH_PROBE_JS = (
     """
-    login_locator = page.get_by_role("link", name="Login")
-    return login_locator.count() > 0 and login_locator.first.is_visible()
+    async () => {
+        try {
+            const r = await fetch('%s', { credentials: 'include' });
+            return r.status;
+        } catch (e) {
+            return 0;
+        }
+    }
+"""
+    % AUTH_PROBE_PATH
+)
+
+_AUTH_OK_JS = (
+    """
+    async () => {
+        try {
+            const r = await fetch('%s', { credentials: 'include' });
+            return r.status === 200;
+        } catch (e) {
+            return false;
+        }
+    }
+"""
+    % AUTH_PROBE_PATH
+)
+
+
+def _playwright_timeout_error() -> type[BaseException]:
+    """Return playwright's TimeoutError, imported lazily (see imports above)."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    return PlaywrightTimeoutError
+
+
+def _needs_login(page: Page) -> bool:
+    """Return True unless an authenticated API call demonstrably succeeds.
+
+    **Fails closed.** This previously inferred "logged in" from the *absence* of
+    a nav link named "Login". The suite's login page has no such link — it
+    offers "Proceed with Google" and "Proceed with GitLab" — so the selector
+    matched nothing, the check reported an authenticated session, and the script
+    skipped the interactive login wait entirely. The browser opened and closed
+    without ever letting the operator sign in, and the stale token was never
+    replaced.
+
+    Markup is not a contract; ``GET /api/plan`` is, and the token minting path
+    already depends on it. Anything other than a clean 200 — 401, 403, a
+    redirect, a thrown fetch, a malformed result — means not authenticated.
+    """
+    try:
+        status = page.evaluate(_AUTH_PROBE_JS)
+    except Exception:  # noqa: BLE001 - any probe failure means "not proven"
+        logger.debug("auth probe raised; treating session as unauthenticated")
+        return True
+
+    if not isinstance(status, (int, float)) or isinstance(status, bool):
+        logger.debug("auth probe returned %r; treating as unauthenticated", status)
+        return True
+    return int(status) != 200
 
 
 def _wait_until_logged_in(page: Page, timeout_ms: int) -> None:
-    """Block until the Login link disappears or the user's name appears."""
-    page.wait_for_function(
-        """
-        () => {
-            const links = Array.from(document.querySelectorAll('a, button'));
-            const login = links.find(el => el.textContent.trim().toLowerCase() === 'login');
-            return !login || login.offsetParent === null;
-        }
-        """,
-        timeout=timeout_ms,
-    )
+    """Block until an authenticated API call succeeds, or the timeout elapses.
+
+    Polls the same probe as :func:`_needs_login` rather than watching for a DOM
+    element to disappear — the old version waited on a "login" element that does
+    not exist, so it returned immediately regardless of session state.
+    """
+    page.wait_for_function(_AUTH_OK_JS, timeout=timeout_ms)
 
 
 def _create_api_token(page: Page, description: str) -> str:
@@ -499,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    except PlaywrightTimeoutError as exc:
+    except _playwright_timeout_error() as exc:
         print(f"browser timeout: {exc}", file=sys.stderr)
         return 1
     return 0
