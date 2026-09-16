@@ -40,6 +40,13 @@ pub struct TokenResponse {
     /// `openid` scope was requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_token: Option<String>,
+    /// The URI naming the type of the issued token, returned by the RFC 8693
+    /// token exchange grant (RFC 8693 §2.2, EXCH-005). REQUIRED in an exchange
+    /// response and absent from every other grant's, so it is modelled as an
+    /// `Option` rather than defaulted to an empty string. It MAY differ from
+    /// the `requested_token_type` that was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_token_type: Option<String>,
     /// Any non-standard parameters returned by the provider.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -57,6 +64,10 @@ impl fmt::Debug for TokenResponse {
                 &self.refresh_token.as_ref().map(|_| REDACTED),
             )
             .field("id_token", &self.id_token.as_ref().map(|_| REDACTED))
+            // Not token material: the issued type is a public URI and stays
+            // legible, since it is the field that identifies what an exchange
+            // actually handed back.
+            .field("issued_token_type", &self.issued_token_type)
             .field("extra", &self.extra)
             .finish()
     }

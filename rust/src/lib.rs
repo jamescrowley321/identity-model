@@ -9,15 +9,16 @@
 //! The Core tier — discovery, JWKS retrieval and key resolution, JWT
 //! validation (including the OIDC ID-token profile), client-credentials and
 //! authorization-code + PKCE token flows, and UserInfo — is implemented, as is
-//! Extended token introspection (RFC 7662). Behavior is proven against the
-//! cross-language conformance vectors in the repository's `spec/`.
+//! Extended token introspection (RFC 7662) and the token exchange grant
+//! (RFC 8693). Behavior is proven against the cross-language conformance
+//! vectors in the repository's `spec/`.
 //!
 //! ## Module Overview
 //!
 //! - [`discovery`] — OIDC Discovery client
 //! - [`jwks`] — JWKS fetch + key resolution
 //! - [`jwt`] — JWT signature + claims validation, ID token validation
-//! - [`token`] — client credentials, authorization code, PKCE
+//! - [`token`] — client credentials, authorization code, PKCE, token exchange
 //! - [`introspection`] — token introspection (RFC 7662)
 //! - [`userinfo`] — UserInfo endpoint client
 //! - [`error`] — the crate error type, [`IdentityError`]
@@ -54,8 +55,9 @@ pub use jwt::{
     validate_id_token, validate_id_token_claims, validate_token, validate_token_with_jwks,
 };
 pub use token::{
-    ClientAuthMethod, PkceChallenge, TokenClient, TokenClientBuilder, TokenResponse,
-    authorization_url,
+    ClientAuthMethod, PkceChallenge, TOKEN_TYPE_ACCESS_TOKEN, TOKEN_TYPE_ID_TOKEN, TOKEN_TYPE_JWT,
+    TOKEN_TYPE_REFRESH_TOKEN, TOKEN_TYPE_SAML1, TOKEN_TYPE_SAML2, TOKEN_TYPE_URIS, TokenClient,
+    TokenClientBuilder, TokenExchangeRequest, TokenResponse, authorization_url,
 };
 pub use userinfo::{Address, UserInfoClient, UserInfoClientBuilder, UserInfoResponse};
 
