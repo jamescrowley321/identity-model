@@ -118,6 +118,17 @@ impl RevocationClient {
     /// - [`IdentityError::Configuration`] — a non-https endpoint without
     ///   `allow_http`.
     pub async fn revoke(&self, token: &str, token_type_hint: Option<&str>) -> Result<()> {
+        // An empty token is a caller bug, not a revocation. RFC 7009 §2.1 makes
+        // `token` REQUIRED, and a server that treats "" as simply unknown answers
+        // 200 (§2.2) — so posting it would hand the caller Ok(()) for a request
+        // that revoked nothing. Fail here rather than let that read as success.
+        if token.is_empty() {
+            return Err(IdentityError::Configuration(
+                "token is required: refusing to send an empty revocation request, which a server would answer 200 and the caller would read as a successful revocation"
+                    .to_string(),
+            ));
+        }
+
         // Require an https endpoint unless http was explicitly allowed. The
         // token is in the request body, so a cleartext post would disclose it.
         let scheme = self.revocation_endpoint.to_ascii_lowercase();
@@ -179,14 +190,20 @@ impl RevocationClient {
             .map_err(|e| IdentityError::Http(format!("post {}: {e}", self.revocation_endpoint)))?;
 
         let status = response.status();
-        let body = read_capped_body(response).await?;
 
-        // A 200 is success regardless of body content (RFC 7009 §2.2). The body
-        // is deliberately not parsed: servers send an empty body, an empty JSON
-        // object, or occasionally whitespace, and none of it carries meaning.
+        // A 2xx is success regardless of body content (RFC 7009 §2.2), so return
+        // before touching the body. Reading it first would let a truncated
+        // chunked response or a connection reset — both common on endpoints that
+        // answer 200 and immediately close — turn a revocation the server has
+        // already performed into an Err, telling the caller the token is still
+        // live. The body carries no meaning on success: servers send nothing, an
+        // empty JSON object, or whitespace.
         if status.is_success() {
             return Ok(());
         }
+
+        // Only an error response is worth reading.
+        let body = read_capped_body(response).await?;
 
         // Non-2xx is an OAuth error (RFC 7009 §2.2.1, RFC 6749 §5.2) —
         // REV-003 unsupported_token_type, REV-004 invalid_client.
@@ -291,8 +308,13 @@ impl RevocationClientBuilder {
         self
     }
 
-    /// Supplies a pre-configured HTTP client. Defaults to the crate's secure
-    /// client, which refuses https-to-http redirect downgrades.
+    /// Supplies a pre-configured HTTP client.
+    ///
+    /// Defaults to a **non-redirecting** client. The token travels in the request
+    /// body, and following a redirect either drops it (301/302/303, where the
+    /// POST is rewritten to a GET) and reports a false success, or replays it —
+    /// with `client_secret` on the `client_secret_post` path — to the redirect
+    /// target (307/308). A caller who overrides this takes on that risk.
     pub fn http_client(mut self, client: HttpClient) -> Self {
         self.http = Some(client);
         self
@@ -338,7 +360,7 @@ impl RevocationClientBuilder {
             ));
         }
         Ok(RevocationClient {
-            http: self.http.unwrap_or_else(crate::http::secure_client),
+            http: self.http.unwrap_or_else(crate::http::no_redirect_client),
             revocation_endpoint,
             client_id,
             client_secret,
@@ -708,6 +730,104 @@ mod tests {
         assert!(
             matches!(err, IdentityError::Configuration(_)),
             "got {err:?}"
+        );
+    }
+
+    // Adversarial (mirrors the Go reference's TestRevoke_RejectsEmptyToken):
+    // token is REQUIRED by RFC 7009 §2.1. An empty one must be rejected locally,
+    // because a lenient server answers the anti-scanning 200 for it and the
+    // caller would read that as a successful revocation. Asserting the server
+    // was never called is the point — an error raised after the request would
+    // still have leaked a malformed request to the provider.
+    #[tokio::test]
+    async fn empty_token_is_rejected_before_the_network() {
+        let server = MockServer::start().await;
+        mount(&server, ResponseTemplate::new(200)).await;
+
+        let endpoint = format!("{}/revoke", server.uri());
+        let err = client(&endpoint)
+            .build()
+            .unwrap()
+            .revoke("", Some("access_token"))
+            .await
+            .expect_err("an empty token must not be sent");
+
+        match &err {
+            IdentityError::Configuration(msg) => {
+                assert!(
+                    msg.contains("token is required"),
+                    "unexpected message: {msg}"
+                )
+            }
+            other => panic!("expected Configuration, got {other:?}"),
+        }
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "empty-token revocation must be rejected before the network, but the server was called"
+        );
+    }
+
+    // A 2xx is decided on before the body is touched, so a body that cannot be
+    // read cannot turn a revocation the server already performed into an error.
+    // Modelled on a provider that answers 200 and drops the connection: the
+    // response promises more bytes than it delivers.
+    #[tokio::test]
+    async fn success_does_not_depend_on_reading_the_body() {
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            ResponseTemplate::new(200)
+                .set_body_raw("", "application/json")
+                .append_header("content-length", "512"),
+        )
+        .await;
+
+        let endpoint = format!("{}/revoke", server.uri());
+        let result = client(&endpoint)
+            .build()
+            .unwrap()
+            .revoke("tok-1", None)
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "a 2xx must succeed without depending on the body: {result:?}"
+        );
+    }
+
+    // A redirect is not followed. On a 302 reqwest would rewrite the POST to a
+    // GET and drop the body, so the final 200 would report success for a request
+    // whose token never arrived — a silent false success on a live token.
+    #[tokio::test]
+    async fn redirect_is_not_followed_and_is_an_error() {
+        let upstream = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&upstream)
+            .await;
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/revoke"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .append_header("location", format!("{}/elsewhere", upstream.uri()).as_str()),
+            )
+            .mount(&server)
+            .await;
+
+        let endpoint = format!("{}/revoke", server.uri());
+        let err = client(&endpoint)
+            .build()
+            .unwrap()
+            .revoke("tok-1", None)
+            .await
+            .expect_err("a 3xx must not be reported as a successful revocation");
+        assert!(matches!(err, IdentityError::Http(_)), "got {err:?}");
+
+        assert!(
+            upstream.received_requests().await.unwrap().is_empty(),
+            "the redirect target must never be contacted — the token is in the body"
         );
     }
 

@@ -139,7 +139,13 @@ test-integration-rust: ## Run Rust live integration tests (#[ignore]-gated) agai
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Running Rust live integration tests..."
-	set -a && . ./.env.node-oidc && set +a && (cd rust && cargo test -- --ignored) || \
+	@# TEST_REQUIRE_LIVE=1: this target boots the fixture itself, so a skip here is
+	@# always a bug (unsourced profile, missing client creds, provider without the
+	@# endpoint). Without it skip_or_fail only eprintln's, libtest swallows stderr
+	@# for passing tests, and a fully skipped run prints "ok" — locally
+	@# indistinguishable from a pass.
+	set -a && . ./.env.node-oidc && set +a && \
+		(cd rust && TEST_REQUIRE_LIVE=1 cargo test -- --ignored) || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 

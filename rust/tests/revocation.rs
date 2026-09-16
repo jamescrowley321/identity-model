@@ -2,7 +2,7 @@
 //! against a real provider.
 //!
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
-//! `rust-integration` CI job boots the local `infra/` node-oidc-provider
+//! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `revocation: { enabled: true }`), runs the unit suite, then runs
 //! these with `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips
 //! fail).
@@ -29,9 +29,9 @@
 //! something the provider understood, and it needs two real endpoints.
 //!
 //! **That a real provider agrees with our reading of the spec.** A mock accepts
-//! whatever we send. node-oidc-provider does not — it rejects a malformed
-//! `token_type_hint`, enforces client auth, and decides for itself what an
-//! unknown token means.
+//! whatever we send. node-oidc-provider does not — it enforces client
+//! authentication, checks the token was issued to the authenticated client
+//! (RFC 7009 §2.1), and decides for itself what an unknown token means.
 //!
 //! Provider selection follows the shared `TEST_*` convention (the
 //! `.env.node-oidc` profile the Makefile sources). `TEST_DISCO_ADDRESS` is the
@@ -113,6 +113,10 @@ async fn discover_or_skip(
 struct Live {
     meta: rs_identity_model::ProviderMetadata,
     revocation_endpoint: String,
+    /// Resolved up front so a provider offering revocation but not introspection
+    /// skips the suite rather than panicking part-way through a test that has
+    /// already minted a live token.
+    introspection_endpoint: String,
     client_id: String,
     client_secret: String,
     allow_http: bool,
@@ -132,12 +136,20 @@ async fn live_or_skip() -> Option<Live> {
         return None;
     };
 
-    let allow_http = issuer.starts_with("http://");
+    // Case-insensitive: the client's own scheme gate lowercases, and a merely
+    // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
+    let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
     let meta = discover_or_skip(&issuer, allow_http).await?;
 
     // REV-005: the endpoint comes from the discovery document, never a constant.
     let Some(revocation_endpoint) = meta.revocation_endpoint.clone() else {
         skip_or_fail("discovery document does not advertise revocation_endpoint");
+        return None;
+    };
+    // Introspection is how these tests prove a revocation landed; it is optional
+    // and independent of revocation, so its absence is a skip, not a failure.
+    let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
+        skip_or_fail("discovery document does not advertise introspection_endpoint");
         return None;
     };
     assert!(
@@ -148,6 +160,7 @@ async fn live_or_skip() -> Option<Live> {
     Some(Live {
         meta,
         revocation_endpoint,
+        introspection_endpoint,
         client_id,
         client_secret,
         allow_http,
@@ -177,11 +190,7 @@ async fn mint_opaque_token(live: &Live) -> String {
 /// Asks the live provider whether a token is active. Used to prove a revocation
 /// actually landed, since the revocation response itself cannot say so.
 async fn is_active(live: &Live, token: &str) -> bool {
-    let endpoint = live
-        .meta
-        .introspection_endpoint
-        .clone()
-        .expect("fixture advertises introspection_endpoint");
+    let endpoint = live.introspection_endpoint.clone();
     IntrospectionClient::builder()
         .client_id(&live.client_id)
         .client_secret(&live.client_secret)
@@ -252,6 +261,15 @@ async fn integration_revoke_is_indistinguishable_live() {
         .revoke(&live_token, Some("access_token"))
         .await
         .expect("revoking a live token succeeds");
+
+    // Prove the first call actually revoked, so the next one is genuinely the
+    // "already revoked" case. Without this the whole test degrades to three
+    // revocations of tokens the provider does not recognise, all answered 200,
+    // and the already-revoked leg would assert nothing.
+    assert!(
+        !is_active(&live, &live_token).await,
+        "first revocation did not land; the already-revoked case below would be vacuous"
+    );
 
     // Already revoked (RFC 7009 §2.2 explicitly requires this to succeed).
     client
@@ -336,15 +354,18 @@ async fn integration_revoke_invalid_client_live() {
     match &err {
         IdentityError::TokenEndpoint { error, status, .. } => {
             assert_eq!(error, "invalid_client", "unexpected OAuth error code");
-            assert!(
-                (400..500).contains(&(*status as u32)),
-                "expected a 4xx, got {status}"
-            );
+            assert!((400..500).contains(status), "expected a 4xx, got {status}");
         }
         IdentityError::Http(msg) => {
+            // The message embeds the endpoint and a server-controlled body
+            // snippet, so a bare "40" substring would also be satisfied by a 404
+            // from a wrong endpoint or by ":8040" in the URL — and the
+            // still-active assertion below would pass too, since a token that was
+            // never sent anywhere is still live. Match the fixed "HTTP <status>"
+            // prefix so only a real client-auth rejection counts.
             assert!(
-                msg.contains("40"),
-                "expected a 4xx in the transport error, got: {msg}"
+                msg.contains("HTTP 401") || msg.contains("HTTP 400"),
+                "expected a client-auth rejection (HTTP 400/401), got: {msg}"
             );
         }
         other => panic!("expected a client-auth failure, got {other:?}"),
@@ -355,4 +376,58 @@ async fn integration_revoke_invalid_client_live() {
         is_active(&live, &token).await,
         "token was revoked despite failed client authentication"
     );
+}
+
+// RFC 7009 §2.1: the server MUST verify the token was issued to the client
+// making the request. This is the one authorization property in the whole suite
+// that only a live provider can demonstrate — a mock revokes whatever it is
+// told. If it ever regressed, any authenticated client could kill any token
+// value it could guess or steal, which is a far worse outcome than the scanning
+// oracle the rest of the file guards against.
+#[tokio::test]
+#[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
+async fn integration_revoke_rejects_another_clients_token_live() {
+    let Some(live) = live_or_skip().await else {
+        return;
+    };
+    let (Some(other_id), Some(other_secret)) = (
+        env_nonempty("TEST_CLIENT_ID"),
+        env_nonempty("TEST_CLIENT_SECRET"),
+    ) else {
+        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset; no second client to test with");
+        return;
+    };
+    if other_id == live.client_id {
+        skip_or_fail("TEST_CLIENT_ID is the same client as TEST_OPAQUE_CLIENT_ID");
+        return;
+    }
+
+    // Minted by `test-opaque`.
+    let token = mint_opaque_token(&live).await;
+
+    // A different, fully authenticated client attempts to revoke it. Per §2.1
+    // the server may answer 200 and simply not revoke, or reject the request
+    // outright — both are conformant, so the assertion that matters is not the
+    // return value but whether the token survived.
+    let _ = RevocationClient::builder()
+        .client_id(&other_id)
+        .client_secret(&other_secret)
+        .revocation_endpoint(&live.revocation_endpoint)
+        .allow_http(live.allow_http)
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("build revocation client for the other client")
+        .revoke(&token, Some("access_token"))
+        .await;
+
+    assert!(
+        is_active(&live, &token).await,
+        "another client revoked a token it was not issued — RFC 7009 §2.1 requires the server to reject this"
+    );
+
+    // And the rightful client can still revoke it, so the test leaves nothing live.
+    revocation_client(&live)
+        .revoke(&token, Some("access_token"))
+        .await
+        .expect("the issuing client can revoke its own token");
 }
