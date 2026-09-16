@@ -29,7 +29,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | in-progress‡ | implemented | implemented |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
-| Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | planned |
+| Extended | DPoP | RFC 9449 | `dpop.json` | implemented | implemented | in-progress§ |
 | Extended | Injectable claims validators | [#603](https://github.com/jamescrowley321/identity-model/issues/603) | `test-fixtures/claims-validation/vectors.json` | implemented | implemented | implemented |
 | Advanced | mTLS + cert-bound tokens | RFC 8705 | — | implemented | planned | planned |
 | Advanced | private_key_jwt client auth | RFC 7523 | — | implemented | planned | planned |
@@ -53,6 +53,19 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > them. Rather than soften a MUST that two of three languages already meet, the status now reflects
 > reality; it flips back to `implemented` when
 > [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574) lands.
+>
+> § **Rust DPoP is `in-progress`**: the key pairs, proof generation, and proof
+> verification are implemented and proven against `DPOP-001`, `DPOP-002`,
+> `DPOP-003`, `DPOP-005`, `DPOP-006` and `DPOP-007` (`rust/tests/dpop.rs`, run and
+> passing, driven from the shared `spec/test-fixtures/dpop/` documents). What is
+> missing is the HTTP half: `DPOP-004` (the `use_dpop_nonce` challenge and retry,
+> with a per-host nonce cache) and `DPOP-008` (presenting a bound token with the
+> `Authorization: DPoP` scheme). A caller can satisfy both by hand today —
+> `DpopKey::proof` returns the header value and `DpopProofOptions::nonce` carries a
+> server nonce — but the library does not yet do it for them, which is what
+> `go/pkg/dpop`'s `Transport` provides. It flips to `implemented` when the
+> transport lands under
+> [identity-model#573](https://github.com/jamescrowley321/identity-model/issues/573).
 >
 > † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors. It gates each (language, capability) pair independently, and fails closed on any capability that has executable vectors but no runner configured for some language. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >

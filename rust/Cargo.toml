@@ -28,9 +28,19 @@ sha2 = "0.11.0"
 # no new supply-chain surface; BSD-3-Clause is on the cargo-deny allowlist.
 subtle = "2"
 getrandom = "0.4.3"
+# DPoP (RFC 9449) key generation, which jsonwebtoken deliberately does not
+# provide — it signs with a key but never mints one. p256 generates the EC P-256
+# half and converts a JWK's `d` scalar to the PKCS#8 DER `EncodingKey` wants.
+p256 = { version = "0.14.0", features = ["pkcs8", "ecdsa"] }
+# The RSA half of DPoP key generation, plus JWK-to-key conversion from the
+# RFC 7517 CRT members. Already compiled into every build as jsonwebtoken's
+# selected crypto backend (see the `aws_lc_rs` note above), so naming it directly
+# adds no new supply-chain surface — it only makes `rsa::KeyPair::generate` and
+# `rsa::KeyPair::from_components` reachable. The `rsa` crate, which would be the
+# obvious alternative, is exactly what the advisory note above rules out.
+aws-lc-rs = "1"
 
 [dev-dependencies]
-p256 = { version = "0.14.0", features = ["pkcs8", "ecdsa"] }
 tokio = { version = "1", features = ["full"] }
 url = "2.5.8"
 wiremock = "0.6.5"
