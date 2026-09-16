@@ -16,3 +16,9 @@ import sys
 CONFORMANCE_DIR = Path(__file__).parent.parent
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
+
+# ``scripts/`` holds standalone PEP 723 tools (e.g. rotate_conformance_token.py)
+# whose pure helpers are unit-tested the same way.
+SCRIPTS_DIR = CONFORMANCE_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
