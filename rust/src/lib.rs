@@ -9,9 +9,9 @@
 //! The Core tier — discovery, JWKS retrieval and key resolution, JWT
 //! validation (including the OIDC ID-token profile), client-credentials and
 //! authorization-code + PKCE token flows, and UserInfo — is implemented, as is
-//! Extended token introspection (RFC 7662) and the token exchange grant
-//! (RFC 8693). Behavior is proven against the cross-language conformance
-//! vectors in the repository's `spec/`.
+//! Extended token introspection (RFC 7662), revocation (RFC 7009), and the
+//! token exchange grant (RFC 8693). Behavior is proven against the
+//! cross-language conformance vectors in the repository's `spec/`.
 //!
 //! ## Module Overview
 //!
@@ -20,6 +20,7 @@
 //! - [`jwt`] — JWT signature + claims validation, ID token validation
 //! - [`token`] — client credentials, authorization code, PKCE, token exchange
 //! - [`introspection`] — token introspection (RFC 7662)
+//! - [`revocation`] — token revocation (RFC 7009)
 //! - [`userinfo`] — UserInfo endpoint client
 //! - [`error`] — the crate error type, [`IdentityError`]
 
@@ -28,6 +29,7 @@ pub mod error;
 pub mod introspection;
 pub mod jwks;
 pub mod jwt;
+pub mod revocation;
 pub mod token;
 pub mod userinfo;
 
@@ -54,6 +56,7 @@ pub use jwt::{
     combine_claims_validators, from_fn, require_claim_value, require_claims, require_scopes,
     validate_id_token, validate_id_token_claims, validate_token, validate_token_with_jwks,
 };
+pub use revocation::{RevocationClient, RevocationClientBuilder};
 pub use token::{
     ClientAuthMethod, PkceChallenge, TOKEN_TYPE_ACCESS_TOKEN, TOKEN_TYPE_ID_TOKEN, TOKEN_TYPE_JWT,
     TOKEN_TYPE_REFRESH_TOKEN, TOKEN_TYPE_SAML1, TOKEN_TYPE_SAML2, TOKEN_TYPE_URIS, TokenClient,
