@@ -476,8 +476,11 @@ jobs:
     # tools/mutation_security_native.py's GO_SURFACE must be killed by tests or
     # waived as a content-hashed equivalent (tools/mutation_security_go_allowlist.txt).
     # Fail-closed: only KILLED / NOT VIABLE pass; NOT COVERED, LIVED, TIMED OUT,
-    # SKIPPED and any future status survive. gremlins scopes execution to the
-    # changed lines itself (--diff), so out-of-scope PRs pass in seconds.
+    # SKIPPED and any future status survive. The driver does its OWN changed-line
+    # scoping (gremlins' --diff mis-scoped and silently skipped mutants on added
+    # lines) and runs gremlins only over the packages holding changed surface
+    # files: ~5-11s per package, ~45s for a six-package diff. A PR that touches
+    # no surface file exits before gremlins runs at all.
     # Change-gated like the other native jobs (CONS-2.4).
     needs: changes
     if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}

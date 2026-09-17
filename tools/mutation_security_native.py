@@ -9,15 +9,32 @@ vacuously (and fast).
 
 Per-language tooling
 --------------------
-* **Go** — `go-gremlins <https://github.com/go-gremlins/gremlins>`_ (v0.6.0+,
-  which has native changed-line scoping via ``--diff``). The driver runs
-  ``gremlins unleash --diff BASE`` from ``go/`` and gates the machine-readable
-  report. gremlins invokes ``git diff --merge-base BASE`` itself; its mutant
-  positions are Go-module-relative while git prints repo-root paths, so the
-  driver exports ``diff.relative=true`` through git's environment-config
-  variables for the gremlins subprocess. If that path alignment ever drifts,
-  gremlins marks the in-scope mutants ``SKIPPED`` (never tested) — which this
-  gate counts as survivors, so drift fails closed instead of green.
+* **Go** — `go-gremlins <https://github.com/go-gremlins/gremlins>`_ (v0.6.0+).
+  gremlins has a ``--diff`` flag, and the driver deliberately does **not** use
+  it: its changed-line scoping is unreliable. Observed on
+  ``fix/go-token-exchange-guards``: gremlins skipped the mutant on a genuinely
+  added line (``go/pkg/token/token.go``'s new ``if resp.TokenType == ""``
+  guard) while testing and killing mutants on other added lines of the same
+  file. A skipped mutant is never executed, and ``SKIPPED`` is (correctly) a
+  survivor here, so delegating the scoping made the gate fail a branch whose
+  tests were in fact fine — and the only way out would have been waiving a
+  well-tested line, i.e. blinding the gate.
+
+  The driver already computes the changed lines itself
+  (:func:`changed_surface_files` + :func:`changed_line_numbers`), so it only
+  needs gremlins to *execute* mutants: it runs ``gremlins unleash <pkg>`` once
+  per package containing a changed surface file and intersects the reported
+  mutants against its own changed-line set. That is strictly stronger than
+  trusting the tool's scoping — nothing in scope can be silently skipped, and
+  no path alignment between two diff implementations has to keep holding.
+  Running the changed packages rather than the whole module keeps the cost
+  proportional to the PR (measured on this repo: ~5-11s per security package,
+  ~45s for all seven, ~49s module-wide). gremlins reports ``file_name``
+  relative to the path argument it was given, so :func:`go_report_mutants`
+  re-attaches the package directory before anything is intersected; the gate
+  then verifies every reported path resolves on disk, because a normalisation
+  that silently matched nothing would make every intersection empty — a gate
+  that passes everything.
 * **Rust** — `cargo-mutants <https://mutants.rs>`_ with ``--in-diff`` (native
   changed-line scoping). ``--in-place`` is required: the crate's tests read and
   ``include_str!`` fixtures from ``../spec/``, which cargo-mutants' default
@@ -37,9 +54,10 @@ Fail-closed rules (all mirrored from the Python gate)
 * **>=1-mutant floor.** Zero mutants enumerated where the tool should have
   produced some is config/scope/version drift, not a pass — exit 2. The
   "changed lines have no mutatable constructs" pass is only taken when an
-  *unrestricted* enumeration proves the tool healthy: the gremlins report
-  always contains the whole Go module's mutants (scoping only affects which
-  are tested), and the Rust gate enumerates the whole crate with
+  *unrestricted* enumeration proves the tool healthy: the gremlins reports
+  contain every mutant in the changed packages (the driver passes no scoping
+  flag, so the run is only narrowed by package, never by line), and the Rust
+  gate enumerates the whole crate with
   ``cargo mutants --list --json`` and filters to the changed files itself, so
   no file-pattern argument can silently scope mutants away.
 * **Coverage cross-check (Rust).** The driver computes its own changed-line ∩
@@ -90,7 +108,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -130,15 +148,31 @@ RUST_SURFACE: list[str] = [
 #: a Go mutant run also has to recompile the package — a cost the baseline never
 #: measures. With gremlins' default coefficient the budget is a small multiple of
 #: a sub-second test run, so compilation alone exhausts it and EVERY mutant comes
-#: back TIMED OUT. Measured on this repo: at the default, pkg/idtoken scored
-#: 0 KILLED / 74 TIMED OUT / 8 NOT COVERED; at coefficient 30 the same mutants
-#: scored 36 KILLED / 0 TIMED OUT / 3 NOT COVERED. The tests were always strong;
-#: the budget was the problem. Because TIMED OUT is (correctly) a survivor here,
-#: an under-sized budget turns the gate into a wall of bogus survivors that an
+#: back TIMED OUT. Because TIMED OUT is (correctly) a survivor here, an
+#: under-sized budget turns the gate into a wall of bogus survivors that an
 #: author can only clear by waiving well-tested lines — the exact way a mutation
-#: gate goes vacuous. Kept generous: the only cost is that a genuinely hanging
+#: gate goes vacuous.
+#:
+#: The coefficient is a *ceiling*, not a sleep: a mutant that dies quickly still
+#: dies quickly, so raising it buys correctness at ~no wall-time cost. Measured
+#: on pkg/token (tests ~0.2s, 67 covered mutants), same tree, one run each:
+#:
+#:   =========== ======= ========== ==========
+#:   coefficient KILLED  TIMED OUT  wall time
+#:   =========== ======= ========== ==========
+#:   default           0         67      1.44s
+#:   30               65          2      8.16s
+#:   300              67          0      7.93s
+#:   =========== ======= ========== ==========
+#:
+#: The default is "fast" only because every mutant exhausts its budget during
+#: compilation and is abandoned. 30 was not enough either: a repeat of the same
+#: comparison on a busier machine scored 38 KILLED / 30 TIMED OUT at 30, so the
+#: bogus-survivor count there is load-dependent — precisely what a shared CI
+#: runner is. 300 scored 0 TIMED OUT in both, and cost no wall time at all here.
+#: Kept generous on purpose: the only real cost is that a genuinely hanging
 #: mutant takes longer to be declared dead, and those are rare.
-GO_TIMEOUT_COEFFICIENT = 30
+GO_TIMEOUT_COEFFICIENT = 300
 
 #: Below this many actually-tested mutants, "zero killed" is plausible chance
 #: rather than a broken run, so the health check stays quiet.
@@ -377,8 +411,9 @@ def evaluate_go(
         entry = f"{name}: {status}"
         if status == "SKIPPED":
             entry += (
-                "  [never tested: gremlins' own diff scoping disagreed with the "
-                "gate's changed-line computation — path/config drift fails closed]"
+                "  [never tested: the gate passes gremlins no scoping flag, so a "
+                "SKIPPED mutant on a changed line is tool drift — fix the run, do "
+                "NOT waive it]"
             )
         elif digest is not None:
             entry += f"  [waiver line: {name} {digest}]"
@@ -469,17 +504,65 @@ def _finish(
 # ── Go gate ──────────────────────────────────────────────────────────────────
 
 
-def _git_env_with_relative_diff() -> dict[str, str]:
-    """Environment for the gremlins subprocess with ``diff.relative=true``
-    injected via git's environment-config mechanism, so the ``git diff``
-    gremlins runs from ``go/`` prints module-relative paths that match its
-    mutant positions. Appends after any pre-existing GIT_CONFIG_* entries."""
-    env = dict(os.environ)
-    count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
-    env[f"GIT_CONFIG_KEY_{count}"] = "diff.relative"
-    env[f"GIT_CONFIG_VALUE_{count}"] = "true"
-    env["GIT_CONFIG_COUNT"] = str(count + 1)
-    return env
+def go_package_dirs(changed: list[str]) -> list[str]:
+    """Module-relative package directories holding the changed files.
+
+    ``["pkg/token/token.go", "pkg/token/options.go", "pkg/jwt/claims.go"]`` →
+    ``["pkg/jwt", "pkg/token"]``. These become gremlins' path arguments, so a
+    PR pays only for the packages it touched instead of the whole module.
+    """
+    return sorted({str(PurePosixPath(f).parent) for f in changed})
+
+
+def go_report_mutants(report: dict, pkg_dir: str) -> list[tuple[str, dict]]:
+    """``(module-relative file, mutant)`` pairs from one gremlins report.
+
+    gremlins reports ``file_name`` relative to the **path argument** it was
+    given — ``gremlins unleash ./pkg/token`` reports ``token.go``, not
+    ``pkg/token/token.go`` — so the package directory has to be re-attached
+    before the report can meet the gate's module-relative changed-line sets.
+    Skipping this step would empty every intersection and turn the gate into an
+    unconditional pass; :func:`gate_go` therefore also checks that each
+    normalised path resolves on disk.
+    """
+    return [
+        (f"{pkg_dir}/{f['file_name']}", m)
+        for f in report.get("files") or []
+        for m in f.get("mutations") or []
+    ]
+
+
+def run_gremlins(pkg_dir: str) -> dict | None:
+    """Run gremlins over one package and return its report, or ``None`` if the
+    run did not complete (the caller fails closed on that).
+
+    No ``--diff``: line scoping is the gate's own job (see the module
+    docstring). gremlins enumerates and tests every covered mutant in the
+    package; the gate decides which of them are in scope.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        out_json = Path(tmp) / "gremlins.json"
+        res = _run(
+            [
+                "gremlins",
+                "unleash",
+                "--timeout-coefficient",
+                str(GO_TIMEOUT_COEFFICIENT),
+                "--output",
+                str(out_json),
+                f"./{pkg_dir}",
+            ],
+            cwd=REPO_ROOT / "go",
+        )
+        sys.stdout.write(res.stdout)
+        if res.returncode != 0 or not out_json.exists():
+            print(
+                f"mutation-security[go]: FAILED — gremlins run over {pkg_dir} did "
+                f"not complete:\n{res.stderr}",
+                file=sys.stderr,
+            )
+            return None
+        return json.loads(out_json.read_text())
 
 
 def gate_go(base: str) -> int:
@@ -506,51 +589,49 @@ def gate_go(base: str) -> int:
         print(f"mutation-security[go]: FAILED — {exc}", file=sys.stderr)
         return 1
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out_json = Path(tmp) / "gremlins.json"
-        res = _run(
-            [
-                "gremlins",
-                "unleash",
-                "--diff",
-                base,
-                "--timeout-coefficient",
-                str(GO_TIMEOUT_COEFFICIENT),
-                "--output",
-                str(out_json),
-            ],
-            cwd=REPO_ROOT / "go",
-            env=_git_env_with_relative_diff(),
-        )
-        sys.stdout.write(res.stdout)
-        if res.returncode != 0 or not out_json.exists():
-            print(
-                f"mutation-security[go]: FAILED — gremlins run did not complete:\n"
-                f"{res.stderr}",
-                file=sys.stderr,
-            )
-            return 2
-        report = json.loads(out_json.read_text())
+    pkg_dirs = go_package_dirs(changed)
+    print(
+        f"mutation-security[go]: mutating {len(pkg_dirs)} changed package(s): "
+        f"{', '.join(pkg_dirs)}"
+    )
 
-    mutants = [
-        (f["file_name"], m)
-        for f in report.get("files") or []
-        for m in f.get("mutations") or []
-    ]
+    mutants: list[tuple[str, dict]] = []
+    for pkg_dir in pkg_dirs:
+        report = run_gremlins(pkg_dir)
+        if report is None:
+            return 2
+        mutants.extend(go_report_mutants(report, pkg_dir))
+
+    # The report's paths are relative to the path argument, so they are only
+    # module-relative after go_report_mutants re-attaches the package dir. If
+    # that ever stops being true, every path would be wrong, every intersection
+    # empty, and the gate an unconditional pass — so prove the paths resolve.
+    unresolved = sorted({f for f, _ in mutants if not (REPO_ROOT / "go" / f).exists()})
+    if unresolved:
+        print(
+            "mutation-security[go]: FAILED — gremlins reported mutant(s) in "
+            "file(s) that do not exist at the module-relative path the gate "
+            f"derived: {', '.join(unresolved)}. gremlins' path reporting has "
+            "changed; the gate cannot map mutants onto changed lines.",
+            file=sys.stderr,
+        )
+        return 2
+
     if not mutants:
-        # gremlins enumerates the WHOLE module regardless of --diff (scoping
-        # only decides which mutants are tested), so an empty report can only
-        # be config/scope/version drift — the module demonstrably has mutants.
+        # gremlins enumerates every mutant in the packages it is pointed at (no
+        # scoping flag is passed), so an empty report can only be
+        # config/scope/version drift — these packages demonstrably have mutants.
         print(
             "mutation-security[go]: FAILED — gremlins enumerated 0 mutants "
-            "module-wide. This is config/scope/version drift, not a pass.",
+            f"across the changed package(s) ({', '.join(pkg_dirs)}). This is "
+            "config/scope/version drift, not a pass.",
             file=sys.stderr,
         )
         return 2
 
     # Health check on the run itself, before judging anyone's tests. gremlins
-    # tests every mutant it did not SKIP; if it tested a meaningful number and
-    # killed NONE of them, the tests did not really run — the overwhelmingly
+    # tests every covered mutant in the packages; if it tested a meaningful
+    # number and killed NONE, the tests did not really run — the overwhelmingly
     # likely cause is a per-mutant timeout too small to cover Go's recompilation
     # (see GO_TIMEOUT_COEFFICIENT), which reports every mutant as TIMED OUT.
     # Without this check that misconfiguration is indistinguishable from "your
@@ -583,13 +664,13 @@ def gate_go(base: str) -> int:
     if not in_scope:
         print(
             "mutation-security[go]: PASSED — the changed line(s) contain no "
-            f"mutatable constructs ({len(mutants)} mutant(s) enumerated "
-            "module-wide; gremlins healthy)."
+            f"mutatable constructs ({len(mutants)} mutant(s) enumerated across "
+            f"{len(pkg_dirs)} changed package(s); gremlins healthy)."
         )
         return 0
     print(
-        f"mutation-security[go]: {len(in_scope)}/{len(mutants)} mutant(s) live "
-        "on the changed line(s)."
+        f"mutation-security[go]: {len(in_scope)}/{len(mutants)} mutant(s) in the "
+        "changed package(s) live on the changed line(s)."
     )
 
     source_lines = {

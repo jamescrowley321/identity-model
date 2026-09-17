@@ -14,6 +14,11 @@ locked in:
   AND its content hash agree; position drift changes nothing, content drift
   invalidates the waiver.
 * **Malformed allowlist entries are hard errors**, never silent passes.
+* **The gate does its own Go scoping** — gremlins is pointed at the changed
+  packages and its report paths are re-anchored to module-relative ones before
+  the changed-line intersection. If that re-anchoring silently stopped
+  matching, every intersection would be empty and the gate would pass
+  everything, so it is pinned here.
 """
 
 from __future__ import annotations
@@ -182,8 +187,13 @@ def test_evaluate_go_everything_else_survives(status):
 
 
 def test_evaluate_go_skipped_survivor_explains_scoping_drift():
+    # The gate passes gremlins no scoping flag, so nothing in the changed
+    # packages should ever come back SKIPPED; if one does it is tool drift, and
+    # the message must say so rather than invite a waiver.
     unwaived, _ = gate.evaluate_go([_go_mutant("SKIPPED")], set(), _GO_SOURCES)
     assert "never tested" in unwaived[0]
+    assert "no scoping flag" in unwaived[0]
+    assert "do NOT waive" in unwaived[0]
 
 
 def test_evaluate_go_waiver_requires_matching_content_hash():
@@ -215,6 +225,68 @@ def test_evaluate_go_unresolvable_position_cannot_be_waived():
     assert waived == []
     assert len(unwaived) == 1
     assert "waiver line" not in unwaived[0]
+
+
+# ── Go package scoping (defect: gremlins' own --diff mis-scoped) ─────────────
+
+
+def test_go_package_dirs_dedupes_to_the_packages_that_changed():
+    changed = [
+        "pkg/token/options.go",
+        "pkg/token/token.go",
+        "pkg/jwt/claims_validation.go",
+        "pkg/jwks/cache/store.go",
+    ]
+    # One entry per package — gremlins takes a single path argument per run,
+    # and a PR must not pay for packages it did not touch.
+    assert gate.go_package_dirs(changed) == [
+        "pkg/jwks/cache",
+        "pkg/jwt",
+        "pkg/token",
+    ]
+
+
+def test_go_report_mutants_reanchors_paths_to_the_module_root():
+    # gremlins reports file_name relative to the PATH ARGUMENT it was given:
+    # `gremlins unleash ./pkg/token` says "token.go", while the gate's
+    # changed-line map is keyed "pkg/token/token.go". Without this
+    # re-anchoring the intersection is always empty — a gate that passes
+    # everything.
+    report = {
+        "files": [
+            {
+                "file_name": "token.go",
+                "mutations": [
+                    {
+                        "status": "KILLED",
+                        "line": 250,
+                        "column": 20,
+                        "type": "CONDITIONALS_NEGATION",
+                    }
+                ],
+            },
+            {"file_name": "sub/helper.go", "mutations": [{"status": "LIVED"}]},
+        ]
+    }
+    assert gate.go_report_mutants(report, "pkg/token") == [
+        (
+            "pkg/token/token.go",
+            {
+                "status": "KILLED",
+                "line": 250,
+                "column": 20,
+                "type": "CONDITIONALS_NEGATION",
+            },
+        ),
+        ("pkg/token/sub/helper.go", {"status": "LIVED"}),
+    ]
+
+
+@pytest.mark.parametrize("report", [{}, {"files": None}, {"files": []}])
+def test_go_report_mutants_tolerates_empty_reports(report):
+    # An empty report is not a crash here — gate_go turns "no mutants at all"
+    # into an exit-2 drift failure, which must be reached, not pre-empted.
+    assert gate.go_report_mutants(report, "pkg/token") == []
 
 
 # ── Rust scoping + evaluation ────────────────────────────────────────────────
