@@ -263,6 +263,45 @@ async fn integration_success_without_issued_token_type_is_rejected() {
     }
 }
 
+// Adversarial: a server that answers the exchange with a 200 that omits
+// token_type. It is REQUIRED by RFC 6749 §5.1 and listed in
+// spec/vectors/token-exchange.json required_fields, and it deserializes to an
+// empty string, so the client must reject the response rather than hand back a
+// token whose type is silently blank.
+#[tokio::test]
+async fn integration_success_without_token_type_is_rejected() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(format!(
+                    r#"{{"access_token":"issued.tok","issued_token_type":"{TOKEN_TYPE_ACCESS_TOKEN}"}}"#
+                ))
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let err = client_for(&server)
+        .token_exchange(&TokenExchangeRequest::new(
+            "subject.tok",
+            TOKEN_TYPE_ACCESS_TOKEN,
+        ))
+        .await
+        .expect_err("a response without token_type must fail");
+
+    match err {
+        // "missing token_type", not "token_type": the latter is also satisfied
+        // by the "is missing issued_token_type" message the adjacent check
+        // produces, so it would not tell the two apart.
+        IdentityError::Http(message) => {
+            assert!(message.contains("missing token_type"), "{message}");
+        }
+        other => panic!("expected Http naming token_type, got {other:?}"),
+    }
+}
+
 // Adversarial: a server that does not implement the grant at all answers
 // unsupported_grant_type; the client surfaces the code rather than masking it.
 #[tokio::test]
