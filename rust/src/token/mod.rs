@@ -68,16 +68,18 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Placeholder printed in place of secret material in `Debug` output (#24).
 const REDACTED: &str = "<redacted>";
 
-/// Parameters owned by the grant and client-authentication logic. They can
-/// never be set or overridden via [`TokenClientBuilder::extra_param`], so that
-/// caller-supplied extras cannot contradict the request's identity or grant
-/// shape.
-/// Note: `resource`, `audience`, and `requested_token_type` are deliberately
-/// NOT reserved. They are non-identity target/output hints a caller may also
-/// want to supply on another grant (e.g. an RFC 8707 `resource` on the client
-/// credentials grant); the token exchange grant sets them from
-/// [`TokenExchangeRequest`], and the extra-params loop skips any key already
-/// present in the form.
+/// Parameters owned by the grant and client-authentication logic on **every**
+/// grant. They can never be set or overridden via
+/// [`TokenClientBuilder::extra_param`], so that caller-supplied extras cannot
+/// contradict the request's identity or grant shape.
+///
+/// `resource`, `audience`, and `requested_token_type` are deliberately absent
+/// here: they are non-identity target/output hints a caller may legitimately
+/// want to supply on a grant that does not model them (e.g. an RFC 8707
+/// `resource` on the client credentials grant), so they stay available as
+/// extras there. On the token exchange grant they ARE owned — it sources them
+/// from [`TokenExchangeRequest`] — so it additionally reserves
+/// [`EXCHANGE_RESERVED_PARAMS`].
 const RESERVED_PARAMS: &[&str] = &[
     "grant_type",
     "client_id",
@@ -91,6 +93,36 @@ const RESERVED_PARAMS: &[&str] = &[
     "actor_token",
     "actor_token_type",
 ];
+
+/// Targeting parameters reserved on the token exchange grant only, on top of
+/// [`RESERVED_PARAMS`].
+///
+/// The exchange sources all three from [`TokenExchangeRequest`] (RFC 8693
+/// §2.1), so an extra param must not be able to inject one the request left
+/// unset, nor override one it pinned. Skipping keys already present in the form
+/// is not enough on its own: when the request omits a value, nothing puts the
+/// key in the form and an extra would slip through — silently retargeting the
+/// exchange at another resource server or asking for a different token type,
+/// with no check that the returned `issued_token_type` is what was requested.
+///
+/// [`TokenClient::token_exchange`] therefore *rejects* an extra param naming one
+/// of these rather than dropping it: extras are client-wide, so a silent drop
+/// would take away a restriction the caller believes is still in force, on one
+/// grant only and with nothing said about it. The skip in
+/// [`TokenClient::do_request`] stays as defence in depth.
+const EXCHANGE_RESERVED_PARAMS: &[&str] = &["requested_token_type", "resource", "audience"];
+
+/// Normalises an extra-param key before it is matched against the reserved
+/// lists.
+///
+/// The match is on the normalised form because the guard has to hold for the
+/// server, not for Rust: a form parser that folds case or trims surrounding
+/// whitespace reads `"Audience"` and `" audience"` as `audience`, so an
+/// exact-byte comparison would wave those spellings straight through the guard
+/// it documents.
+fn normalize_param_key(key: &str) -> String {
+    key.trim().to_ascii_lowercase()
+}
 
 /// How client credentials are presented to the token endpoint (RFC 6749 §2.3).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -168,7 +200,8 @@ impl TokenClient {
         if let Some(scope) = scope {
             form.push(("scope".to_string(), scope.to_string()));
         }
-        self.do_request(form, self.client_secret.as_deref()).await
+        self.do_request(form, self.client_secret.as_deref(), &[])
+            .await
     }
 
     /// Performs the OAuth 2.0 authorization code grant (RFC 6749 §4.1.3,
@@ -216,7 +249,8 @@ impl TokenClient {
         if let Some(verifier) = code_verifier {
             form.push(("code_verifier".to_string(), verifier.to_string()));
         }
-        self.do_request(form, self.client_secret.as_deref()).await
+        self.do_request(form, self.client_secret.as_deref(), &[])
+            .await
     }
 
     /// Performs the OAuth 2.0 token exchange grant (RFC 8693 §2.1, EXCH-001):
@@ -232,6 +266,11 @@ impl TokenClient {
     ///
     /// Authentication uses the configured [`ClientAuthMethod`]
     /// (`client_secret_basic` by default), exactly as for the other grants.
+    /// The exchange owns its `requested_token_type`, `resource`, and `audience`
+    /// parameters, so a [`TokenClientBuilder::extra_param`] carrying one of
+    /// those keys is an error rather than something to drop: `extra_param` is
+    /// client-wide, and quietly dropping an `audience` the caller set to pin
+    /// every token to one API would relax that restriction on this grant alone.
     ///
     /// ```no_run
     /// # async fn run() -> rs_identity_model::Result<()> {
@@ -256,16 +295,43 @@ impl TokenClient {
     /// # Errors
     ///
     /// - [`IdentityError::Validation`] — `request` is missing a REQUIRED
-    ///   RFC 8693 §2.1 parameter. No request is sent.
+    ///   RFC 8693 §2.1 parameter, or a [`TokenClientBuilder::extra_param`] key
+    ///   names a parameter this grant owns
+    ///   (`requested_token_type`, `resource`, `audience`). No request is sent.
     /// - [`IdentityError::TokenEndpoint`] — a non-2xx OAuth error response
     ///   (RFC 8693 §2.2.2, RFC 6749 §5.2, EXCH-006).
     /// - [`IdentityError::Http`] — a transport failure, a non-OAuth error body,
-    ///   or a 2xx body missing the REQUIRED `access_token` or
+    ///   or a 2xx body missing the REQUIRED `access_token`, `token_type`, or
     ///   `issued_token_type`.
     /// - [`IdentityError::Deserialization`] — a 2xx body that is not a valid
-    ///   token response.
+    ///   token response. An explicit JSON `null` falls here rather than under
+    ///   the missing-field errors above: `#[serde(default)]` fills in only an
+    ///   *absent* key, so `"token_type": null` fails to deserialize before any
+    ///   of those checks run.
     pub async fn token_exchange(&self, request: &TokenExchangeRequest) -> Result<TokenResponse> {
         request.validate()?;
+        // An extra param naming a parameter the exchange owns is rejected, not
+        // dropped. `extra_param` lives on [`TokenClientBuilder`], so it is
+        // client-wide and shared with `client_credentials` and `exchange_code`:
+        // dropping one here would take away a restriction the caller believes
+        // is in force — an `audience` that pinned tokens to one API would
+        // vanish on this grant alone, the AS could issue a broader token, and
+        // nothing would say which grant lost it. Keys are sorted so the message
+        // names the same key on every run when several collide.
+        let mut colliding: Vec<&str> = self
+            .extra_params
+            .keys()
+            .map(String::as_str)
+            .filter(|key| EXCHANGE_RESERVED_PARAMS.contains(&normalize_param_key(key).as_str()))
+            .collect();
+        colliding.sort_unstable();
+        if let Some(key) = colliding.first() {
+            return Err(IdentityError::Validation(format!(
+                "token exchange: extra param {key:?} names a parameter this grant owns; \
+                 set it with TokenExchangeRequest::resource, ::audience, or \
+                 ::requested_token_type instead"
+            )));
+        }
 
         let mut form: Vec<(String, String)> = vec![
             ("grant_type".to_string(), GRANT_TOKEN_EXCHANGE.to_string()),
@@ -275,31 +341,59 @@ impl TokenClient {
                 request.subject_token_type.clone(),
             ),
         ];
-        // validate() has already established that a non-empty actor token comes
-        // with a non-empty type, so the pair is sent together or not at all.
-        if let Some(actor_token) = request.actor_token.as_deref().filter(|t| !t.is_empty()) {
+        // RFC 8693 §2.1 forbids the half-pair `actor_token` without
+        // `actor_token_type`. Both halves are destructured together so the
+        // forbidden form is unrepresentable here, rather than merely unreachable
+        // because validate() ran first: reading the type separately would emit
+        // `actor_token_type=` the moment the two fields disagreed.
+        if let (Some(actor_token), Some(actor_token_type)) = (
+            request.actor_token.as_deref(),
+            request.actor_token_type.as_deref(),
+        ) {
             form.push(("actor_token".to_string(), actor_token.to_string()));
-            form.push((
-                "actor_token_type".to_string(),
-                request.actor_token_type.clone().unwrap_or_default(),
-            ));
+            form.push(("actor_token_type".to_string(), actor_token_type.to_string()));
         }
-        if let Some(requested) = &request.requested_token_type {
-            form.push(("requested_token_type".to_string(), requested.clone()));
+        // Empty optional parameters are skipped rather than sent as `key=`: an
+        // empty value is not a request for anything, and a server is free to
+        // read it as a malformed parameter and reject the whole exchange.
+        if let Some(requested) = request
+            .requested_token_type
+            .as_deref()
+            .filter(|t| !t.is_empty())
+        {
+            form.push(("requested_token_type".to_string(), requested.to_string()));
         }
-        if let Some(scope) = &request.scope {
-            form.push(("scope".to_string(), scope.clone()));
+        if let Some(scope) = request.scope.as_deref().filter(|s| !s.is_empty()) {
+            form.push(("scope".to_string(), scope.to_string()));
         }
         // resource and audience MAY each appear more than once (RFC 8693 §2.1),
         // which the ordered pair list preserves and a map would collapse.
-        for resource in &request.resources {
+        for resource in request.resources.iter().filter(|r| !r.is_empty()) {
             form.push(("resource".to_string(), resource.clone()));
         }
-        for audience in &request.audiences {
+        for audience in request.audiences.iter().filter(|a| !a.is_empty()) {
             form.push(("audience".to_string(), audience.clone()));
         }
 
-        let token = self.do_request(form, self.client_secret.as_deref()).await?;
+        let token = self
+            .do_request(
+                form,
+                self.client_secret.as_deref(),
+                EXCHANGE_RESERVED_PARAMS,
+            )
+            .await?;
+        // token_type is REQUIRED in a successful token response
+        // (RFC 6749 §5.1), and `spec/vectors/token-exchange.json` lists it
+        // among the exchange's required fields. It deserializes with a default
+        // of "", so an omitted one has to be caught here rather than left to
+        // surface as an empty string the caller may put straight into an
+        // Authorization header.
+        if token.token_type.is_empty() {
+            return Err(IdentityError::Http(format!(
+                "token exchange response from {} is missing token_type",
+                self.token_endpoint
+            )));
+        }
         // issued_token_type is REQUIRED in a successful exchange response
         // (RFC 8693 §2.2); a 200 that omits it is non-conformant and is
         // rejected rather than handed back with the field silently empty.
@@ -320,10 +414,18 @@ impl TokenClient {
     /// `application/x-www-form-urlencoded`, and decodes the response: a 2xx body
     /// into [`TokenResponse`], otherwise an OAuth error body into
     /// [`IdentityError::TokenEndpoint`] (status checked before decode).
+    ///
+    /// `grant_reserved` names parameters this particular grant owns on top of
+    /// [`RESERVED_PARAMS`]; extras matching them are dropped rather than sent.
+    /// Grants that can say so more usefully reject the collision before calling
+    /// in (as [`TokenClient::token_exchange`] does) — the drop here is defence
+    /// in depth, not the primary guard. Both lists are matched on
+    /// [`normalize_param_key`].
     async fn do_request(
         &self,
         mut form: Vec<(String, String)>,
         client_secret: Option<&str>,
+        grant_reserved: &[&str],
     ) -> Result<TokenResponse> {
         // Require an https endpoint unless http was explicitly allowed.
         let scheme = self.token_endpoint.to_ascii_lowercase();
@@ -361,7 +463,11 @@ impl TokenClient {
         // client-auth parameters (whether or not already present — on the Basic
         // path client_id is absent from the body yet must not be injectable).
         for (key, value) in &self.extra_params {
-            if RESERVED_PARAMS.contains(&key.as_str()) || form.iter().any(|(k, _)| k == key) {
+            let normalized = normalize_param_key(key);
+            if RESERVED_PARAMS.contains(&normalized.as_str())
+                || grant_reserved.contains(&normalized.as_str())
+                || form.iter().any(|(k, _)| k == key)
+            {
                 continue;
             }
             form.push((key.clone(), value.clone()));
@@ -488,8 +594,17 @@ impl TokenClientBuilder {
     }
 
     /// Adds a single extra form parameter for provider-specific extensions
-    /// (e.g. `resource` or `audience`). Reserved grant/auth parameters are
-    /// never overridden.
+    /// (e.g. an RFC 8707 `resource` or an `audience` on a grant that does not
+    /// model them). Reserved grant/auth parameters are never overridden.
+    ///
+    /// Extras are client-wide, so they apply to every grant this client
+    /// performs. [`token_exchange`] additionally owns `requested_token_type`,
+    /// `resource`, and `audience` — it takes those from its
+    /// [`TokenExchangeRequest`] — and fails with [`IdentityError::Validation`]
+    /// rather than silently ignoring an extra that names one of them. Keys are
+    /// compared case-insensitively and ignoring surrounding whitespace.
+    ///
+    /// [`token_exchange`]: TokenClient::token_exchange
     pub fn extra_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.extra_params.insert(key.into(), value.into());
         self
@@ -1486,6 +1601,450 @@ mod tests {
                 other => panic!("{body}: expected a rejection naming access_token, got {other:?}"),
             }
         }
+    }
+
+    // RFC 6749 §5.1 REQUIRED (and spec/vectors/token-exchange.json
+    // required_fields): a 200 that omits token_type — or sends it empty — is
+    // rejected. `TokenResponse::token_type` defaults to "", so without this
+    // check the caller would get Ok back holding an empty token type.
+    #[tokio::test]
+    async fn token_exchange_rejects_response_without_token_type() {
+        let omitted = format!(
+            r#"{{"access_token":"issued-tok","issued_token_type":"{TOKEN_TYPE_ACCESS_TOKEN}"}}"#
+        );
+        let empty = format!(
+            r#"{{"access_token":"issued-tok","token_type":"","issued_token_type":"{TOKEN_TYPE_ACCESS_TOKEN}"}}"#
+        );
+
+        for body in [omitted, empty] {
+            let server = MockServer::start().await;
+            mount_token(
+                &server,
+                ResponseTemplate::new(200).set_body_string(body.clone()),
+            )
+            .await;
+
+            let err = exchange_client(&server)
+                .token_exchange(&TokenExchangeRequest::new(
+                    "subject-tok",
+                    TOKEN_TYPE_ACCESS_TOKEN,
+                ))
+                .await
+                .expect_err("a missing token_type must fail");
+
+            match err {
+                // "missing token_type", not "token_type": the latter is also
+                // satisfied by the adjacent "is missing issued_token_type"
+                // message, so it would not tell the two checks apart.
+                IdentityError::Http(message) => {
+                    assert!(message.contains("missing token_type"), "{body}: {message}");
+                }
+                other => panic!("{body}: expected Http, got {other:?}"),
+            }
+        }
+    }
+
+    // RFC 8693 §1.1: an actor token that is present but empty — in either half
+    // of the pair — is rejected locally. Dropping it instead would post a
+    // subject-only request, downgrading the delegation the caller asked for
+    // into an impersonation without a word.
+    #[tokio::test]
+    async fn token_exchange_empty_actor_token_sends_nothing() {
+        for (actor_token, actor_token_type) in [("", TOKEN_TYPE_JWT), ("actor-tok", ""), ("", "")] {
+            let server = exchange_server("exchange-delegation-success.json").await;
+
+            let err = exchange_client(&server)
+                .token_exchange(
+                    &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                        .actor_token(actor_token, actor_token_type),
+                )
+                .await
+                .expect_err("an empty half of the actor pair must fail");
+
+            assert!(
+                matches!(err, IdentityError::Validation(_)),
+                "({actor_token:?}, {actor_token_type:?}): {err:?}"
+            );
+            assert!(
+                server.received_requests().await.unwrap().is_empty(),
+                "no request may be sent for ({actor_token:?}, {actor_token_type:?})"
+            );
+        }
+    }
+
+    // An optional parameter set to the empty string is omitted, not sent as a
+    // bare `key=`: an empty value requests nothing and a server may treat it as
+    // a malformed parameter and reject the exchange outright.
+    #[tokio::test]
+    async fn token_exchange_omits_empty_optional_parameters() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .requested_token_type("")
+                    .scope("")
+                    .resource("")
+                    .audience(""),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        for key in ["requested_token_type", "scope", "resource", "audience"] {
+            assert!(
+                form_all(&pairs, key).is_empty(),
+                "empty {key} must not be sent: {pairs:?}"
+            );
+        }
+    }
+
+    // Only the empty entries are dropped — a list mixing empty and real values
+    // still sends the real ones, in order.
+    #[tokio::test]
+    async fn token_exchange_keeps_non_empty_entries_when_dropping_empty_ones() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        exchange_client(&server)
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .resource("")
+                    .resource("https://rs.example.com")
+                    .audience("aud-a")
+                    .audience(""),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "resource"), ["https://rs.example.com"]);
+        assert_eq!(form_all(&pairs, "audience"), ["aud-a"]);
+    }
+
+    // The exchange owns requested_token_type, resource, and audience, and says
+    // so loudly: an extra param naming one fails the call before anything is
+    // sent. Dropping it instead would be a silent loss of a restriction —
+    // extra_param is client-wide, so a caller who set `audience` to pin every
+    // token to one API would get a broader token back from this grant alone,
+    // with nothing to say which grant discarded it.
+    #[tokio::test]
+    async fn token_exchange_extra_params_cannot_inject_targeting_params() {
+        // The bare request never names the parameters; the second names them as
+        // empty strings, which are dropped from the form — neither shape may
+        // leave an opening for an extra to fill.
+        let requests = [
+            TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN),
+            TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                .requested_token_type("")
+                .audience("")
+                .resource(""),
+        ];
+
+        // The keys are written out here rather than iterated from
+        // EXCHANGE_RESERVED_PARAMS on purpose: driving the cases from the
+        // constant under test lets a shrunk constant silently shrink the test.
+        // Drop "audience" from it and this would stay green while `audience`
+        // became injectable again; empty it and the body would never run at
+        // all. The constant is pinned separately, by
+        // exchange_reserved_params_cover_every_targeting_parameter.
+        for request in requests {
+            for key in ["requested_token_type", "resource", "audience"] {
+                let server = exchange_server("exchange-impersonation-success.json").await;
+
+                let err = client(&format!("{}/token", server.uri()))
+                    .extra_param(key, "https://evil.example.com")
+                    .build()
+                    .unwrap()
+                    .token_exchange(&request)
+                    .await
+                    .expect_err("an extra param naming an owned parameter must fail");
+
+                match err {
+                    IdentityError::Validation(message) => {
+                        assert!(message.contains(key), "{key}: {message}");
+                        assert!(message.contains("TokenExchangeRequest"), "{key}: {message}");
+                    }
+                    other => panic!("{key}: expected Validation, got {other:?}"),
+                }
+                assert!(
+                    server.received_requests().await.unwrap().is_empty(),
+                    "{key}: no request may be sent"
+                );
+            }
+        }
+    }
+
+    // Pins the constant the test above deliberately does not read. Between the
+    // two, removing a key from EXCHANGE_RESERVED_PARAMS fails loudly here while
+    // the injection test keeps exercising all three; order is not pinned
+    // because it carries no meaning.
+    #[test]
+    fn exchange_reserved_params_cover_every_targeting_parameter() {
+        let mut reserved = EXCHANGE_RESERVED_PARAMS.to_vec();
+        reserved.sort_unstable();
+        assert_eq!(reserved, ["audience", "requested_token_type", "resource"]);
+    }
+
+    // ...nor override one the request did pin. Note what this test is and is
+    // not: it is a regression guard, not coverage of EXCHANGE_RESERVED_PARAMS.
+    // Before the collision was rejected outright this case already passed,
+    // because do_request skips a key that is already in the form — it was green
+    // with and without the constant. What it pins now is that agreeing with the
+    // request does not buy an extra param a pass: the call fails, so a caller
+    // whose client-wide extra contradicts a grant finds out.
+    #[tokio::test]
+    async fn token_exchange_extra_params_cannot_override_targeting_params() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        let err = client(&format!("{}/token", server.uri()))
+            .extra_param("requested_token_type", TOKEN_TYPE_ID_TOKEN)
+            .extra_param("audience", "https://evil.example.com")
+            .extra_param("resource", "https://evil-rs.example.com")
+            .build()
+            .unwrap()
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .requested_token_type(TOKEN_TYPE_ACCESS_TOKEN)
+                    .audience("https://api.example.com")
+                    .resource("https://rs.example.com"),
+            )
+            .await
+            .expect_err("a colliding extra param must fail even when the request pins it");
+
+        match err {
+            // Keys are reported in sorted order, so "audience" is named first
+            // every run rather than whichever the HashMap yielded first.
+            IdentityError::Validation(message) => {
+                assert!(message.contains("audience"), "{message}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no request may be sent"
+        );
+    }
+
+    // Reserving three keys on the exchange must not become "the exchange drops
+    // every extra": a key the grant does not own still reaches the body, next
+    // to the targeting parameters the request itself pinned. Nothing else pins
+    // this for the exchange path, so an over-broad guard would pass the suite.
+    #[tokio::test]
+    async fn token_exchange_sends_non_reserved_extra_param() {
+        let server = exchange_server("exchange-impersonation-success.json").await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("tenant", "t1")
+            .build()
+            .unwrap()
+            .token_exchange(
+                &TokenExchangeRequest::new("subject-tok", TOKEN_TYPE_ACCESS_TOKEN)
+                    .audience("https://api.example.com"),
+            )
+            .await
+            .expect("exchange succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "tenant"), ["t1"]);
+        assert_eq!(form_all(&pairs, "audience"), ["https://api.example.com"]);
+    }
+
+    // The reserved lists are matched on a normalised key. A server whose form
+    // parser folds case or trims whitespace reads "Audience" and " audience" as
+    // `audience`, so an exact-byte match would hand it the very parameter the
+    // guard claims cannot be injected.
+    #[tokio::test]
+    async fn token_exchange_reserved_extras_are_matched_normalised() {
+        for key in [
+            "Audience",
+            " audience",
+            "REQUESTED_TOKEN_TYPE",
+            "\tresource ",
+        ] {
+            let server = exchange_server("exchange-impersonation-success.json").await;
+
+            let err = client(&format!("{}/token", server.uri()))
+                .extra_param(key, "https://evil.example.com")
+                .build()
+                .unwrap()
+                .token_exchange(&TokenExchangeRequest::new(
+                    "subject-tok",
+                    TOKEN_TYPE_ACCESS_TOKEN,
+                ))
+                .await
+                .expect_err("a case- or whitespace-variant reserved key must fail");
+
+            assert!(
+                matches!(err, IdentityError::Validation(_)),
+                "{key:?}: {err:?}"
+            );
+            assert!(
+                server.received_requests().await.unwrap().is_empty(),
+                "{key:?}: no request may be sent"
+            );
+        }
+    }
+
+    // The same normalisation covers RESERVED_PARAMS, which every grant applies:
+    // a variant spelling must not reach the body, where a case-folding or
+    // trimming server would read it as the reserved parameter it imitates.
+    #[tokio::test]
+    async fn reserved_extras_are_matched_normalised() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("Grant_Type", "evil-grant")
+            .extra_param(" scope", "evil-scope")
+            .extra_param("CLIENT_ID", "evil-client")
+            .build()
+            .unwrap()
+            .client_credentials(None)
+            .await
+            .expect("grant succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "grant_type"), ["client_credentials"]);
+        for key in [
+            "Grant_Type",
+            " scope",
+            "CLIENT_ID",
+            "scope",
+            "client_id",
+            "client_secret",
+        ] {
+            assert!(
+                form_all(&pairs, key).is_empty(),
+                "{key:?} must not be sent: {pairs:?}"
+            );
+        }
+    }
+
+    // The `grant_reserved` arm of the do_request skip is the one arm no public
+    // caller can reach: token_exchange — the only grant that passes a non-empty
+    // list — rejects a colliding extra param outright, and the other two pass
+    // `&[]`, so the arm never decides anything the suite above can observe.
+    // That is why it is exercised here by calling do_request directly. Left to
+    // the public API, weakening the skip to
+    // `reserved || (grant_reserved && already_in_form)` keeps every other test
+    // green while gutting the arm for exactly the case the list exists for: a
+    // grant-owned parameter the request left unset is in no form to collide
+    // with, so `already_in_form` is false and the extra would be appended to
+    // the wire — silently retargeting the exchange at another resource server,
+    // which is what reserving the key was for. Sending `audience` as a
+    // client-wide extra is legitimate on the grants that do not own it, and
+    // client_credentials_still_allows_targeting_extra_params pins that, so the
+    // drop has to be keyed on the grant rather than on the key alone.
+    #[tokio::test]
+    async fn grant_reserved_extra_absent_from_the_form_is_dropped() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        let token_client = client(&format!("{}/token", server.uri()))
+            .extra_param("audience", "https://evil.example.com")
+            .extra_param("tenant", "t1")
+            .build()
+            .unwrap();
+
+        // The form deliberately carries no `audience` — the exchange omits an
+        // empty one — so the "already in the form" arm cannot stand in for the
+        // grant_reserved arm under test.
+        token_client
+            .do_request(
+                vec![("grant_type".to_string(), GRANT_TOKEN_EXCHANGE.to_string())],
+                token_client.client_secret.as_deref(),
+                EXCHANGE_RESERVED_PARAMS,
+            )
+            .await
+            .expect("request succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert!(
+            form_all(&pairs, "audience").is_empty(),
+            "a grant-reserved extra the form does not already carry must not be \
+             sent at all: {pairs:?}"
+        );
+        // Positive control: extras are applied on this very call, so the
+        // assertion above cannot pass merely because none were.
+        assert_eq!(form_all(&pairs, "tenant"), ["t1"]);
+        assert_eq!(form_all(&pairs, "grant_type"), [GRANT_TOKEN_EXCHANGE]);
+    }
+
+    // Regression guard for the documented rationale, not coverage of
+    // EXCHANGE_RESERVED_PARAMS: this passed before the constant existed too,
+    // when client credentials had no grant_reserved list at all. What it guards
+    // is the `&[]` this grant passes to do_request — the three targeting
+    // parameters are reserved on the EXCHANGE path only, and a grant that does
+    // not model them (client credentials has no RFC 8707 resource of its own)
+    // must still be able to send them as extras. It fails if someone widens the
+    // reservation to every grant.
+    #[tokio::test]
+    async fn client_credentials_still_allows_targeting_extra_params() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("resource", "https://rs.example.com")
+            .extra_param("audience", "https://api.example.com")
+            .extra_param("requested_token_type", TOKEN_TYPE_ACCESS_TOKEN)
+            .build()
+            .unwrap()
+            .client_credentials(None)
+            .await
+            .expect("grant succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "resource"), ["https://rs.example.com"]);
+        assert_eq!(form_all(&pairs, "audience"), ["https://api.example.com"]);
+        assert_eq!(
+            form_all(&pairs, "requested_token_type"),
+            [TOKEN_TYPE_ACCESS_TOKEN]
+        );
+    }
+
+    // Mirror image of the test above for the third grant_reserved call site.
+    // exchange_code passes `&[]` as well and nothing else pins it: handing it
+    // EXCHANGE_RESERVED_PARAMS by mistake would silently drop an RFC 8707
+    // `resource` or `audience` from the authorization code grant, and every
+    // other test in the suite would stay green.
+    #[tokio::test]
+    async fn exchange_code_still_allows_targeting_extra_params() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        client(&format!("{}/token", server.uri()))
+            .extra_param("resource", "https://rs.example.com")
+            .extra_param("audience", "https://api.example.com")
+            .extra_param("requested_token_type", TOKEN_TYPE_ACCESS_TOKEN)
+            .build()
+            .unwrap()
+            .exchange_code("auth-code-1", "https://app.example/cb", None)
+            .await
+            .expect("grant succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert_eq!(form_all(&pairs, "resource"), ["https://rs.example.com"]);
+        assert_eq!(form_all(&pairs, "audience"), ["https://api.example.com"]);
+        assert_eq!(
+            form_all(&pairs, "requested_token_type"),
+            [TOKEN_TYPE_ACCESS_TOKEN]
+        );
     }
 
     // The issued_token_type is a modelled field, so it must not also be left
