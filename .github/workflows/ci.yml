@@ -485,6 +485,14 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
     runs-on: ubuntu-latest
+    # A mutation run has no natural ceiling: the per-mutant budget is
+    # GO_TIMEOUT_COEFFICIENT (300) x the package's own baseline test time, and
+    # gremlins' boundary mutators routinely produce non-terminating loops (flip
+    # `>` to `<=` in go/pkg/jwks/cache.go's `for len(...) > maxEntries` eviction
+    # loops and the mutant spins forever), so a pathological mutant would
+    # otherwise burn GitHub's 6-hour default. A healthy run is ~45s for a
+    # six-package diff; 30 minutes is a wide margin that still fails fast.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
