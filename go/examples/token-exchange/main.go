@@ -13,8 +13,9 @@
 //	  -client-id my-client \
 //	  -audience https://api.example.com
 //
-// Set ACTOR_TOKEN in the environment to run a delegation exchange instead of an
-// impersonation exchange.
+// Pass -delegate to run a delegation exchange instead of an impersonation
+// exchange; the actor token is then read from ACTOR_TOKEN, and an unset or empty
+// ACTOR_TOKEN is an error rather than a silent fall back to impersonation.
 //
 // With no SUBJECT_TOKEN set, the example runs a self-contained demo: it serves a
 // tiny RFC 8693 token endpoint locally and performs both an impersonation and a
@@ -41,7 +42,8 @@ func main() {
 	endpoint := flag.String("token-endpoint", "", "token endpoint (overrides discovery)")
 	clientID := flag.String("client-id", "", "client id")
 	subjectTokenType := flag.String("subject-token-type", token.TokenTypeAccessToken, "subject_token_type URI")
-	actorTokenType := flag.String("actor-token-type", token.TokenTypeJWT, "actor_token_type URI (required when ACTOR_TOKEN is set)")
+	delegate := flag.Bool("delegate", false, "run a delegation exchange: send ACTOR_TOKEN as the actor token")
+	actorTokenType := flag.String("actor-token-type", token.TokenTypeJWT, "actor_token_type URI (required with -delegate)")
 	audience := flag.String("audience", "", "optional target audience")
 	resource := flag.String("resource", "", "optional target resource URI")
 	post := flag.Bool("post", false, "use client_secret_post instead of client_secret_basic")
@@ -76,7 +78,14 @@ func main() {
 	if *post {
 		opts = append(opts, token.WithClientAuth(token.ClientSecretPost))
 	}
-	if actorToken != "" {
+	// Delegation is requested affirmatively with -delegate, and the option is then
+	// applied unconditionally. Gating it on a non-empty ACTOR_TOKEN instead would
+	// re-open the downgrade the guard exists to prevent: an unset or empty
+	// ACTOR_TOKEN would drop the option, and the requested delegation would become
+	// an impersonation exchange whose issued token carries the subject's full
+	// authority with no act claim. Applied unconditionally, an empty actor token
+	// is a loud ErrInvalidTokenExchange before anything is sent.
+	if *delegate {
 		opts = append(opts, token.WithActorToken(actorToken, *actorTokenType))
 	}
 	if *audience != "" {
