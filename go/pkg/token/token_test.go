@@ -396,6 +396,52 @@ func TestTokenResponse_ExpiresInRejectsGarbage(t *testing.T) {
 	}
 }
 
+// Reserved parameters are matched on the normalized key, so no spelling of one
+// slips past: an authorization server whose form parser folds case or trims
+// surrounding whitespace would read "Client_ID" or " client_secret" as the real
+// parameter, and a byte-exact guard would hand it a contradicting identity.
+// client_assertion/client_assertion_type are reserved for the same reason — an
+// injected assertion authenticates the request as a different client
+// (RFC 7523 §2.2).
+func TestClientCredentials_ExtraParamsCannotInjectNormalizedReserved(t *testing.T) {
+	injected := map[string]string{
+		"Client_ID":             "evil",
+		" client_secret":        "evil",
+		"GRANT_TYPE":            "evil",
+		"client_assertion":      "evil-assertion",
+		"client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+		"Scope ":                "evil-scope",
+	}
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, successBody, &got)
+
+	_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret",
+		WithExtraParams(injected), WithScopes("api"), WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	for k := range injected {
+		if got.form.Has(k) {
+			t.Errorf("reserved param %q injected into body: %v", k, got.form)
+		}
+	}
+	// The grant's own values are untouched, and Basic-auth identity stays
+	// authoritative with no credentials in the body.
+	if got.form.Has("client_id") || got.form.Has("client_secret") {
+		t.Errorf("client credentials leaked into body: %v", got.form)
+	}
+	if g := got.form.Get("grant_type"); g != grantClientCredentials {
+		t.Errorf("grant_type = %q, want %q", g, grantClientCredentials)
+	}
+	if g := got.form.Get("scope"); g != "api" {
+		t.Errorf("scope = %q, want api", g)
+	}
+	user, _, _ := parseBasicAuth(got.authHeader)
+	if user != "cid" {
+		t.Errorf("Basic auth user = %q, want cid", user)
+	}
+}
+
 // Extra params must not inject reserved client-auth parameters. On the Basic
 // path client_id is absent from the body, so a guard keyed only on form.Has
 // would let WithExtraParams smuggle a contradicting client_id. Regression.

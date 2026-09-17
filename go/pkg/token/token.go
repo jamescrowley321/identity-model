@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -40,15 +41,19 @@ const (
 	TokenTypeJWT = "urn:ietf:params:oauth:token-type:jwt"
 )
 
-// reservedParams are owned by the grant and client-authentication logic. They
-// can never be set or overridden via [WithExtraParams], so that caller-supplied
-// extras cannot contradict the request's identity (e.g. injecting a body
-// client_id that disagrees with the Basic-auth credentials) or its grant shape.
-// Note: resource, audience, and requested_token_type are intentionally NOT
-// reserved. They are non-identity target/output hints that callers may also
-// supply via WithExtraParams on any grant (e.g. an RFC 8707 resource on the
-// client credentials grant); the token exchange grant sets them via its own
-// options, and the extra-params loop skips any key already present in the form.
+// reservedParams are owned by the grant and client-authentication logic on
+// every grant. They can never be set or overridden via [WithExtraParams], so
+// that caller-supplied extras cannot contradict the request's identity (e.g.
+// injecting a body client_id that disagrees with the Basic-auth credentials) or
+// its grant shape. Keys are matched after [normalizeParamKey], because a server
+// whose form parser folds case or trims would otherwise accept "Client_ID" or
+// " client_id" as the real parameter.
+//
+// resource, audience and requested_token_type are deliberately absent from this
+// set: they are non-identity targeting hints that a caller may legitimately
+// supply via [WithExtraParams] on a grant that has no dedicated option for them
+// (e.g. an RFC 8707 resource on the client credentials grant). They are instead
+// reserved on the token exchange path alone, via [exchangeReservedParams].
 var reservedParams = map[string]bool{
 	"grant_type":         true,
 	"client_id":          true,
@@ -61,6 +66,53 @@ var reservedParams = map[string]bool{
 	"subject_token_type": true,
 	"actor_token":        true,
 	"actor_token_type":   true,
+	// Private-key/secret JWT client authentication (RFC 7523 §2.2, RFC 7521
+	// §4.2): an injected assertion would authenticate the request as a client
+	// the caller was never issued credentials for.
+	"client_assertion":      true,
+	"client_assertion_type": true,
+}
+
+// exchangeReservedParams are reserved on the token exchange path only, in
+// addition to [reservedParams]. RFC 8693 §2.1 makes resource, audience and
+// requested_token_type part of how an exchange is targeted and what it asks to
+// have issued, and [TokenExchange] sources all three from its own options
+// ([WithResource], [WithAudience], [WithRequestedTokenType]). An extra param
+// must therefore neither inject one the caller never pinned nor override one
+// they did. Other grants are unaffected and may still set these keys via
+// [WithExtraParams].
+var exchangeReservedParams = map[string]bool{
+	"resource":             true,
+	"audience":             true,
+	"requested_token_type": true,
+}
+
+// normalizeParamKey folds an extra-param key to the form the reserved sets are
+// keyed in. Reservation is enforced on the normalized key because an
+// authorization server's form parser is not required to be byte-exact: ASP.NET
+// IFormCollection and Duende IdentityServer, among others, fold case and trim
+// surrounding whitespace, so "Audience" or " audience" sent verbatim would reach
+// such a server as the reserved parameter itself.
+func normalizeParamKey(k string) string {
+	return strings.ToLower(strings.TrimSpace(k))
+}
+
+// firstReservedExtra reports the lowest-sorted key of extras that grantReserved
+// reserves, comparing keys via [normalizeParamKey]. Go map iteration order is
+// randomized, so the keys are sorted to keep the reported key (and therefore the
+// error message) stable when several collide.
+func firstReservedExtra(extras map[string]string, grantReserved map[string]bool) (string, bool) {
+	var collisions []string
+	for k := range extras {
+		if grantReserved[normalizeParamKey(k)] {
+			collisions = append(collisions, k)
+		}
+	}
+	if len(collisions) == 0 {
+		return "", false
+	}
+	sort.Strings(collisions)
+	return collisions[0], true
 }
 
 // ClientCredentials performs the OAuth 2.0 client credentials grant
@@ -80,7 +132,7 @@ func ClientCredentials(ctx context.Context, tokenEndpoint, clientID, clientSecre
 		form.Set("scope", strings.Join(cfg.scopes, " "))
 	}
 
-	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form)
+	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form, nil)
 }
 
 // AuthorizationCode performs the OAuth 2.0 authorization code grant
@@ -114,7 +166,7 @@ func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redir
 	// cfg.clientSecret is "" for a public client (identified via client_id in
 	// the body) or the confidential secret from [WithClientSecret], which
 	// doTokenRequest presents per the configured ClientAuthMethod.
-	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, cfg.clientSecret, form)
+	return doTokenRequest(ctx, cfg, tokenEndpoint, clientID, cfg.clientSecret, form, nil)
 }
 
 // TokenExchange performs the OAuth 2.0 token exchange grant (RFC 8693 §2.1): it
@@ -140,16 +192,36 @@ func TokenExchange(ctx context.Context, tokenEndpoint, clientID, clientSecret, s
 	if subjectTokenType == "" {
 		return nil, fmt.Errorf("%w: subject_token_type is required", ErrInvalidTokenExchange)
 	}
-	// actor_token_type is REQUIRED whenever actor_token is present (RFC 8693 §2.1).
-	if cfg.actorToken != "" && cfg.actorTokenType == "" {
-		return nil, fmt.Errorf("%w: actor_token_type is required when actor_token is set", ErrInvalidTokenExchange)
+	// A colliding extra param is rejected before anything is sent rather than
+	// dropped from the form. Dropping it would turn an injection attempt into the
+	// silent loss of a restriction: a caller who pinned an audience through
+	// [WithExtraParams] would send no audience at all, get a 200, and receive a
+	// token broader than the one they asked for with no signal that it happened.
+	if k, ok := firstReservedExtra(cfg.extraParams, exchangeReservedParams); ok {
+		return nil, fmt.Errorf("%w: %s must be set via its option (WithResource/WithAudience/WithRequestedTokenType), not WithExtraParams", ErrInvalidTokenExchange, k)
+	}
+	// An actor token counts as supplied when [WithActorToken] was applied, not
+	// when the string happens to be non-empty: an empty actor token sourced from
+	// an env lookup or header would otherwise be dropped from the form, silently
+	// downgrading the requested delegation to an impersonation exchange whose
+	// issued token carries the subject's full authority with no act claim
+	// (RFC 8693 §1.1).
+	if cfg.actorTokenSet {
+		if cfg.actorToken == "" {
+			return nil, fmt.Errorf("%w: actor_token must not be empty when provided", ErrInvalidTokenExchange)
+		}
+		// actor_token_type is REQUIRED whenever actor_token is present
+		// (RFC 8693 §2.1).
+		if cfg.actorTokenType == "" {
+			return nil, fmt.Errorf("%w: actor_token_type is required when actor_token is set", ErrInvalidTokenExchange)
+		}
 	}
 
 	form := url.Values{}
 	form.Set("grant_type", grantTokenExchange)
 	form.Set("subject_token", subjectToken)
 	form.Set("subject_token_type", subjectTokenType)
-	if cfg.actorToken != "" {
+	if cfg.actorTokenSet {
 		form.Set("actor_token", cfg.actorToken)
 		form.Set("actor_token_type", cfg.actorTokenType)
 	}
@@ -167,9 +239,16 @@ func TokenExchange(ctx context.Context, tokenEndpoint, clientID, clientSecret, s
 		form.Add("audience", a)
 	}
 
-	resp, err := doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form)
+	resp, err := doTokenRequest(ctx, cfg, tokenEndpoint, clientID, clientSecret, form, exchangeReservedParams)
 	if err != nil {
 		return nil, err
+	}
+	// token_type is REQUIRED in a successful response (RFC 6749 §5.1, restated by
+	// RFC 8693 §2.2.1); a 200 that omits it is non-conformant. Without it a
+	// caller applying the §2.2.1 bearer test (token_type != "N_A") would treat an
+	// unknown, possibly non-bearer credential as a Bearer token.
+	if resp.TokenType == "" {
+		return nil, &RequestError{Op: "token exchange response", Err: fmt.Errorf("missing token_type")}
 	}
 	// issued_token_type is REQUIRED in a successful token exchange response
 	// (RFC 8693 §2.2); a 200 that omits it is non-conformant.
@@ -183,7 +262,11 @@ func TokenExchange(ctx context.Context, tokenEndpoint, clientID, clientSecret, s
 // form to endpoint as application/x-www-form-urlencoded, and decodes the
 // response: a 2xx body into [TokenResponse], otherwise an OAuth error body into
 // [TokenError] (status checked before decode).
-func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, clientSecret string, form url.Values) (*TokenResponse, error) {
+//
+// grantReserved names parameters reserved by the calling grant on top of the
+// package-wide [reservedParams]; it may be nil for a grant that reserves nothing
+// extra.
+func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, clientSecret string, form url.Values, grantReserved map[string]bool) (*TokenResponse, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, &RequestError{Op: "parse token endpoint", Err: err}
@@ -211,9 +294,12 @@ func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, client
 	// Extra params are applied last but never override reserved grant or
 	// client-auth parameters (whether or not they are already present in the
 	// form — on the Basic path client_id is absent from the body yet must not
-	// be injectable).
+	// be injectable), nor any parameter the calling grant reserves for itself.
+	// The grantReserved arm is defence in depth: [TokenExchange] rejects such a
+	// key outright, so it is unreachable from there.
 	for k, v := range cfg.extraParams {
-		if reservedParams[k] || form.Has(k) {
+		nk := normalizeParamKey(k)
+		if reservedParams[nk] || grantReserved[nk] || form.Has(k) {
 			continue
 		}
 		form.Set(k, v)

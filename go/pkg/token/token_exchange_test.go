@@ -396,3 +396,324 @@ func TestTokenExchange_OversizedBody(t *testing.T) {
 		t.Fatalf("error = %v, want *RequestError for oversized body", err)
 	}
 }
+
+// A 200 response is rejected unless it carries a non-empty token_type: RFC 6749
+// §5.1 makes it REQUIRED and RFC 8693 §2.2.1 restates it for the exchange, where
+// its value is also the bearer test (token_type != "N_A"). Without the guard a
+// non-bearer credential returned with no token_type would be sent as a Bearer
+// token. Matches the Python reference, which rejects a missing/empty token_type.
+func TestTokenExchange_RejectsMissingTokenType(t *testing.T) {
+	const issued = `"issued_token_type":"urn:ietf:params:oauth:token-type:access_token"`
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{
+			name:    "token_type absent",
+			body:    `{"access_token":"issued-tok",` + issued + `}`,
+			wantErr: true,
+		},
+		{
+			name:    "token_type empty string",
+			body:    `{"access_token":"issued-tok","token_type":"",` + issued + `}`,
+			wantErr: true,
+		},
+		{
+			name:    "token_type null",
+			body:    `{"access_token":"issued-tok","token_type":null,` + issued + `}`,
+			wantErr: true,
+		},
+		{
+			name:    "token_type present",
+			body:    `{"access_token":"issued-tok","token_type":"Bearer",` + issued + `}`,
+			wantErr: false,
+		},
+		{
+			name:    "token_type N_A is a value, not an absence",
+			body:    `{"access_token":"issued-tok","token_type":"N_A",` + issued + `}`,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got capturedRequest
+			srv := newTokenServer(t, http.StatusOK, tt.body, &got)
+
+			resp, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+				"subject-tok", TokenTypeAccessToken, WithInsecureAllowHTTP())
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("TokenExchange: %v", err)
+				}
+				if resp.TokenType == "" {
+					t.Errorf("token_type = %q, want the response value", resp.TokenType)
+				}
+				return
+			}
+			var re *RequestError
+			if !errors.As(err, &re) {
+				t.Fatalf("error = %v, want *RequestError for missing token_type", err)
+			}
+			// "missing issued_token_type" also contains "token_type", so assert the
+			// exact message to prove which guard fired.
+			const wantMsg = "missing token_type"
+			if re.Err == nil || re.Err.Error() != wantMsg {
+				t.Errorf("error = %v, want %q", re.Err, wantMsg)
+			}
+			if resp != nil {
+				t.Errorf("response = %+v, want nil on rejection", resp)
+			}
+		})
+	}
+}
+
+// A supplied-but-empty actor token is a caller error, not a request for
+// impersonation. Dropping it from the form would silently downgrade delegation
+// to impersonation (RFC 8693 §1.1), so it is rejected locally before any request
+// is sent. Matches the Python reference ("actor_token must not be empty when
+// provided"). Omitting WithActorToken entirely is how impersonation is asked for.
+func TestTokenExchange_SuppliedEmptyActorTokenRejected(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       []Option
+		wantErr    bool
+		wantActor  string
+		wantTyp    string
+		wantNoPair bool
+	}{
+		{
+			name:    "empty actor token with a type",
+			opts:    []Option{WithActorToken("", TokenTypeJWT)},
+			wantErr: true,
+		},
+		{
+			name:    "empty actor token and empty type",
+			opts:    []Option{WithActorToken("", "")},
+			wantErr: true,
+		},
+		{
+			name:    "actor token without a type",
+			opts:    []Option{WithActorToken("actor-tok", "")},
+			wantErr: true,
+		},
+		{
+			name:      "both supplied",
+			opts:      []Option{WithActorToken("actor-tok", TokenTypeJWT)},
+			wantActor: "actor-tok",
+			wantTyp:   TokenTypeJWT,
+		},
+		{
+			name:       "option omitted requests impersonation",
+			opts:       nil,
+			wantNoPair: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got capturedRequest
+			srv := newTokenServer(t, http.StatusOK, exchangeFixture(t, "exchange-delegation-success.json"), &got)
+
+			opts := append([]Option{}, tt.opts...)
+			opts = append(opts, WithInsecureAllowHTTP())
+			_, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+				"subject-tok", TokenTypeAccessToken, opts...)
+
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidTokenExchange) {
+					t.Fatalf("error = %v, want ErrInvalidTokenExchange", err)
+				}
+				if got.method != "" {
+					t.Errorf("no request must be sent for an invalid actor token, got %s with form %v", got.method, got.form)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("TokenExchange: %v", err)
+			}
+			if tt.wantNoPair {
+				if got.form.Has("actor_token") || got.form.Has("actor_token_type") {
+					t.Errorf("impersonation must not send an actor pair: %v", got.form)
+				}
+				return
+			}
+			if got.form.Get("actor_token") != tt.wantActor {
+				t.Errorf("actor_token = %q, want %q", got.form.Get("actor_token"), tt.wantActor)
+			}
+			if got.form.Get("actor_token_type") != tt.wantTyp {
+				t.Errorf("actor_token_type = %q, want %q", got.form.Get("actor_token_type"), tt.wantTyp)
+			}
+		})
+	}
+}
+
+// On the exchange path resource, audience and requested_token_type are sourced
+// from the exchange's own options, so a colliding WithExtraParams key is
+// rejected before the request is built rather than dropped from the form.
+// Dropping it would convert an injection attempt into the silent loss of a
+// restriction: the pinned rows below would send no targeting at all, get a 200,
+// and hand back a token broader than the caller asked for with no signal.
+func TestTokenExchange_ExtraParamsCannotSetTargeting(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		evil string
+		pin  Option
+	}{
+		{
+			name: "requested_token_type unpinned",
+			key:  "requested_token_type",
+			evil: TokenTypeRefreshToken,
+		},
+		{
+			name: "requested_token_type pinned",
+			key:  "requested_token_type",
+			evil: TokenTypeRefreshToken,
+			pin:  WithRequestedTokenType(TokenTypeAccessToken),
+		},
+		{
+			name: "audience unpinned",
+			key:  "audience",
+			evil: "https://evil.example.com",
+		},
+		{
+			name: "audience pinned",
+			key:  "audience",
+			evil: "https://evil.example.com",
+			pin:  WithAudience("https://api.example.com"),
+		},
+		{
+			name: "resource unpinned",
+			key:  "resource",
+			evil: "https://evil.example.com",
+		},
+		{
+			name: "resource pinned",
+			key:  "resource",
+			evil: "https://evil.example.com",
+			pin:  WithResource("https://rs.example.com"),
+		},
+		// Reservation is enforced on the normalized key: an authorization server
+		// whose form parser folds case or trims surrounding whitespace (ASP.NET
+		// IFormCollection, Duende IdentityServer) would read these as the reserved
+		// parameter itself, so a byte-exact guard would let them through.
+		{
+			name: "audience mixed case",
+			key:  "Audience",
+			evil: "https://evil.example.com",
+		},
+		{
+			name: "audience leading space",
+			key:  " audience",
+			evil: "https://evil.example.com",
+		},
+		{
+			name: "requested_token_type upper case",
+			key:  "REQUESTED_TOKEN_TYPE",
+			evil: TokenTypeRefreshToken,
+		},
+		{
+			name: "resource trailing space, pinned",
+			key:  "resource ",
+			evil: "https://evil.example.com",
+			pin:  WithResource("https://rs.example.com"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got capturedRequest
+			srv := newTokenServer(t, http.StatusOK, exchangeFixture(t, "exchange-impersonation-success.json"), &got)
+
+			opts := []Option{WithExtraParams(map[string]string{tt.key: tt.evil}), WithInsecureAllowHTTP()}
+			if tt.pin != nil {
+				opts = append([]Option{tt.pin}, opts...)
+			}
+			resp, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+				"subject-tok", TokenTypeAccessToken, opts...)
+
+			if !errors.Is(err, ErrInvalidTokenExchange) {
+				t.Fatalf("error = %v, want ErrInvalidTokenExchange for extra param %q", err, tt.key)
+			}
+			if !strings.Contains(err.Error(), tt.key) {
+				t.Errorf("error %q does not name the offending key %q", err, tt.key)
+			}
+			if resp != nil {
+				t.Errorf("response = %+v, want nil on rejection", resp)
+			}
+			if got.method != "" {
+				t.Errorf("no request must be sent for a reserved extra param, got %s with form %v", got.method, got.form)
+			}
+		})
+	}
+}
+
+// When several extras collide the rejection must name a stable key: Go map
+// iteration order is randomized, so the keys are sorted and the lowest is
+// reported. Repeated to make an unsorted implementation fail reliably.
+func TestTokenExchange_ExtraParamsCollisionErrorIsStable(t *testing.T) {
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, exchangeFixture(t, "exchange-impersonation-success.json"), &got)
+
+	const want = "token: invalid token exchange request: audience must be set via its option " +
+		"(WithResource/WithAudience/WithRequestedTokenType), not WithExtraParams"
+	for i := 0; i < 50; i++ {
+		_, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+			"subject-tok", TokenTypeAccessToken,
+			WithExtraParams(map[string]string{
+				"resource":             "https://evil.example.com",
+				"audience":             "https://evil.example.com",
+				"requested_token_type": TokenTypeRefreshToken,
+			}), WithInsecureAllowHTTP())
+		if !errors.Is(err, ErrInvalidTokenExchange) {
+			t.Fatalf("error = %v, want ErrInvalidTokenExchange", err)
+		}
+		if err.Error() != want {
+			t.Fatalf("iteration %d: error = %q, want %q", i, err, want)
+		}
+	}
+}
+
+// A non-reserved extra param must still reach the exchange request. The
+// reservation is keyed on three specific parameters, not a blanket drop of every
+// extra on this grant: an over-broad implementation would discard every
+// provider-specific extension on an exchange and no other test would notice.
+func TestTokenExchange_NonReservedExtraParamsReachRequest(t *testing.T) {
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, exchangeFixture(t, "exchange-impersonation-success.json"), &got)
+
+	extras := map[string]string{"tenant": "t1", "acr_values": "mfa"}
+	if _, err := TokenExchange(context.Background(), srv.URL, "cid", "secret",
+		"subject-tok", TokenTypeAccessToken,
+		WithExtraParams(extras), WithInsecureAllowHTTP()); err != nil {
+		t.Fatalf("TokenExchange: %v", err)
+	}
+	for k, want := range extras {
+		if g := got.form.Get(k); g != want {
+			t.Errorf("%s = %q, want %q on the exchange request", k, g, want)
+		}
+	}
+}
+
+// The exchange-path reservation is scoped to the exchange: a grant with no
+// option of its own for these keys may still set them via WithExtraParams (e.g.
+// an RFC 8707 resource on the client credentials grant). Regression guard for
+// the rationale the exchange-only split preserves.
+func TestClientCredentials_ExtraParamsCanSetTargeting(t *testing.T) {
+	extras := map[string]string{
+		"resource":             "https://api.example.com",
+		"audience":             "https://aud.example.com",
+		"requested_token_type": TokenTypeAccessToken,
+	}
+	var got capturedRequest
+	srv := newTokenServer(t, http.StatusOK, successBody, &got)
+
+	if _, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret",
+		WithExtraParams(extras), WithInsecureAllowHTTP()); err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	for k, want := range extras {
+		if g := got.form.Get(k); g != want {
+			t.Errorf("%s = %q, want %q on the client credentials grant", k, g, want)
+		}
+	}
+}

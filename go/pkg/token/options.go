@@ -34,8 +34,13 @@ type config struct {
 	allowHTTP    bool
 
 	// Token exchange (RFC 8693) parameters.
-	actorToken         string
-	actorTokenType     string
+	actorToken     string
+	actorTokenType string
+	// actorTokenSet records that [WithActorToken] was applied, which a bare
+	// string cannot express. A supplied-but-empty actor token is a caller error
+	// (rejected by [TokenExchange]), not a request for impersonation; omitting
+	// the option is how impersonation is requested.
+	actorTokenSet      bool
 	resources          []string
 	audiences          []string
 	requestedTokenType string
@@ -89,9 +94,19 @@ func WithCodeVerifier(verifier string) Option {
 	return func(c *config) { c.codeVerifier = verifier }
 }
 
-// WithExtraParams adds arbitrary additional form parameters to the request,
-// for provider-specific extensions (e.g. resource or audience). Reserved
-// parameters set by the grant itself take precedence.
+// WithExtraParams adds arbitrary additional form parameters to the request, for
+// provider-specific extensions (e.g. an RFC 8707 resource on the client
+// credentials grant). Reserved parameters set by the grant itself take
+// precedence and can never be injected or overridden this way; a key is matched
+// case-insensitively and with surrounding whitespace trimmed, so no spelling of
+// it slips past a server that folds or trims the parameter name.
+//
+// On the [TokenExchange] grant that reservation additionally covers resource,
+// audience and requested_token_type, which are sourced from [WithResource],
+// [WithAudience] and [WithRequestedTokenType]. Supplying one of those three here
+// is rejected by [TokenExchange] rather than dropped, so a caller who pinned a
+// targeting parameter this way learns to move it to the option instead of
+// silently sending an unrestricted exchange.
 func WithExtraParams(params map[string]string) Option {
 	return func(c *config) { c.extraParams = params }
 }
@@ -100,10 +115,17 @@ func WithExtraParams(params map[string]string) Option {
 // request, turning it into a delegation exchange (RFC 8693 §1.1, §2.1). The
 // tokenType is one of the TokenType* URIs (RFC 8693 §3) and is REQUIRED whenever
 // an actor token is present. It is ignored by grants other than token exchange.
+//
+// Applying this option with an empty token or tokenType is rejected by
+// [TokenExchange] rather than quietly dropped: a delegation request that loses
+// its actor token becomes an impersonation request, whose issued token carries
+// the subject's full authority with no act claim. Omit the option entirely to
+// request impersonation.
 func WithActorToken(token, tokenType string) Option {
 	return func(c *config) {
 		c.actorToken = token
 		c.actorTokenType = tokenType
+		c.actorTokenSet = true
 	}
 }
 

@@ -10,6 +10,36 @@ Releases are `go/vX.Y.Z` tags — the subdirectory-module format `go get`
 requires — resolvable as
 `go get github.com/jamescrowley321/identity-model/go@vX.Y.Z`.
 
+## Unreleased
+
+### Changed
+
+- `pkg/token`: `TokenExchange` now rejects three request/response shapes it
+  previously accepted. Each was a silent security downgrade, so the stricter
+  behaviour is a break for callers that relied on it:
+  - `WithActorToken("", ...)` — a supplied-but-empty actor token — is now an
+    `ErrInvalidTokenExchange` before the request is sent, instead of being
+    dropped from the form. Dropping it turned a delegation exchange into an
+    impersonation exchange whose issued token carries the subject's full
+    authority with no `act` claim. Omit `WithActorToken` entirely to request
+    impersonation.
+  - `WithExtraParams` carrying `resource`, `audience` or `requested_token_type`
+    on an exchange is now an `ErrInvalidTokenExchange`, instead of being applied
+    or silently dropped. Set them with `WithResource`, `WithAudience` and
+    `WithRequestedTokenType`, which is where the exchange sources them from.
+    Keys are matched case-insensitively and with surrounding whitespace trimmed.
+    Other grants are unaffected and may still pass these keys as extras.
+  - A 2xx exchange response with no `token_type` is now a `RequestError`
+    (`missing token_type`) rather than a successful result. `token_type` is
+    REQUIRED (RFC 6749 §5.1, RFC 8693 §2.2.1) and is also the bearer test, so a
+    missing value left callers treating an unknown credential as a Bearer token.
+- `pkg/token`: `client_assertion` and `client_assertion_type` are now reserved on
+  every grant and can no longer be set via `WithExtraParams`; an injected
+  assertion would authenticate the request as a different client (RFC 7523 §2.2).
+- `examples/token-exchange`: delegation is now requested with the explicit
+  `-delegate` flag rather than inferred from a non-empty `ACTOR_TOKEN`, so an
+  empty `ACTOR_TOKEN` fails loudly instead of downgrading to impersonation.
+
 ## go/v0.3.0 (2026-09-05)
 
 ### Added
