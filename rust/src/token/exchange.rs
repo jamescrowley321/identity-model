@@ -127,6 +127,11 @@ impl TokenExchangeRequest {
     /// Attaches the acting party's token, turning the request into a delegation
     /// exchange (RFC 8693 §1.1, §2.1). `token_type` is one of the
     /// [`TOKEN_TYPE_URIS`] and is REQUIRED whenever an actor token is present.
+    ///
+    /// Both arguments must be non-empty: an empty one is rejected when the
+    /// exchange is validated, so an accidental empty actor token cannot quietly
+    /// turn a delegation into an impersonation. Simply do not call this method
+    /// to request impersonation.
     pub fn actor_token(mut self, token: impl Into<String>, token_type: impl Into<String>) -> Self {
         self.actor_token = Some(token.into());
         self.actor_token_type = Some(token_type.into());
@@ -167,8 +172,9 @@ impl TokenExchangeRequest {
     /// # Errors
     ///
     /// [`IdentityError::Validation`] when `subject_token` or
-    /// `subject_token_type` is empty, or when an `actor_token` is present
-    /// without its `actor_token_type`.
+    /// `subject_token_type` is empty, when a present `actor_token` is the empty
+    /// string, or when an `actor_token` is present without a non-empty
+    /// `actor_token_type`.
     pub(crate) fn validate(&self) -> Result<()> {
         if self.subject_token.is_empty() {
             return Err(IdentityError::Validation(
@@ -180,16 +186,32 @@ impl TokenExchangeRequest {
                 "token exchange: subject_token_type is required".to_string(),
             ));
         }
+        // An actor token that is present but empty is rejected rather than
+        // dropped: silently sending a subject-only request would downgrade the
+        // delegation the caller asked for into an impersonation
+        // (RFC 8693 §1.1). A caller who wants impersonation omits
+        // `actor_token` entirely.
+        if self.actor_token.as_deref().is_some_and(str::is_empty) {
+            return Err(IdentityError::Validation(
+                "token exchange: actor_token must not be empty when provided".to_string(),
+            ));
+        }
         // actor_token_type is REQUIRED whenever actor_token is present
-        // (RFC 8693 §2.1).
-        if self.actor_token.as_deref().is_some_and(|t| !t.is_empty())
+        // (RFC 8693 §2.1), and a type that is present but empty is as unusable
+        // as an absent one. The absent and empty cases are folded into one
+        // check on purpose: `actor_token()` is the only way to set either half
+        // and it always sets both, so a separate "type is None" arm would be
+        // unreachable through the public API and could never be tested.
+        if self.actor_token.is_some()
             && !self
                 .actor_token_type
                 .as_deref()
                 .is_some_and(|t| !t.is_empty())
         {
             return Err(IdentityError::Validation(
-                "token exchange: actor_token_type is required when actor_token is set".to_string(),
+                "token exchange: actor_token_type is required and must not be empty \
+                 when actor_token is set"
+                    .to_string(),
             ));
         }
         Ok(())
@@ -269,7 +291,7 @@ mod tests {
     }
 
     // RFC 8693 §2.1: actor_token_type is REQUIRED whenever actor_token is
-    // present. An empty type is as absent as a missing one.
+    // present, and an empty type is as unusable as a missing one.
     #[test]
     fn validate_rejects_actor_token_without_type() {
         let err = TokenExchangeRequest::new("subject.tok", TOKEN_TYPE_ACCESS_TOKEN)
@@ -279,14 +301,23 @@ mod tests {
         assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
     }
 
-    // An empty actor_token is treated as no delegation at all, so the
-    // actor_token_type requirement does not fire.
+    // RFC 8693 §1.1: a present-but-empty actor token is rejected, not dropped.
+    // Dropping it would send a subject-only request, silently turning the
+    // delegation the caller asked for into an impersonation.
     #[test]
-    fn validate_allows_empty_actor_token_without_type() {
-        TokenExchangeRequest::new("subject.tok", TOKEN_TYPE_ACCESS_TOKEN)
-            .actor_token("", "")
-            .validate()
-            .expect("an empty actor token is not a delegation");
+    fn validate_rejects_empty_actor_token() {
+        for (token, token_type) in [("", ""), ("", TOKEN_TYPE_JWT)] {
+            let err = TokenExchangeRequest::new("subject.tok", TOKEN_TYPE_ACCESS_TOKEN)
+                .actor_token(token, token_type)
+                .validate()
+                .expect_err("an empty actor token must be rejected");
+            match err {
+                IdentityError::Validation(message) => {
+                    assert!(message.contains("actor_token"), "{message}");
+                }
+                other => panic!("expected Validation, got {other:?}"),
+            }
+        }
     }
 
     // #24: Debug never prints the subject or actor token, but still reveals
