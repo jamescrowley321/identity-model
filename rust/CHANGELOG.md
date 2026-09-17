@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-09-17)
+
+### Bug Fixes
+
+- **rust**: Close four token-exchange fail-open paths
+  ([#718](https://github.com/jamescrowley321/identity-model/pull/718),
+  [`3e15e48`](https://github.com/jamescrowley321/identity-model/commit/3e15e487e90dc931419c8528f43d9b322459ccd5))
+
+- **rust**: Pin the grant_reserved arm of the do_request extras skip
+  ([#718](https://github.com/jamescrowley321/identity-model/pull/718),
+  [`3e15e48`](https://github.com/jamescrowley321/identity-model/commit/3e15e487e90dc931419c8528f43d9b322459ccd5))
+
+
 ## v0.5.0 (2026-09-16)
 
 ### Features
