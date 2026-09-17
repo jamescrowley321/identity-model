@@ -1924,6 +1924,60 @@ mod tests {
         }
     }
 
+    // The `grant_reserved` arm of the do_request skip is the one arm no public
+    // caller can reach: token_exchange — the only grant that passes a non-empty
+    // list — rejects a colliding extra param outright, and the other two pass
+    // `&[]`, so the arm never decides anything the suite above can observe.
+    // That is why it is exercised here by calling do_request directly. Left to
+    // the public API, weakening the skip to
+    // `reserved || (grant_reserved && already_in_form)` keeps every other test
+    // green while gutting the arm for exactly the case the list exists for: a
+    // grant-owned parameter the request left unset is in no form to collide
+    // with, so `already_in_form` is false and the extra would be appended to
+    // the wire — silently retargeting the exchange at another resource server,
+    // which is what reserving the key was for. Sending `audience` as a
+    // client-wide extra is legitimate on the grants that do not own it, and
+    // client_credentials_still_allows_targeting_extra_params pins that, so the
+    // drop has to be keyed on the grant rather than on the key alone.
+    #[tokio::test]
+    async fn grant_reserved_extra_absent_from_the_form_is_dropped() {
+        let server = MockServer::start().await;
+        mount_token(
+            &server,
+            ResponseTemplate::new(200).set_body_string(SUCCESS_BODY),
+        )
+        .await;
+
+        let token_client = client(&format!("{}/token", server.uri()))
+            .extra_param("audience", "https://evil.example.com")
+            .extra_param("tenant", "t1")
+            .build()
+            .unwrap();
+
+        // The form deliberately carries no `audience` — the exchange omits an
+        // empty one — so the "already in the form" arm cannot stand in for the
+        // grant_reserved arm under test.
+        token_client
+            .do_request(
+                vec![("grant_type".to_string(), GRANT_TOKEN_EXCHANGE.to_string())],
+                token_client.client_secret.as_deref(),
+                EXCHANGE_RESERVED_PARAMS,
+            )
+            .await
+            .expect("request succeeds");
+
+        let pairs = form_pairs(&only_request(&server).await);
+        assert!(
+            form_all(&pairs, "audience").is_empty(),
+            "a grant-reserved extra the form does not already carry must not be \
+             sent at all: {pairs:?}"
+        );
+        // Positive control: extras are applied on this very call, so the
+        // assertion above cannot pass merely because none were.
+        assert_eq!(form_all(&pairs, "tenant"), ["t1"]);
+        assert_eq!(form_all(&pairs, "grant_type"), [GRANT_TOKEN_EXCHANGE]);
+    }
+
     // Regression guard for the documented rationale, not coverage of
     // EXCHANGE_RESERVED_PARAMS: this passed before the constant existed too,
     // when client credentials had no grant_reserved list at all. What it guards
