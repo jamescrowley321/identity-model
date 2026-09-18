@@ -44,6 +44,24 @@ pub enum IdentityError {
         claim: Option<String>,
     },
 
+    /// A DPoP proof failed verification (RFC 9449 §4.3, DPOP-006).
+    ///
+    /// `field` names the offending proof member — `"alg"`, `"typ"`, `"jwk"`,
+    /// `"signature"`, `"jti"`, `"htm"`, `"htu"`, `"iat"`, `"ath"`, `"nonce"` — so
+    /// a caller can tell a method/URI mismatch from a signature or structural
+    /// failure without parsing a message string. Kept distinct from
+    /// [`IdentityError::Validation`] because a rejected proof is a
+    /// *sender-constraint* failure: the access token it accompanied may itself be
+    /// perfectly valid, and the right response is a `DPoP` challenge rather than a
+    /// plain token rejection.
+    #[error("dpop proof verification failed{}: {reason}", .field.as_deref().map(|f| format!(" for {f:?}")).unwrap_or_default())]
+    DpopVerification {
+        /// The offending proof member, when one can be named.
+        field: Option<String>,
+        /// Why the proof was rejected.
+        reason: String,
+    },
+
     /// A client or builder was misconfigured (missing required fields).
     #[error("configuration error: {0}")]
     Configuration(String),
