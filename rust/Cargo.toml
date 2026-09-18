@@ -44,3 +44,13 @@ aws-lc-rs = "1"
 tokio = { version = "1", features = ["full"] }
 url = "2.5.8"
 wiremock = "0.6.5"
+# The DPoP live tests attach a proof to the token request by handing
+# `TokenClient` a client carrying the `DPoP` header, which needs the same
+# reqwest the crate itself uses — already a direct dependency, so naming it here
+# adds no supply-chain surface.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Generates the wrong-curve key that `key_strength_is_enforced_by_the_backend`
+# feeds the ES256 loader, so the test material is minted at run time rather than
+# committed as a private-key file. Sibling of the `p256` dependency above, and
+# test-only.
+p384 = { version = "0.14.0", features = ["pkcs8"] }
