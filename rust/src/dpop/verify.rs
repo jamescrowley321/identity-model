@@ -327,8 +327,13 @@ pub fn verify_proof(
         Some(now) => now,
         None => now_unix()?,
     };
-    let max_age = options.max_iat_age.as_secs() as i64;
-    if (now - iat).abs() > max_age {
+    // `iat` is attacker-controlled and unauthenticated at this point, so the
+    // distance must be computed with arithmetic that is total over i64:
+    // `now - iat` overflows for an `iat` near i64::MIN and panics under
+    // overflow checks. `abs_diff` returns the distance as a u64 and cannot
+    // trap, which also removes the `as i64` cast on the window.
+    let max_age = options.max_iat_age.as_secs();
+    if now.abs_diff(iat) > max_age {
         return Err(reject(
             "iat",
             format!("proof iat is outside the acceptable {max_age}s window"),
@@ -515,6 +520,28 @@ mod tests {
             let err = verify_at(&proof, now + offset, window)
                 .expect_err(&format!("offset {offset}s must be rejected"));
             assert_eq!(field_of(&err), Some("iat"), "offset {offset}s");
+        }
+    }
+
+    /// An `iat` at the extremes of `i64` is rejected, not trapped on.
+    ///
+    /// `iat` is attacker-controlled — it arrives in an unauthenticated proof —
+    /// and the window check subtracts it from the current time. A plain
+    /// `now - iat` overflows for `i64::MIN`, which panics in any
+    /// overflow-checked build (the default `dev` profile, and any release
+    /// profile setting `overflow-checks`). That is a pre-authentication denial
+    /// of service reachable by anyone who can reach the resource server, so the
+    /// arithmetic has to be total over the whole domain.
+    #[test]
+    fn an_extreme_iat_is_rejected_rather_than_overflowing() {
+        let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let now = 1_700_000_000;
+
+        for iat in [i64::MIN, i64::MIN + 1, i64::MAX, i64::MAX - 1] {
+            let proof = proof_at(&key, iat);
+            let err = verify_at(&proof, now, DEFAULT_MAX_IAT_AGE)
+                .expect_err("an iat at the i64 boundary is far outside any window");
+            assert_eq!(field_of(&err), Some("iat"), "iat {iat}");
         }
     }
 
