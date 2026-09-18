@@ -34,6 +34,26 @@ pub(crate) fn secure_client() -> Client {
         .expect("build identity-model HTTP client")
 }
 
+/// Builds a [`reqwest::Client`] that follows **no** redirects.
+///
+/// For endpoints that carry a credential or a token in the request body, a
+/// followed redirect is not a convenience — it is a correctness and disclosure
+/// bug. On a 301/302/303 reqwest rewrites the POST to a GET and drops the body,
+/// so the final 2xx reports success for a request whose payload was never
+/// delivered. On a 307/308 it preserves both, replaying the form — including
+/// `client_secret` on the `client_secret_post` path — to the redirect target;
+/// reqwest strips the `Authorization` header across hosts but not the body.
+///
+/// RFC 7009 defines no redirect semantics for the revocation endpoint, so
+/// refusing to follow one and surfacing the 3xx as an error is the honest
+/// behaviour.
+pub(crate) fn no_redirect_client() -> Client {
+    Client::builder()
+        .redirect(Policy::none())
+        .build()
+        .expect("build identity-model non-redirecting HTTP client")
+}
+
 /// A redirect policy that refuses an `https` → `http` downgrade and bounds the
 /// redirect chain to [`MAX_REDIRECTS`] hops.
 fn no_downgrade_policy() -> Policy {
