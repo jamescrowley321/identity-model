@@ -610,11 +610,36 @@ mod tests {
         assert!(DpopKey::from_pkcs8_pem(pem, DpopAlgorithm::Es256).is_err());
     }
 
-    /// A deliberately weak 1024-bit RSA private key, and a P-384 EC key. Both are
-    /// throwaway test material generated for this test and used nowhere else; they
-    /// exist to prove the loader rejects them.
+    /// A deliberately weak 1024-bit RSA private key: throwaway test material
+    /// that exists only to prove the loader rejects it.
+    ///
+    /// This one is committed because it cannot be minted at run time — the
+    /// crate's RSA backend (`aws_lc_rs::rsa::KeySize`) offers no size below
+    /// 2048, which is the whole point of the check below, and the `rsa` crate
+    /// that could generate one is ruled out by RUSTSEC-2023-0071 (see the
+    /// dependency note in `Cargo.toml`). Its wrong-curve counterpart *is*
+    /// generated, by [`p384_pem`].
     const RSA_1024_PEM: &str = include_str!("testdata/rsa-1024-too-small.pem");
-    const EC_P384_PEM: &str = include_str!("testdata/ec-p384-wrong-curve.pem");
+
+    /// Mints an EC P-384 key in PKCS#8 PEM form — a curve ES256 must refuse.
+    ///
+    /// Generated per run rather than committed, so the only key material in the
+    /// tree is the RSA one that cannot be generated. The draw-and-retry mirrors
+    /// [`generate_p256_pkcs8`]: 48 uniform bytes from the OS CSPRNG, with
+    /// `from_slice` enforcing the valid scalar range.
+    fn p384_pem() -> String {
+        let mut seed = [0u8; 48];
+        for _ in 0..EC_SCALAR_DRAWS {
+            getrandom::fill(&mut seed).expect("system CSPRNG unavailable");
+            let secret = p384::SecretKey::from_slice(&seed);
+            seed.fill(0);
+            if let Ok(secret) = secret {
+                let der = secret.to_pkcs8_der().expect("encode P-384 PKCS#8");
+                return pem_encode(PKCS8_PEM_LABEL, der.as_bytes());
+            }
+        }
+        panic!("{EC_SCALAR_DRAWS} draws all fell outside the P-384 scalar range");
+    }
 
     /// DPOP-007: the key-strength rules RFC 9449 §4.1 and RFC 7518 §3.3 impose are
     /// enforced — an RSA modulus below 2048 bits and an EC key on a curve other
@@ -634,7 +659,7 @@ mod tests {
             "got {too_small:?}"
         );
 
-        let wrong_curve = DpopKey::from_pkcs8_pem(EC_P384_PEM, DpopAlgorithm::Es256)
+        let wrong_curve = DpopKey::from_pkcs8_pem(&p384_pem(), DpopAlgorithm::Es256)
             .expect_err("ES256 requires curve P-256");
         assert!(
             matches!(wrong_curve, IdentityError::Validation(_)),
