@@ -19,8 +19,6 @@ Example:
     ```
 """
 
-# Initialize SSL compatibility for backward compatibility with requests library
-from .. import ssl_config  # noqa: F401
 from ..core.authorize_response import (
     AuthorizeCallbackResponse,
     parse_authorize_callback_response,

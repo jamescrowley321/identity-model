@@ -270,9 +270,13 @@ Environment variables (see `core/http_utils.py`):
 
 The library supports custom SSL certificates via environment variables. Priority order:
 1. `SSL_CERT_FILE` (httpx native, recommended)
-2. `REQUESTS_CA_BUNDLE` (backward compatibility)
-3. `CURL_CA_BUNDLE` (httpx fallback)
+2. `CURL_CA_BUNDLE` (httpx fallback)
+3. `REQUESTS_CA_BUNDLE` (backward compatibility)
 4. System defaults
+
+Resolved per-request by `get_ssl_verify()`. Importing the library never writes to
+`os.environ`; `ensure_ssl_compatibility()` does, and is opt-in for callers who need
+*other* libraries in the process to honour `REQUESTS_CA_BUNDLE`.
 
 See `ssl_config.py` for implementation details.
 

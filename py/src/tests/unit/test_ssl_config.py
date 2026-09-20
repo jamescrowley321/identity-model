@@ -1,6 +1,10 @@
 """Tests for SSL certificate environment variable compatibility."""
 
+import json
 import os
+import subprocess
+import sys
+import textwrap
 import threading
 from unittest.mock import patch
 
@@ -233,3 +237,89 @@ class TestGetSSLVerify:
             get_ssl_verify.cache_clear()
             new_result = get_ssl_verify()
             assert new_result == "/second/cert.crt"
+
+
+class TestImportHasNoEnvironmentSideEffect:
+    """Importing the library must not mutate the host process environment.
+
+    ``SSL_CERT_FILE`` is honoured by ``ssl``, ``requests``, ``urllib3``, ``boto3``
+    and anything else in the process. Writing it from an import changes the TLS
+    trust store of code that never asked this library for anything, with no
+    opt-out and no way to restore the prior value.
+
+    These assertions must run in a fresh interpreter: the parent process has
+    already imported the package, so an in-process re-import is a no-op that
+    would pass without testing anything.
+    """
+
+    @staticmethod
+    def _env_changed_by_importing(module: str) -> dict[str, list[str | None]]:
+        """Import ``module`` in a subprocess; return every env var it changed.
+
+        The returned mapping is ``{name: [before, after]}`` and is empty when the
+        import left the environment untouched.
+        """
+        code = textwrap.dedent(
+            """
+            import importlib
+            import json
+            import os
+            import sys
+
+            before = dict(os.environ)
+            importlib.import_module(sys.argv[1])
+            after = dict(os.environ)
+
+            print(
+                json.dumps(
+                    {
+                        key: [before.get(key), after.get(key)]
+                        for key in before.keys() | after.keys()
+                        if before.get(key) != after.get(key)
+                    }
+                )
+            )
+            """
+        )
+
+        # Inherit the parent environment so the child can find the interpreter's
+        # packages, but pin the three variables whose interaction drives the
+        # legacy REQUESTS_CA_BUNDLE -> SSL_CERT_FILE write: only REQUESTS_CA_BUNDLE
+        # set is exactly the state that triggers it.
+        child_env = dict(os.environ)
+        child_env.pop("SSL_CERT_FILE", None)
+        child_env.pop("CURL_CA_BUNDLE", None)
+        child_env["REQUESTS_CA_BUNDLE"] = "/path/to/legacy-ca-bundle.crt"
+
+        result = subprocess.run(
+            [sys.executable, "-c", code, module],
+            env=child_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    @pytest.mark.parametrize(
+        "module",
+        ["py_identity_model", "py_identity_model.aio"],
+    )
+    def test_import_does_not_write_ssl_cert_file(self, module):
+        """Test that importing an entry point leaves SSL_CERT_FILE unset."""
+        changed = self._env_changed_by_importing(module)
+
+        assert "SSL_CERT_FILE" not in changed, (
+            f"importing {module} set SSL_CERT_FILE to "
+            f"{changed.get('SSL_CERT_FILE', [None, None])[1]!r}, silently "
+            "changing the TLS trust store for every other library in the process"
+        )
+
+    @pytest.mark.parametrize(
+        "module",
+        ["py_identity_model", "py_identity_model.aio"],
+    )
+    def test_import_leaves_environment_unchanged(self, module):
+        """Test that importing an entry point changes no environment variable."""
+        changed = self._env_changed_by_importing(module)
+
+        assert changed == {}, f"importing {module} mutated os.environ: {changed}"

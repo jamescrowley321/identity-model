@@ -199,6 +199,15 @@ ignore = [
     "PLR2004", # magic values — config tests assert against the specific registry defaults/values under test
     "ARG002",  # unused args on ConfigSource Protocol stub implementations (resolve(self, keys))
 ]
+"src/tests/unit/test_ssl_config.py" = [
+    "S101",    # pytest assertions
+    # The import-side-effect regression test must import the package in a fresh
+    # interpreter — in-process re-import is a no-op and would pass vacuously. The
+    # argv is fixed and literal (sys.executable + an inline source string), with
+    # no shell and no untrusted input. Same reviewed-policy rationale as tools/**
+    # below rather than a scattered `# noqa` at the call site.
+    "S603",
+]
 "src/tests/harness/**/*.py" = [
     "S101",    # pytest assertions
     "PLR0913", # minter / mock-OP APIs are intentionally parameter-rich (mint, sign, mint_access_token)

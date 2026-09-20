@@ -11,20 +11,27 @@ import os
 
 def ensure_ssl_compatibility() -> None:
     """
-    Ensure backward compatibility for SSL certificate environment variables.
+    Export a legacy REQUESTS_CA_BUNDLE setting as SSL_CERT_FILE, process-wide.
 
-    httpx respects SSL_CERT_FILE and CURL_CA_BUNDLE, but not REQUESTS_CA_BUNDLE
-    (which was used by the requests library). For backward compatibility, if
-    REQUESTS_CA_BUNDLE is set but SSL_CERT_FILE is not, we set SSL_CERT_FILE
-    to the value of REQUESTS_CA_BUNDLE.
+    Opt-in: nothing in this library calls it. Call it only when you want
+    *other* libraries in the process to honour REQUESTS_CA_BUNDLE, which they
+    would otherwise ignore. py-identity-model does not need it — its own
+    requests resolve the same variables through :func:`get_ssl_verify`.
 
-    This function is called automatically when the library is imported, so users
-    don't need to call it explicitly.
+    If REQUESTS_CA_BUNDLE is set and neither SSL_CERT_FILE nor CURL_CA_BUNDLE
+    is, this sets SSL_CERT_FILE to the REQUESTS_CA_BUNDLE value.
 
     Environment variables checked (in priority order):
     1. SSL_CERT_FILE - httpx native variable (highest priority)
     2. CURL_CA_BUNDLE - also respected by httpx
     3. REQUESTS_CA_BUNDLE - legacy requests library variable (for backward compatibility)
+
+    Warning:
+        This writes to os.environ, which is process-global and not thread-safe.
+        SSL_CERT_FILE changes the TLS trust store for ssl, requests, urllib3,
+        boto3 and every other library in the process, and this function records
+        no prior value to restore. Call it once, early, from application code —
+        never from library import.
     """
     # Only set SSL_CERT_FILE if it's not already set
     if "SSL_CERT_FILE" not in os.environ:
@@ -80,10 +87,6 @@ def get_ssl_verify() -> str | bool:
         if os.environ.get(env_var):
             return os.environ[env_var]
     return True  # Default: verify with system CA bundle
-
-
-# Initialize SSL compatibility when module is imported
-ensure_ssl_compatibility()
 
 
 __all__ = ["ensure_ssl_compatibility", "get_ssl_verify"]

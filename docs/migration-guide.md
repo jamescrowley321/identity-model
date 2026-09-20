@@ -566,7 +566,18 @@ The library supports the following SSL certificate environment variables (in pri
 2. **`CURL_CA_BUNDLE`** - also respected by httpx
 3. **`REQUESTS_CA_BUNDLE`** - legacy requests library variable (for backward compatibility)
 
-**Backward Compatibility:** If you're migrating from an older version that used `requests`, your existing `REQUESTS_CA_BUNDLE` environment variable will continue to work. The library automatically sets `SSL_CERT_FILE` to the value of `REQUESTS_CA_BUNDLE` if `SSL_CERT_FILE` is not already set.
+**Backward Compatibility:** If you're migrating from an older version that used `requests`, your existing `REQUESTS_CA_BUNDLE` environment variable will continue to work — the library reads all three variables directly when it builds a request.
+
+Importing the library does not modify your process environment. If you relied on
+earlier versions copying `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` for the benefit of
+*other* libraries in the same process (`requests`, `urllib3`, `boto3`), call the shim
+yourself from application startup:
+
+```python
+from py_identity_model.ssl_config import ensure_ssl_compatibility
+
+ensure_ssl_compatibility()  # writes SSL_CERT_FILE process-wide
+```
 
 #### Example
 
