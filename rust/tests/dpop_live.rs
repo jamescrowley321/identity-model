@@ -199,7 +199,11 @@ async fn token_request_with_proof(
         "DPoP",
         HeaderValue::from_str(proof).expect("a compact JWS is a valid header value"),
     );
-    let http = reqwest::Client::builder()
+    // Start from the crate's hardened builder, not a bare `reqwest::Client`.
+    // `http_client` REPLACES the default client, so building one from scratch
+    // would drop the https -> http redirect refusal on the one request that
+    // carries the client secret.
+    let http = rs_identity_model::secure_client_builder()
         .default_headers(headers)
         .build()
         .expect("build DPoP-carrying HTTP client");

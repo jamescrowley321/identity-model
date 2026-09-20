@@ -52,6 +52,7 @@ pub use dpop::{
     ath as dpop_ath, jwk_thumbprint, normalize_htu as dpop_normalize_htu, verify_proof,
 };
 pub use error::IdentityError;
+pub use http::secure_client_builder;
 pub use introspection::{
     Introspection, IntrospectionAudience, IntrospectionClient, IntrospectionClientBuilder,
 };

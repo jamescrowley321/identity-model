@@ -156,7 +156,18 @@ fn allow_http_for(issuer: &str) -> Result<bool, String> {
              fixture, or use an https:// issuer."
         ));
     }
-    Ok(opted_in)
+    // Scope the opt-in to the scheme it was granted for. Returning `opted_in`
+    // unconditionally meant a stale exported ALLOW_HTTP=1 also widened an
+    // `https://` issuer, so a discovery document advertising an `http://`
+    // token_endpoint would receive the client secret in the clear.
+    Ok(opted_in && issuer.to_ascii_lowercase().starts_with("http://"))
+}
+
+/// Renders a credential as a short prefix plus its length, so the example can show
+/// which value goes where without emitting the value itself.
+fn redacted(value: &str) -> String {
+    let prefix: String = value.chars().take(8).collect();
+    format!("{prefix}...<redacted, {} chars>", value.len())
 }
 
 #[tokio::main]
@@ -203,7 +214,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // each proof with the single request it was signed for.
     let mut headers = HeaderMap::new();
     headers.insert("DPoP", HeaderValue::from_str(&proof)?);
-    let http = reqwest::Client::builder()
+    // Start from the crate's hardened builder, not a bare `reqwest::Client`.
+    // `http_client` REPLACES the default client, so building one from scratch
+    // would drop the https -> http redirect refusal on the one request that
+    // carries the client secret.
+    let http = rs_identity_model::secure_client_builder()
         .default_headers(headers)
         .build()?;
 
@@ -245,8 +260,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nSend the protected-resource request as:");
     println!("  GET {resource_uri}");
-    println!("  Authorization: DPoP {}", token.access_token);
-    println!("  DPoP: {resource_proof}");
+    // Redacted deliberately. What this example exists to show is the header
+    // *shape* and the `ath` binding, not the credential — and an example in an
+    // auth library gets copied into real clients, where printing a live token
+    // writes it to the process log (and, against a non-fixture provider, to CI
+    // output).
+    println!("  Authorization: DPoP {}", redacted(&token.access_token));
+    println!("  DPoP: {}", redacted(&resource_proof));
 
     // The other side of the wire, shown here so the check a resource server
     // owes is explicit. Verifying the proof is necessary but NOT sufficient:
