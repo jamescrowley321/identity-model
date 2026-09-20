@@ -606,6 +606,33 @@ jobs:
       - name: Repo-tooling tests
         run: make test-tools
 
+  conformance-harness-tests:
+    # The conformance harness's own unit tests (parser + callback probes).
+    #
+    # These existed and ran nowhere. `testpaths = ["src/tests"]` excludes
+    # conformance/tests from every pytest job, the sole runner was a Makefile
+    # target, and its sole caller was `pre-push`, which is not required before
+    # a push. So the guards written to stop specific regressions in the harness
+    # -- test_check_probes_the_api_not_the_dom exists to stop a revert to
+    # DOM-sniffing -- could not fail a pull request. A revert would have merged
+    # green (#690).
+    #
+    # Split out from unit-tests for the same reason tools-tests is: py/src/tests
+    # and its 80% coverage gate belong to the published package, and harness
+    # tests must not move the library's coverage number.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python-uv
+
+      - name: Conformance harness tests
+        run: make conformance-test-harness
+
   spec-vector-coverage:
     # CONS-1.5 cross-language coverage gate: every language's thin runner must
     # execute every executable vector id in spec/vectors (offline — no
@@ -756,7 +783,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, conformance-harness-tests, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -785,6 +812,7 @@ jobs:
             rust-checks=${{ needs.rust-checks.result }}
             rust-mutation-gate=${{ needs.rust-mutation-gate.result }}
             tools-tests=${{ needs.tools-tests.result }}
+            conformance-harness-tests=${{ needs.conformance-harness-tests.result }}
             spec-vector-coverage=${{ needs.spec-vector-coverage.result }}
             publish-parity=${{ needs.publish-parity.result }}
             example-tests=${{ needs.example-tests.result }}
