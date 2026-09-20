@@ -153,6 +153,11 @@ class TestCacheIsolationBetweenProviders:
         2. Cache doesn't allow cross-provider token acceptance
         3. The kid mismatch causes proper rejection
         """
+        # Deliberately NOT routed through expired_token_or_skip: this token
+        # comes from a gitignored .env.local, never from a CI secret, so it is
+        # absent on every runner by design. TEST_REQUIRE_LIVE covers the
+        # Terraform-written secrets; making this one fail would turn a
+        # local-only fixture into a permanent CI failure.
         alternate_provider_token = get_alternate_provider_expired_token()
         if alternate_provider_token is None:
             pytest.skip(".env.local not found - skipping cross-provider test")

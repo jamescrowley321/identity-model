@@ -1,6 +1,25 @@
 variable "project_id" {
   type        = string
   description = "Shared Descope project ID (from identity-stack). Used as audience and in discovery URLs."
+
+  # Feeds DESCOPE_AUDIENCE, DESCOPE_DISCO_ADDRESS and DESCOPE_JWKS_ADDRESS.
+  # The first of those is written by `github_actions_secret.descope_audience`
+  # in github.tf, which is not one of the for_each resources carrying the
+  # precondition backstop -- so without this the guarantee would hold only for
+  # the map-driven writers. An empty project_id also silently produces the
+  # syntactically-valid discovery URL "https://api.descope.com//.well-known/...".
+  validation {
+    condition     = length(trimspace(var.project_id)) > 0
+    error_message = "project_id must be non-empty; it feeds DESCOPE_AUDIENCE and both DESCOPE_*_ADDRESS secrets."
+  }
+
+  # It is interpolated straight into a URL path, so a value carrying a slash or
+  # whitespace yields a well-formed but wrong discovery/JWKS address -- which no
+  # non-empty check can catch, because the surrounding URL keeps it non-empty.
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]+$", var.project_id))
+    error_message = "project_id must be a bare id (letters, digits, _ or -); it is interpolated into the discovery and JWKS URLs."
+  }
 }
 
 variable "github_repository" {
@@ -22,11 +41,17 @@ variable "github_repository" {
 # Every variable below that feeds a GitHub secret is defaultless AND carries a
 # non-empty validation. Both halves are load-bearing, for different reasons:
 #
-#   * Defaultless is what makes Terraform *prompt*. Terraform only asks for
-#     variables that have no default, so `default = ""` means an operator
-#     applying from a fresh checkout or a fresh HCP workspace is never asked,
-#     gets a green apply, and silently overwrites a live secret with "".
+#   * Defaultless is what makes the value REQUIRED. On a local interactive
+#     apply Terraform prompts for it; on HCP Terraform, which is where this
+#     root actually runs (see the `cloud` block in main.tf), there is nobody to
+#     prompt, so a missing value fails the run. Either way it cannot be skipped
+#     past. With `default = ""` neither happens: the operator is never asked,
+#     the run goes green, and a live secret is silently overwritten with "".
 #     GitHub secrets are write-only, so the previous value is unrecoverable.
+#
+#     The practical consequence: each of these needs a workspace variable set
+#     in HCP. That is the intended trade -- a failed run beats a blanked
+#     secret, because a failed run tells you.
 #   * The validation is what rejects an *explicit* empty, which a `-var=x=`
 #     flag or a stale tfvars entry can still supply past the prompt.
 #
@@ -74,7 +99,14 @@ variable "descope_expired_token" {
   validation {
     condition = alltrue([
       for part in split(".", var.descope_expired_token) : length(part) > 0
-    ]) && length(split(".", var.descope_expired_token)) == 3
+      ]) && length(split(".", var.descope_expired_token)) == 3 && (
+      # Reject surrounding whitespace rather than tolerating it. A value pasted
+      # into an HCP variable with a trailing newline splits into three non-empty
+      # segments, so it passes the shape check, is written verbatim, and then
+      # fails decoding at validate_token -- surfacing as a library base64 bug
+      # rather than as "re-mint the token".
+      var.descope_expired_token == trimspace(var.descope_expired_token)
+    )
     error_message = "descope_expired_token must be a JWT (three non-empty dot-separated segments). A non-JWT value is written to the secret and then silently SKIPS the expiry-rejection test -- check for a WAF error body such as 'error code: 1010'."
   }
 }
@@ -162,7 +194,14 @@ variable "test_expired_token" {
   validation {
     condition = alltrue([
       for part in split(".", var.test_expired_token) : length(part) > 0
-    ]) && length(split(".", var.test_expired_token)) == 3
+      ]) && length(split(".", var.test_expired_token)) == 3 && (
+      # Reject surrounding whitespace rather than tolerating it. A value pasted
+      # into an HCP variable with a trailing newline splits into three non-empty
+      # segments, so it passes the shape check, is written verbatim, and then
+      # fails decoding at validate_token -- surfacing as a library base64 bug
+      # rather than as "re-mint the token".
+      var.test_expired_token == trimspace(var.test_expired_token)
+    )
     error_message = "test_expired_token must be a JWT (three non-empty dot-separated segments). A non-JWT value is written to the secret and then silently SKIPS the expiry-rejection test."
   }
 }

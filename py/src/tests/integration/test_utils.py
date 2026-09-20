@@ -48,6 +48,33 @@ def set_env_file(env_file_path: str | None) -> None:
     _reset_async_http_client()
 
 
+#: spec/config.md CFG-107: booleans accept true/false/1/0 case-insensitively
+#: and anything else is an error. Strictness matters more here than for most
+#: flags: every unrecognised spelling of "on" would quietly mean *off*, and off
+#: is the setting that restores the green-skip this gate exists to remove. A
+#: typo must be loud, not permissive.
+#:
+#: Note the cross-language floor: the Go and Rust harnesses compare against the
+#: literal "1" (e.g. rust/tests/discovery.rs). `true` therefore arms Python and
+#: leaves those two skipping, so CI must set "1" -- which it does -- until all
+#: three share one grammar.
+_TRUE = frozenset({"true", "1"})
+_FALSE = frozenset({"false", "0", ""})
+
+
+def _strict_bool(name: str, raw: str) -> bool:
+    value = raw.strip().lower()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    raise RuntimeError(
+        f"CFG-003: {name}={raw!r} is not a boolean. Use one of "
+        "true/false/1/0 (case-insensitive). Refusing to guess, because "
+        "guessing wrong disables a test gate silently."
+    )
+
+
 def _is_valid_jwt_format(token: str) -> bool:
     """Check if a string looks like a JWT (3 dot-separated segments)."""
     return token.count(".") == JWT_SEGMENT_SEPARATOR_COUNT and all(
@@ -196,8 +223,9 @@ def get_config(env_file: str | None = None) -> dict:
         # spec/config.md tier `test`. Off by default so a developer without the
         # optional credentials still gets a useful local run; CI sets it to 1 so
         # a missing credential is reported rather than skipped past.
-        "TEST_REQUIRE_LIVE": os.environ.get("TEST_REQUIRE_LIVE", "").lower()
-        in ("1", "true", "yes"),
+        "TEST_REQUIRE_LIVE": _strict_bool(
+            "TEST_REQUIRE_LIVE", os.environ.get("TEST_REQUIRE_LIVE", "")
+        ),
         # Auth code flow config (optional — used when provider
         # supports devInteractions)
         "TEST_AUTH_CODE_CLIENT_ID": os.environ.get("TEST_AUTH_CODE_CLIENT_ID", ""),
