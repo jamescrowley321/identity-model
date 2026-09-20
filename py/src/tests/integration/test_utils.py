@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from dotenv import dotenv_values, load_dotenv
+import pytest
 
 from py_identity_model.aio.http_client import _reset_async_http_client
 from py_identity_model.ssl_config import get_ssl_verify
@@ -52,6 +53,40 @@ def _is_valid_jwt_format(token: str) -> bool:
     return token.count(".") == JWT_SEGMENT_SEPARATOR_COUNT and all(
         len(part) > 0 for part in token.split(".")
     )
+
+
+def expired_token_or_skip(test_config: dict) -> str:
+    """Return the configured expired JWT, failing instead of skipping in CI.
+
+    ``TEST_EXPIRED_TOKEN`` reaches CI as a write-only GitHub secret written by
+    ``infra/descope/github_ci_secrets.tf``. Write-only means a blank or
+    malformed value cannot be read back and noticed -- and the tests it feeds
+    are the ones proving this library *rejects* expired JWTs. Skipping on a
+    missing value therefore turns a destroyed credential into a green run with
+    the expiry check silently switched off, which is precisely the regression
+    those tests exist to catch.
+
+    So: skip locally, where the token is genuinely optional, but under
+    ``TEST_REQUIRE_LIVE=1`` -- which the Ory and Descope integration jobs set --
+    fail, so the loss surfaces on the job that depends on it.
+
+    The token value is never echoed into the failure message; only its shape is
+    described.
+    """
+    token = test_config.get("TEST_EXPIRED_TOKEN", "")
+    if token and _is_valid_jwt_format(token):
+        return token
+
+    reason = (
+        "TEST_EXPIRED_TOKEN is "
+        + ("unset or empty" if not token else "not a valid JWT")
+        + " (expected three non-empty dot-separated segments). The expiry-"
+        "rejection tests cannot run. Re-mint the token and re-apply "
+        "infra/descope -- see infra/descope/variables.tf."
+    )
+    if test_config.get("TEST_REQUIRE_LIVE"):
+        pytest.fail(reason)
+    pytest.skip(reason)
 
 
 @contextlib.contextmanager
@@ -158,6 +193,11 @@ def get_config(env_file: str | None = None) -> dict:
         "TEST_AUDIENCE": os.environ.get("TEST_AUDIENCE", ""),
         "TEST_REQUIRE_HTTPS": os.environ.get("TEST_REQUIRE_HTTPS", "true").lower()
         not in ("false", "0", "no"),
+        # spec/config.md tier `test`. Off by default so a developer without the
+        # optional credentials still gets a useful local run; CI sets it to 1 so
+        # a missing credential is reported rather than skipped past.
+        "TEST_REQUIRE_LIVE": os.environ.get("TEST_REQUIRE_LIVE", "").lower()
+        in ("1", "true", "yes"),
         # Auth code flow config (optional — used when provider
         # supports devInteractions)
         "TEST_AUTH_CODE_CLIENT_ID": os.environ.get("TEST_AUTH_CODE_CLIENT_ID", ""),
