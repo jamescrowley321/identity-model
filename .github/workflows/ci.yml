@@ -124,6 +124,12 @@ jobs:
       - name: Integration Tests (ORY)
         run: make test-integration-ory
         env:
+          # Turn a missing credential into a failure instead of a skip. These
+          # secrets are write-only: Terraform can blank one and nothing reads it
+          # back, so without this the expiry-rejection tests would quietly stop
+          # running and the job would still report success. See
+          # infra/descope/variables.tf and test_utils.expired_token_or_skip.
+          TEST_REQUIRE_LIVE: "1"
           TEST_DISCO_ADDRESS: ${{ secrets.TEST_DISCO_ADDRESS }}
           TEST_JWKS_ADDRESS: ${{ secrets.TEST_JWKS_ADDRESS }}
           TEST_CLIENT_ID: ${{ secrets.TEST_CLIENT_ID }}
@@ -147,6 +153,12 @@ jobs:
       - name: Integration Tests (Descope)
         run: make test-integration-descope
         env:
+          # Turn a missing credential into a failure instead of a skip. These
+          # secrets are write-only: Terraform can blank one and nothing reads it
+          # back, so without this the expiry-rejection tests would quietly stop
+          # running and the job would still report success. See
+          # infra/descope/variables.tf and test_utils.expired_token_or_skip.
+          TEST_REQUIRE_LIVE: "1"
           TEST_DISCO_ADDRESS: ${{ secrets.DESCOPE_DISCO_ADDRESS }}
           TEST_JWKS_ADDRESS: ${{ secrets.DESCOPE_JWKS_ADDRESS }}
           TEST_CLIENT_ID: ${{ secrets.DESCOPE_CLIENT_ID }}
