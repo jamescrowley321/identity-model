@@ -87,7 +87,7 @@ Logical key IDs are dotted lowercase. Environment names, defaults, and legacy se
 
 | Logical key | Env name(s) | Type | Default | Strict validation | Legacy semantics | Py | Go | Rust |
 |---|---|---|---|---|---|---|---|---|
-| `tls.cert_file` | `SSL_CERT_FILE` | path | — (system CA) | non-empty path | py: first set of `SSL_CERT_FILE` → `CURL_CA_BUNDLE` → `REQUESTS_CA_BUNDLE` wins (cached per process). Import never writes to the environment; the opt-in `ensure_ssl_compatibility()` copies `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` process-wide for other libraries' benefit | ✔ | n/a | n/a |
+| `tls.cert_file` | `SSL_CERT_FILE` | path | — (system CA) | non-empty path | py: first set of `SSL_CERT_FILE` → `CURL_CA_BUNDLE` → `REQUESTS_CA_BUNDLE` wins (cached per process). Resolution is read-only: implementations MUST NOT write the resolved value back into the environment | ✔ | n/a | n/a |
 | `tls.ca_bundle` | `CURL_CA_BUNDLE` | path | — | non-empty path | ↑ (second in chain) | ✔ | n/a | n/a |
 | `tls.ca_bundle_requests` | `REQUESTS_CA_BUNDLE` | path | — | non-empty path | ↑ (third in chain; `requests`-era compat) | ✔ | n/a | n/a |
 

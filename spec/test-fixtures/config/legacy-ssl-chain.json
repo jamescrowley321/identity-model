@@ -15,7 +15,7 @@
       "env": { "REQUESTS_CA_BUNDLE": "/c.pem" },
       "expect": {
         "resolved": { "tls.verify": "/c.pem" },
-        "note": "get_ssl_verify() reads REQUESTS_CA_BUNDLE third; nothing is copied into the environment. Import must not write to the environment in any implementation."
+        "note": "REQUESTS_CA_BUNDLE is read third; nothing is copied into the environment. No implementation may write the resolved value back at import or init time."
       }
     },
     {

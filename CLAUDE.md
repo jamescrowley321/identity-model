@@ -276,9 +276,9 @@ The library supports custom SSL certificates via environment variables. Priority
 
 Resolved by `get_ssl_verify()`, which is `lru_cache`d — read once per process and
 fixed for its lifetime, so a runtime change needs a restart (or
-`get_ssl_verify.cache_clear()` plus rebuilt clients). Importing the library never writes to
-`os.environ`; `ensure_ssl_compatibility()` does, and is opt-in for callers who need
-*other* libraries in the process to honour `REQUESTS_CA_BUNDLE`.
+`get_ssl_verify.cache_clear()` plus rebuilt clients). Resolution is read-only —
+nothing in this module writes to `os.environ`, so an import never changes the TLS
+trust store of anything else in the process.
 
 See `ssl_config.py` for implementation details.
 

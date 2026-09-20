@@ -570,24 +570,30 @@ The library supports the following SSL certificate environment variables (in pri
 
 The resolution is cached: `get_ssl_verify()` is `lru_cache`d and its result is consumed when the HTTP client is built, so the CA bundle is fixed for the life of the process. Changing any of the three variables at runtime — including to distrust a compromised CA — requires a restart, not a config reload.
 
-Importing the library does not modify your process environment. If you relied on
-earlier versions copying `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` for the benefit of
-*other* libraries in the same process to honour it, call the shim yourself from
-application startup:
+Importing the library does not modify your process environment.
+
+Earlier versions copied `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` at import, which
+changed the TLS trust store for everything else in the process. That is gone, along
+with the `ensure_ssl_compatibility()` helper that performed it.
+
+If you relied on it, do it explicitly in your own startup code, where the
+process-global write is visible to whoever reads it:
 
 ```python
-from py_identity_model.ssl_config import ensure_ssl_compatibility
+import os
 
-ensure_ssl_compatibility()  # writes SSL_CERT_FILE process-wide
+# Only needed if OTHER libraries in this process must honour REQUESTS_CA_BUNDLE.
+# py-identity-model reads it directly and needs nothing here.
+if not os.environ.get("SSL_CERT_FILE") and os.environ.get("REQUESTS_CA_BUNDLE"):
+    os.environ["SSL_CERT_FILE"] = os.environ["REQUESTS_CA_BUNDLE"]
 ```
 
 `SSL_CERT_FILE` is honoured by stdlib `ssl` (so also `aiohttp`, and anything building
 a default `SSLContext`) and by `urllib3` when it loads default certs. It is **not**
 read by `requests` — which honours `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`, and
 otherwise bundled certifi — nor by `boto3`/`botocore`, which use `AWS_CA_BUNDLE` and
-otherwise certifi. The shim is also a no-op when `CURL_CA_BUNDLE` carries the bundle,
-since stdlib `ssl` does not read that variable either; set `SSL_CERT_FILE` directly
-for that case.
+otherwise certifi. Prefer setting `SSL_CERT_FILE` in the environment directly over
+deriving it at runtime.
 
 #### Example
 
