@@ -24,4 +24,10 @@ repos:
         types: [python]
         pass_filenames: false
         require_serial: true
-
+      - id: actionlint
+        name: actionlint (+ shellcheck on run blocks)
+        entry: .github/scripts/lint_workflows.sh
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false
+        require_serial: true
