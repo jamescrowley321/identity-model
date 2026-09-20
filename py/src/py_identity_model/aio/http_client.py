@@ -105,7 +105,10 @@ def retry_with_backoff_async(
             retries, delay_base = _get_retry_params(max_retries, base_delay)
             last_exception: httpx.RequestError | None = None
 
-            for attempt in range(retries + 1):
+            # max(0, ...) so an explicit negative max_retries argument cannot
+            # reproduce range(0) -- the env path is bounded in get_retry_config,
+            # but the decorator also takes the value directly.
+            for attempt in range(max(0, retries) + 1):
                 try:
                     response = await func(*args, **kwargs)
 

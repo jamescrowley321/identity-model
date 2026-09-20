@@ -64,16 +64,16 @@ Logical key IDs are dotted lowercase. Environment names, defaults, and legacy se
 
 | Logical key | Env name(s) | Type | Default | Strict validation | Legacy semantics | Py | Go | Rust |
 |---|---|---|---|---|---|---|---|---|
-| `http.timeout` | `HTTP_TIMEOUT` | float secs | `30.0` | > 0 | py: `float(getenv)`; invalid value raises unhandled `ValueError` at read time | ✔ | n/a | n/a |
-| `http.retry.max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS`, alias `HTTP_RETRY_COUNT` | int | `3` | ≥ 0 (`0` disables retries) | py: primary wins over alias when both set; `0` honored; invalid raises unhandled `ValueError` | ✔ | n/a | n/a |
-| `http.retry.base_delay` | `HTTP_RETRY_BASE_DELAY` | float secs | `1.0` | ≥ 0 | py: `float(getenv)`; invalid raises unhandled `ValueError`. Per-retry delay is additionally capped at 120 s internally (not a key) | ✔ | n/a | n/a |
+| `http.timeout` | `HTTP_TIMEOUT` | float secs | `30.0` | > 0 | py: invalid, non-finite or non-positive values log a warning and fall back to the default | ✔ | n/a | n/a |
+| `http.retry.max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS`, alias `HTTP_RETRY_COUNT` | int | `3` | ≥ 0 (`0` disables retries), no ceiling | py: primary wins over alias when both set; `0` honored; negative values are raised to `0` with a warning, because a negative count cancelled the request itself; invalid values log a warning and fall back to the default. Legacy divergence from §Types: an empty or whitespace-only primary is treated as absent and falls through to the alias, preserving the original `getenv(a) or getenv(b)` semantics | ✔ | n/a | n/a |
+| `http.retry.base_delay` | `HTTP_RETRY_BASE_DELAY` | float secs | `1.0` | ≥ 0 | py: invalid, non-finite or negative values log a warning and fall back to the default. Per-retry delay is additionally capped at 120 s internally (not a key) | ✔ | n/a | n/a |
 
 ### JWKS & discovery
 
 | Logical key | Env name(s) | Type | Default | Strict validation | Legacy semantics | Py | Go | Rust |
 |---|---|---|---|---|---|---|---|---|
-| `jwks.max_size` | `MAX_JWKS_SIZE` | int bytes | `524288` (512 KB) | > 0 | py: `int(getenv)`; invalid raises unhandled `ValueError` | ✔ | n/a¹ | n/a¹ |
-| `jwks.max_keys` | `MAX_JWKS_KEYS` | int | `100` | ≥ 1 | py: `max(1, int(getenv))` — values < 1 clamp to 1; invalid raises unhandled `ValueError` | ✔ | n/a | n/a |
+| `jwks.max_size` | `MAX_JWKS_SIZE` | int bytes | `524288` (512 KB) | > 0 | py: invalid or non-positive values log a warning and fall back to the default; every positive value is honoured | ✔ | n/a¹ | n/a¹ |
+| `jwks.max_keys` | `MAX_JWKS_KEYS` | int | `100` | ≥ 1 | py: `max(1, ...)` — values < 1 clamp to 1 and log a warning; invalid values log a warning and fall back to the default | ✔ | n/a | n/a |
 | `jwks.cache.ttl` | `JWKS_CACHE_TTL` | float secs | `86400` (24 h) | clamp [60, 86400] | py: priority `Cache-Control: max-age` → env → default; NaN/Inf/invalid → default; out-of-range clamps. go/rust: static 24 h option default, env not read | ✔ | n/a² | n/a² |
 | `discovery.cache.ttl` | `DISCO_CACHE_TTL` | float secs | `3600` (1 h) | clamp [60, 86400] | py: same priority/clamping as above. go/rust: static 24 h option default, env not read (known divergence — parity roadmap H3) | ✔ | n/a² | n/a² |
 | `jwks.kid_miss_cooldown` | `KID_MISS_REFRESH_COOLDOWN` | float secs | `5.0` | clamp [0, 3600]; `0` = opt-out | py: invalid/NaN → default; clamps. go/rust: static 5 s option default, env not read | ✔ | n/a² | n/a² |
