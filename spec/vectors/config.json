@@ -142,7 +142,7 @@
       "title": "Legacy TLS chain order",
       "given": "Legacy-mode resolution of the TLS verify source with combinations of SSL_CERT_FILE, CURL_CA_BUNDLE, and REQUESTS_CA_BUNDLE set",
       "when": "The verify value is resolved",
-      "then": "The first set variable in the order SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE wins; none set falls back to system CAs — matching today's Python behavior including the REQUESTS_CA_BUNDLE compat shim",
+      "then": "The first set variable in the order SSL_CERT_FILE, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE wins; none set falls back to system CAs. Resolution is read-only and in-process: implementations MUST NOT write the resolved value back into the environment at import or init time",
       "fixture": "config/legacy-ssl-chain.json",
       "references": ["config.md §Key Registry"]
     },
