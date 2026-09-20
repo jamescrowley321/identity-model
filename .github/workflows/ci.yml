@@ -41,8 +41,14 @@ jobs:
   # Change-detection: the Go and Rust suites only need to run when their own
   # code — or the shared spec/infra they test against — changed (CONS-2.4).
   # The Python suites are NOT gated: it is the OIDF-certified library and its
-  # tests always run. ci-complete treats a skipped job as a pass, so gating is
-  # safe for the required merge gate.
+  # tests always run.
+  #
+  # Gating is safe for the required merge gate only because ci-complete checks
+  # that each skip was JUSTIFIED — that the skipped job's own `if:` evaluated
+  # false — rather than accepting any skip as a pass. That makes the filters
+  # below load-bearing: a path this workflow reads but does not list here
+  # produces a skip that ci-complete will wave through as legitimate. Add the
+  # path when you add the read.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -66,6 +72,13 @@ jobs:
               - 'spec/**'
               - 'infra/**'
               - '.github/workflows/ci.yml'
+              - '.github/scripts/**'
+              # Provider profiles sourced by the Go and Rust integration legs
+              # (see the `set -a && . ./.env.*` steps below) and by the
+              # node-oidc Python leg. Editing one changes what those suites run
+              # against, so a PR touching only these must not skip them (#642).
+              - '.env.node-oidc'
+              - '.env.identityserver'
 
   lint:
     runs-on: ubuntu-latest
@@ -746,38 +759,110 @@ jobs:
     needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
       - name: Check CI results
+        env:
+          # Every job in this workflow, with the result it reported.
+          RESULTS: |
+            changes=${{ needs.changes.result }}
+            lint=${{ needs.lint.result }}
+            unit-tests=${{ needs.unit-tests.result }}
+            fastapi-tests=${{ needs.fastapi-tests.result }}
+            integration-tests-ory=${{ needs.integration-tests-ory.result }}
+            integration-tests-descope=${{ needs.integration-tests-descope.result }}
+            integration-tests-node-oidc=${{ needs.integration-tests-node-oidc.result }}
+            integration-tests-keycloak=${{ needs.integration-tests-keycloak.result }}
+            integration-tests-cross-issuer=${{ needs.integration-tests-cross-issuer.result }}
+            integration-tests-ws=${{ needs.integration-tests-ws.result }}
+            integration-tests-go=${{ needs.integration-tests-go.result }}
+            go-checks=${{ needs.go-checks.result }}
+            go-vulncheck=${{ needs.go-vulncheck.result }}
+            go-mutation-gate=${{ needs.go-mutation-gate.result }}
+            integration-tests-rust=${{ needs.integration-tests-rust.result }}
+            rust-checks=${{ needs.rust-checks.result }}
+            rust-mutation-gate=${{ needs.rust-mutation-gate.result }}
+            tools-tests=${{ needs.tools-tests.result }}
+            spec-vector-coverage=${{ needs.spec-vector-coverage.result }}
+            publish-parity=${{ needs.publish-parity.result }}
+            example-tests=${{ needs.example-tests.result }}
+            build=${{ needs.build.result }}
+            security-gate=${{ needs.security-gate.result }}
+            load-smoke=${{ needs.load-smoke.result }}
+          # The jobs that may legitimately skip, each paired with the condition
+          # that makes the skip legitimate.
+          #
+          # Each expression is the NEGATION of that job's own `if:`. That is the
+          # whole point: a skip is expected exactly when the job's own gate
+          # evaluated false. Any other skip -- a skipped dependency, a failed
+          # `changes` job, a `needs:` entry that no longer names a real job --
+          # is an anomaly, and is now a failure rather than a silent pass.
+          #
+          # These mirrors can drift from the `if:` they copy. They drift CLOSED:
+          # a mismatch makes a legitimate skip look unjustified and fails the
+          # gate, which is noisy but safe, and the accompanying
+          # assert_ci_complete_covers_all_jobs.py step catches the structural
+          # half before it gets that far.
+          SKIP_ALLOWED: |
+            integration-tests-ory=${{ !inputs.run-ory-integration }}
+            integration-tests-descope=${{ !inputs.run-descope-integration }}
+            example-tests=${{ !inputs.run-example-tests }}
+            build=${{ !inputs.run-build }}
+            integration-tests-go=${{ needs.changes.outputs.go != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            go-checks=${{ needs.changes.outputs.go != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            go-vulncheck=${{ needs.changes.outputs.go != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            go-mutation-gate=${{ needs.changes.outputs.go != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            integration-tests-rust=${{ needs.changes.outputs.rust != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            rust-checks=${{ needs.changes.outputs.rust != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
+            rust-mutation-gate=${{ needs.changes.outputs.rust != 'true' && needs.changes.outputs.shared != 'true' && !inputs.run-native-tests }}
         run: |
-          results=( \
-            "${{ needs.changes.result }}" \
-            "${{ needs.lint.result }}" \
-            "${{ needs.unit-tests.result }}" \
-            "${{ needs.fastapi-tests.result }}" \
-            "${{ needs.integration-tests-ory.result }}" \
-            "${{ needs.integration-tests-descope.result }}" \
-            "${{ needs.integration-tests-node-oidc.result }}" \
-            "${{ needs.integration-tests-keycloak.result }}" \
-            "${{ needs.integration-tests-cross-issuer.result }}" \
-            "${{ needs.integration-tests-ws.result }}" \
-            "${{ needs.integration-tests-go.result }}" \
-            "${{ needs.go-checks.result }}" \
-            "${{ needs.go-vulncheck.result }}" \
-            "${{ needs.go-mutation-gate.result }}" \
-            "${{ needs.integration-tests-rust.result }}" \
-            "${{ needs.rust-checks.result }}" \
-            "${{ needs.rust-mutation-gate.result }}" \
-            "${{ needs.tools-tests.result }}" \
-            "${{ needs.spec-vector-coverage.result }}" \
-            "${{ needs.publish-parity.result }}" \
-            "${{ needs.example-tests.result }}" \
-            "${{ needs.build.result }}" \
-            "${{ needs.security-gate.result }}" \
-            "${{ needs.load-smoke.result }}" \
-          )
-          for result in "${results[@]}"; do
-            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
-              echo "CI failed: found job with result '$result'"
-              exit 1
-            fi
+          set -euo pipefail
+
+          declare -A result=() skip_allowed=()
+          # `[ -n "$job" ] && ...` would be the last command in the body, so a
+          # blank line makes the body return 1 and `set -e` kills the gate
+          # before it has checked anything. Use an explicit if.
+          while IFS='=' read -r job value; do
+            if [ -n "$job" ]; then result["$job"]="$value"; fi
+          done <<< "$RESULTS"
+          while IFS='=' read -r job value; do
+            if [ -n "$job" ]; then skip_allowed["$job"]="$value"; fi
+          done <<< "$SKIP_ALLOWED"
+
+          status=0
+          for job in $(printf '%s\n' "${!result[@]}" | sort); do
+            outcome="${result[$job]}"
+            case "$outcome" in
+              success)
+                printf '  ok       %s\n' "$job"
+                ;;
+              skipped)
+                if [ "${skip_allowed[$job]:-false}" = "true" ]; then
+                  printf '  skipped  %s (its own gate evaluated false)\n' "$job"
+                else
+                  printf '  SKIPPED  %s\n' "$job"
+                  echo "::error title=Unjustified skip::$job was skipped, but nothing in this run justifies it. A skipped job is not a passed job."
+                  status=1
+                fi
+                ;;
+              *)
+                printf '  %-8s %s\n' "${outcome:-MISSING}" "$job"
+                echo "::error title=CI job did not pass::$job reported '${outcome:-<no result>}'."
+                status=1
+                ;;
+            esac
           done
-          echo "All CI jobs passed"
+
+          if [ "$status" -ne 0 ]; then
+            echo "CI failed: see the annotated jobs above."
+            exit 1
+          fi
+          echo "All ${#result[@]} CI jobs passed or skipped for a stated reason."
+
+      - name: Every job is covered by this gate
+        # Runs last on purpose: if a job is missing from the maps above, the
+        # results loop has already passed without ever looking at it, and this
+        # is what turns that into a failure.
+        run: python3 .github/scripts/assert_ci_complete_covers_all_jobs.py
