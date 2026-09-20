@@ -28,10 +28,37 @@ const MAX_REDIRECTS: usize = 10;
 /// Panics only if the underlying TLS backend fails to initialise, matching the
 /// behaviour of [`reqwest::Client::new`] / [`reqwest::Client::default`].
 pub(crate) fn secure_client() -> Client {
-    Client::builder()
-        .redirect(no_downgrade_policy())
+    secure_client_builder()
         .build()
         .expect("build identity-model HTTP client")
+}
+
+/// Returns a [`reqwest::ClientBuilder`] carrying this crate's redirect hardening,
+/// so a caller who needs their own client does not silently lose it.
+///
+/// Supplying a client to `TokenClientBuilder::http_client` (or the discovery and
+/// JWKS equivalents) *replaces* the hardened default, including the `https` →
+/// `http` redirect refusal. That matters most on the token request, which carries
+/// the client secret: an authorization server answering `307 Location:
+/// http://issuer/token` would otherwise be followed, and because the host is
+/// unchanged reqwest does not strip the `Authorization` header. `allow_http(false)`
+/// does not cover this — it validates the configured endpoint scheme, never a
+/// redirect target.
+///
+/// Start from this builder whenever you need to add default headers — attaching a
+/// DPoP proof, say — and you keep the defence:
+///
+/// ```no_run
+/// # use reqwest::header::{HeaderMap, HeaderValue};
+/// let mut headers = HeaderMap::new();
+/// headers.insert("DPoP", HeaderValue::from_static("..."));
+/// let http = rs_identity_model::secure_client_builder()
+///     .default_headers(headers)
+///     .build()?;
+/// # Ok::<(), reqwest::Error>(())
+/// ```
+pub fn secure_client_builder() -> reqwest::ClientBuilder {
+    Client::builder().redirect(no_downgrade_policy())
 }
 
 /// A redirect policy that refuses an `https` → `http` downgrade and bounds the
