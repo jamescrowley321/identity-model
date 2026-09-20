@@ -274,7 +274,9 @@ The library supports custom SSL certificates via environment variables. Priority
 3. `REQUESTS_CA_BUNDLE` (backward compatibility)
 4. System defaults
 
-Resolved per-request by `get_ssl_verify()`. Importing the library never writes to
+Resolved by `get_ssl_verify()`, which is `lru_cache`d — read once per process and
+fixed for its lifetime, so a runtime change needs a restart (or
+`get_ssl_verify.cache_clear()` plus rebuilt clients). Importing the library never writes to
 `os.environ`; `ensure_ssl_compatibility()` does, and is opt-in for callers who need
 *other* libraries in the process to honour `REQUESTS_CA_BUNDLE`.
 

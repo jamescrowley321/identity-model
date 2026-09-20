@@ -291,18 +291,33 @@ class TestImportHasNoEnvironmentSideEffect:
         child_env.pop("CURL_CA_BUNDLE", None)
         child_env["REQUESTS_CA_BUNDLE"] = "/path/to/legacy-ca-bundle.crt"
 
+        # timeout: an import that deadlocks would otherwise hang forever — the
+        # unit-test job sets no timeout-minutes, so a stuck child burns the
+        # six-hour default instead of failing.
         result = subprocess.run(
             [sys.executable, "-c", code, module],
             env=child_env,
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
+            timeout=60,
         )
-        return json.loads(result.stdout)
+        # check=True would raise CalledProcessError without the captured stderr,
+        # reporting a child-side ImportError as a bare exit status.
+        assert result.returncode == 0, (
+            f"importing {module} in a subprocess failed "
+            f"(exit {result.returncode}):\n{result.stderr}"
+        )
+        # Parse only the last non-empty line: a dependency banner or a
+        # sitecustomize print on the child's stdout would otherwise surface as an
+        # unrelated JSONDecodeError.
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        assert lines, f"subprocess produced no output; stderr:\n{result.stderr}"
+        return json.loads(lines[-1])
 
     @pytest.mark.parametrize(
         "module",
-        ["py_identity_model", "py_identity_model.aio"],
+        ["py_identity_model", "py_identity_model.sync", "py_identity_model.aio"],
     )
     def test_import_does_not_write_ssl_cert_file(self, module):
         """Test that importing an entry point leaves SSL_CERT_FILE unset."""
@@ -316,10 +331,64 @@ class TestImportHasNoEnvironmentSideEffect:
 
     @pytest.mark.parametrize(
         "module",
-        ["py_identity_model", "py_identity_model.aio"],
+        ["py_identity_model", "py_identity_model.sync", "py_identity_model.aio"],
     )
     def test_import_leaves_environment_unchanged(self, module):
         """Test that importing an entry point changes no environment variable."""
         changed = self._env_changed_by_importing(module)
 
         assert changed == {}, f"importing {module} mutated os.environ: {changed}"
+
+
+class TestEnsureSSLCompatibilityOptIn:
+    """The opt-in shim must resolve the same way get_ssl_verify() does.
+
+    docs/migration-guide.md points callers here to close the split trust store
+    left when only REQUESTS_CA_BUNDLE is set, so a silent no-op is the one
+    failure mode that matters: the caller believes the export happened.
+    """
+
+    def test_empty_ssl_cert_file_is_treated_as_unset(self):
+        """Test that an empty SSL_CERT_FILE does not suppress the export."""
+        with patch.dict(
+            os.environ,
+            {
+                "SSL_CERT_FILE": "",
+                "REQUESTS_CA_BUNDLE": "/path/to/ca-bundle.crt",
+            },
+            clear=True,
+        ):
+            ensure_ssl_compatibility()
+
+            # An empty value selects no bundle -- get_ssl_verify() skips it for
+            # the same reason -- so the legacy value must still be exported.
+            assert os.environ["SSL_CERT_FILE"] == "/path/to/ca-bundle.crt"
+
+    def test_empty_curl_ca_bundle_does_not_suppress_the_export(self):
+        """Test that an empty CURL_CA_BUNDLE does not suppress the export."""
+        with patch.dict(
+            os.environ,
+            {
+                "CURL_CA_BUNDLE": "",
+                "REQUESTS_CA_BUNDLE": "/path/to/ca-bundle.crt",
+            },
+            clear=True,
+        ):
+            ensure_ssl_compatibility()
+
+            assert os.environ["SSL_CERT_FILE"] == "/path/to/ca-bundle.crt"
+
+    def test_export_agrees_with_get_ssl_verify(self):
+        """Test that the exported value is the one the library itself resolves."""
+        with patch.dict(
+            os.environ,
+            {
+                "SSL_CERT_FILE": "",
+                "REQUESTS_CA_BUNDLE": "/path/to/ca-bundle.crt",
+            },
+            clear=True,
+        ):
+            ensure_ssl_compatibility()
+            get_ssl_verify.cache_clear()
+
+            assert os.environ["SSL_CERT_FILE"] == get_ssl_verify()

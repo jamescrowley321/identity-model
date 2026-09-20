@@ -566,18 +566,28 @@ The library supports the following SSL certificate environment variables (in pri
 2. **`CURL_CA_BUNDLE`** - also respected by httpx
 3. **`REQUESTS_CA_BUNDLE`** - legacy requests library variable (for backward compatibility)
 
-**Backward Compatibility:** If you're migrating from an older version that used `requests`, your existing `REQUESTS_CA_BUNDLE` environment variable will continue to work — the library reads all three variables directly when it builds a request.
+**Backward Compatibility:** If you're migrating from an older version that used `requests`, your existing `REQUESTS_CA_BUNDLE` environment variable will continue to work — the library reads all three variables itself.
+
+The resolution is cached: `get_ssl_verify()` is `lru_cache`d and its result is consumed when the HTTP client is built, so the CA bundle is fixed for the life of the process. Changing any of the three variables at runtime — including to distrust a compromised CA — requires a restart, not a config reload.
 
 Importing the library does not modify your process environment. If you relied on
 earlier versions copying `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` for the benefit of
-*other* libraries in the same process (`requests`, `urllib3`, `boto3`), call the shim
-yourself from application startup:
+*other* libraries in the same process to honour it, call the shim yourself from
+application startup:
 
 ```python
 from py_identity_model.ssl_config import ensure_ssl_compatibility
 
 ensure_ssl_compatibility()  # writes SSL_CERT_FILE process-wide
 ```
+
+`SSL_CERT_FILE` is honoured by stdlib `ssl` (so also `aiohttp`, and anything building
+a default `SSLContext`) and by `urllib3` when it loads default certs. It is **not**
+read by `requests` — which honours `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`, and
+otherwise bundled certifi — nor by `boto3`/`botocore`, which use `AWS_CA_BUNDLE` and
+otherwise certifi. The shim is also a no-op when `CURL_CA_BUNDLE` carries the bundle,
+since stdlib `ssl` does not read that variable either; set `SSL_CERT_FILE` directly
+for that case.
 
 #### Example
 
