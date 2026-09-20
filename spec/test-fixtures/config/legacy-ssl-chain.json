@@ -15,7 +15,7 @@
       "env": { "REQUESTS_CA_BUNDLE": "/c.pem" },
       "expect": {
         "resolved": { "tls.verify": "/c.pem" },
-        "note": "Import-time shim copies REQUESTS_CA_BUNDLE into SSL_CERT_FILE when the first two are unset."
+        "note": "REQUESTS_CA_BUNDLE is read third; nothing is copied into the environment. No implementation may write the resolved value back at import or init time."
       }
     },
     {

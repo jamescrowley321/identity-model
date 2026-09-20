@@ -25,7 +25,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | in-progress‡ | implemented | implemented |
-| Extended | Token Revocation | RFC 7009 | `revocation.json` | in-progress‡ | implemented | implemented |
+| Extended | Token Revocation | RFC 7009 | `revocation.json`§ | in-progress‡ | implemented | implemented |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | in-progress‡ | implemented | implemented |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
@@ -43,6 +43,15 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
 > **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+>
+> § **Revocation's status is hand-verified, not gate-enforced.** `revocation.json` is a prose
+> contract with no executable `vectors` array, so `tools/spec_coverage_gate.py` excludes the
+> capability from its inventory entirely and configures no revocation runner in any language — the
+> `spec-vector-coverage` gate passes over it vacuously. The `REV-001`..`REV-005` mapping lives in test
+> comments, which no gate reads. Go additionally loads the named fixtures under
+> `spec/test-fixtures/revocation/`; Python and Rust reconstruct the bodies inline, so a fixture change
+> would break Go and leave the others green. Read `implemented` here as "a human checked the tests
+> against the vectors", not as a machine-enforced claim.
 >
 > ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
 > MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
