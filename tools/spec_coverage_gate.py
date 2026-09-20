@@ -30,6 +30,14 @@ no-runner check iterates the same inventory the marker empties, so it cannot
 see the exclusion either, and the gate still prints GATE PASSED. Dropping a
 capability has to be a diff to this file. Opting out is a temporary state:
 it means "not yet gated", never "not required".
+
+The absence of a ``vectors`` array was exactly the self-exemption that rule
+forbids. A capability whose cases carry no executable vectors produced an
+empty inventory entry and was skipped — silently, and by editing the data the
+gate reads. Ten of the twelve capabilities in ``spec/`` sit in that state (95
+of 119 cases), so the gate covered two capabilities while reporting GATE
+PASSED for all of them. ``UNVECTORED`` now names them here, in the gate, and
+a capability that carries no vectors and is not named fails closed.
 """
 
 from __future__ import annotations
@@ -134,6 +142,36 @@ RUNNERS: list[tuple[str, str, Path, list[str]]] = [
 #: to the data that code reads. Every entry is a debt to be paid, not a setting.
 OPTED_OUT: frozenset[str] = frozenset()
 
+#: Capabilities whose vector files are prose contracts: cases with ids and
+#: descriptions, but no executable ``vectors`` array for a runner to execute.
+#:
+#: These were invisible. `spec_inventory` kept only capabilities with
+#: executable cases, so one with none produced no entry, the no-runner check
+#: iterated that same empty inventory, and the gate printed GATE PASSED having
+#: inspected nothing — the precise failure the OPTED_OUT rule above exists to
+#: prevent, arrived at through data rather than a marker.
+#:
+#: Naming them here does not gate them; it stops the gap being invisible, and
+#: makes closing one a deletion from this dict. The value is the number of
+#: cases currently stranded, so the cost is legible in review.
+#:
+#: Like OPTED_OUT, every entry is a debt. Two checks keep it honest: a
+#: capability missing from both this dict and OPTED_OUT fails the gate, and an
+#: entry here that has since gained executable vectors fails it too, so the
+#: list cannot rot into a permanent exemption.
+UNVECTORED: dict[str, int] = {
+    "authorization-code": 6,
+    "client-credentials": 6,
+    "configuration": 33,
+    "discovery": 10,
+    "dpop": 8,
+    "introspection": 6,
+    "jwks": 7,
+    "revocation": 5,
+    "token-exchange": 6,
+    "userinfo": 8,
+}
+
 #: Languages that must cover every gated capability.
 LANGUAGES = ["python", "go", "rust"]
 
@@ -143,9 +181,10 @@ def report_name(language: str, capability: str) -> str:
     return f"{language}.{capability}.json"
 
 
-def spec_inventory() -> dict[str, dict[str, set[str]]]:
+def spec_inventory() -> tuple[dict[str, dict[str, set[str]]], set[str]]:
     """Executable + native case ids per capability that carries vectors."""
     inventory: dict[str, dict[str, set[str]]] = {}
+    unvectored: set[str] = set()
     for path in sorted(SPEC_DIR.glob("*.json")):
         try:
             capability = json.loads(path.read_text())
@@ -168,7 +207,11 @@ def spec_inventory() -> dict[str, dict[str, set[str]]]:
         native = {c["id"] for c in cases if c.get("execution") == "native"}
         if executable:
             inventory[name] = {"executable": executable, "native": native}
-    return inventory
+        else:
+            # Recorded rather than dropped. Skipping silently here is what let
+            # ten capabilities leave the gate without a diff to this file.
+            unvectored.add(name)
+    return inventory, unvectored
 
 
 def run_runners(report_dir: Path) -> None:
@@ -190,9 +233,44 @@ def run_runners(report_dir: Path) -> None:
 
 
 def check_reports(report_dir: Path) -> int:
-    inventory = spec_inventory()
+    inventory, unvectored = spec_inventory()
     if not inventory:
         sys.exit("[spec-coverage] no capability with executable vectors found in spec/")
+
+    # A capability with no executable vectors used to vanish here. Both
+    # directions are checked so the exemption list cannot rot: an unnamed
+    # capability cannot leave the gate by dropping its vectors, and a named one
+    # cannot stay exempt after gaining them.
+    undeclared = sorted(unvectored - set(UNVECTORED) - OPTED_OUT)
+    stale = sorted(set(UNVECTORED) & set(inventory))
+    vanished = sorted(set(UNVECTORED) - unvectored - set(inventory))
+    if undeclared or stale or vanished:
+        print("\n[spec-coverage] GATE FAILED — exemption list out of date:")
+        for name in undeclared:
+            print(
+                f"  - {name}: carries no executable `vectors`, so nothing gates "
+                f"it, and it is named in neither UNVECTORED nor OPTED_OUT. Add "
+                f"vectors, or declare the gap in tools/spec_coverage_gate.py."
+            )
+        for name in stale:
+            print(
+                f"  - {name}: now carries executable vectors but is still listed "
+                f"in UNVECTORED. Remove the entry so the gate enforces it."
+            )
+        for name in vanished:
+            print(
+                f"  - {name}: listed in UNVECTORED but no such capability exists "
+                f"in spec/. Remove the stale entry."
+            )
+        return 1
+
+    if UNVECTORED:
+        stranded = sum(UNVECTORED.values())
+        print(
+            f"[spec-coverage] {len(UNVECTORED)} capabilities carry no executable "
+            f"vectors and are NOT gated ({stranded} cases): "
+            f"{', '.join(sorted(UNVECTORED))}"
+        )
 
     # Fail closed on a capability nobody runs. A vector file that carries
     # executable cases but has no runner entry for some language is worse than

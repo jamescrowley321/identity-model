@@ -44,6 +44,13 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 > **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
+> § **Ten of the twelve capabilities are hand-verified, not gate-enforced.** Only `id-token` and
+> `validation` carry executable `vectors` arrays; the other ten vector files are prose contracts
+> (95 of 119 cases). `tools/spec_coverage_gate.py` names them in its `UNVECTORED` register and
+> prints the gap on every run, and a capability can no longer leave the gate by dropping its
+> vectors — but naming a gap is not closing it. Read `implemented` for those rows as "a human
+> checked the tests against the vectors". Revocation is the worked example:
+>
 > § **Revocation's status is hand-verified, not gate-enforced.** `revocation.json` is a prose
 > contract with no executable `vectors` array, so `tools/spec_coverage_gate.py` excludes the
 > capability from its inventory entirely and configures no revocation runner in any language — the
