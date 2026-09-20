@@ -32,12 +32,14 @@ carried by the advisory databases the scanners read).
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import git
 import pytest
 import yaml
-from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 
@@ -49,52 +51,80 @@ _SR_CONFIGS = (
     _REPO_ROOT / "tools" / "semantic-release-rust.toml",
 )
 
-# `--from "python-semantic-release==10.6.1"` and the unquoted form both appear.
+#: A pinned PSR version as it appears in raw TEXT. Used only where there is no
+#: command to tokenise: counting copies in the Makefile, and reading the
+#: invocation the semantic-release TOML headers document for humans to copy.
 _PSR_PIN = re.compile(r"""python-semantic-release\s*==\s*([0-9][^"'\s\\]*)""")
-#: A GitPython bound, captured WHOLE — `>=3.1.59`, and `>=3.1.59,!=3.1.70` as one
-#: string rather than a first constraint plus a silently-dropped tail. An earlier
-#: operator-and-version pair regex could not see `~=` or `!=` at all, and stopped
-#: at the comma, so a second constraint on one side of the parity checks compared
-#: equal to its absence on the other.
-_GITPYTHON_SPEC = re.compile(r"""gitpython\s*([<>=!~][^"'\s\\]*)""", re.IGNORECASE)
 
-
-def _specifier(raw: str, where: str) -> SpecifierSet:
-    """`raw` as a specifier set, or a named failure — never an unhandled raise."""
-    try:
-        return SpecifierSet(raw)
-    except InvalidSpecifier as exc:
-        raise AssertionError(
-            f"{where} carries an unparseable GitPython bound `gitpython{raw}`: {exc}"
-        ) from exc
-
-
-#: Matches a `uvx` invocation of PSR inside one shell command, however it is
-#: wrapped. A previous line-based regex missed any invocation split across lines
-#: with a backslash — and because the bound check only inspects what it matched,
-#: a reformatted job would have escaped it silently while the others still
-#: matched. Line continuations are folded away before this is applied.
-_UVX_PSR = re.compile(r"uvx\s[^;&|]*?python-semantic-release", re.DOTALL)
+#: A `\` line continuation, folded before anything is tokenised.
 _LINE_CONTINUATION = re.compile(r"\\\s*\n\s*")
-#: A whole-line shell comment inside a `run:` script. Several release jobs
-#: explain the bound by quoting PSR's own loose `gitpython~=3.0` in a comment
-#: above the command; that is prose about a dependency, not a bound this
-#: pipeline applies, and reading it as one made the parity check compare the
-#: Makefile against a sentence.
-_COMMENT_LINE = re.compile(r"^[ \t]*#.*$", re.MULTILINE)
+
+#: Shell operators that end one command and begin the next.
+_COMMAND_SEPARATORS = frozenset({";", "&&", "||", "|", "&", "(", ")"})
+
+#: The one GitPython mention in prose that is NOT a claim about this pipeline:
+#: PSR's own loose declaration, quoted in several jobs while explaining why the
+#: floor exists. Every other `gitpython<op>` in a comment is a statement about
+#: what the job below it does, and is checked.
+_UPSTREAM_LITERAL = SpecifierSet("~=3.0")
+
+
+def _commands(script: str) -> list[list[str]]:
+    """A shell script as the list of commands a shell would actually run.
+
+    Tokenised with `shlex` rather than scanned with regexes, because every gap
+    this replaced came from reading the text instead of the commands:
+
+    * A bound written `gitpython>=3.1.59, <3.1.60` -- legal PEP 508, and the
+      conventional spacing -- was captured as `>=3.1.59,` by a character class
+      that stopped at whitespace. `packaging` then discarded the empty trailing
+      segment, so the truncated bound compared EQUAL to `>=3.1.59` and a
+      ceiling vanished from both sides of the parity check at once.
+    * `... semantic-release version  # floor gitpython>=3.1.59` counted as a
+      bound, because only whole-line comments were stripped. bash discards
+      everything from the `#`, so the job ran PSR unbounded while the gate read
+      the comment as the constraint -- in a job holding RELEASE_TOKEN.
+    * A `run:` block holding two PSR calls passed if EITHER carried the bound,
+      because the check searched the whole block. Commands are now individual.
+
+    Continuations are folded first, so a wrapped invocation is one command.
+    Newlines then separate commands, and `shlex` in POSIX mode drops comments
+    exactly where bash does -- including a `#` that is inside quotes and
+    therefore not a comment at all.
+
+    A script that cannot be tokenised raises rather than returning nothing: a
+    block this function fails to read would otherwise be exempt from every
+    check below it, silently, which is the failure mode the whole module is
+    about.
+    """
+    commands: list[list[str]] = []
+    for line in _LINE_CONTINUATION.sub(" ", script).splitlines():
+        if not line.strip():
+            continue
+        lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            tokens = list(lexer)
+        except ValueError as exc:
+            raise AssertionError(
+                f"could not tokenise a release.yml command, so nothing would "
+                f"check it: {line.strip()[:120]!r} ({exc})"
+            ) from exc
+        current: list[str] = []
+        for token in tokens:
+            if token in _COMMAND_SEPARATORS:
+                if current:
+                    commands.append(current)
+                    current = []
+            else:
+                current.append(token)
+        if current:
+            commands.append(current)
+    return commands
 
 
 def _run_blocks(workflow_text: str) -> list[str]:
-    """Every `run:` script in the workflow, as whole commands.
-
-    Parsed as YAML rather than scanned line by line, so a `run:` block is read
-    as the shell script it is. Whole-line comments are dropped — nothing runs
-    them — and line continuations are folded, so an invocation wrapped across
-    several lines is one command here. That matters in both directions: the
-    checks below inspect what they match, so anything they fail to match is
-    silently exempt from them, and anything they match that is not a command
-    is enforced against prose.
-    """
+    """Every `run:` script in the workflow, as written."""
     doc = yaml.safe_load(workflow_text)
     jobs = doc.get("jobs") if isinstance(doc, dict) else None
     if not isinstance(jobs, dict):
@@ -107,14 +137,118 @@ def _run_blocks(workflow_text: str) -> list[str]:
         for step in steps:
             run = step.get("run") if isinstance(step, dict) else None
             if isinstance(run, str):
-                blocks.append(_LINE_CONTINUATION.sub(" ", _COMMENT_LINE.sub("", run)))
+                blocks.append(run)
     return blocks
+
+
+def _workflow_commands(workflow_text: str) -> list[list[str]]:
+    """Every command in every `run:` block."""
+    return [cmd for block in _run_blocks(workflow_text) for cmd in _commands(block)]
+
+
+def _requirement(token: str) -> Requirement | None:
+    """`token` as a PEP 508 requirement, or None if it is not one."""
+    try:
+        return Requirement(token)
+    except InvalidRequirement:
+        return None
+
+
+def _uvx_requirement_tokens(command: list[str]) -> list[str]:
+    """The values uvx resolves as requirements: `--from` and every `--with`.
+
+    Read positionally from the token list, so a requirement is whatever uvx
+    would actually install -- not whatever a regex happened to find somewhere
+    in the surrounding text.
+    """
+    values: list[str] = []
+    for flag, value in zip(command, command[1:]):
+        if flag in ("--from", "--with"):
+            values.append(value)
+    return values
+
+
+def _is_uvx_psr(command: list[str]) -> bool:
+    """Whether this command runs python-semantic-release through uvx."""
+    if not command or command[0] != "uvx":
+        return False
+    for token in _uvx_requirement_tokens(command):
+        requirement = _requirement(token)
+        if requirement is not None and requirement.name == "python-semantic-release":
+            return True
+    return False
+
+
+def _bound_for(name: str, tokens: list[str], where: str) -> SpecifierSet | None:
+    """The specifier `tokens` puts on `name`, or None if it names no bound.
+
+    A mention with no specifier (`--with gitpython`) is not a bound: it
+    constrains nothing.
+    """
+    found: list[SpecifierSet] = []
+    for token in tokens:
+        requirement = _requirement(token)
+        if requirement is None or requirement.name.lower() != name.lower():
+            continue
+        if str(requirement.specifier):
+            found.append(requirement.specifier)
+    if not found:
+        return None
+    distinct = {str(spec) for spec in found}
+    assert len(distinct) == 1, (
+        f"{where} bounds {name} more than one way: {sorted(distinct)}. "
+        "Everything here is compared against one definition."
+    )
+    return found[0]
+
+
+#: A `gitpython<op>` written in a comment. These are claims about what the
+#: command below them does, and they demonstrably rot: the floor was described
+#: in three places in release.yml while living in exactly one.
+_GITPYTHON_IN_PROSE = re.compile(
+    r"""gitpython\s*([<>=!~][^\s\\"',]*(?:\s*,\s*[<>=!~][^\s\\"',]*)*)""",
+    re.IGNORECASE,
+)
+
+
+def _comment_bounds(script: str) -> list[SpecifierSet]:
+    """Every GitPython bound asserted in a comment in `script`."""
+    bounds: list[SpecifierSet] = []
+    for line in _LINE_CONTINUATION.sub(" ", script).splitlines():
+        comment = _strip_to_comment(line)
+        if comment is None:
+            continue
+        for raw in _GITPYTHON_IN_PROSE.findall(comment):
+            try:
+                bounds.append(SpecifierSet(raw))
+            except Exception:  # noqa: BLE001 - prose need not parse
+                continue
+    return bounds
+
+
+def _strip_to_comment(line: str) -> str | None:
+    """The comment part of `line`, or None. Quotes are respected."""
+    in_single = in_double = False
+    for index, char in enumerate(line):
+        if char == "'" and not in_double:
+            in_single = not in_single
+        elif char == '"' and not in_single:
+            in_double = not in_double
+        elif char == "#" and not in_single and not in_double:
+            return line[index:]
+    return None
 
 
 @pytest.fixture(scope="module")
 def psr_tooling() -> str:
-    """The Makefile's `PSR_TOOLING` — the single definition of the release tooling."""
-    body = _MAKEFILE.read_text()
+    r"""The Makefile's `PSR_TOOLING` — the single definition of the release tooling.
+
+    Continuations are folded, so a definition wrapped across lines reads whole.
+    Make continues a variable on a trailing `\`, this definition is already
+    78 characters, and a single-line capture would have silently compared
+    everything against whatever fitted on the first line.
+    """
+    body = _LINE_CONTINUATION.sub(" ", _MAKEFILE.read_text())
     match = re.search(r"^PSR_TOOLING\s*:?=\s*(.+)$", body, re.MULTILINE)
     assert match is not None, (
         "Makefile lost its PSR_TOOLING definition. `make test-tools` depends on "
@@ -124,28 +258,36 @@ def psr_tooling() -> str:
 
 
 @pytest.fixture(scope="module")
-def psr_pin(psr_tooling: str) -> str:
-    found = _PSR_PIN.findall(psr_tooling)
-    assert len(found) == 1, (
-        f"PSR_TOOLING must pin exactly one python-semantic-release version, "
-        f"got {found}: the release workflow pins one and these must be comparable."
-    )
-    return found[0]
+def psr_tooling_requirements(psr_tooling: str) -> list[str]:
+    """PSR_TOOLING's `--from`/`--with` values, read the way uvx reads them."""
+    (command,) = _commands(f"uvx {psr_tooling}")
+    return _uvx_requirement_tokens(command)
 
 
 @pytest.fixture(scope="module")
-def gitpython_specifier(psr_tooling: str) -> SpecifierSet:
-    found = _GITPYTHON_SPEC.findall(psr_tooling)
-    assert found, (
+def psr_pin(psr_tooling_requirements: list[str]) -> str:
+    bound = _bound_for(
+        "python-semantic-release", psr_tooling_requirements, "PSR_TOOLING"
+    )
+    assert bound is not None, (
+        "PSR_TOOLING must pin a python-semantic-release version: the release "
+        "workflow pins one and these must be comparable."
+    )
+    pinned = [spec.version for spec in bound if spec.operator == "=="]
+    assert len(pinned) == 1, (
+        f"PSR_TOOLING must pin python-semantic-release exactly, got `{bound}`."
+    )
+    return pinned[0]
+
+
+@pytest.fixture(scope="module")
+def gitpython_specifier(psr_tooling_requirements: list[str]) -> SpecifierSet:
+    bound = _bound_for("gitpython", psr_tooling_requirements, "PSR_TOOLING")
+    assert bound is not None, (
         "PSR_TOOLING must bound GitPython. Unbounded, PSR's loose `gitpython~=3.0` "
         "admits <=3.1.58, which carries a critical RCE advisory."
     )
-    bounds = {str(_specifier(raw, "PSR_TOOLING")) for raw in found}
-    assert len(bounds) == 1, (
-        f"PSR_TOOLING bounds GitPython more than one way: {sorted(bounds)}. "
-        "Everything else here is compared against one definition."
-    )
-    return _specifier(found[0], "PSR_TOOLING")
+    return bound
 
 
 class TestTheEnvironmentToolsTestsRunIn:
@@ -202,51 +344,74 @@ class TestTheMakefileUsesTheSingleDefinition:
         )
 
 
-class TestTheGitPythonBoundReader:
-    """What the parity checks can see, they can enforce — and nothing else.
-
-    Each bound is read whole and compared as a `SpecifierSet`, so a constraint
-    present on one side and absent on the other is drift. The pair regex this
-    replaced could not match `~=` or `!=` at all and stopped at the comma, which
-    made a two-constraint bound compare equal to its first constraint alone.
-    """
+class TestTheRequirementReader:
+    """What the parity checks can see, they can enforce — and nothing else."""
 
     @pytest.mark.parametrize(
         "raw",
         [">=3.1.59", "==3.1.62", "~=3.1.59", "!=3.1.60", "<3.1.60", ">3.1.58"],
     )
     def test_every_operator_form_is_seen(self, raw):
-        assert _GITPYTHON_SPEC.findall(f'--with "gitpython{raw}"') == [raw]
+        (command,) = _commands(f'uvx --with "gitpython{raw}" semantic-release')
+        bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+        assert bound == SpecifierSet(raw)
 
-    def test_a_multi_constraint_bound_is_read_whole(self):
-        (found,) = _GITPYTHON_SPEC.findall('--with "gitpython>=3.1.59,!=3.1.70"')
-        assert _specifier(found, "test") == SpecifierSet(">=3.1.59,!=3.1.70")
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            ">=3.1.59,!=3.1.70",
+            # The spacing #706 is about: PEP 508 legal, and what a person types.
+            ">=3.1.59, !=3.1.70",
+            ">=3.1.59 , <3.1.60",
+        ],
+    )
+    def test_a_multi_constraint_bound_is_read_whole(self, raw):
+        """A tail dropped here compares EQUAL to the bound without it."""
+        (command,) = _commands(f'uvx --with "gitpython{raw}" semantic-release')
+        bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+        assert bound == SpecifierSet(raw)
+        assert bound != SpecifierSet(raw.split(",")[0])
 
-    def test_a_dropped_constraint_is_drift(self):
-        """The case a subset comparison called equal."""
-        assert _specifier(">=3.1.59,!=3.1.70", "test") != SpecifierSet(">=3.1.59")
+    @pytest.mark.parametrize("raw", ["==3.1.62", "~=3.1.59", "!=3.1.60"])
+    def test_an_unquoted_bound_without_a_redirection_character_is_seen(self, raw):
+        (command,) = _commands(f"uvx --with gitpython{raw} semantic-release")
+        bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+        assert bound == SpecifierSet(raw)
 
-    def test_the_unquoted_form_is_seen(self):
-        assert _GITPYTHON_SPEC.findall("--with gitpython>=3.1.59 semantic-release") == [
-            ">=3.1.59"
-        ]
+    @pytest.mark.parametrize("raw", [">=3.1.59", "<3.1.60"])
+    def test_an_unquoted_bound_with_a_redirection_character_is_no_bound(self, raw):
+        """Because bash does not see one either — it sees a redirection.
+
+        `uvx --with gitpython>=3.1.59 ...` writes to a file called `=3.1.59`
+        and installs an unbounded `gitpython`. The previous regex read the raw
+        text and reported a bound the shell would never apply; reading tokens
+        agrees with bash instead, and the missing bound then fails
+        `test_no_psr_invocation_omits_the_gitpython_bound` loudly.
+        """
+        (command,) = _commands(f"uvx --with gitpython{raw} semantic-release")
+        assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
 
     def test_an_unbounded_mention_is_not_a_bound(self):
-        assert _GITPYTHON_SPEC.findall('--with "gitpython"') == []
+        (command,) = _commands('uvx --with "gitpython" semantic-release')
+        assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
 
-    def test_an_unparseable_bound_fails_by_name(self):
-        with pytest.raises(AssertionError, match="unparseable GitPython bound"):
-            _specifier(">=not.a.version.\u00a7", "somewhere")
+    def test_a_bound_on_another_package_is_not_gitpython(self):
+        (command,) = _commands('uvx --with "click>=8.1" semantic-release')
+        assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
+
+    def test_two_different_bounds_fail_by_name(self):
+        (command,) = _commands(
+            'uvx --with "gitpython>=3.1.59" --with "gitpython<3.1.60" semantic-release'
+        )
+        with pytest.raises(AssertionError, match="more than one way"):
+            _bound_for("gitpython", _uvx_requirement_tokens(command), "somewhere")
+
+    def test_an_unparseable_requirement_is_not_a_bound(self):
+        assert _requirement(">=not.a.version.§") is None
 
 
-class TestTheRunBlockReader:
-    """`_run_blocks` reads whatever the workflow file holds, shape included.
-
-    A shape it cannot walk must yield no commands, not raise: an exception here
-    is a test *error* that takes every other check in this file down with it,
-    while an empty result is caught loudly one class below by
-    `test_the_workflow_still_invokes_psr`.
-    """
+class TestTheCommandReader:
+    """`_commands` reads what a shell runs, not what the text looks like."""
 
     @pytest.mark.parametrize(
         ("shape", "text"),
@@ -261,48 +426,153 @@ class TestTheRunBlockReader:
         ids=lambda v: v if " " in v else "",
     )
     def test_a_malformed_workflow_yields_no_commands(self, shape, text):
-        assert _run_blocks(text) == [], f"{shape} should read as no commands"
-
-    def test_a_commented_line_is_not_a_command(self):
-        """Release jobs quote PSR's loose `gitpython~=3.0` while explaining the bound."""
-        text = (
-            "jobs:\n"
-            "  release:\n"
-            "    steps:\n"
-            "      - run: |\n"
-            "          # PSR's loose gitpython~=3.0 otherwise allows <=3.1.58.\n"
-            '          uvx --with "gitpython>=3.1.59" semantic-release version\n'
-        )
-        (command,) = _run_blocks(text)
-        assert _GITPYTHON_SPEC.findall(command) == [">=3.1.59"]
-
-    def test_a_commented_out_invocation_is_not_enforced(self):
-        """It does not run, so it cannot resolve anything."""
-        text = (
-            "jobs:\n"
-            "  release:\n"
-            "    steps:\n"
-            "      - run: |\n"
-            "          # uvx --from python-semantic-release==9.0.0 semantic-release\n"
-            "          echo skipped\n"
-        )
-        (command,) = _run_blocks(text)
-        assert not _UVX_PSR.search(command), command
+        assert _workflow_commands(text) == [], f"{shape} should read as no commands"
 
     def test_a_wrapped_invocation_reads_as_one_command(self):
-        """The fold is what lets a multi-line `run:` be matched at all."""
-        text = (
-            "jobs:\n"
-            "  release:\n"
-            "    steps:\n"
-            "      - run: |\n"
-            "          uvx --from python-semantic-release==10.6.2 \\\n"
-            '            --with "gitpython>=3.1.59" \\\n'
-            "            semantic-release version\n"
+        (command,) = _commands(
+            "uvx --from python-semantic-release==10.6.2 \\\n"
+            '  --with "gitpython>=3.1.59" \\\n'
+            "  semantic-release version"
         )
-        (command,) = _run_blocks(text)
-        assert _UVX_PSR.search(command), command
-        assert _PSR_PIN.findall(command) == ["10.6.2"]
+        assert _is_uvx_psr(command)
+        assert _bound_for(
+            "gitpython", _uvx_requirement_tokens(command), "test"
+        ) == SpecifierSet(">=3.1.59")
+
+    def test_a_whole_line_comment_is_not_a_command(self):
+        commands = _commands(
+            "# uvx --from python-semantic-release==9.0.0 semantic-release\necho skipped"
+        )
+        assert not any(_is_uvx_psr(c) for c in commands)
+
+    def test_an_end_of_line_comment_is_not_a_bound(self):
+        """bash discards from the `#`; so must the gate, or the job is unbounded."""
+        (command,) = _commands(
+            "uvx --from python-semantic-release==10.6.2 semantic-release version"
+            "  # floor gitpython>=3.1.59"
+        )
+        assert _is_uvx_psr(command)
+        assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
+
+    def test_a_hash_inside_quotes_is_not_a_comment(self):
+        commands = _commands(
+            'echo "a # b" && uvx --with "gitpython>=3.1.59" '
+            "--from python-semantic-release==10.6.2 semantic-release version"
+        )
+        assert any(_is_uvx_psr(c) for c in commands)
+
+    def test_commands_joined_by_an_operator_are_separate(self):
+        commands = _commands(
+            "cd py && uvx --from python-semantic-release==10.6.2 "
+            '--with "gitpython>=3.1.59" semantic-release version'
+        )
+        assert len(commands) == 2
+        assert commands[0] == ["cd", "py"]
+
+    def test_two_invocations_on_separate_lines_are_separate(self):
+        """A block-wide search passed if EITHER call carried the bound."""
+        commands = _commands(
+            'uvx --from python-semantic-release==10.6.2 --with "gitpython>=3.1.59" '
+            "semantic-release version\n"
+            "uvx --from python-semantic-release==10.6.2 semantic-release version --print"
+        )
+        psr = [c for c in commands if _is_uvx_psr(c)]
+        assert len(psr) == 2
+        unbounded = [
+            c
+            for c in psr
+            if _bound_for("gitpython", _uvx_requirement_tokens(c), "test") is None
+        ]
+        assert len(unbounded) == 1
+
+    def test_an_untokenisable_command_fails_loudly(self):
+        """Silently yielding nothing would exempt the block from every check."""
+        with pytest.raises(AssertionError, match="could not tokenise"):
+            _commands('uvx --with "unterminated')
+
+
+class TestTheParityLogicItself:
+    """Drives the comparison on synthetic input, not just on the repo's files.
+
+    Every assertion in the class below reads real repo files, which are correct
+    — so none of them proves the comparison *fails* on a drifted bound. That is
+    exactly how a parser that truncated at whitespace stayed green: the readers
+    were tested, the assertion that consumes them was not.
+    """
+
+    MAKEFILE_BOUND = SpecifierSet(">=3.1.59")
+
+    def _drift(self, workflow_text: str) -> list[str]:
+        """The comparison `test_every_gitpython_pin_matches_the_makefile` makes."""
+        drifted = []
+        for command in _workflow_commands(workflow_text):
+            if not _is_uvx_psr(command):
+                continue
+            bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+            if bound != self.MAKEFILE_BOUND:
+                drifted.append(str(bound))
+        return drifted
+
+    def _workflow(self, run: str) -> str:
+        body = "\n".join(f"          {line}" for line in run.splitlines())
+        return f"jobs:\n  release:\n    steps:\n      - run: |\n{body}\n"
+
+    def test_a_matching_bound_is_not_drift(self):
+        assert (
+            self._drift(
+                self._workflow(
+                    "uvx --from python-semantic-release==10.6.2 "
+                    '--with "gitpython>=3.1.59" semantic-release version'
+                )
+            )
+            == []
+        )
+
+    def test_an_added_constraint_is_drift(self):
+        """A superset bound is drift too: it resolves what tools/ never runs."""
+        assert self._drift(
+            self._workflow(
+                "uvx --from python-semantic-release==10.6.2 "
+                '--with "gitpython>=3.1.59,!=3.1.70" semantic-release version'
+            )
+        ) == ["!=3.1.70,>=3.1.59"]
+
+    def test_a_constraint_written_with_a_space_is_drift(self):
+        """#706: the truncating reader compared this EQUAL to `>=3.1.59`."""
+        assert self._drift(
+            self._workflow(
+                "uvx --from python-semantic-release==10.6.2 "
+                '--with "gitpython>=3.1.59, <3.1.60" semantic-release version'
+            )
+        ) == ["<3.1.60,>=3.1.59"]
+
+    def test_a_loosened_bound_is_drift(self):
+        assert self._drift(
+            self._workflow(
+                "uvx --from python-semantic-release==10.6.2 "
+                '--with "gitpython>=3.1.0" semantic-release version'
+            )
+        ) == [">=3.1.0"]
+
+    def test_a_bound_only_in_a_trailing_comment_reads_as_unbounded(self):
+        """#710: bash never sees it, so neither may the gate."""
+        assert self._drift(
+            self._workflow(
+                "uvx --from python-semantic-release==10.6.2 semantic-release version"
+                "  # floor gitpython>=3.1.59"
+            )
+        ) == ["None"]
+
+    def test_a_second_unbounded_invocation_in_one_block_is_drift(self):
+        """#710: a block-wide search passed on the bounded call alone."""
+        assert self._drift(
+            self._workflow(
+                "uvx --from python-semantic-release==10.6.2 "
+                '--with "gitpython>=3.1.59" semantic-release version\n'
+                "uvx --from python-semantic-release==10.6.2 semantic-release version "
+                "--print"
+            )
+        ) == ["None"]
 
 
 class TestTheWorkflowAgreesWithTheMakefile:
@@ -311,9 +581,13 @@ class TestTheWorkflowAgreesWithTheMakefile:
         return _RELEASE_WORKFLOW.read_text()
 
     @pytest.fixture(scope="class")
-    def psr_commands(self, workflow) -> list[str]:
-        """Every shell command in release.yml that runs PSR through uvx."""
-        return [b for b in _run_blocks(workflow) if _UVX_PSR.search(b)]
+    def psr_commands(self, workflow) -> list[list[str]]:
+        """Every command in release.yml that runs PSR through uvx.
+
+        Per invocation, not per `run:` block. A block holding a bounded call and
+        an unbounded one used to pass on the strength of the first.
+        """
+        return [c for c in _workflow_commands(workflow) if _is_uvx_psr(c)]
 
     def test_the_workflow_still_invokes_psr(self, psr_commands):
         """Guards the rest of the class against passing vacuously."""
@@ -322,40 +596,44 @@ class TestTheWorkflowAgreesWithTheMakefile:
             "pin-parity assertions would pass vacuously — update them."
         )
 
-    def test_every_psr_invocation_is_accounted_for(self, workflow, psr_commands):
-        """Nothing mentioning PSR may sit outside the set the checks inspect.
-
-        The checks below only constrain `psr_commands`. If a `run:` block names
-        PSR but this fixture does not classify it as a uvx invocation, that block
-        would be exempt from every assertion without anyone noticing.
-        """
-        mentions = [b for b in _run_blocks(workflow) if "python-semantic-release" in b]
-        unmatched = [b.strip()[:120] for b in mentions if b not in psr_commands]
+    def test_every_psr_mention_is_accounted_for(self, workflow, psr_commands):
+        """Nothing mentioning PSR may sit outside the set the checks inspect."""
+        mentions = [
+            c
+            for c in _workflow_commands(workflow)
+            if any("python-semantic-release" in token for token in c)
+        ]
+        unmatched = [" ".join(c)[:120] for c in mentions if c not in psr_commands]
         assert not unmatched, (
-            "these release.yml run-blocks mention python-semantic-release but were "
+            "these release.yml commands mention python-semantic-release but were "
             f"not recognised as uvx invocations, so nothing checks them: {unmatched}"
         )
 
     def test_every_psr_pin_matches_the_makefile(self, psr_commands, psr_pin):
-        found = [v for cmd in psr_commands for v in _PSR_PIN.findall(cmd)]
-        assert found, "release.yml pins no python-semantic-release version"
-        drifted = sorted({v for v in found if v != psr_pin})
+        drifted = set()
+        for command in psr_commands:
+            bound = _bound_for(
+                "python-semantic-release",
+                _uvx_requirement_tokens(command),
+                "release.yml",
+            )
+            if bound != SpecifierSet(f"=={psr_pin}"):
+                drifted.add(str(bound))
         assert not drifted, (
-            f"release.yml pins python-semantic-release {drifted}, but PSR_TOOLING "
-            f"pins {psr_pin}. `make test-tools` would validate the release parsers "
-            "against a PSR the release job never runs."
+            f"release.yml pins python-semantic-release {sorted(drifted)}, but "
+            f"PSR_TOOLING pins {psr_pin}. `make test-tools` would validate the "
+            "release parsers against a PSR the release job never runs."
         )
 
     def test_every_gitpython_pin_matches_the_makefile(
         self, psr_commands, gitpython_specifier
     ):
-        found = [raw for cmd in psr_commands for raw in _GITPYTHON_SPEC.findall(cmd)]
-        assert found, "release.yml no longer constrains GitPython"
         drifted = sorted(
             {
-                raw
-                for raw in found
-                if _specifier(raw, "release.yml") != gitpython_specifier
+                str(_bound_for("gitpython", _uvx_requirement_tokens(c), "release.yml"))
+                for c in psr_commands
+                if _bound_for("gitpython", _uvx_requirement_tokens(c), "release.yml")
+                != gitpython_specifier
             }
         )
         assert not drifted, (
@@ -366,14 +644,64 @@ class TestTheWorkflowAgreesWithTheMakefile:
         )
 
     def test_no_psr_invocation_omits_the_gitpython_bound(self, psr_commands):
-        """One unconstrained job is enough to resolve a vulnerable GitPython."""
+        """One unconstrained invocation is enough to resolve a vulnerable GitPython."""
         unconstrained = [
-            cmd.strip()[:120] for cmd in psr_commands if not _GITPYTHON_SPEC.search(cmd)
+            " ".join(c)[:120]
+            for c in psr_commands
+            if _bound_for("gitpython", _uvx_requirement_tokens(c), "release.yml")
+            is None
         ]
         assert not unconstrained, (
             "these release.yml invocations run python-semantic-release without the "
             f"GitPython bound, so they resolve it freely: {unconstrained}"
         )
+
+
+class TestTheCommentsDescribeTheRealBound:
+    """A comment about the floor is a claim, and claims rot.
+
+    These were checked before a blanket comment strip removed them, and they
+    demonstrably drift: the floor is explained in three places in release.yml
+    and lives in exactly one. The bound checks above deliberately ignore
+    comments — bash does — so without this nothing looks at them at all.
+    """
+
+    def test_every_gitpython_comment_matches_the_makefile(self, gitpython_specifier):
+        workflow = _RELEASE_WORKFLOW.read_text()
+        claimed = {
+            str(bound)
+            for block in _run_blocks(workflow)
+            for bound in _comment_bounds(block)
+            # PSR's own declaration, quoted while explaining why the floor
+            # exists. A fact about upstream, not a claim about this pipeline,
+            # and the only such exemption.
+            if bound != _UPSTREAM_LITERAL
+        }
+        drifted = sorted(c for c in claimed if SpecifierSet(c) != gitpython_specifier)
+        assert not drifted, (
+            f"release.yml comments describe the GitPython floor as {drifted}, but "
+            f"PSR_TOOLING says {gitpython_specifier}. The comment is what the next "
+            "person raising the floor reads."
+        )
+
+    def test_the_upstream_literal_is_the_only_exemption(self):
+        """If PSR's declaration changes, the exemption must be revisited."""
+        assert _UPSTREAM_LITERAL == SpecifierSet("~=3.0")
+
+    def test_a_stale_floor_comment_is_caught(self):
+        """The check above reads real files, which are correct — drive it too."""
+        stale = _comment_bounds("# Floor gitpython>=3.1.59 (same as the core job)")
+        assert stale == [SpecifierSet(">=3.1.59")]
+        assert stale[0] != SpecifierSet(">=3.1.60")
+
+    def test_a_multi_constraint_comment_is_read_whole(self):
+        """The same truncation #706 is about, on the prose side."""
+        (bound,) = _comment_bounds("# floor gitpython>=3.1.59, !=3.1.70 applies")
+        assert bound == SpecifierSet(">=3.1.59,!=3.1.70")
+
+    def test_the_upstream_literal_is_not_read_as_a_claim(self):
+        (bound,) = _comment_bounds("# PSR's loose gitpython~=3.0 allows <=3.1.58.")
+        assert bound == _UPSTREAM_LITERAL
 
 
 class TestTheSemanticReleaseConfigsDocumentTheSamePins:
@@ -388,22 +716,16 @@ class TestTheSemanticReleaseConfigsDocumentTheSamePins:
         psr_found = _PSR_PIN.findall(text)
         assert psr_found, f"{config.name} documents no PSR version to check"
         assert set(psr_found) == {psr_pin}, (
-            f"{config.name} documents python-semantic-release {sorted(set(psr_found))}, "
-            f"but PSR_TOOLING pins {psr_pin}."
+            f"{config.name} documents python-semantic-release "
+            f"{sorted(set(psr_found))}, but PSR_TOOLING pins {psr_pin}."
         )
-        gp_found = _GITPYTHON_SPEC.findall(text)
-        assert gp_found, (
+        documented = _comment_bounds(text)
+        assert documented, (
             f"{config.name} documents a PSR invocation with no GitPython bound; "
             "copying it by hand resolves GitPython freely, and <=3.1.58 carries "
             "a critical RCE advisory."
         )
-        drifted = sorted(
-            {
-                raw
-                for raw in gp_found
-                if _specifier(raw, config.name) != gitpython_specifier
-            }
-        )
+        drifted = sorted({str(b) for b in documented if b != gitpython_specifier})
         assert not drifted, (
             f"{config.name} documents GitPython {drifted}, but PSR_TOOLING says "
             f"{gitpython_specifier}. Exact, not a superset: a constraint added to "
