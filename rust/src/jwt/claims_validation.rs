@@ -23,7 +23,7 @@
 //! and Rust libraries so a resource server can express the same policy in any
 //! language. That parity is enforced by the shared conformance vectors in
 //! `spec/test-fixtures/claims-validation/vectors.json` (driven by
-//! `tests/claims_validation_conformance.rs`). For a runnable end-to-end
+//! `tests/it/conformance/claims_validation.rs`). For a runnable end-to-end
 //! demonstration of composing these validators, see
 //! `examples/combined_claims_validator.rs`
 //! (`cargo run --example combined_claims_validator`).

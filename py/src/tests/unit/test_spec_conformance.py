@@ -2,7 +2,7 @@
 
 Drives every executable vector in ``spec/vectors/validation.json`` against
 py-identity-model's validation API — the same language-neutral vector set the
-Go (``go/internal/conformance``) and Rust (``rust/tests/spec_conformance.rs``)
+Go (``go/internal/conformance``) and Rust (``rust/tests/it/conformance/validation.rs``)
 runners execute — so the "build conformance vectors once" constraint holds.
 
 Thin-executor contract: the vectors carry inputs and canonical expected

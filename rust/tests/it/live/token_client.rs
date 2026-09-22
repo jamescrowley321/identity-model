@@ -22,19 +22,19 @@
 //!
 //! Mirrors the Go reference (`go/pkg/token/token_integration_test.go`):
 //!
-//! * `integration_client_credentials_live` (CC-001/CC-002): obtains a real
+//! * `client_credentials` (CC-001/CC-002): obtains a real
 //!   access token via the client-credentials grant with the default
 //!   `client_secret_basic` auth and asserts `access_token`/`token_type` are set.
-//! * `integration_client_credentials_invalid_client` (CC-004): a bad client
+//! * `client_credentials_invalid_client` (CC-004): a bad client
 //!   secret surfaces a typed [`IdentityError::TokenEndpoint`] (RFC 6749 §5.2) —
 //!   or, for providers with a non-RFC error body, an [`IdentityError::Http`]
 //!   carrying the 4xx status.
-//! * `integration_authorization_code_pkce_rejected` (ACG-004/005/006, partial):
+//! * `authorization_code_pkce_rejected` (ACG-004/005/006, partial):
 //!   exchanging an invalid authorization code that carries a PKCE
 //!   `code_verifier` reaches the live token endpoint and is rejected with a
 //!   typed [`IdentityError::TokenEndpoint`] (`invalid_grant`). This verifies the
 //!   request shape (grant type, code, code_verifier) and live error parsing.
-//! * `integration_authorization_code_pkce_end_to_end` (ACG-001..003, CONS-1.4):
+//! * `authorization_code_pkce_end_to_end` (ACG-001..003, CONS-1.4):
 //!   a full headless authorization-code + PKCE round-trip driving
 //!   node-oidc-provider's devInteractions (login + consent) with no browser,
 //!   then the real token-endpoint exchange with the `code_verifier`.
@@ -43,72 +43,26 @@ use std::time::Duration;
 
 use rs_identity_model::{DiscoveryClient, IdentityError, PkceChallenge, TokenClient};
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it
-/// panics. CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule, CONS-1.4 review).
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
+use crate::common::authcode::follow_to_callback;
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::live::discover_or_skip;
 
 /// Discovers the live provider's `token_endpoint`, skipping the test when the
 /// provider is unreachable so a missing local stack does not fail CI-less runs.
 async fn token_endpoint_or_skip(issuer: &str, allow_http: bool) -> Option<String> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => {
-            assert!(
-                !meta.token_endpoint.is_empty(),
-                "discovery returned empty token_endpoint"
-            );
-            Some(meta.token_endpoint)
-        }
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
+    let meta = discover_or_skip(issuer, allow_http).await?;
+    assert!(
+        !meta.token_endpoint.is_empty(),
+        "discovery returned empty token_endpoint"
+    );
+    Some(meta.token_endpoint)
 }
 
 // CC-001 / CC-002: the client-credentials grant obtains a real access token from
 // the provider using the default client_secret_basic authentication.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_client_credentials_live() {
+async fn client_credentials() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -153,7 +107,7 @@ async fn integration_client_credentials_live() {
 // proprietary body surface as Http carrying the 4xx status.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_client_credentials_invalid_client() {
+async fn client_credentials_invalid_client() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -202,7 +156,7 @@ async fn integration_client_credentials_invalid_client() {
 // error parsing independent of the end-to-end flow below.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_authorization_code_pkce_rejected() {
+async fn authorization_code_pkce_rejected() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -253,79 +207,9 @@ async fn integration_authorization_code_pkce_rejected() {
 // `perform_auth_code_flow`. Skips (cleanly) on provider profiles without
 // devInteractions.
 
-/// Minimal cookie store for the interaction flow: `name=value` pairs from
-/// `Set-Cookie`, deletions (empty value) removed. Path/domain attributes are
-/// ignored — everything in the flow shares the fixture origin.
-fn absorb_cookies(store: &mut std::collections::HashMap<String, String>, resp: &reqwest::Response) {
-    for sc in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-        let Ok(s) = sc.to_str() else { continue };
-        let Some(pair) = s.split(';').next() else {
-            continue;
-        };
-        let Some((name, value)) = pair.split_once('=') else {
-            continue;
-        };
-        if value.is_empty() {
-            store.remove(name.trim());
-        } else {
-            store.insert(name.trim().to_string(), value.to_string());
-        }
-    }
-}
-
-fn cookie_header(store: &std::collections::HashMap<String, String>) -> String {
-    store
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-/// Follows a redirect chain manually, stopping when a `Location` targets the
-/// (unserved) `redirect_uri`. Returns `(final_url, status, Some(callback_url))`
-/// when the callback is reached, `(final_url, status, None)` on a non-redirect
-/// page. Error statuses are returned, not raised — the caller decides whether
-/// a 4xx means "no headless UI" (skip) or a real failure.
-async fn follow_to_callback(
-    client: &reqwest::Client,
-    cookies: &mut std::collections::HashMap<String, String>,
-    mut request: reqwest::RequestBuilder,
-    redirect_uri: &str,
-) -> Result<(url::Url, reqwest::StatusCode, Option<String>), String> {
-    for _hop in 0..10 {
-        let req = request
-            .header(reqwest::header::COOKIE, cookie_header(cookies))
-            .build()
-            .map_err(|e| format!("build request: {e}"))?;
-        let current = req.url().clone();
-        let resp = client
-            .execute(req)
-            .await
-            .map_err(|e| format!("request {current} failed: {e}"))?;
-        absorb_cookies(cookies, &resp);
-        let status = resp.status();
-        if !status.is_redirection() {
-            return Ok((current, status, None));
-        }
-        let loc = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| format!("redirect without Location at {current}"))?;
-        let next = current
-            .join(loc)
-            .map_err(|e| format!("resolve redirect {loc:?}: {e}"))?;
-        if next.as_str().starts_with(redirect_uri) {
-            return Ok((current, status, Some(next.into())));
-        }
-        request = client.get(next);
-    }
-    Err("too many redirects (>10)".into())
-}
-
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_authorization_code_pkce_end_to_end() {
+async fn authorization_code_pkce_end_to_end() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;

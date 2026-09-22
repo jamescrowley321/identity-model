@@ -225,7 +225,7 @@ mod tests {
     // EXCH-003: the exported constants are the six RFC 8693 §3 URIs, verbatim
     // and in section order. The cross-language fixture
     // spec/test-fixtures/token-exchange/token-type-uris.json holds the same set;
-    // tests/token_exchange.rs asserts the two agree.
+    // tests/it/local/token_exchange.rs asserts the two agree.
     #[test]
     fn token_type_uris_are_the_six_rfc_8693_uris() {
         assert_eq!(

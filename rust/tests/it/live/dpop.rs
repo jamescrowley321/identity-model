@@ -14,7 +14,7 @@
 //! make infra-down
 //! ```
 //!
-//! ## Why these exist when `tests/dpop.rs` already covers DPOP-001..008
+//! ## Why these exist when `conformance::dpop` already covers DPOP-001..008
 //!
 //! The offline suite proves this crate is self-consistent: a proof it generates
 //! is one it verifies, against claims it chose. Every assertion there is
@@ -51,49 +51,15 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 use rs_identity_model::{
-    DiscoveryClient, DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, IdentityError,
-    JwksClient, ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
+    DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, IdentityError, JwksClient,
+    ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
 };
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::live::discover_or_skip;
 
 /// The discovery member whose presence means the provider has DPoP enabled.
 const DPOP_ALGS_METADATA: &str = "dpop_signing_alg_values_supported";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test.
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
 
 /// Everything a DPoP test needs from the live provider, resolved once.
 struct Live {
@@ -123,19 +89,7 @@ async fn live_or_skip() -> Option<Live> {
     // Case-insensitive: the client's own scheme gate lowercases, and a merely
     // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
     let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    let meta = match discovery.discover(&issuer).await {
-        Ok(meta) => meta,
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            return None;
-        }
-    };
+    let meta = discover_or_skip(&issuer, allow_http).await?;
 
     // The capability gate: a provider with DPoP switched off advertises nothing,
     // and every profile that does not support it skips here rather than failing.
@@ -258,7 +212,7 @@ fn cnf_jkt(claims: &rs_identity_model::Claims) -> String {
 // offline suite cannot catch.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_bound_client_credentials_live() {
+async fn dpop_bound_client_credentials() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -305,7 +259,7 @@ async fn integration_dpop_bound_client_credentials_live() {
 // true if the provider is reading the proof at all.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_mismatched_proof_is_rejected_live() {
+async fn dpop_mismatched_proof_is_rejected() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -353,14 +307,14 @@ fn assert_dpop_rejection(err: &IdentityError, what: &str) {
 // token round-trips through this crate's resource-server verifier, and the
 // thumbprint that verifier reports is the one the provider put in `cnf.jkt`.
 //
-// This is the join the offline suite cannot make. `tests/dpop.rs` verifies
+// This is the join the offline suite cannot make. `conformance::dpop` verifies
 // proofs over tokens it invented; here the token is one the provider minted and
 // bound, so a resource server following RFC 9449 §7 — compare the verified
 // proof's thumbprint against the token's `cnf.jkt`, then its `ath` against the
 // presented token — is exercised against real material end to end.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_ath_binds_a_live_token_live() {
+async fn dpop_ath_binds_a_live_token() {
     let Some(live) = live_or_skip().await else {
         return;
     };
