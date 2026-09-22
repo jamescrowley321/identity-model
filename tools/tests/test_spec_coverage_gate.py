@@ -557,6 +557,25 @@ def test_a_capability_cannot_leave_the_gate_by_going_all_native(
     assert "still listed in UNVECTORED" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("bad", [None, [], "tests::n1", 3])
+def test_a_non_map_native_block_is_a_named_failure_not_a_traceback(
+    gate, capsys, bad
+) -> None:
+    """`.get("native", {})` defaults only when the key is absent.
+
+    An explicit `"native": null` reached `native.get(...)` as None and raised
+    AttributeError, aborting the gate — so one malformed report would hide
+    every other language's real coverage gap behind a traceback.
+    """
+    _write_native_only(gate, "dpop", ["N-1"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native=bad)
+
+    assert gate.run() == GATE_FAILED
+    assert "'native' is not a map" in capsys.readouterr().out
+
+
 def test_the_real_spec_tree_has_a_runner_for_every_gated_capability() -> None:
     """Guards the live config, not a fixture: RUNNERS must cover spec/vectors."""
     inventory, _ = spec_coverage_gate.spec_inventory()

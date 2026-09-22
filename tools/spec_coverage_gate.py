@@ -371,7 +371,20 @@ def check_reports(report_dir: Path) -> int:
             continue
 
         executed = set(report.get("executed", []))
+        # `report.get("native", {})` defaults only when the key is ABSENT. An
+        # explicit `"native": null` — or a list, or a string — passes the
+        # default by and reaches `native.get(...)` below as a non-mapping,
+        # raising AttributeError and aborting the whole check with a traceback,
+        # hiding every other language's real gap behind it. Same treatment as
+        # the malformed `executed_vectors` guard below: name it as this
+        # report's failure and carry on to the next.
         native = report.get("native", {})
+        if not isinstance(native, dict):
+            failures.append(
+                f"({language}, {capability}): report's 'native' is not a map of "
+                f"case id to native-test anchor"
+            )
+            continue
         # Per-case vector counts. A runner that reports only case ids cannot
         # prove it ran every vector in a case, so its absence is a gate failure
         # rather than something to infer from `executed`.
