@@ -156,9 +156,13 @@ def get_retry_config() -> tuple[int, float]:
         )
         base_delay = DEFAULT_RETRY_BASE_DELAY
     else:
-        # This bounds the base. calculate_delay() bounds the product, which is
-        # what actually reaches sleep().
-        base_delay = min(raw_delay, MAX_RETRY_DELAY_SECONDS)
+        # Deliberately no upper bound: http.retry.base_delay is documented as
+        # ">= 0" with no ceiling in spec/config.md and carries no `hi` in the
+        # registry, so clamping here would make HTTP_RETRY_BASE_DELAY=300 read
+        # as 300.0 through Config.from_env() and 120.0 at the request path --
+        # the same split that RETRY_ATTEMPTS_CEILING was removed to avoid.
+        # calculate_delay() bounds the product, which is what reaches sleep().
+        base_delay = raw_delay
 
     return max_retries, base_delay
 
@@ -250,7 +254,21 @@ def calculate_delay(
         float: Delay in seconds, never above the effective ceiling
     """
     ceiling = get_max_retry_delay() if max_delay is None else max_delay
-    return min(base_delay * (2**attempt), ceiling)
+    # Floor the base: a negative base_delay argument produced a negative delay
+    # that reached time.sleep() and raised ValueError from inside the error
+    # handler, masking the network error it was retrying.
+    base = max(0.0, base_delay)
+    if base == 0 or ceiling <= base:
+        return min(base, ceiling)
+
+    # Stop doubling once the ceiling is reached. HTTP_RETRY_MAX_ATTEMPTS carries
+    # no ceiling by design, and 2**attempt stops converting to float past ~1024,
+    # so a large count raised OverflowError out of the retry decorator instead of
+    # the httpx.RequestError that callers catch. The exponent that first reaches
+    # the ceiling is derived from the ceiling and the base rather than picked:
+    # every attempt past it returns the ceiling anyway.
+    saturating_exponent = math.ceil(math.log2(ceiling / base))
+    return min(base * (2 ** min(attempt, saturating_exponent)), ceiling)
 
 
 def parse_retry_after(value: str | None, now: float | None = None) -> float | None:

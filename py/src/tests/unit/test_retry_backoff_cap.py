@@ -11,14 +11,23 @@ The ceiling is a default, not a hard limit: a deployment that deliberately wants
 longer waits raises ``HTTP_RETRY_MAX_DELAY`` and gets them.
 """
 
+import logging
+import os
+from unittest import mock
+
+import httpx
 import pytest
 
+from py_identity_model.aio.http_client import retry_with_backoff_async
 from py_identity_model.core.http_utils import (
+    _WARNED,
     DEFAULT_RETRY_BASE_DELAY,
     MAX_RETRY_DELAY_SECONDS,
     calculate_delay,
     get_max_retry_delay,
+    get_timeout,
 )
+from py_identity_model.sync.http_client import retry_with_backoff
 
 
 # 2**9 * 1.0 == 512s uncapped: the attempt index a retry-hardened deployment
@@ -26,6 +35,9 @@ from py_identity_model.core.http_utils import (
 LATE_ATTEMPT = 9
 EARLY_ATTEMPT = 3
 EXPECTED_EARLY_DELAY = 8.0
+HTTP_OK = 200
+URL = "https://issuer.example.com/.well-known/openid-configuration"
+SINGLE_ATTEMPT = 1
 RAISED_CEILING = 600.0
 UNCLAMPED_LATE_DELAY = 512.0
 EXPLICIT_CEILING = 5.0
@@ -105,3 +117,85 @@ class TestCeilingIsADefaultNotALimit:
         monkeypatch.setenv("HTTP_RETRY_MAX_DELAY", raw)
 
         assert get_max_retry_delay() == MAX_RETRY_DELAY_SECONDS
+
+
+class TestArgumentPathIsGuardedToo:
+    """The decorator takes these values directly, bypassing the env bounds."""
+
+    def test_negative_max_retries_argument_still_issues_the_request(self):
+        """Test that retry_with_backoff(max_retries=-1) does not cancel the call."""
+        attempts = 0
+        expected = httpx.Response(HTTP_OK, request=httpx.Request("GET", URL))
+
+        @retry_with_backoff(max_retries=-1)
+        def request():
+            nonlocal attempts
+            attempts += 1
+            return expected
+
+        # get_retry_config clamps the env path, but the decorator argument
+        # reaches range(retries + 1) directly -- the guard there is what this
+        # exercises, and deleting it leaves the env tests green.
+        assert request() is expected
+        assert attempts == SINGLE_ATTEMPT
+
+    async def test_negative_max_retries_argument_on_the_async_twin(self):
+        """Test that the async decorator guards the same argument."""
+        attempts = 0
+        expected = httpx.Response(HTTP_OK, request=httpx.Request("GET", URL))
+
+        @retry_with_backoff_async(max_retries=-1)
+        async def request():
+            nonlocal attempts
+            attempts += 1
+            return expected
+
+        assert await request() is expected
+        assert attempts == SINGLE_ATTEMPT
+
+    def test_negative_base_delay_argument_never_reaches_sleep(self):
+        """Test that a negative base_delay cannot raise out of time.sleep()."""
+        # min() alone bounded the top; a negative base produced a negative delay
+        # that raised ValueError from inside the RequestError handler, masking
+        # the network error being retried.
+        assert calculate_delay(-1.0, EARLY_ATTEMPT) >= 0.0
+
+    def test_a_huge_attempt_count_does_not_overflow(self):
+        """Test that 2**attempt cannot raise OverflowError out of the decorator."""
+        # HTTP_RETRY_MAX_ATTEMPTS has no ceiling by design, so attempt can reach
+        # values where 2**attempt stops converting to float.
+        assert calculate_delay(DEFAULT_RETRY_BASE_DELAY, 4096) == (
+            MAX_RETRY_DELAY_SECONDS
+        )
+
+
+class TestMisconfigurationIsVisible:
+    """A silent fallback is the failure mode these warnings exist to prevent."""
+
+    def test_invalid_value_warns_naming_the_variable(self, caplog):
+        """Test that an unparseable value logs a warning naming the variable."""
+        _WARNED.clear()
+        with (
+            caplog.at_level(logging.WARNING),
+            mock.patch.dict(os.environ, {"HTTP_TIMEOUT": "abc"}, clear=True),
+        ):
+            get_timeout()
+
+        assert "HTTP_TIMEOUT" in caplog.text
+
+    def test_the_warning_fires_only_once(self, caplog):
+        """Test that a per-request getter does not warn on every call."""
+        _WARNED.clear()
+        with (
+            caplog.at_level(logging.WARNING),
+            mock.patch.dict(os.environ, {"HTTP_TIMEOUT": "abc"}, clear=True),
+        ):
+            get_timeout()
+            first = len(caplog.records)
+            get_timeout()
+            get_timeout()
+
+        # These run on every HTTP request; warning per call would bury the line
+        # that explains the misconfiguration.
+        assert first == 1
+        assert len(caplog.records) == first

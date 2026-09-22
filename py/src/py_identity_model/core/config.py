@@ -29,6 +29,8 @@ import os
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
+from .http_utils import MAX_RETRY_DELAY_SECONDS
+
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -185,7 +187,8 @@ _REGISTRY: tuple[_KeySpec, ...] = (
         "http_retry_max_delay",
         ("HTTP_RETRY_MAX_DELAY",),
         _Kind.FLOAT,
-        120.0,
+        # One source of truth: http_utils owns the value, this row references it.
+        MAX_RETRY_DELAY_SECONDS,
         lo=0.0,
         lo_exclusive=True,
     ),
