@@ -168,6 +168,23 @@ def _names_match(left: str, right: str) -> bool:
     return canonicalize_name(left) == canonicalize_name(right)
 
 
+#: A shell expansion in a token: `$VAR`, `${VAR}`, `$(cmd)` or a backtick.
+#: Any of these means the value this file reads is NOT the value uvx installs.
+_SHELL_EXPANSION = re.compile(r"[$`]")
+
+
+def _is_shell_expanded(token: str) -> bool:
+    """Whether `token`'s real value is decided at run time, not written here.
+
+    Every assertion in this file reads the workflow as text. A requirement
+    written `--from "$PSR_REQ"` has no pin to read: the token does not parse as
+    a requirement, so the command was not recognised as a PSR invocation and
+    every check simply skipped it — while the other, literal invocations kept
+    the vacuity guard green. Unreadable must fail, not pass.
+    """
+    return bool(_SHELL_EXPANSION.search(token))
+
+
 def _mentions_psr(token: str) -> bool:
     """Whether `token` names python-semantic-release, however it is spelled.
 
@@ -514,6 +531,19 @@ class TestTheRequirementReader:
         """The accounting check is the backstop; it must not be case-defeatable."""
         assert _mentions_psr(f"{spelling}==10.6.2")
 
+    @pytest.mark.parametrize(
+        "token",
+        ["$PSR_REQ", "${PSR_REQ}", "$(cat pin.txt)", "`cat pin.txt`", "psr==$VER"],
+    )
+    def test_a_shell_expanded_requirement_is_detected(self, token):
+        assert _is_shell_expanded(token)
+
+    @pytest.mark.parametrize(
+        "token", ["python-semantic-release==10.6.2", "gitpython>=3.1.59", "psr"]
+    )
+    def test_a_literal_requirement_is_not_an_expansion(self, token):
+        assert not _is_shell_expanded(token)
+
     def test_a_different_distribution_is_not_a_psr_mention(self):
         assert not _mentions_psr("gitpython>=3.1.59")
         assert not _mentions_psr("semantic-release")
@@ -726,6 +756,27 @@ class TestTheWorkflowAgreesWithTheMakefile:
         assert not unmatched, (
             "these release.yml commands mention python-semantic-release but were "
             f"not recognised as uvx invocations, so nothing checks them: {unmatched}"
+        )
+
+    def test_no_uvx_requirement_is_decided_at_run_time(self, workflow):
+        """A requirement this file cannot read is a requirement it cannot gate.
+
+        Checked across every uvx command, not just the ones recognised as PSR:
+        a shell-expanded `--from` is exactly what stops a command being
+        recognised, so keying this on `psr_commands` would look past the case
+        it exists for.
+        """
+        expanded = [
+            f"{' '.join(command)[:120]} -> {token}"
+            for command in _workflow_commands(workflow)
+            if command and command[0] == "uvx"
+            for token in _uvx_requirement_tokens(command)
+            if _is_shell_expanded(token)
+        ]
+        assert not expanded, (
+            "these release.yml uvx requirements are shell expansions, so the "
+            "pin they resolve to is not written in the workflow and nothing "
+            f"here can check it. Write the requirement literally: {expanded}"
         )
 
     def test_every_psr_pin_matches_the_makefile(self, psr_commands, psr_pin):
