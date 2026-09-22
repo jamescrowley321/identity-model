@@ -2,6 +2,89 @@
 
 <!-- version list -->
 
+## v4.0.1 (2026-09-22)
+
+### Bug Fixes
+
+- **ci**: Gate the @claude workflow on the acting user and stop re-triggers stacking
+  ([#739](https://github.com/jamescrowley321/identity-model/pull/739),
+  [`a3c98d2`](https://github.com/jamescrowley321/identity-model/commit/a3c98d2d72062af7d866f7e286212c8997450310))
+
+### Chores
+
+- Sync uv.lock with 4.0.0
+  ([`b9bc8ed`](https://github.com/jamescrowley321/identity-model/commit/b9bc8edb0bc954ef1b9d0b8f83856b838115973b))
+
+- **deps)(deps**: Update idna requirement
+  ([#740](https://github.com/jamescrowley321/identity-model/pull/740),
+  [`411a056`](https://github.com/jamescrowley321/identity-model/commit/411a056149e3f1a07f2f5817f81e7d5762730369))
+
+### Continuous Integration
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#742](https://github.com/jamescrowley321/identity-model/pull/742),
+  [`a17d3d4`](https://github.com/jamescrowley321/identity-model/commit/a17d3d4c800ac18056ddbc2ad65693d2621c7423))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#741](https://github.com/jamescrowley321/identity-model/pull/741),
+  [`0a8b09d`](https://github.com/jamescrowley321/identity-model/commit/0a8b09d9719a3920b241d549753ccdc5171bb256))
+
+
+## v4.0.0 (2026-09-20)
+
+### Bug Fixes
+
+- **py**: Correct the TLS-trust docs and the opt-in shim's guard
+  ([#731](https://github.com/jamescrowley321/identity-model/pull/731),
+  [`1096913`](https://github.com/jamescrowley321/identity-model/commit/1096913248e4526925d0f72cd44b44a3231baf17))
+
+- **py**: Remove ensure_ssl_compatibility()
+  ([#731](https://github.com/jamescrowley321/identity-model/pull/731),
+  [`1096913`](https://github.com/jamescrowley321/identity-model/commit/1096913248e4526925d0f72cd44b44a3231baf17))
+
+- **py**: Stop mutating the process environment at import
+  ([#731](https://github.com/jamescrowley321/identity-model/pull/731),
+  [`1096913`](https://github.com/jamescrowley321/identity-model/commit/1096913248e4526925d0f72cd44b44a3231baf17))
+
+### Chores
+
+- Sync uv.lock with 3.18.2
+  ([`421f5ca`](https://github.com/jamescrowley321/identity-model/commit/421f5ca604242301f367b857050c43e9293b8cec))
+
+- **deps)(deps**: Update uvicorn requirement
+  ([#724](https://github.com/jamescrowley321/identity-model/pull/724),
+  [`4cabe3c`](https://github.com/jamescrowley321/identity-model/commit/4cabe3c7c14250eaed53716e14a6f71b5ce39cf0))
+
+### Continuous Integration
+
+- Restore the @claude reviewer with a read-only Bash allowlist
+  ([#723](https://github.com/jamescrowley321/identity-model/pull/723),
+  [`95d6cb6`](https://github.com/jamescrowley321/identity-model/commit/95d6cb681997a3db8881999f7265903c19f19515))
+
+- Scope the review workflow's tool grant and stop persisting the job token
+  ([`9bd44c4`](https://github.com/jamescrowley321/identity-model/commit/9bd44c46de06d49a5ef601652c14c91dd7aeac16))
+
+- **claude**: Give the review skill the Bash it declares
+  ([#679](https://github.com/jamescrowley321/identity-model/pull/679),
+  [`1ba9dbd`](https://github.com/jamescrowley321/identity-model/commit/1ba9dbdd16091742d3f0b5feaf223ab4044dbd47))
+
+- **claude**: Review pull requests on open, not only on @claude
+  ([#676](https://github.com/jamescrowley321/identity-model/pull/676),
+  [`5d54ee9`](https://github.com/jamescrowley321/identity-model/commit/5d54ee9edef056b5f07ebc36fc4e85b7b587f366))
+
+- **deps**: Bump anyio from 4.13.0 to 4.14.2 in /py
+  ([#726](https://github.com/jamescrowley321/identity-model/pull/726),
+  [`eb4e097`](https://github.com/jamescrowley321/identity-model/commit/eb4e09793913263dca353785b7477146756b5b11))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#725](https://github.com/jamescrowley321/identity-model/pull/725),
+  [`409676f`](https://github.com/jamescrowley321/identity-model/commit/409676f92198fefde7a4aff3d881f804d154e9ad))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#720](https://github.com/jamescrowley321/identity-model/pull/720),
+  [`156a7a7`](https://github.com/jamescrowley321/identity-model/commit/156a7a72ad17d25002f39c608282b3c44cf39c8c))
+
+
 ## v3.18.2 (2026-09-16)
 
 ### Bug Fixes

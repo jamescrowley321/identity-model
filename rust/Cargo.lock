@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "rs-identity-model"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",

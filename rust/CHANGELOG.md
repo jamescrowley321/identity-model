@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v0.6.1 (2026-09-20)
+
+### Bug Fixes
+
+- **rust**: Close the redirect bypass and two disclosure paths (red-team round)
+  ([#678](https://github.com/jamescrowley321/identity-model/pull/678),
+  [`be24294`](https://github.com/jamescrowley321/identity-model/commit/be24294b9ea4ab0fd98b4ff07e92417386fd047f))
+
+- **rust**: Close three revocation fail-open paths found by blind peer review
+  ([#678](https://github.com/jamescrowley321/identity-model/pull/678),
+  [`be24294`](https://github.com/jamescrowley321/identity-model/commit/be24294b9ea4ab0fd98b4ff07e92417386fd047f))
+
+### Testing
+
+- **rust**: Live integration coverage for token revocation (RFC 7009)
+  ([#678](https://github.com/jamescrowley321/identity-model/pull/678),
+  [`be24294`](https://github.com/jamescrowley321/identity-model/commit/be24294b9ea4ab0fd98b4ff07e92417386fd047f))
+
+- **rust**: Live integration coverage for token revocation (RFC 9449 → RFC 7009)
+  ([#678](https://github.com/jamescrowley321/identity-model/pull/678),
+  [`be24294`](https://github.com/jamescrowley321/identity-model/commit/be24294b9ea4ab0fd98b4ff07e92417386fd047f))
+
+
 ## v0.6.0 (2026-09-17)
 
 ### Bug Fixes
