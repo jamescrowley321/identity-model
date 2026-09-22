@@ -12,6 +12,17 @@ own green check, and the aggregate check still passes. It simply stops being
 able to block a merge. This script makes that drift a CI failure instead, so a
 job added without wiring cannot silently become optional.
 
+What this CANNOT prove: that the job list is the right one. It reads the same
+ci.yml the pull request is editing, so deleting a job from `needs:`, `RESULTS`
+and `SKIP_ALLOWED` together leaves all three agreeing about a smaller matrix
+and this script content. A check cannot audit its own baseline.
+
+What stands behind it is branch protection, which names its required contexts
+outside the repository, where a pull request cannot reach them. That is the
+layer to add a job to when it must be impossible to drop -- not this file. Read
+a pass here as "every job this workflow declares is wired into the gate", never
+as "every job that ought to exist does".
+
 Exits non-zero with a specific message naming the offending jobs.
 """
 
