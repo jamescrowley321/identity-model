@@ -85,6 +85,17 @@ NON_CORE = {
     "conformance": "the OIDF certification harness — ships nothing",
     "tools": "the repo gates and release machinery — ships nothing",
     "ci": "the GitHub Actions workflows — ship nothing",
+    "claude": "the @claude reviewer workflow — ships nothing",
+    "release": "the release machinery itself — ships nothing",
+    "deps": "dependency bumps to repo tooling — ship nothing",
+    "docs": "the mkdocs tree, built from main — ships nothing in a wheel",
+    "hooks": "the pre-commit hooks — ship nothing",
+    "matrix": "the CI matrix — ships nothing",
+    "harness": "the test harness — ships nothing",
+    "test": "tests — ship nothing",
+    "tests": "tests — ship nothing",
+    "integration": "integration tests — ship nothing",
+    "keycloak": "a test fixture provider — ships nothing",
 }
 
 
@@ -99,6 +110,32 @@ def test_a_non_core_scope_never_bumps_the_core_library(core, repo, scope, kind) 
     assert not _kept(core, repo, f"{kind}({scope}): something in {NON_CORE[scope]}"), (
         f"{kind}({scope}) would cut a py-identity-model release"
     )
+
+
+@pytest.mark.parametrize("kind", ["feat", "fix", "perf"])
+@pytest.mark.parametrize("scope", ["CI", "Ci", "cI", "ReLeAsE", "TOOLS"])
+def test_a_non_core_scope_is_matched_whatever_its_case(core, repo, scope, kind) -> None:
+    """`fix(CI):` is `fix(ci):`. The shift key must not be a release trigger.
+
+    python-semantic-release's ConventionalCommitParser does not normalise the
+    scope (checked against 10.6.2), so these arrive spelled as written.
+    """
+    assert not _kept(core, repo, f"{kind}({scope}): a workflow change"), (
+        f"{kind}({scope}) would cut a py-identity-model release"
+    )
+
+
+@pytest.mark.parametrize("scope", ["rust", "Rust", "RUST"])
+def test_a_sibling_pipeline_claims_its_scope_whatever_its_case(repo, scope) -> None:
+    """The mirror: a capitalised scope must still REACH its own pipeline."""
+    assert _kept(
+        release_parsers.RustCommitParser(), repo, f"feat({scope}): a crate change"
+    )
+
+
+def test_an_unscoped_commit_is_not_treated_as_non_core(core, repo) -> None:
+    """`(result.scope or "")` must not make an unscoped commit match anything."""
+    assert _kept(core, repo, "fix: a real library fix")
 
 
 def test_the_declared_non_core_scopes_are_exactly_the_ones_under_test() -> None:

@@ -71,29 +71,61 @@ PACKAGE_SCOPE = "fastapi"
 #: guard. Workflow changes should carry ``ci:`` as the conventional *type*,
 #: which no pipeline versions from; this entry is the backstop for when one
 #: carries ``ci`` as the scope instead.
+#: Every entry is lower-case; membership is tested against a case-folded scope.
+#: `fix(CI):` is the same change as `fix(ci):` and must route the same way —
+#: `ci` is an acronym people capitalise, and an exact-match frozenset let
+#: `fix(CI):` walk straight past this guard and cut a release.
 NON_CORE_SCOPES = frozenset(
     {
         PACKAGE_SCOPE,
+        # sibling release tracks
         "go",
         "rust",
         "node",
+        # shared, versioned by nobody
         "spec",
         "infra",
+        # repo-only trees that ship nothing in any wheel
         "conformance",
         "tools",
         "ci",
+        "claude",
+        "release",
+        "deps",
+        "docs",
+        "hooks",
+        "matrix",
+        "harness",
+        "test",
+        "tests",
+        "integration",
+        "keycloak",
     }
 )
 
 
 def _is_scope_commit(result: ParseResult, scope: str) -> bool:
-    """Whether a parse result is scoped to ``scope``."""
-    return isinstance(result, ParsedCommit) and result.scope == scope
+    """Whether a parse result is scoped to ``scope``.
+
+    Case-folded for the same reason as :func:`_is_non_core_commit`: a
+    `feat(Rust):` must version the Rust crate, not be dropped as unrecognised.
+    """
+    if not isinstance(result, ParsedCommit):
+        return False
+    return (result.scope or "").casefold() == scope.casefold()
 
 
 def _is_non_core_commit(result: ParseResult) -> bool:
-    """Whether a parse result is scoped to a non-core release track."""
-    return isinstance(result, ParsedCommit) and result.scope in NON_CORE_SCOPES
+    """Whether a parse result is scoped to a non-core release track.
+
+    Case-folded: the upstream ConventionalCommitParser does not normalise the
+    scope (verified against 10.6.2), so `fix(CI):` and `fix(Ci):` reach here
+    spelled as written. Matching them exactly would leave the guard defeatable
+    by the shift key.
+    """
+    if not isinstance(result, ParsedCommit):
+        return False
+    return (result.scope or "").casefold() in NON_CORE_SCOPES
 
 
 class _ScopeRoutedParser(ConventionalCommitParser):

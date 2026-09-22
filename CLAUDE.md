@@ -305,11 +305,18 @@ This repo is a `uv` workspace. Besides the core `py-identity-model` library
     `.github/workflows/release-fastapi.yml`, which publishes to PyPI via
     trusted publishing.
   - **Commit convention:** scope every commit that belongs to a non-Python
-    release track. A custom scope-routed parser (`tools/release_parsers.py`)
-    drops commits scoped `(fastapi)`, `(go)`, `(rust)`, `(node)`, `(spec)`, or
-    `(infra)` from the core `py-identity-model` pipeline (and the fastapi
-    pipeline keeps only `(fastapi)`), so e.g. `feat(go)` or `feat(fastapi)`
-    never bumps the Python library. Python releases use the `py-v{version}`
+    release track, and every commit that ships nothing at all. A custom
+    scope-routed parser (`tools/release_parsers.py`) drops commits carrying any
+    scope in its `NON_CORE_SCOPES` from the core `py-identity-model` pipeline
+    (and the fastapi pipeline keeps only `(fastapi)`), so e.g. `feat(go)` or
+    `feat(fastapi)` never bumps the Python library. That set is the single
+    authority and it is matched case-insensitively — read it there rather than
+    copying it here, which is how this list came to be three scopes short while
+    `fix(ci):` cut 4.0.1. Sibling tracks: `(fastapi)` `(go)` `(rust)` `(node)`.
+    Shared: `(spec)` `(infra)`. Ships-nothing: `(conformance)` `(tools)` `(ci)`
+    `(claude)` `(release)` `(deps)` `(docs)` `(hooks)` `(matrix)` `(harness)`
+    `(test)` `(tests)` `(integration)` `(keycloak)`. Workflow changes should
+    use `ci:` as the TYPE; no pipeline versions from it. Python releases use the `py-v{version}`
     tag format; Go/Rust use `go/vX.Y.Z` / `rust-vX.Y.Z`. The routing is
     scope-based, not path-based: an **unscoped** `feat:` touching only `go/`
     would still bump the core, so the scope is load-bearing. The release

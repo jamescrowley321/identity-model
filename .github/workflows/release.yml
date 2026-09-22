@@ -6,8 +6,10 @@ on:
       - main
     # The commit-parser scope routing (tools/release_parsers.py) is what keeps
     # cross-track commits from bumping py-identity-model — the core `release`
-    # job's parser drops every (fastapi)/(go)/(rust)/(node)/(spec)/(infra)
-    # commit. go/** and rust/** are deliberately NOT ignored here: their own
+    # job's parser drops every commit whose scope is in NON_CORE_SCOPES there.
+    # Read that set in that file: this comment named six scopes while the set
+    # held eight, and `.github/**` is not in paths-ignore below, so a
+    # `fix(ci):` workflow commit cut py-identity-model 4.0.1 to PyPI. go/** and rust/** are deliberately NOT ignored here: their own
     # version jobs (release-go-version / release-rust-version) live in this
     # workflow and MUST run on native-only pushes to auto-tag their releases.
     # Pushes touching ONLY the shared spec/infra or the inert node scaffold have
