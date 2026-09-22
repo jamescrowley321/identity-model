@@ -84,6 +84,7 @@ NON_CORE = {
     "infra": "the shared IdP fixtures",
     "conformance": "the OIDF certification harness — ships nothing",
     "tools": "the repo gates and release machinery — ships nothing",
+    "ci": "the GitHub Actions workflows — ship nothing",
 }
 
 
@@ -103,6 +104,26 @@ def test_a_non_core_scope_never_bumps_the_core_library(core, repo, scope, kind) 
 def test_the_declared_non_core_scopes_are_exactly_the_ones_under_test() -> None:
     """A scope added to the constant without a case here fails loudly."""
     assert release_parsers.NON_CORE_SCOPES == frozenset(NON_CORE)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # The two subjects that actually mis-released, verbatim. 3.18.1 came
+        # from a pair of fix(conformance): commits about a token-rotation
+        # script; 4.0.1 came from this fix(ci): commit, a GitHub Actions
+        # trigger condition published to PyPI as a library bug fix.
+        "fix(conformance): stop the rotation script disclosing the token",
+        "fix(ci): gate the @claude workflow on the acting user and stop "
+        "re-triggers stacking (#739)",
+    ],
+)
+def test_the_commits_that_mis_released_no_longer_bump_the_core(
+    core, repo, message
+) -> None:
+    assert not _kept(core, repo, message), (
+        f"{message!r} would cut another py-identity-model release"
+    )
 
 
 @pytest.mark.parametrize(

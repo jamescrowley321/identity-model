@@ -31,7 +31,7 @@ pipeline only sees its own history:
 The split is scope-based, not path-based: an unscoped ``fix:`` that touches
 only ``go/`` still bumps the core. Scoping cross-track commits (``(fastapi)``,
 ``(go)``, ``(rust)``, ``(spec)``, ``(infra)``, ``(node)``, ``(conformance)``,
-``(tools)``) is therefore
+``(tools)``, ``(ci)``) is therefore
 load-bearing — see CLAUDE.md "Workspace Packages". The release workflow also
 path-guards on those directories as a second line of defence.
 """
@@ -60,8 +60,29 @@ PACKAGE_SCOPE = "fastapi"
 #: script disclosing the token" under Bug Fixes — in the published changelog
 #: of an auth library, where it looks like a token-disclosure fix in the
 #: library itself. Nothing in either commit touches shipped code.
+#:
+#: ``ci`` was missing too, and it repeated the incident verbatim:
+#: ``fix(ci): gate the @claude workflow on the acting user`` (#739) cut
+#: py-identity-model 4.0.1, whose changelog reads "Bug Fixes — ci: Gate the
+#: @claude workflow…" — a GitHub Actions trigger condition published to PyPI
+#: as a bug fix in an auth library. ``.github/**`` is deliberately absent from
+#: the release workflow's ``paths-ignore`` (the Go and Rust versioners must run
+#: on workflow-only pushes), so for a workflow change the scope is the ONLY
+#: guard. Workflow changes should carry ``ci:`` as the conventional *type*,
+#: which no pipeline versions from; this entry is the backstop for when one
+#: carries ``ci`` as the scope instead.
 NON_CORE_SCOPES = frozenset(
-    {PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra", "conformance", "tools"}
+    {
+        PACKAGE_SCOPE,
+        "go",
+        "rust",
+        "node",
+        "spec",
+        "infra",
+        "conformance",
+        "tools",
+        "ci",
+    }
 )
 
 
