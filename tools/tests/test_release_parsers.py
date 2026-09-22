@@ -84,6 +84,17 @@ NON_CORE = {
     "infra": "the shared IdP fixtures",
     "conformance": "the OIDF certification harness — ships nothing",
     "tools": "the repo gates and release machinery — ships nothing",
+    "ci": "the GitHub Actions workflows — ship nothing",
+    "claude": "the @claude reviewer workflow — ships nothing",
+    "release": "the release machinery itself — ships nothing",
+    "docs": "the mkdocs tree, built from main — ships nothing in a wheel",
+    "hooks": "the pre-commit hooks — ship nothing",
+    "matrix": "the CI matrix — ships nothing",
+    "harness": "the test harness — ships nothing",
+    "test": "tests — ship nothing",
+    "tests": "tests — ship nothing",
+    "integration": "integration tests — ship nothing",
+    "keycloak": "a test fixture provider — ships nothing",
 }
 
 
@@ -100,9 +111,74 @@ def test_a_non_core_scope_never_bumps_the_core_library(core, repo, scope, kind) 
     )
 
 
+@pytest.mark.parametrize("kind", ["feat", "fix", "perf"])
+@pytest.mark.parametrize("scope", ["CI", "Ci", "cI", "ReLeAsE", "TOOLS"])
+def test_a_non_core_scope_is_matched_whatever_its_case(core, repo, scope, kind) -> None:
+    """`fix(CI):` is `fix(ci):`. The shift key must not be a release trigger.
+
+    python-semantic-release's ConventionalCommitParser does not normalise the
+    scope (checked against 10.6.2), so these arrive spelled as written.
+    """
+    assert not _kept(core, repo, f"{kind}({scope}): a workflow change"), (
+        f"{kind}({scope}) would cut a py-identity-model release"
+    )
+
+
+@pytest.mark.parametrize("scope", ["rust", "Rust", "RUST"])
+def test_a_sibling_pipeline_claims_its_scope_whatever_its_case(repo, scope) -> None:
+    """The mirror: a capitalised scope must still REACH its own pipeline."""
+    assert _kept(
+        release_parsers.RustCommitParser(), repo, f"feat({scope}): a crate change"
+    )
+
+
+def test_an_unscoped_commit_is_not_treated_as_non_core(core, repo) -> None:
+    """`(result.scope or "")` must not make an unscoped commit match anything."""
+    assert _kept(core, repo, "fix: a real library fix")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Verbatim: this commit moved the cryptography floor in
+        # py/pyproject.toml and cut py-v3.8.1. Downstream pins that floor to
+        # get the patch. Adding `deps` to NON_CORE_SCOPES would drop it, so
+        # the CVE fix would sit on main, changelogged, and never reach PyPI.
+        "fix(deps): require cryptography>=50 to patch PYSEC-2026-3552/3553/3554",
+        "feat(deps): raise the minimum httpx for the redirect fix",
+    ],
+)
+def test_a_dependency_floor_fix_still_bumps_the_core(core, repo, message) -> None:
+    """A `fix(deps):` floor bump ships in the wheel and MUST cut a release."""
+    assert _kept(core, repo, message), (
+        f"{message!r} was dropped — a shipped dependency floor would never reach PyPI"
+    )
+    assert "deps" not in release_parsers.NON_CORE_SCOPES
+
+
 def test_the_declared_non_core_scopes_are_exactly_the_ones_under_test() -> None:
     """A scope added to the constant without a case here fails loudly."""
     assert release_parsers.NON_CORE_SCOPES == frozenset(NON_CORE)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # The two subjects that actually mis-released, verbatim. 3.18.1 came
+        # from a pair of fix(conformance): commits about a token-rotation
+        # script; 4.0.1 came from this fix(ci): commit, a GitHub Actions
+        # trigger condition published to PyPI as a library bug fix.
+        "fix(conformance): stop the rotation script disclosing the token",
+        "fix(ci): gate the @claude workflow on the acting user and stop "
+        "re-triggers stacking (#739)",
+    ],
+)
+def test_the_commits_that_mis_released_no_longer_bump_the_core(
+    core, repo, message
+) -> None:
+    assert not _kept(core, repo, message), (
+        f"{message!r} would cut another py-identity-model release"
+    )
 
 
 @pytest.mark.parametrize(

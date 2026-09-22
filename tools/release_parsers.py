@@ -31,7 +31,7 @@ pipeline only sees its own history:
 The split is scope-based, not path-based: an unscoped ``fix:`` that touches
 only ``go/`` still bumps the core. Scoping cross-track commits (``(fastapi)``,
 ``(go)``, ``(rust)``, ``(spec)``, ``(infra)``, ``(node)``, ``(conformance)``,
-``(tools)``) is therefore
+``(tools)``, ``(ci)``) is therefore
 load-bearing — see CLAUDE.md "Workspace Packages". The release workflow also
 path-guards on those directories as a second line of defence.
 """
@@ -60,19 +60,77 @@ PACKAGE_SCOPE = "fastapi"
 #: script disclosing the token" under Bug Fixes — in the published changelog
 #: of an auth library, where it looks like a token-disclosure fix in the
 #: library itself. Nothing in either commit touches shipped code.
+#:
+#: ``ci`` was missing too, and it repeated the incident verbatim:
+#: ``fix(ci): gate the @claude workflow on the acting user`` (#739) cut
+#: py-identity-model 4.0.1, whose changelog reads "Bug Fixes — ci: Gate the
+#: @claude workflow…" — a GitHub Actions trigger condition published to PyPI
+#: as a bug fix in an auth library. ``.github/**`` is deliberately absent from
+#: the release workflow's ``paths-ignore`` (the Go and Rust versioners must run
+#: on workflow-only pushes), so for a workflow change the scope is the ONLY
+#: guard. Workflow changes should carry ``ci:`` as the conventional *type*,
+#: which no pipeline versions from; this entry is the backstop for when one
+#: carries ``ci`` as the scope instead.
+#: `deps` is deliberately ABSENT: `fix(deps): require cryptography>=50 to
+#: patch PYSEC-2026-3552/3553/3554` moved the floor in `py/pyproject.toml`
+#: and cut py-v3.8.1 — a shipped security fix downstreams pin against.
+#: Dependabot noise is `chore(deps)`, which no pipeline versions from
+#: anyway, so listing `deps` here buys nothing and silently withholds the
+#: next CVE floor from PyPI while the changelog claims it shipped.
+#: Every entry is lower-case; membership is tested against a case-folded scope.
+#: `fix(CI):` is the same change as `fix(ci):` and must route the same way —
+#: `ci` is an acronym people capitalise, and an exact-match frozenset let
+#: `fix(CI):` walk straight past this guard and cut a release.
 NON_CORE_SCOPES = frozenset(
-    {PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra", "conformance", "tools"}
+    {
+        PACKAGE_SCOPE,
+        # sibling release tracks
+        "go",
+        "rust",
+        "node",
+        # shared, versioned by nobody
+        "spec",
+        "infra",
+        # repo-only trees that ship nothing in any wheel
+        "conformance",
+        "tools",
+        "ci",
+        "claude",
+        "release",
+        "docs",
+        "hooks",
+        "matrix",
+        "harness",
+        "test",
+        "tests",
+        "integration",
+        "keycloak",
+    }
 )
 
 
 def _is_scope_commit(result: ParseResult, scope: str) -> bool:
-    """Whether a parse result is scoped to ``scope``."""
-    return isinstance(result, ParsedCommit) and result.scope == scope
+    """Whether a parse result is scoped to ``scope``.
+
+    Case-folded for the same reason as :func:`_is_non_core_commit`: a
+    `feat(Rust):` must version the Rust crate, not be dropped as unrecognised.
+    """
+    if not isinstance(result, ParsedCommit):
+        return False
+    return (result.scope or "").casefold() == scope.casefold()
 
 
 def _is_non_core_commit(result: ParseResult) -> bool:
-    """Whether a parse result is scoped to a non-core release track."""
-    return isinstance(result, ParsedCommit) and result.scope in NON_CORE_SCOPES
+    """Whether a parse result is scoped to a non-core release track.
+
+    Case-folded: the upstream ConventionalCommitParser does not normalise the
+    scope (verified against 10.6.2), so `fix(CI):` and `fix(Ci):` reach here
+    spelled as written. Matching them exactly would leave the guard defeatable
+    by the shift key.
+    """
+    if not isinstance(result, ParsedCommit):
+        return False
+    return (result.scope or "").casefold() in NON_CORE_SCOPES
 
 
 class _ScopeRoutedParser(ConventionalCommitParser):
