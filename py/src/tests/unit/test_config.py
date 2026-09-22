@@ -137,6 +137,7 @@ def test_cfg108_absent_optional_keys_take_defaults():
     assert _full(cfg) == {
         "http_timeout": 30.0,
         "http_retry_max_attempts": 3,
+        "http_retry_max_delay": 120.0,
         "http_retry_base_delay": 1.0,
         "jwks_max_size": 524288,
         "jwks_max_keys": 100,
