@@ -70,6 +70,10 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     report_dir.mkdir()
     monkeypatch.setattr(spec_coverage_gate, "SPEC_DIR", spec_dir)
     monkeypatch.setattr(spec_coverage_gate, "LANGUAGES", LANGUAGES)
+    # UNVECTORED describes the real spec/ tree, like OPTED_OUT. A synthetic tree
+    # must not be judged against it — the live constant is guarded separately by
+    # test_the_unvectored_list_matches_the_real_spec_tree.
+    monkeypatch.setattr(spec_coverage_gate, "UNVECTORED", {})
 
     class Gate:
         def __init__(self) -> None:
@@ -413,9 +417,168 @@ def test_no_capability_is_currently_opted_out_of_the_gate() -> None:
     )
 
 
+def test_the_unvectored_list_matches_the_real_spec_tree() -> None:
+    """Guards the live constant against the spec tree it describes.
+
+    UNVECTORED is a debt register, and a register that drifts is worse than
+    none: a capability could drop its vectors and be covered by a stale entry,
+    or gain them and stay exempt. Both directions are asserted against the real
+    spec/ so the list can only be wrong in a way this fails on.
+    """
+    inventory, unvectored = spec_coverage_gate.spec_inventory()
+    declared = set(spec_coverage_gate.UNVECTORED)
+
+    assert unvectored - declared - spec_coverage_gate.OPTED_OUT == set(), (
+        "capabilities carry no executable vectors and are named in neither "
+        f"UNVECTORED nor OPTED_OUT: {sorted(unvectored - declared)} — nothing "
+        "gates them and nothing says so"
+    )
+    assert declared & set(inventory) == set(), (
+        f"capabilities listed in UNVECTORED now carry executable vectors: "
+        f"{sorted(declared & set(inventory))} — remove the entry so the gate "
+        "enforces them"
+    )
+    assert declared - unvectored == set(), (
+        f"UNVECTORED names capabilities that are not in spec/: "
+        f"{sorted(declared - unvectored)}"
+    )
+
+
+def test_a_capability_cannot_leave_the_gate_by_dropping_its_vectors(
+    gate, capsys
+) -> None:
+    """The self-exemption the module's own docstring forbids.
+
+    A vector file that empties its `vectors` arrays used to disappear from the
+    inventory, and the no-runner check iterated that same emptied inventory --
+    so the gate printed GATE PASSED having inspected nothing. The capability
+    left enforcement by editing the data the gate reads, which is precisely
+    what moving the opt-out into this module was meant to make impossible.
+    """
+    # Two capabilities, as the real tree has: stripping one must not merely
+    # empty the inventory (which already fails closed) but be caught while
+    # another capability still reports coverage -- the live shape, where two of
+    # twelve carried vectors and the gate passed for all twelve.
+    gate.write_capability("validation", ["V-1", "V-2"])
+    gate.write_capability("id-token", ["I-1"])
+    gate.configure_runners(
+        [(lang, cap) for lang in LANGUAGES for cap in ("validation", "id-token")]
+    )
+    for lang in LANGUAGES:
+        gate.write_report(lang, "validation", ["V-1", "V-2"])
+        gate.write_report(lang, "id-token", ["I-1"])
+    assert gate.run() == GATE_PASSED
+
+    path = gate.spec_dir / "id-token.json"
+    capability = json.loads(path.read_text())
+    for case in capability["tests"]:
+        case.pop("vectors", None)
+    path.write_text(json.dumps(capability))
+
+    assert gate.run() == GATE_FAILED
+    assert "carries no executable `vectors`" in capsys.readouterr().out
+
+
+def _write_native_only(gate, name: str, case_ids: list[str]) -> None:
+    """A capability whose cases are ALL `execution: "native"` — no vectors."""
+    (gate.spec_dir / f"{name}.json").write_text(
+        json.dumps(
+            {
+                "capability": name,
+                "tests": [{"id": c, "execution": "native"} for c in case_ids],
+            }
+        )
+    )
+
+
+def test_a_native_only_capability_stays_in_the_gate(gate, capsys) -> None:
+    """It carries no `vectors`, but it is not unvectored.
+
+    Keyed on executable vectors alone, a capability whose cases are all
+    `execution: "native"` fell through to `unvectored` and its `native` set was
+    discarded, so its per-language anchors were never checked. It must instead
+    require runners like any other gated capability.
+    """
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([])
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "no runner" in out
+    # The message must not claim executable vectors it does not have.
+    assert "2 native cases" in out
+    assert "executable vectors" not in out
+
+
+def test_a_native_only_capability_fails_when_its_anchors_are_missing(
+    gate, capsys
+) -> None:
+    """The check that was being dropped, now reachable."""
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native={"N-1": "tests::n1"})
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "N-2): native case has no native-test anchor" in out
+
+
+def test_a_native_only_capability_passes_when_every_anchor_is_present(
+    gate, capsys
+) -> None:
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(
+            lang, "dpop", [], native={"N-1": "tests::n1", "N-2": "tests::n2"}
+        )
+
+    assert gate.run() == GATE_PASSED
+
+
+def test_a_capability_cannot_leave_the_gate_by_going_all_native(
+    gate, capsys, monkeypatch
+) -> None:
+    """The exemption route the failure message used to steer you into.
+
+    A native-only capability landed in `unvectored`, so the gate failed asking
+    for it to be named in UNVECTORED — and naming it there made the gate pass
+    while its native anchors went unchecked in every language, permanently.
+    Declaring it unvectored must now be rejected instead, because it IS gated.
+    """
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native={})
+
+    monkeypatch.setattr(spec_coverage_gate, "UNVECTORED", {"dpop": 2})
+    assert gate.run() == GATE_FAILED
+    assert "still listed in UNVECTORED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bad", [None, [], "tests::n1", 3])
+def test_a_non_map_native_block_is_a_named_failure_not_a_traceback(
+    gate, capsys, bad
+) -> None:
+    """`.get("native", {})` defaults only when the key is absent.
+
+    An explicit `"native": null` reached `native.get(...)` as None and raised
+    AttributeError, aborting the gate — so one malformed report would hide
+    every other language's real coverage gap behind a traceback.
+    """
+    _write_native_only(gate, "dpop", ["N-1"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native=bad)
+
+    assert gate.run() == GATE_FAILED
+    assert "'native' is not a map" in capsys.readouterr().out
+
+
 def test_the_real_spec_tree_has_a_runner_for_every_gated_capability() -> None:
     """Guards the live config, not a fixture: RUNNERS must cover spec/vectors."""
-    inventory = spec_coverage_gate.spec_inventory()
+    inventory, _ = spec_coverage_gate.spec_inventory()
     configured = {(lang, cap) for lang, cap, _, _ in spec_coverage_gate.RUNNERS}
     missing = [
         (lang, cap)
