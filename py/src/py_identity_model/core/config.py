@@ -29,6 +29,8 @@ import os
 from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
+from .http_utils import MAX_RETRY_DELAY_SECONDS
+
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -179,6 +181,16 @@ _REGISTRY: tuple[_KeySpec, ...] = (
         _Kind.INT,
         3,
         lo=0,
+    ),
+    _KeySpec(
+        "http.retry.max_delay",
+        "http_retry_max_delay",
+        ("HTTP_RETRY_MAX_DELAY",),
+        _Kind.FLOAT,
+        # One source of truth: http_utils owns the value, this row references it.
+        MAX_RETRY_DELAY_SECONDS,
+        lo=0.0,
+        lo_exclusive=True,
     ),
     _KeySpec(
         "http.retry.base_delay",
@@ -404,6 +416,7 @@ class Config:
     # HTTP transport
     http_timeout: float
     http_retry_max_attempts: int
+    http_retry_max_delay: float
     http_retry_base_delay: float
     # JWKS & discovery
     jwks_max_size: int

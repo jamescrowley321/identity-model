@@ -34,7 +34,7 @@
     {
       "id": "CFG-104",
       "title": "Invalid value fails closed, never silently defaults",
-      "given": "Strict-mode construction where a source yields a non-numeric http.timeout and an out-of-domain http.retry.max_attempts",
+      "given": "Strict-mode construction where a source yields a non-numeric http.timeout, an out-of-domain http.retry.max_attempts and a non-positive http.retry.max_delay",
       "when": "Config construction is attempted",
       "then": "No Config value is produced and a CFG-003 error names each invalid logical key; the registry default is not substituted",
       "fixture": "config/strict-invalid-value.json",
@@ -72,7 +72,7 @@
       "title": "Absent optional keys take registry defaults",
       "given": "Strict-mode construction with only the required client-group keys supplied",
       "when": "Config construction succeeds",
-      "then": "client.scope is 'openid profile email', client.audience equals client.id, client.post_login_redirect and client.post_logout_redirect are '/', client.excluded_paths is ['/docs','/openapi.json','/health'], http.timeout is 30.0",
+      "then": "client.scope is 'openid profile email', client.audience equals client.id, client.post_login_redirect and client.post_logout_redirect are '/', client.excluded_paths is ['/docs','/openapi.json','/health'], http.timeout is 30.0, http.retry.max_delay is 120.0",
       "fixture": "config/strict-defaults.json",
       "references": ["config.md §Key Registry"]
     },

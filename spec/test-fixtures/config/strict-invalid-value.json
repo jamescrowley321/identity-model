@@ -6,10 +6,17 @@
     {
       "name": "env",
       "type": "env",
-      "values": { "HTTP_TIMEOUT": "soon", "HTTP_RETRY_MAX_ATTEMPTS": "-2" }
+      "values": {
+        "HTTP_TIMEOUT": "soon",
+        "HTTP_RETRY_MAX_ATTEMPTS": "-2",
+        "HTTP_RETRY_MAX_DELAY": "0"
+      }
     }
   ],
   "expect": {
-    "error": { "code": "CFG-003", "keys": ["http.timeout", "http.retry.max_attempts"] }
+    "error": {
+      "code": "CFG-003",
+      "keys": ["http.timeout", "http.retry.max_attempts", "http.retry.max_delay"]
+    }
   }
 }

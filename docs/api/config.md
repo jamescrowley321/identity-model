@@ -62,6 +62,7 @@ takes the `EnvSource` prefix (default `OIDC_`).
 |---|---|---|---|
 | `http.timeout` | `HTTP_TIMEOUT` | float > 0 | `30.0` |
 | `http.retry.max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS` | int >= 0 | `3` |
+| `http.retry.max_delay` | `HTTP_RETRY_MAX_DELAY` | float > 0 | `120.0` |
 | `http.retry.base_delay` | `HTTP_RETRY_BASE_DELAY` | float >= 0 | `1.0` |
 | `jwks.max_size` | `MAX_JWKS_SIZE` | int >= 1 | `524288` |
 | `jwks.max_keys` | `MAX_JWKS_KEYS` | int >= 1 | `100` |
