@@ -20,8 +20,9 @@ gh pr view <N> --repo <owner>/<repo> --json comments \
   do not assume stale, and do not assume live. Reproduce before fixing or dismissing.
 - Record in the PR which findings were fixed and which were superseded by later commits.
 - If a lens is wrong, say so with the evidence rather than quietly complying.
-- **Do not self-resolve Policy & Provenance findings.** The AI provenance block goes in
-  the PR description; the named-human attestation is the maintainer's to give.
+- **Policy & Provenance findings are the maintainer's to close, not the authoring
+  agent's.** Put the AI provenance block in the PR description; the named-human
+  attestation is the maintainer's to give, not an agent's.
 
 ## Behaviour lives in four places
 
