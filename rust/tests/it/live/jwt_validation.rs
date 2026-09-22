@@ -22,7 +22,7 @@
 //!
 //! What it proves:
 //!
-//! * `integration_client_credentials_validate_and_tamper` (AC-9, JWT-001/009):
+//! * `client_credentials_validate_and_tamper` (AC-9, JWT-001/009):
 //!   acquires a real access token via the client-credentials grant (raw
 //!   `client_secret_basic` POST — the `TokenClient` builder lands in R4.5),
 //!   validates it end-to-end (discovery → JWKS → `validate_token_with_jwks`),
@@ -31,114 +31,26 @@
 //!   JWKS (see `infra/node-oidc-provider/provider.js`: the `urn:test:api`
 //!   resource sets `accessTokenFormat: "jwt"`), so happy-path validation
 //!   genuinely verifies against the live key set.
-//! * `integration_forced_refresh_against_live_jwks` (JWT-001/010): signs a token
+//! * `forced_refresh_against_live_jwks` (JWT-001/010): signs a token
 //!   with the shared fixture key whose `kid` the provider does not publish, so
 //!   key resolution must force one JWKS refresh and ultimately surface
 //!   [`IdentityError::KeyNotFound`], mirroring the Go reference
 //!   (`go/pkg/jwt/jwt_integration_test.go`).
 
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use rs_identity_model::{
-    DiscoveryClient, IdentityError, JwksClient, ProviderMetadata, ValidationOptions,
-};
-use serde_json::{Value, json};
+use jsonwebtoken::{Algorithm, Header};
+use rs_identity_model::{IdentityError, JwksClient, ValidationOptions};
+use serde_json::json;
 use std::time::Duration;
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-const FIXTURE_DER: &str = "../spec/test-fixtures/validation/signing-key.pkcs1.der";
-const FIXTURE_KID: &str = "test-key-1";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it
-/// panics. CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule, CONS-1.4 review).
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Discovers the live provider, skipping the test if it is unreachable.
-async fn discover_or_skip(issuer: &str, allow_http: bool) -> Option<ProviderMetadata> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => Some(meta),
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
-}
-
-/// Acquires a client-credentials access token via a raw `client_secret_basic`
-/// POST to the discovered `token_endpoint`. The full `TokenClient` builder is
-/// story R4.5; this keeps the JWT integration test self-contained.
-async fn client_credentials_token(
-    token_endpoint: &str,
-    client_id: &str,
-    client_secret: &str,
-) -> String {
-    let mut form = vec![("grant_type", "client_credentials".to_string())];
-    if let Some(scope) = env_nonempty("TEST_SCOPE") {
-        form.push(("scope", scope));
-    }
-    let resp = reqwest::Client::new()
-        .post(token_endpoint)
-        .basic_auth(client_id, Some(client_secret))
-        .form(&form)
-        .send()
-        .await
-        .unwrap_or_else(|e| panic!("client_credentials POST to {token_endpoint}: {e}"));
-    let status = resp.status();
-    let body: Value = resp
-        .json()
-        .await
-        .unwrap_or_else(|e| panic!("decode token response: {e}"));
-    assert!(
-        status.is_success(),
-        "token endpoint returned {status}: {body}"
-    );
-    body["access_token"]
-        .as_str()
-        .unwrap_or_else(|| panic!("token response has no access_token: {body}"))
-        .to_string()
-}
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::fixtures::{FIXTURE_KID, signing_key};
+use crate::common::live::{client_credentials_token, discover_or_skip};
 
 // AC-9 / JWT-001 / JWT-009: acquire a real client-credentials token, validate it
 // end-to-end against the live JWKS, then confirm a tampered copy is rejected.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_client_credentials_validate_and_tamper() {
+async fn client_credentials_validate_and_tamper() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -200,20 +112,12 @@ async fn integration_client_credentials_validate_and_tamper() {
     );
 }
 
-/// Builds an RS256 [`EncodingKey`] from the shared private-key fixture
-/// (`signing-key.pkcs1.der`, the PKCS#1 DER form of `signing-key.jwk.json`) so
-/// the signed token carries `kid=test-key-1` — a key the provider does not
-/// publish — without depending on the `rsa` crate (RUSTSEC-2023-0071).
-fn signing_key() -> EncodingKey {
-    EncodingKey::from_rsa_der(&std::fs::read(FIXTURE_DER).expect("read signing key DER"))
-}
-
 // JWT-001 / JWT-010: discover the live provider, fetch its real JWKS, then
 // validate a token whose kid the provider does not publish. Key resolution must
 // force one JWKS refresh and surface KeyNotFound against the live endpoint.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_forced_refresh_against_live_jwks() {
+async fn forced_refresh_against_live_jwks() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -222,14 +126,9 @@ async fn integration_forced_refresh_against_live_jwks() {
     // Local fixtures serve plain HTTP; allow it for http:// issuers only.
     let allow_http = issuer.starts_with("http://");
 
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    let meta = discovery
-        .discover(&issuer)
-        .await
-        .unwrap_or_else(|e| panic!("discover({issuer}): {e}"));
+    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+        return;
+    };
     assert!(
         !meta.jwks_uri.is_empty(),
         "discovery returned empty jwks_uri"

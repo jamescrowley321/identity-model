@@ -23,7 +23,7 @@
 //!
 //! Behaviour is proven against the cross-language conformance IDs
 //! `IDT-001`..`IDT-011` in `spec/vectors/id-token.json`
-//! (`rust/tests/spec_conformance_id_token.rs`) — the same language-neutral
+//! (`rust/tests/it/conformance/id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
 //! This module positively validates the ID-Token profile; it deliberately does

@@ -22,12 +22,12 @@
 //!
 //! Mirrors the Go reference (`go/pkg/userinfo/userinfo_integration_test.go`):
 //!
-//! * `integration_userinfo_bogus_token` (UI-004): a bogus access token is
+//! * `userinfo_bogus_token` (UI-004): a bogus access token is
 //!   rejected by the live provider with a 401 [`IdentityError::UserInfo`]
 //!   carrying a `WWW-Authenticate` challenge (tolerating providers that omit it
 //!   per RFC 6750 §3). This error path is always runnable without an
 //!   interactive end-user login.
-//! * `integration_userinfo_client_credentials_token` (UI-001, best-effort): a
+//! * `userinfo_client_credentials_token` (UI-001, best-effort): a
 //!   client_credentials access token has no end-user subject, so the provider
 //!   rejects it at the UserInfo endpoint; we assert a typed error rather than a
 //!   successful claims response. The positive end-user path (an authorization_code
@@ -37,68 +37,21 @@
 
 use std::time::Duration;
 
-use rs_identity_model::{DiscoveryClient, IdentityError, TokenClient, UserInfoClient};
+use rs_identity_model::{IdentityError, TokenClient, UserInfoClient};
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it
-/// panics. CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule, CONS-1.4 review).
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::live::discover_or_skip;
 
 /// Discovers the live provider's endpoints, skipping the test when the provider
 /// is unreachable so a missing local stack does not fail CI-less runs. Returns
 /// `(userinfo_endpoint, token_endpoint)`.
 async fn endpoints_or_skip(issuer: &str, allow_http: bool) -> Option<(String, String)> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => {
-            let Some(userinfo) = meta.userinfo_endpoint.filter(|u| !u.is_empty()) else {
-                skip_or_fail("provider does not advertise a userinfo_endpoint");
-                return None;
-            };
-            Some((userinfo, meta.token_endpoint))
-        }
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
+    let meta = discover_or_skip(issuer, allow_http).await?;
+    let Some(userinfo) = meta.userinfo_endpoint.filter(|u| !u.is_empty()) else {
+        skip_or_fail("provider does not advertise a userinfo_endpoint");
+        return None;
+    };
+    Some((userinfo, meta.token_endpoint))
 }
 
 // UI-004 (live): a bogus access token is rejected by the live provider with a
@@ -106,7 +59,7 @@ async fn endpoints_or_skip(issuer: &str, allow_http: bool) -> Option<(String, St
 // always runnable without an interactive end-user login.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_userinfo_bogus_token() {
+async fn userinfo_bogus_token() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -158,7 +111,7 @@ async fn integration_userinfo_bogus_token() {
 // rather than asserted (same deferral as token ACG-006).
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_userinfo_client_credentials_token() {
+async fn userinfo_client_credentials_token() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;

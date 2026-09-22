@@ -65,9 +65,9 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 >
 > § **Rust DPoP is `in-progress`**: the key pairs, proof generation, and proof
 > verification are implemented and proven against `DPOP-001`, `DPOP-002`,
-> `DPOP-003`, `DPOP-005`, `DPOP-006` and `DPOP-007` (`rust/tests/dpop.rs`, run and
+> `DPOP-003`, `DPOP-005`, `DPOP-006` and `DPOP-007` (`rust/tests/it/conformance/dpop.rs`, run and
 > passing, driven from the shared `spec/test-fixtures/dpop/` documents), and
-> against a live provider in `rust/tests/dpop_live.rs` — node-oidc-provider
+> against a live provider in `rust/tests/it/live/dpop.rs` — node-oidc-provider
 > accepts the generated proof, issues `token_type: DPoP`, and returns a `cnf.jkt`
 > equal to the thumbprint this crate computed, with a mismatched `htm`/`htu`
 > refused as `invalid_dpop_proof`. What is missing is the HTTP half: `DPOP-004`
@@ -138,7 +138,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > **Vector-id anchoring.** `introspection.json`'s `INTR-001`…`INTR-006` are descriptive-only — they carry no
 > executable vectors, so `spec-vector-coverage` does not enforce them and each language anchors them by naming
 > the id in the covering test. Current state: Go (`pkg/introspection/introspection_test.go`) and Rust
-> (`tests/introspection.rs`) anchor all six; Python anchors `INTR-001`, `-002`, `-004` and `-005` in
+> (`rust/tests/it/live/introspection.rs`) anchor all six; Python anchors `INTR-001`, `-002`, `-004` and `-005` in
 > `test_introspection.py` / `test_aio_introspection.py`, and half of `-003` — it has no `client_secret_post`
 > path to anchor (see ‡ above). **`INTR-006` (resolving the endpoint from the discovery document) has no Python
 > anchor**: Python's `introspect_token` takes the endpoint on the request, so discovery resolution is a caller

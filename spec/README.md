@@ -72,8 +72,8 @@ Two capabilities carry executable vectors and a runner in **every language**:
 
 | capability | cases | vectors | Go | Python | Rust |
 | --- | --- | --- | --- | --- | --- |
-| validation | 12 + 1 native | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
-| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
+| validation | 12 + 1 native | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/it/conformance/validation.rs` |
+| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
 
 Each runner asserts full coverage internally, and the **cross-language coverage
 gate** (`tools/spec_coverage_gate.py`, `make spec-coverage`, CI job
