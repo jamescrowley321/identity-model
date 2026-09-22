@@ -19,7 +19,10 @@ use crate::common::live::{client_credentials_token, discover_or_skip};
 /// Discovers the live provider and acquires a real client-credentials token,
 /// returning `None` (after a SKIP) when the profile/provider is unavailable.
 async fn live_token_and_meta() -> Option<(String, ProviderMetadata, JwksClient)> {
-    let issuer = issuer_from_env()?;
+    let Some(issuer) = issuer_from_env() else {
+        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        return None;
+    };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),

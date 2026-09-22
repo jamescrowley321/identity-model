@@ -5,10 +5,17 @@
 //! Only the fixture provider has `devInteractions`; callers detect a real
 //! browser login UI (a non-redirect page outside `/interaction/`) and skip.
 //!
-//! The jar is scoped to the origin of the first request: cookies are stored
-//! from, and sent to, that origin only, so a redirect off the provider never
-//! carries its session cookies with it. The callback is recognised by exact
-//! origin + path against `redirect_uri`, not by string prefix.
+//! The jar is scoped to the site (scheme, host, port) of the first request:
+//! cookies are stored from, and sent to, that site only, so a redirect off the
+//! provider never carries its session cookies with it. The callback is
+//! recognised by exact site + path against `redirect_uri`, not by string
+//! prefix. Site comparison is done on the parts rather than [`url::Origin`],
+//! which is opaque (never self-equal) for non-http schemes such as a custom
+//! app scheme or `urn:ietf:wg:oauth:2.0:oob` redirect URI.
+//!
+//! The client passed to [`follow_to_callback`] must be built with
+//! `redirect::Policy::none()`; otherwise reqwest follows redirects itself and
+//! the callback is never observed.
 
 use std::collections::HashMap;
 
@@ -48,7 +55,7 @@ pub fn cookie_header(store: &HashMap<String, String>) -> String {
 /// a 4xx means "no headless UI" (skip) or a real failure.
 ///
 /// Cookies are only attached to, and only absorbed from, requests on the same
-/// origin as the first hop; a redirect to any other origin is followed bare.
+/// site as the first hop; a redirect to any other site is followed bare.
 pub async fn follow_to_callback(
     client: &reqwest::Client,
     cookies: &mut HashMap<String, String>,
@@ -56,12 +63,11 @@ pub async fn follow_to_callback(
     redirect_uri: &str,
 ) -> Result<(url::Url, reqwest::StatusCode, Option<String>), String> {
     let callback = url::Url::parse(redirect_uri).map_err(|e| format!("parse redirect_uri: {e}"))?;
-    let mut jar_origin: Option<url::Origin> = None;
+    let mut jar_site: Option<Site> = None;
     for _hop in 0..10 {
         let mut req = request.build().map_err(|e| format!("build request: {e}"))?;
         let current = req.url().clone();
-        let origin = jar_origin.get_or_insert_with(|| current.origin()).clone();
-        let same_origin = current.origin() == origin;
+        let same_origin = *jar_site.get_or_insert_with(|| site(&current)) == site(&current);
         if same_origin && !cookies.is_empty() {
             let value = cookie_header(cookies)
                 .parse()
@@ -87,10 +93,21 @@ pub async fn follow_to_callback(
         let next = current
             .join(loc)
             .map_err(|e| format!("resolve redirect {loc:?}: {e}"))?;
-        if next.origin() == callback.origin() && next.path() == callback.path() {
+        if site(&next) == site(&callback) && next.path() == callback.path() {
             return Ok((current, status, Some(next.into())));
         }
         request = client.get(next);
     }
     Err("too many redirects (>10)".into())
+}
+
+/// The (scheme, host, port) triple a cookie jar is scoped to.
+type Site = (String, Option<String>, Option<u16>);
+
+fn site(u: &url::Url) -> Site {
+    (
+        u.scheme().to_string(),
+        u.host_str().map(str::to_string),
+        u.port_or_known_default(),
+    )
 }
