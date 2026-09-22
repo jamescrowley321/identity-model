@@ -28,8 +28,8 @@ from py_identity_model.sync.token_validation import (
 
 from .conftest import DEFAULT_VALIDATION_OPTIONS as DEFAULT_OPTIONS
 from .test_utils import (
-    _is_valid_jwt_format,
     count_upstream_fetches,
+    expired_token_or_skip,
     get_alternate_provider_expired_token,
 )
 
@@ -153,6 +153,11 @@ class TestCacheIsolationBetweenProviders:
         2. Cache doesn't allow cross-provider token acceptance
         3. The kid mismatch causes proper rejection
         """
+        # Deliberately NOT routed through expired_token_or_skip: this token
+        # comes from a gitignored .env.local, never from a CI secret, so it is
+        # absent on every runner by design. TEST_REQUIRE_LIVE covers the
+        # Terraform-written secrets; making this one fail would turn a
+        # local-only fixture into a permanent CI failure.
         alternate_provider_token = get_alternate_provider_expired_token()
         if alternate_provider_token is None:
             pytest.skip(".env.local not found - skipping cross-provider test")
@@ -179,9 +184,7 @@ class TestCacheIsolationBetweenProviders:
 
         This ensures the cache doesn't bypass expiration checks.
         """
-        expired_token = test_config.get("TEST_EXPIRED_TOKEN", "")
-        if not expired_token or not _is_valid_jwt_format(expired_token):
-            pytest.skip("TEST_EXPIRED_TOKEN not configured or not a valid JWT")
+        expired_token = expired_token_or_skip(test_config)
 
         # Descope session tokens use a different issuer format than OIDC discovery.
         # Disable issuer verification so we test expiration, not issuer mismatch.
@@ -194,7 +197,7 @@ class TestCacheIsolationBetweenProviders:
 
         with pytest.raises(TokenExpiredException):
             validate_token(
-                jwt=test_config["TEST_EXPIRED_TOKEN"],
+                jwt=expired_token,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
                 token_validation_config=validation_config,
             )

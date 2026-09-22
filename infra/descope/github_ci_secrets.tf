@@ -59,6 +59,21 @@ resource "github_actions_secret" "ory_test" {
   repository      = var.github_repository
   secret_name     = each.key
   plaintext_value = each.value
+
+  # Backstop for the per-variable validations in variables.tf. Those cover the
+  # inputs that exist today; this covers whatever is added to these maps
+  # tomorrow, including values derived from other resources rather than from
+  # variables. A blank write is unrecoverable: GitHub secrets are write-only,
+  # so the previous value cannot be read back to restore it.
+  #
+  # TEST_AUDIENCE is the single exemption -- an empty audience is a real
+  # configuration for this suite, not a missing value. See variables.tf.
+  lifecycle {
+    precondition {
+      condition     = each.key == "TEST_AUDIENCE" || length(trimspace(each.value)) > 0
+      error_message = "Refusing to write an empty value to CI secret ${each.key}: GitHub secrets are write-only, so this would silently destroy the live value and leave the suite it feeds skipping green."
+    }
+  }
 }
 
 # --------------------------------------------------------------------------
@@ -76,4 +91,19 @@ resource "github_dependabot_secret" "ci" {
   repository      = var.github_repository
   secret_name     = each.key
   plaintext_value = each.value
+
+  # Backstop for the per-variable validations in variables.tf. Those cover the
+  # inputs that exist today; this covers whatever is added to these maps
+  # tomorrow, including values derived from other resources rather than from
+  # variables. A blank write is unrecoverable: GitHub secrets are write-only,
+  # so the previous value cannot be read back to restore it.
+  #
+  # TEST_AUDIENCE is the single exemption -- an empty audience is a real
+  # configuration for this suite, not a missing value. See variables.tf.
+  lifecycle {
+    precondition {
+      condition     = each.key == "TEST_AUDIENCE" || length(trimspace(each.value)) > 0
+      error_message = "Refusing to write an empty value to CI secret ${each.key}: GitHub secrets are write-only, so this would silently destroy the live value and leave the suite it feeds skipping green."
+    }
+  }
 }

@@ -19,7 +19,7 @@ from py_identity_model.sync.token_validation import (
 )
 
 from .conftest import DEFAULT_VALIDATION_OPTIONS as DEFAULT_OPTIONS
-from .test_utils import _is_valid_jwt_format, count_upstream_fetches
+from .test_utils import count_upstream_fetches, expired_token_or_skip
 
 
 # JWT format: three dot-separated segments
@@ -28,9 +28,7 @@ JWT_SEGMENT_SEPARATOR_COUNT = 2
 
 def test_token_validation_expired_token(test_config, require_https):
     """Test expired token validation using cached config."""
-    expired_token = test_config.get("TEST_EXPIRED_TOKEN", "")
-    if not expired_token or not _is_valid_jwt_format(expired_token):
-        pytest.skip("TEST_EXPIRED_TOKEN not configured or not a valid JWT")
+    expired_token = expired_token_or_skip(test_config)
 
     # Descope session tokens use issuer format https://api.descope.com/v1/apps/{id}
     # which differs from the OIDC discovery issuer https://api.descope.com/{id}.
@@ -39,7 +37,7 @@ def test_token_validation_expired_token(test_config, require_https):
 
     with pytest.raises(TokenExpiredException):
         validate_token(
-            jwt=test_config["TEST_EXPIRED_TOKEN"],
+            jwt=expired_token,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
             token_validation_config=TokenValidationConfig(
                 perform_disco=True,
