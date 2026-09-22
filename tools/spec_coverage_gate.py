@@ -38,6 +38,17 @@ gate reads. Ten of the twelve capabilities in ``spec/`` sit in that state (95
 of 119 cases), so the gate covered two capabilities while reporting GATE
 PASSED for all of them. ``UNVECTORED`` now names them here, in the gate, and
 a capability that carries no vectors and is not named fails closed.
+
+What this gate does NOT prove: that the declaration is complete. The expected
+per-case vector counts are read from ``spec/vectors/*.json``, and the runners
+execute those same files, so deleting a vector from a case lowers both sides
+and the gate still passes. That is the residual of the self-exemption family
+above, and it is not closable here — a gate cannot audit its own baseline.
+What stops it is that ``spec/vectors/*.json`` is NORMATIVE and its diffs are
+reviewed as spec changes, not as test edits: removing a vector is a visible
+change to a normative file, and has to be argued for there. Read GATE PASSED
+as "every vector the spec declares was executed by every language", never as
+"the spec declares enough vectors".
 """
 
 from __future__ import annotations
