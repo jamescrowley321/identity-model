@@ -41,8 +41,17 @@ cargo run --example basic_setup
 cargo run --example combined_claims_validator
 ```
 
-Integration tests run against the shared provider in [`../infra`](../infra)
-(`make infra-up` from the repo root).
+Unit tests live inline under `src/` next to the code they cover. Everything
+else is one integration-test binary, `tests/it`, split by what a test needs:
+
+- `conformance::` — driven by the shared `../spec` fixtures; offline.
+- `local::` — a server or pipeline this binary runs itself; offline.
+- `live::` — a real provider; `#[ignore]`-gated. Run against the shared
+  provider in [`../infra`](../infra) with `make test-integration-rust` from
+  the repo root (or `make infra-up` then `cargo test -- --ignored`).
+
+Shared helpers (provider selection, skip-or-fail, fixture keys, the headless
+auth-code driver) are in `tests/it/common/`; add to them rather than copying.
 
 ## Claims Validation (injectable policy)
 
@@ -67,7 +76,7 @@ with `ValidationOptions::builder().claims_validator(...)`. See
 for a runnable `combine` demonstration. Behavioural parity with the sibling
 libraries is enforced by the shared vectors in
 [`../spec/test-fixtures/claims-validation/vectors.json`](../spec/test-fixtures/claims-validation/vectors.json),
-driven by `tests/claims_validation_conformance.rs`.
+driven by `tests/it/conformance/claims_validation.rs`.
 
 ## Capabilities
 

@@ -86,8 +86,8 @@ that implements them**:
 
 | capability | cases | vectors | Go | Python | Rust |
 | --- | --- | --- | --- | --- | --- |
-| validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
-| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
+| validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/it/conformance/validation.rs` |
+| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
 | revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |

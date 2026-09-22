@@ -47,67 +47,10 @@
 
 use std::time::Duration;
 
-use rs_identity_model::{
-    DiscoveryClient, IdentityError, IntrospectionClient, RevocationClient, TokenClient,
-};
+use rs_identity_model::{IdentityError, IntrospectionClient, RevocationClient, TokenClient};
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test.
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-/// Discovers the live provider's metadata, skipping when it is unreachable so a
-/// missing local stack does not fail CI-less runs.
-async fn discover_or_skip(
-    issuer: &str,
-    allow_http: bool,
-) -> Option<rs_identity_model::ProviderMetadata> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => Some(meta),
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
-}
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::live::discover_or_skip;
 
 /// Everything a revocation test needs from the live provider, resolved once.
 struct Live {
@@ -222,7 +165,7 @@ fn revocation_client(live: &Live) -> RevocationClient {
 // information, so the only proof is asking a second endpoint.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_opaque_token_takes_effect_live() {
+async fn revoke_opaque_token_takes_effect() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -250,7 +193,7 @@ async fn integration_revoke_opaque_token_takes_effect_live() {
 // a token-scanning oracle.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_is_indistinguishable_live() {
+async fn revoke_is_indistinguishable() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -289,7 +232,7 @@ async fn integration_revoke_is_indistinguishable_live() {
 // reject on it. A mock cannot prove the provider honours that.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_tolerates_wrong_hint_live() {
+async fn revoke_tolerates_wrong_hint() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -310,7 +253,7 @@ async fn integration_revoke_tolerates_wrong_hint_live() {
 // REV-002: omitting the hint entirely is valid — it is an OPTIONAL parameter.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_without_hint_live() {
+async fn revoke_without_hint() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -330,7 +273,7 @@ async fn integration_revoke_without_hint_live() {
 // request and left it live.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_invalid_client_live() {
+async fn revoke_invalid_client() {
     let Some(live) = live_or_skip().await else {
         return;
     };
@@ -391,7 +334,7 @@ async fn integration_revoke_invalid_client_live() {
 // oracle the rest of the file guards against.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_rejects_another_clients_token_live() {
+async fn revoke_rejects_another_clients_token() {
     let Some(live) = live_or_skip().await else {
         return;
     };

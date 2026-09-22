@@ -28,77 +28,22 @@
 //! token is minted via the client-credentials grant against the `test-opaque`
 //! client, whose tokens node-oidc-provider issues in opaque form:
 //!
-//! * `integration_introspect_active_live` (INTR-001/003/006): mint an opaque
+//! * `introspect_active` (INTR-001/003/006): mint an opaque
 //!   token, discover the endpoint, introspect it, and assert `active == true`
 //!   with the client_id echoed back.
-//! * `integration_introspect_inactive_live` (INTR-002): introspecting a garbage
+//! * `introspect_inactive` (INTR-002): introspecting a garbage
 //!   token yields `active == false`.
-//! * `integration_introspect_invalid_client_live` (INTR-005): a bad client
+//! * `introspect_invalid_client` (INTR-005): a bad client
 //!   secret surfaces a typed [`IdentityError::TokenEndpoint`] (`invalid_client`)
 //!   — or, for providers with a non-RFC error body, an [`IdentityError::Http`]
 //!   carrying the 4xx status.
 
 use std::time::Duration;
 
-use rs_identity_model::{DiscoveryClient, IdentityError, IntrospectionClient, TokenClient};
+use rs_identity_model::{IdentityError, IntrospectionClient, TokenClient};
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test.
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-/// Discovers the live provider's metadata, skipping when it is unreachable so a
-/// missing local stack does not fail CI-less runs.
-async fn discover_or_skip(
-    issuer: &str,
-    allow_http: bool,
-) -> Option<rs_identity_model::ProviderMetadata> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => Some(meta),
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
-}
+use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::live::discover_or_skip;
 
 /// Mints an opaque access token from the `test-opaque` client via the
 /// client-credentials grant. node-oidc-provider issues opaque (non-JWT) tokens
@@ -131,7 +76,7 @@ async fn mint_opaque_token(
 // assert active=true with the client_id echoed back.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_introspect_active_live() {
+async fn introspect_active() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -187,7 +132,7 @@ async fn integration_introspect_active_live() {
 // active=false (probing an unknown token is not an error).
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_introspect_inactive_live() {
+async fn introspect_inactive() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
@@ -233,7 +178,7 @@ async fn integration_introspect_inactive_live() {
 // proprietary body surface as Http carrying the 4xx status.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_introspect_invalid_client_live() {
+async fn introspect_invalid_client() {
     let Some(issuer) = issuer_from_env() else {
         skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
         return;
