@@ -40,6 +40,7 @@ import pytest
 import yaml
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 
@@ -146,6 +147,44 @@ def _workflow_commands(workflow_text: str) -> list[list[str]]:
     return [cmd for block in _run_blocks(workflow_text) for cmd in _commands(block)]
 
 
+#: The distribution whose invocations this file polices, as written everywhere.
+_PSR_NAME = "python-semantic-release"
+
+
+def _names_match(left: str, right: str) -> bool:
+    """Whether two distribution names are the same distribution (PEP 503).
+
+    Package names are case-insensitive and treat runs of `-`, `_` and `.` as
+    equivalent, so `Python-Semantic-Release`, `python_semantic_release` and
+    `python-semantic-release` all install the same thing. Comparing them with
+    `==` meant a capitalised `--from Python-Semantic-Release` was not classified
+    as a PSR invocation, and therefore was never checked for the GitPython
+    floor -- while the other, correctly spelled invocations kept the
+    "the workflow still invokes PSR" guard green, so nothing looked wrong.
+
+    `_bound_for` already lowercased; only this comparison did not. One of the
+    two being normalised is what made it survive review.
+    """
+    return canonicalize_name(left) == canonicalize_name(right)
+
+
+def _mentions_psr(token: str) -> bool:
+    """Whether `token` names python-semantic-release, however it is spelled.
+
+    The accounting check is the backstop for everything the tokeniser misses,
+    so it must not itself be defeated by capitalisation. It was: a literal
+    `"python-semantic-release" in token` let `Python-Semantic-Release` through
+    both this check and `_is_uvx_psr`, and an unbounded GitPython alongside it
+    then passed the whole suite green.
+    """
+    parsed = _requirement(token)
+    if parsed is not None:
+        return _names_match(parsed.name, _PSR_NAME)
+    # Not a requirement (a bare `semantic-release` subcommand, a path, a flag
+    # value): fall back to a normalised substring so a mention still counts.
+    return canonicalize_name(_PSR_NAME) in canonicalize_name(token)
+
+
 def _requirement(token: str) -> Requirement | None:
     """`token` as a PEP 508 requirement, or None if it is not one."""
     try:
@@ -154,16 +193,32 @@ def _requirement(token: str) -> Requirement | None:
         return None
 
 
+#: The uvx flags whose value is a requirement uvx will install.
+_REQUIREMENT_FLAGS = ("--from", "--with")
+
+
 def _uvx_requirement_tokens(command: list[str]) -> list[str]:
     """The values uvx resolves as requirements: `--from` and every `--with`.
 
     Read positionally from the token list, so a requirement is whatever uvx
     would actually install -- not whatever a regex happened to find somewhere
     in the surrounding text.
+
+    Both spellings count. uvx accepts `--with gitpython>=3.1.59` and
+    `--with=gitpython>=3.1.59` identically, but the separated form is two
+    tokens and the joined form is one. Reading only the separated form made
+    `--from=python-semantic-release==10.6.2` invisible: the command was not
+    recognised as a PSR invocation at all, so every assertion below simply
+    skipped it. A gate that stops looking when the author changes an equals
+    sign is not a gate.
     """
     values: list[str] = []
+    for token in command:
+        for flag in _REQUIREMENT_FLAGS:
+            if token.startswith(f"{flag}="):
+                values.append(token[len(flag) + 1 :])
     for flag, value in zip(command, command[1:]):
-        if flag in ("--from", "--with"):
+        if flag in _REQUIREMENT_FLAGS:
             values.append(value)
     return values
 
@@ -174,7 +229,7 @@ def _is_uvx_psr(command: list[str]) -> bool:
         return False
     for token in _uvx_requirement_tokens(command):
         requirement = _requirement(token)
-        if requirement is not None and requirement.name == "python-semantic-release":
+        if requirement is not None and _names_match(requirement.name, _PSR_NAME):
             return True
     return False
 
@@ -188,7 +243,7 @@ def _bound_for(name: str, tokens: list[str], where: str) -> SpecifierSet | None:
     found: list[SpecifierSet] = []
     for token in tokens:
         requirement = _requirement(token)
-        if requirement is None or requirement.name.lower() != name.lower():
+        if requirement is None or not _names_match(requirement.name, name):
             continue
         if str(requirement.specifier):
             found.append(requirement.specifier)
@@ -399,6 +454,70 @@ class TestTheRequirementReader:
         (command,) = _commands('uvx --with "click>=8.1" semantic-release')
         assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
 
+    @pytest.mark.parametrize("flag", ["--from", "--with"])
+    def test_the_joined_flag_form_is_read(self, flag):
+        """`--with=x` is one token; `--with x` is two. uvx accepts both.
+
+        Reading only the separated form made an invocation spelled with an
+        equals sign invisible to every assertion in this file rather than
+        failing one of them.
+        """
+        (command,) = _commands(f'uvx {flag}="gitpython>=3.1.59" semantic-release')
+        bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+        assert bound == SpecifierSet(">=3.1.59")
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "python-semantic-release",
+            "Python-Semantic-Release",
+            "python_semantic_release",
+            "PYTHON.SEMANTIC.RELEASE",
+        ],
+    )
+    def test_every_pep503_spelling_is_the_same_distribution(self, spelling):
+        """Names are case-insensitive and `-`/`_`/`.` are equivalent.
+
+        A capitalised `--from Python-Semantic-Release` used to be classified as
+        "not a PSR invocation", so the GitPython floor was never checked on it
+        while the correctly spelled calls kept the vacuity guard green.
+        """
+        (command,) = _commands(f"uvx --from {spelling}==10.6.2 semantic-release")
+        assert _is_uvx_psr(command)
+
+    @pytest.mark.parametrize("spelling", ["gitpython", "GitPython", "GITPYTHON"])
+    def test_a_bound_is_found_under_every_spelling_of_its_name(self, spelling):
+        """PyPI serves this one as `GitPython`; the workflows write `gitpython`."""
+        (command,) = _commands(f'uvx --with "{spelling}>=3.1.59" semantic-release')
+        bound = _bound_for("gitpython", _uvx_requirement_tokens(command), "test")
+        assert bound == SpecifierSet(">=3.1.59")
+
+    @pytest.mark.parametrize("spelling", ["git_python", "Git.Python", "git-python"])
+    def test_a_separator_makes_it_a_different_distribution(self, spelling):
+        """PEP 503 folds runs of `-_.` to `-`; it does not delete them.
+
+        `git_python` normalises to `git-python`, which is not `gitpython`. The
+        bound must not be credited to a package the resolver would not install.
+        """
+        (command,) = _commands(f'uvx --with "{spelling}>=3.1.59" semantic-release')
+        assert _bound_for("gitpython", _uvx_requirement_tokens(command), "test") is None
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "python-semantic-release",
+            "Python-Semantic-Release",
+            "python_semantic_release",
+        ],
+    )
+    def test_a_mention_is_accounted_for_under_every_spelling(self, spelling):
+        """The accounting check is the backstop; it must not be case-defeatable."""
+        assert _mentions_psr(f"{spelling}==10.6.2")
+
+    def test_a_different_distribution_is_not_a_psr_mention(self):
+        assert not _mentions_psr("gitpython>=3.1.59")
+        assert not _mentions_psr("semantic-release")
+
     def test_two_different_bounds_fail_by_name(self):
         (command,) = _commands(
             'uvx --with "gitpython>=3.1.59" --with "gitpython<3.1.60" semantic-release'
@@ -601,7 +720,7 @@ class TestTheWorkflowAgreesWithTheMakefile:
         mentions = [
             c
             for c in _workflow_commands(workflow)
-            if any("python-semantic-release" in token for token in c)
+            if any(_mentions_psr(token) for token in c)
         ]
         unmatched = [" ".join(c)[:120] for c in mentions if c not in psr_commands]
         assert not unmatched, (
