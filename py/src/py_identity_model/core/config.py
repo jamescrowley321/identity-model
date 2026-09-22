@@ -181,6 +181,15 @@ _REGISTRY: tuple[_KeySpec, ...] = (
         lo=0,
     ),
     _KeySpec(
+        "http.retry.max_delay",
+        "http_retry_max_delay",
+        ("HTTP_RETRY_MAX_DELAY",),
+        _Kind.FLOAT,
+        120.0,
+        lo=0.0,
+        lo_exclusive=True,
+    ),
+    _KeySpec(
         "http.retry.base_delay",
         "http_retry_base_delay",
         ("HTTP_RETRY_BASE_DELAY",),
@@ -404,6 +413,7 @@ class Config:
     # HTTP transport
     http_timeout: float
     http_retry_max_attempts: int
+    http_retry_max_delay: float
     http_retry_base_delay: float
     # JWKS & discovery
     jwks_max_size: int

@@ -163,6 +163,29 @@ def get_retry_config() -> tuple[int, float]:
     return max_retries, base_delay
 
 
+def get_max_retry_delay() -> float:
+    """Get the ceiling on a single retry wait.
+
+    ``MAX_RETRY_DELAY_SECONDS`` is the default, not a hard limit: a deployment
+    that deliberately wants longer waits sets ``HTTP_RETRY_MAX_DELAY`` and gets
+    them. Capping at a number the caller did not choose would be the same
+    mistake as capping their timeout.
+
+    Returns:
+        float: Maximum seconds any single retry wait may take.
+    """
+    value = _env_number("HTTP_RETRY_MAX_DELAY", MAX_RETRY_DELAY_SECONDS, cast=float)
+    if value <= 0:
+        _warn_once(
+            "HTTP_RETRY_MAX_DELAY:sign",
+            "Non-positive HTTP_RETRY_MAX_DELAY=%s; using default %s",
+            value,
+            MAX_RETRY_DELAY_SECONDS,
+        )
+        return MAX_RETRY_DELAY_SECONDS
+    return value
+
+
 def get_timeout() -> float:
     """
     Get HTTP timeout from environment variable.
@@ -202,7 +225,9 @@ def should_retry_response(response: httpx.Response, attempt: int, retries: int) 
     ) and attempt < retries
 
 
-def calculate_delay(base_delay: float, attempt: int) -> float:
+def calculate_delay(
+    base_delay: float, attempt: int, max_delay: float | None = None
+) -> float:
     """
     Calculate exponential backoff delay.
 
@@ -210,10 +235,22 @@ def calculate_delay(base_delay: float, attempt: int) -> float:
         base_delay: Base delay in seconds
         attempt: Current attempt number (0-indexed)
 
+    The result is bounded by ``max_delay``, which defaults to the resolved
+    ``HTTP_RETRY_MAX_DELAY`` (itself defaulting to ``MAX_RETRY_DELAY_SECONDS``).
+    Only the response path applied that bound before; the ``httpx.RequestError``
+    branches call this directly, so ``base * 2**attempt`` grew without limit.
+
+    Args:
+        base_delay: Base delay in seconds
+        attempt: Current attempt number (0-indexed)
+        max_delay: Ceiling for this wait. Defaults to the resolved setting;
+            pass a value to override it for one call.
+
     Returns:
-        float: Delay in seconds
+        float: Delay in seconds, never above the effective ceiling
     """
-    return base_delay * (2**attempt)
+    ceiling = get_max_retry_delay() if max_delay is None else max_delay
+    return min(base_delay * (2**attempt), ceiling)
 
 
 def parse_retry_after(value: str | None, now: float | None = None) -> float | None:
@@ -265,7 +302,7 @@ def resolve_retry_delay(
     retry_after = parse_retry_after(response.headers.get("Retry-After"))
     if retry_after is None:
         return backoff
-    return min(max(backoff, retry_after), MAX_RETRY_DELAY_SECONDS)
+    return min(max(backoff, retry_after), get_max_retry_delay())
 
 
 def check_no_redirect(response: httpx.Response) -> None:
@@ -342,6 +379,7 @@ __all__ = [
     "check_no_redirect",
     "get_max_jwks_keys",
     "get_max_jwks_size",
+    "get_max_retry_delay",
     "get_retry_config",
     "get_timeout",
     "parse_retry_after",

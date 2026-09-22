@@ -66,6 +66,7 @@ Logical key IDs are dotted lowercase. Environment names, defaults, and legacy se
 |---|---|---|---|---|---|---|---|---|
 | `http.timeout` | `HTTP_TIMEOUT` | float secs | `30.0` | > 0 | py: invalid, non-finite or non-positive values log a warning and fall back to the default | ✔ | n/a | n/a |
 | `http.retry.max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS`, alias `HTTP_RETRY_COUNT` | int | `3` | ≥ 0 (`0` disables retries), no ceiling | py: primary wins over alias when both set; `0` honored; negative values are raised to `0` with a warning, because a negative count cancelled the request itself; invalid values log a warning and fall back to the default. Legacy divergence from §Types: an empty or whitespace-only primary is treated as absent and falls through to the alias, preserving the original `getenv(a) or getenv(b)` semantics | ✔ | n/a | n/a |
+| `http.retry.max_delay` | `HTTP_RETRY_MAX_DELAY` | float secs | `120.0` | > 0 | py: ceiling on a single retry wait, applied to the computed backoff on both the 429/5xx path and the connection-error path. A default, not a hard limit — a deployment that wants longer waits raises it; invalid or non-positive values log a warning and fall back to the default | ✔ | n/a | n/a |
 | `http.retry.base_delay` | `HTTP_RETRY_BASE_DELAY` | float secs | `1.0` | ≥ 0 | py: invalid, non-finite or negative values log a warning and fall back to the default. Per-retry delay is additionally capped at 120 s internally (not a key) | ✔ | n/a | n/a |
 
 ### JWKS & discovery
