@@ -46,6 +46,23 @@ py-identity-model is a production-grade OIDC/OAuth2.0 helper library for Python 
 
 6. **Create a PR for all changes** — push the feature branch and open a PR against `main`. PR titles **must** follow conventional commit format (e.g., `feat(discovery): add metadata support`, `fix: handle missing kid`, `ci: update actions`).
 
+7. **Read and resolve the `@claude` review before asking for a merge.** The automated
+   blind-peer-review bot posts a multi-lens verdict as a PR comment, not as a GitHub
+   review, so it does **not** appear in `gh pr view --json reviews` and a green check
+   row does not mean it passed — the `Claude` check goes green when the *workflow* ran,
+   whatever the verdict was. Read it explicitly:
+   ```bash
+   gh pr view <N> --repo <owner>/<repo> --json comments \
+     -q '.comments[] | select(.author.login=="claude") | .body'
+   ```
+   Treat a `BLOCK` verdict as blocking. Findings posted before a force-push describe the
+   diff as it was then, so check each one against the current tree rather than assuming
+   it is stale *or* still live — confirm with a repro before fixing or dismissing. State
+   in the PR which findings were fixed and which were superseded, and say so plainly if
+   a lens was wrong. The two Policy & Provenance findings are the exception to fixing
+   them yourself: the AI provenance block belongs in the PR description, and the named
+   human attestation is the maintainer's to give, not an agent's.
+
 ## Repository Layout
 
 This repository is a **polyglot monorepo**. The Python package lives under
