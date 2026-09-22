@@ -17,6 +17,7 @@ endpoints.
 | `jwt` | JWT signature + claims validation, ID token validation, plus injectable/composable claims validators | RFC 7519 / 7515, OIDC Core 1.0 §3.1.3.7 |
 | `token` | Client credentials, auth code, PKCE, token exchange | RFC 6749 / 7636 / 8693 |
 | `introspection` | Token introspection client | RFC 7662 |
+| `dpop` | DPoP key pairs, proof generation, proof verification | RFC 9449, RFC 7638 |
 | `userinfo` | UserInfo endpoint client | OIDC Core 1.0 §5.3 |
 | `error` | `IdentityError` — the crate error type | — |
 
@@ -72,7 +73,14 @@ driven by `tests/claims_validation_conformance.rs`.
 
 The Core tier (discovery, JWKS, JWT validation including the OIDC ID-token
 profile, client-credentials and authorization-code + PKCE, UserInfo) is
-implemented, as are the Extended token introspection (RFC 7662) and token
-exchange (RFC 8693) capabilities. Revocation and DPoP are not yet implemented.
+implemented, as are the Extended token introspection (RFC 7662), token
+revocation (RFC 7009), and token exchange (RFC 8693) capabilities.
+
+DPoP (RFC 9449) is partially implemented: `dpop` provides key pairs, proof
+generation, and proof verification, along with the RFC 7638 thumbprint a
+`cnf.jkt` binding is checked against. Attaching the proof over HTTP — the
+`use_dpop_nonce` retry and the `Authorization: DPoP` scheme — is still the
+caller's job; see the `dpop` module docs.
+
 Behavioral parity with the Python and Go libraries is enforced by the
 cross-language conformance vectors in [`../spec`](../spec).

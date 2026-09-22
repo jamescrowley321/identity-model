@@ -9,9 +9,10 @@
 //! The Core tier — discovery, JWKS retrieval and key resolution, JWT
 //! validation (including the OIDC ID-token profile), client-credentials and
 //! authorization-code + PKCE token flows, and UserInfo — is implemented, as is
-//! Extended token introspection (RFC 7662), revocation (RFC 7009), and the
-//! token exchange grant (RFC 8693). Behavior is proven against the
-//! cross-language conformance vectors in the repository's `spec/`.
+//! Extended token introspection (RFC 7662), revocation (RFC 7009), the token
+//! exchange grant (RFC 8693), and the key/proof/verify half of DPoP
+//! (RFC 9449 — see [`dpop`] for what is not yet covered). Behavior is proven
+//! against the cross-language conformance vectors in the repository's `spec/`.
 //!
 //! ## Module Overview
 //!
@@ -21,10 +22,12 @@
 //! - [`token`] — client credentials, authorization code, PKCE, token exchange
 //! - [`introspection`] — token introspection (RFC 7662)
 //! - [`revocation`] — token revocation (RFC 7009)
+//! - [`dpop`] — DPoP sender-constrained tokens (RFC 9449)
 //! - [`userinfo`] — UserInfo endpoint client
 //! - [`error`] — the crate error type, [`IdentityError`]
 
 pub mod discovery;
+pub mod dpop;
 pub mod error;
 pub mod introspection;
 pub mod jwks;
@@ -44,7 +47,12 @@ mod http;
 mod env;
 
 pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, ProviderMetadata};
+pub use dpop::{
+    DPOP_PROOF_TYP, DpopAlgorithm, DpopKey, DpopProof, DpopProofOptions, DpopVerifyOptions,
+    ath as dpop_ath, jwk_thumbprint, normalize_htu as dpop_normalize_htu, verify_proof,
+};
 pub use error::IdentityError;
+pub use http::secure_client_builder;
 pub use introspection::{
     Introspection, IntrospectionAudience, IntrospectionClient, IntrospectionClientBuilder,
 };
