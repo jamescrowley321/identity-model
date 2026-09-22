@@ -66,10 +66,15 @@ on:
   # Re-opened 2026-09-16. The trigger was removed by #445 for two reasons: a
   # review posted per lens on EVERY push, and a paid provider billed per pull
   # request. Both are addressed rather than ignored — `opened` and
-  # `ready_for_review` fire once per pull request instead of once per push, and
+  # `ready_for_review` fire per pull request rather than per push (once, given
+  # the draft guard below; the claim was previously "once" without it), and
   # auth is now CLAUDE_CODE_OAUTH_TOKEN, a subscription rather than per-token
   # third-party billing. Without this, opening a pull request ran nothing at all
   # and changes merged unreviewed unless a human remembered to type @claude.
+  # `opened` fires for DRAFTS too — GitHub sends it regardless of draft state —
+  # so the job's `if:` tests `draft == false`. Without that, the ordinary
+  # open-as-draft-then-mark-ready flow billed two full reviews per pull request,
+  # the first on deliberately incomplete work (#704).
   pull_request:
     types: [opened, ready_for_review]
   issue_comment:
@@ -78,12 +83,34 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
+  # `opened` only. `assigned` was here, and the `if:` below tests the ISSUE
+  # AUTHOR's association — on an `assigned` event the person acting is whoever
+  # assigned, which needs only triage permission, while the author may have
+  # written the issue long before this workflow existed. So any old
+  # OWNER/MEMBER-authored issue whose body merely contained the substring
+  # `@claude` fired a full lens run on every re-assign, and a triager toggling
+  # assign/unassign bought one 30-minute session per toggle. With `opened`, the
+  # author IS the actor and the association test means what it says (#698).
   issues:
-    types: [opened, assigned]
+    types: [opened]
 
+# Per pull request or issue, superseding rather than queueing.
+#
+# `cancel-in-progress: false` made re-triggers STACK: each draft->ready toggle,
+# each re-assign, bought another sequential 30-minute Opus session against the
+# shared subscription window rather than replacing the one already running.
+#
+# On a global ceiling (#704's third suggestion): GitHub concurrency gives one
+# group per run, so a single block cannot both supersede per pull request and
+# cap total parallelism. A constant group would cap it, but GitHub keeps only
+# ONE pending run per group — a review legitimately queued for another pull
+# request would be cancelled while pending, and a silently dropped review reads
+# exactly like a review that found nothing. That trade is worse than the burst
+# it prevents. Total spend is bounded instead by the trigger surface above and
+# by `timeout-minutes` below; burst is not bounded, deliberately.
 concurrency:
   group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions: {}
 
@@ -94,11 +121,11 @@ jobs:
     # who wrote it being the owner, an org member, or a repo collaborator. See
     # "WHO CAN TRIGGER IT" above for why that test lives here, not in the action.
     if: |
-      (github.event_name == 'pull_request' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+      (github.event_name == 'issues' && (startsWith(github.event.issue.body, '@claude') || startsWith(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     # A default review is five lenses, so five subagents. Without a ceiling a
     # wedged review sits there spending subscription usage until the job's own
