@@ -861,8 +861,22 @@ jobs:
           fi
           echo "All ${#result[@]} CI jobs passed or skipped for a stated reason."
 
+      # The script below parses this workflow, so it needs a YAML parser.
+      # Bare `python3` on the runner happens to have PyYAML today, but that is
+      # the runner image's choice, not this repo's: an image refresh that drops
+      # it takes the gate with it. Declare the dependency rather than inherit
+      # it. `sync: false` skips the py/ workspace sync — this step needs uv and
+      # nothing else. (The sibling `python3 tools/sync_cargo_lock_version.py`
+      # in release-rust.yml is stdlib-only, which is why it needs no setup.)
+      - name: Set up uv
+        uses: ./.github/actions/setup-python-uv
+        with:
+          sync: "false"
+
       - name: Every job is covered by this gate
         # Runs last on purpose: if a job is missing from the maps above, the
         # results loop has already passed without ever looking at it, and this
         # is what turns that into a failure.
-        run: python3 .github/scripts/assert_ci_complete_covers_all_jobs.py
+        run: >-
+          uv run --with pyyaml --no-project
+          python .github/scripts/assert_ci_complete_covers_all_jobs.py
