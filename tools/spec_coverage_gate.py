@@ -192,6 +192,20 @@ def report_name(language: str, capability: str) -> str:
     return f"{language}.{capability}.json"
 
 
+def _carries(want: dict) -> str:
+    """What a capability has that needs a runner, for the no-runner message.
+
+    A native-only capability carries no executable vectors, so saying it does
+    sends the reader looking for a `vectors` array that is not there.
+    """
+    parts = []
+    if want["executable"]:
+        parts.append(f"{sum(want['executable'].values())} executable vectors")
+    if want["native"]:
+        parts.append(f"{len(want['native'])} native cases")
+    return " and ".join(parts)
+
+
 def spec_inventory() -> tuple[dict[str, dict[str, set[str]]], set[str]]:
     """Executable + native case ids per capability that carries vectors."""
     inventory: dict[str, dict[str, set[str]]] = {}
@@ -216,7 +230,16 @@ def spec_inventory() -> tuple[dict[str, dict[str, set[str]]], set[str]]:
             if c.get("vectors") and c.get("execution") != "native"
         }
         native = {c["id"] for c in cases if c.get("execution") == "native"}
-        if executable:
+        # `or native`: a capability whose cases are ALL `execution: "native"`
+        # has nothing in `executable`, but it is not unvectored — it carries
+        # native cases whose per-language anchors this gate exists to check.
+        # Keyed on `executable` alone it fell through to `unvectored`, the
+        # `native` set was discarded, and the fix a contributor would reach for
+        # is to name it in UNVECTORED to make the gate pass — which files it
+        # under "carries no executable vectors" and drops its anchor checks for
+        # good. Same shape as the missing-`vectors` exemption above: a
+        # capability leaving the gate by way of the data the gate reads.
+        if executable or native:
             inventory[name] = {"executable": executable, "native": native}
         else:
             # Recorded rather than dropped. Skipping silently here is what let
@@ -290,8 +313,9 @@ def check_reports(report_dir: Path) -> int:
     # bailed out entirely as soon as a second capability gained vectors.
     configured = {(language, capability) for language, capability, _, _ in RUNNERS}
     missing_runners = [
-        f"({language}, {capability}): capability has executable vectors but no "
-        f"runner is configured in RUNNERS"
+        f"({language}, {capability}): capability carries "
+        f"{_carries(inventory[capability])} but no runner is configured in "
+        f"RUNNERS"
         for capability in sorted(inventory)
         for language in LANGUAGES
         if (language, capability) not in configured

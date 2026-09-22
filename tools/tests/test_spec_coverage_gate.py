@@ -479,6 +479,84 @@ def test_a_capability_cannot_leave_the_gate_by_dropping_its_vectors(
     assert "carries no executable `vectors`" in capsys.readouterr().out
 
 
+def _write_native_only(gate, name: str, case_ids: list[str]) -> None:
+    """A capability whose cases are ALL `execution: "native"` — no vectors."""
+    (gate.spec_dir / f"{name}.json").write_text(
+        json.dumps(
+            {
+                "capability": name,
+                "tests": [{"id": c, "execution": "native"} for c in case_ids],
+            }
+        )
+    )
+
+
+def test_a_native_only_capability_stays_in_the_gate(gate, capsys) -> None:
+    """It carries no `vectors`, but it is not unvectored.
+
+    Keyed on executable vectors alone, a capability whose cases are all
+    `execution: "native"` fell through to `unvectored` and its `native` set was
+    discarded, so its per-language anchors were never checked. It must instead
+    require runners like any other gated capability.
+    """
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([])
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "no runner" in out
+    # The message must not claim executable vectors it does not have.
+    assert "2 native cases" in out
+    assert "executable vectors" not in out
+
+
+def test_a_native_only_capability_fails_when_its_anchors_are_missing(
+    gate, capsys
+) -> None:
+    """The check that was being dropped, now reachable."""
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native={"N-1": "tests::n1"})
+
+    assert gate.run() == GATE_FAILED
+    out = capsys.readouterr().out
+    assert "N-2): native case has no native-test anchor" in out
+
+
+def test_a_native_only_capability_passes_when_every_anchor_is_present(
+    gate, capsys
+) -> None:
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(
+            lang, "dpop", [], native={"N-1": "tests::n1", "N-2": "tests::n2"}
+        )
+
+    assert gate.run() == GATE_PASSED
+
+
+def test_a_capability_cannot_leave_the_gate_by_going_all_native(
+    gate, capsys, monkeypatch
+) -> None:
+    """The exemption route the failure message used to steer you into.
+
+    A native-only capability landed in `unvectored`, so the gate failed asking
+    for it to be named in UNVECTORED — and naming it there made the gate pass
+    while its native anchors went unchecked in every language, permanently.
+    Declaring it unvectored must now be rejected instead, because it IS gated.
+    """
+    _write_native_only(gate, "dpop", ["N-1", "N-2"])
+    gate.configure_runners([(lang, "dpop") for lang in LANGUAGES])
+    for lang in LANGUAGES:
+        gate.write_report(lang, "dpop", [], native={})
+
+    monkeypatch.setattr(spec_coverage_gate, "UNVECTORED", {"dpop": 2})
+    assert gate.run() == GATE_FAILED
+    assert "still listed in UNVECTORED" in capsys.readouterr().out
+
+
 def test_the_real_spec_tree_has_a_runner_for_every_gated_capability() -> None:
     """Guards the live config, not a fixture: RUNNERS must cover spec/vectors."""
     inventory, _ = spec_coverage_gate.spec_inventory()
