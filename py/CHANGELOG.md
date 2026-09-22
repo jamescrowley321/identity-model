@@ -2,6 +2,34 @@
 
 <!-- version list -->
 
+## v4.0.1 (2026-09-22)
+
+### Bug Fixes
+
+- **ci**: Gate the @claude workflow on the acting user and stop re-triggers stacking
+  ([#739](https://github.com/jamescrowley321/identity-model/pull/739),
+  [`a3c98d2`](https://github.com/jamescrowley321/identity-model/commit/a3c98d2d72062af7d866f7e286212c8997450310))
+
+### Chores
+
+- Sync uv.lock with 4.0.0
+  ([`b9bc8ed`](https://github.com/jamescrowley321/identity-model/commit/b9bc8edb0bc954ef1b9d0b8f83856b838115973b))
+
+- **deps)(deps**: Update idna requirement
+  ([#740](https://github.com/jamescrowley321/identity-model/pull/740),
+  [`411a056`](https://github.com/jamescrowley321/identity-model/commit/411a056149e3f1a07f2f5817f81e7d5762730369))
+
+### Continuous Integration
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#742](https://github.com/jamescrowley321/identity-model/pull/742),
+  [`a17d3d4`](https://github.com/jamescrowley321/identity-model/commit/a17d3d4c800ac18056ddbc2ad65693d2621c7423))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#741](https://github.com/jamescrowley321/identity-model/pull/741),
+  [`0a8b09d`](https://github.com/jamescrowley321/identity-model/commit/0a8b09d9719a3920b241d549753ccdc5171bb256))
+
+
 ## v4.0.0 (2026-09-20)
 
 ### Bug Fixes
