@@ -15,6 +15,7 @@ from datetime import UTC
 from email.utils import parsedate_to_datetime
 import math
 import os
+import sys
 import time
 
 import httpx
@@ -248,27 +249,50 @@ def calculate_delay(
         base_delay: Base delay in seconds
         attempt: Current attempt number (0-indexed)
         max_delay: Ceiling for this wait. Defaults to the resolved setting;
-            pass a value to override it for one call.
+            pass a value to override it for one call. A non-finite or
+            non-positive value is unusable and falls back to the resolved
+            setting with a warning, the same treatment ``HTTP_RETRY_MAX_DELAY``
+            gets from the environment.
 
     Returns:
         float: Delay in seconds, never above the effective ceiling
     """
-    ceiling = get_max_retry_delay() if max_delay is None else max_delay
+    # This runs inside the httpx.RequestError handler. Anything it raises
+    # replaces the network error the caller was about to see, so every input
+    # must come out as a number in [0, ceiling].
+    if max_delay is None:
+        ceiling = get_max_retry_delay()
+    elif not math.isfinite(max_delay) or max_delay <= 0:
+        # The env path already refuses these in get_max_retry_delay(); the
+        # argument bypassed it and reached time.sleep() (negative) or the
+        # exponent arithmetic (nan / inf).
+        _warn_once(
+            "calculate_delay:max_delay",
+            "Unusable max_delay=%s; using resolved HTTP_RETRY_MAX_DELAY",
+            max_delay,
+        )
+        ceiling = get_max_retry_delay()
+    else:
+        ceiling = max_delay
+
     # Floor the base: a negative base_delay argument produced a negative delay
     # that reached time.sleep() and raised ValueError from inside the error
-    # handler, masking the network error it was retrying.
+    # handler. max() also maps nan to 0.0, since nan compares false.
     base = max(0.0, base_delay)
     if base == 0 or ceiling <= base:
         return min(base, ceiling)
 
-    # Stop doubling once the ceiling is reached. HTTP_RETRY_MAX_ATTEMPTS carries
-    # no ceiling by design, and 2**attempt stops converting to float past ~1024,
-    # so a large count raised OverflowError out of the retry decorator instead of
-    # the httpx.RequestError that callers catch. The exponent that first reaches
-    # the ceiling is derived from the ceiling and the base rather than picked:
-    # every attempt past it returns the ceiling anyway.
-    saturating_exponent = math.ceil(math.log2(ceiling / base))
-    return min(base * (2 ** min(attempt, saturating_exponent)), ceiling)
+    # HTTP_RETRY_MAX_ATTEMPTS carries no ceiling by design, so attempt can be
+    # large enough that base * 2**attempt is not a finite float. Decide that in
+    # exact integer arithmetic: base is mantissa * 2**base_exponent, so the
+    # product overflows exactly when base_exponent + attempt exceeds the float
+    # exponent limit -- and every such value is above any finite ceiling.
+    # Neither 2**attempt nor ceiling / base is ever formed, so neither can
+    # overflow on the way to the comparison.
+    _, base_exponent = math.frexp(base)
+    if base_exponent + attempt > sys.float_info.max_exp:
+        return ceiling
+    return min(math.ldexp(base, attempt), ceiling)
 
 
 def parse_retry_after(value: str | None, now: float | None = None) -> float | None:

@@ -37,6 +37,34 @@ if TYPE_CHECKING:
     from .managed_client import HTTPClient
 
 
+# time.sleep() converts its argument to a signed 64-bit nanosecond count and
+# raises OverflowError past it; on Linux the kernel also rejects an absolute
+# deadline past that range, so the usable limit shrinks with machine uptime.
+# HTTP_RETRY_MAX_DELAY is documented "> 0" with no upper bound, and a bound the
+# operator did not choose is the failure mode this module avoids, so the sync
+# client sleeps in slices instead. The slice length is the one asyncio uses
+# for its selector timeout (MAXIMUM_SELECT_TIMEOUT), for the same reason.
+SLEEP_SLICE_SECONDS = 24 * 60 * 60.0
+
+
+def _sleep(seconds: float) -> None:
+    """Wait ``seconds`` without a ceiling on the value.
+
+    Exactly ``time.sleep(seconds)`` for any wait up to ``SLEEP_SLICE_SECONDS``,
+    so nothing that observes the call (a mocked ``time.sleep`` in a consumer's
+    tests, say) sees a different argument than before. A longer wait is taken
+    in slices of that length, so a spec-valid ceiling cannot raise
+    ``OverflowError`` out of the retry loop. Slices are counted rather than
+    measured against a clock: a deadline loop never terminates under a mocked
+    sleep, and passes ``seconds`` minus elapsed time to the real one.
+    """
+    while seconds > SLEEP_SLICE_SECONDS:
+        time.sleep(SLEEP_SLICE_SECONDS)
+        seconds -= SLEEP_SLICE_SECONDS
+    if seconds > 0:
+        time.sleep(seconds)
+
+
 # Thread-local storage for sync HTTP client
 _thread_local = threading.local()
 
@@ -105,7 +133,7 @@ def retry_with_backoff(max_retries: int | None = None, base_delay: float | None 
                             attempt,
                             retries,
                         )
-                        time.sleep(delay)
+                        _sleep(delay)
                         continue
 
                     check_no_redirect(response)
@@ -116,7 +144,7 @@ def retry_with_backoff(max_retries: int | None = None, base_delay: float | None 
                     if attempt < retries:
                         delay = calculate_delay(delay_base, attempt)
                         _log_retry(f"Request error: {e}", delay, attempt, retries)
-                        time.sleep(delay)
+                        _sleep(delay)
                         continue
                     raise
 
