@@ -314,8 +314,11 @@ This repo is a `uv` workspace. Besides the core `py-identity-model` library
     copying it here, which is how this list came to be three scopes short while
     `fix(ci):` cut 4.0.1. Sibling tracks: `(fastapi)` `(go)` `(rust)` `(node)`.
     Shared: `(spec)` `(infra)`. Ships-nothing: `(conformance)` `(tools)` `(ci)`
-    `(claude)` `(release)` `(deps)` `(docs)` `(hooks)` `(matrix)` `(harness)`
-    `(test)` `(tests)` `(integration)` `(keycloak)`. Workflow changes should
+    `(claude)` `(release)` `(docs)` `(hooks)` `(matrix)` `(harness)`
+    `(test)` `(tests)` `(integration)` `(keycloak)`. NOT `(deps)`: a
+    `fix(deps):` moves a floor in `py/pyproject.toml` and must cut a
+    release (it cut py-v3.8.1 for the cryptography CVEs); dependabot
+    noise is `chore(deps)`, which versions nothing anyway. Workflow changes should
     use `ci:` as the TYPE; no pipeline versions from it. Python releases use the `py-v{version}`
     tag format; Go/Rust use `go/vX.Y.Z` / `rust-vX.Y.Z`. The routing is
     scope-based, not path-based: an **unscoped** `feat:` touching only `go/`

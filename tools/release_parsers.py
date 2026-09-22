@@ -71,6 +71,12 @@ PACKAGE_SCOPE = "fastapi"
 #: guard. Workflow changes should carry ``ci:`` as the conventional *type*,
 #: which no pipeline versions from; this entry is the backstop for when one
 #: carries ``ci`` as the scope instead.
+#: `deps` is deliberately ABSENT: `fix(deps): require cryptography>=50 to
+#: patch PYSEC-2026-3552/3553/3554` moved the floor in `py/pyproject.toml`
+#: and cut py-v3.8.1 — a shipped security fix downstreams pin against.
+#: Dependabot noise is `chore(deps)`, which no pipeline versions from
+#: anyway, so listing `deps` here buys nothing and silently withholds the
+#: next CVE floor from PyPI while the changelog claims it shipped.
 #: Every entry is lower-case; membership is tested against a case-folded scope.
 #: `fix(CI):` is the same change as `fix(ci):` and must route the same way —
 #: `ci` is an acronym people capitalise, and an exact-match frozenset let
@@ -91,7 +97,6 @@ NON_CORE_SCOPES = frozenset(
         "ci",
         "claude",
         "release",
-        "deps",
         "docs",
         "hooks",
         "matrix",

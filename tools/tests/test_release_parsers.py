@@ -87,7 +87,6 @@ NON_CORE = {
     "ci": "the GitHub Actions workflows — ship nothing",
     "claude": "the @claude reviewer workflow — ships nothing",
     "release": "the release machinery itself — ships nothing",
-    "deps": "dependency bumps to repo tooling — ship nothing",
     "docs": "the mkdocs tree, built from main — ships nothing in a wheel",
     "hooks": "the pre-commit hooks — ship nothing",
     "matrix": "the CI matrix — ships nothing",
@@ -136,6 +135,25 @@ def test_a_sibling_pipeline_claims_its_scope_whatever_its_case(repo, scope) -> N
 def test_an_unscoped_commit_is_not_treated_as_non_core(core, repo) -> None:
     """`(result.scope or "")` must not make an unscoped commit match anything."""
     assert _kept(core, repo, "fix: a real library fix")
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Verbatim: this commit moved the cryptography floor in
+        # py/pyproject.toml and cut py-v3.8.1. Downstream pins that floor to
+        # get the patch. Adding `deps` to NON_CORE_SCOPES would drop it, so
+        # the CVE fix would sit on main, changelogged, and never reach PyPI.
+        "fix(deps): require cryptography>=50 to patch PYSEC-2026-3552/3553/3554",
+        "feat(deps): raise the minimum httpx for the redirect fix",
+    ],
+)
+def test_a_dependency_floor_fix_still_bumps_the_core(core, repo, message) -> None:
+    """A `fix(deps):` floor bump ships in the wheel and MUST cut a release."""
+    assert _kept(core, repo, message), (
+        f"{message!r} was dropped — a shipped dependency floor would never reach PyPI"
+    )
+    assert "deps" not in release_parsers.NON_CORE_SCOPES
 
 
 def test_the_declared_non_core_scopes_are_exactly_the_ones_under_test() -> None:
