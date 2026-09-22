@@ -161,7 +161,8 @@ def get_retry_config() -> tuple[int, float]:
         # ">= 0" with no ceiling in spec/config.md and carries no `hi` in the
         # registry, so clamping here would make HTTP_RETRY_BASE_DELAY=300 read
         # as 300.0 through Config.from_env() and 120.0 at the request path --
-        # the same split that RETRY_ATTEMPTS_CEILING was removed to avoid.
+        # the same split an earlier revision's retry-attempt ceiling was
+        # removed to avoid.
         # calculate_delay() bounds the product, which is what reaches sleep().
         base_delay = raw_delay
 
@@ -338,7 +339,8 @@ def resolve_retry_delay(
 
     Honors a server-provided ``Retry-After`` header when present, using the
     larger of it and the exponential backoff so a rate limiter's explicit
-    pacing is respected. The result is capped at ``MAX_RETRY_DELAY_SECONDS``.
+    pacing is respected. The result is bounded by the resolved
+    ``HTTP_RETRY_MAX_DELAY`` (default ``MAX_RETRY_DELAY_SECONDS``).
     """
     backoff = calculate_delay(base_delay, attempt)
     retry_after = parse_retry_after(response.headers.get("Retry-After"))

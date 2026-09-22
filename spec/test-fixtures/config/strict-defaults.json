@@ -23,7 +23,8 @@
       "client.post_login_redirect": "/",
       "client.post_logout_redirect": "/",
       "client.excluded_paths": ["/docs", "/openapi.json", "/health"],
-      "http.timeout": 30.0
+      "http.timeout": 30.0,
+      "http.retry.max_delay": 120.0
     }
   }
 }
