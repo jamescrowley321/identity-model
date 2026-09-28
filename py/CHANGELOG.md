@@ -2,6 +2,36 @@
 
 <!-- version list -->
 
+## v4.0.3 (2026-09-28)
+
+### Bug Fixes
+
+- **go,rust**: Release the JWKS-008 unusable-key fix
+  ([#798](https://github.com/jamescrowley321/identity-model/pull/798),
+  [`fb78337`](https://github.com/jamescrowley321/identity-model/commit/fb783373e5e0d47320024f03e4160f550b797210))
+
+### Chores
+
+- Sync uv.lock with 4.0.2
+  ([`83d11b0`](https://github.com/jamescrowley321/identity-model/commit/83d11b076cb8ebc39daba4a2c00e3708ef46c81f))
+
+### Continuous Integration
+
+- Run the conformance harness tests
+  ([#737](https://github.com/jamescrowley321/identity-model/pull/737),
+  [`08eda0c`](https://github.com/jamescrowley321/identity-model/commit/08eda0c887902d5427b764d5e7b8c7a8ae1a195e))
+
+- Run the hosted conformance suite on every merge and daily
+  ([#761](https://github.com/jamescrowley321/identity-model/pull/761),
+  [`0d87441`](https://github.com/jamescrowley321/identity-model/commit/0d87441a9890449e9bd3555e86444c68c514df63))
+
+### Testing
+
+- **harness**: Publish mock OP EC coordinates at full width
+  ([#797](https://github.com/jamescrowley321/identity-model/pull/797),
+  [`9250640`](https://github.com/jamescrowley321/identity-model/commit/925064012c9b8a85a80acb84b70e54b1f94b7798))
+
+
 ## v4.0.2 (2026-09-28)
 
 ### Bug Fixes
