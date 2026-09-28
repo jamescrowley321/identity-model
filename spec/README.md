@@ -31,12 +31,17 @@ This directory is the **single source of truth** for what every identity-model l
       "given": "A discovery document whose issuer differs from the requested issuer",
       "when": "Discovery is invoked",
       "then": "An issuer-mismatch error is raised",
-      "fixture": "discovery/issuer-mismatch.json",
       "references": ["§4.3"]
     }
   ]
 }
 ```
+
+Besides `tests`, a capability file may carry `notes` (prose that says how its vectors are read:
+input keys, defaults and conventions) and `required_fields` (the members a response MUST carry).
+`required_fields` documents the requirement; runners enforce it only through the reject vectors
+that omit those members. Each executable vector may carry a `name`, which labels it in runner
+output and forms the Python parametrize id (`<id>-<name>`) that known gaps are keyed by.
 
 ### Executable vectors
 
@@ -65,8 +70,11 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
-| JWKS | `vectors/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
+| JWKS | `vectors/jwks.json` (JWKS-001..007) — **executable vectors** | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
+| ID Token | `vectors/id-token.json` (IDT-001..011) — **executable vectors** | `test-fixtures/validation/` |
+| Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
+| UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -75,7 +83,8 @@ These capabilities carry executable vectors and a runner in **every language**:
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
 | revocation | 5 | 7 | `go/internal/conformance/revocation_test.go` | `py/src/tests/unit/test_spec_revocation_conformance.py` | `rust/tests/spec_conformance_revocation.rs` |
-| userinfo | 7 | 7 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/unit/test_spec_userinfo_conformance.py` | `rust/tests/spec_conformance_userinfo.rs` |
+| userinfo | 7 | 9 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/unit/test_spec_userinfo_conformance.py` | `rust/tests/spec_conformance_userinfo.rs` |
+| jwks | 7 | 10 | `go/internal/conformance/jwks_test.go` | `py/src/tests/unit/test_spec_jwks_conformance.py` | `rust/tests/spec_conformance_jwks.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
@@ -92,15 +101,17 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   and optional `body_fixture` (relative to `test-fixtures/`). The runner serves them
   from a local mock server and replaces the literal `https://server.example.com`
   in a fixture with that server's base URL.
+- `http_sequence` (optional): a list of responses per path; the n-th request to
+  the path gets the n-th response and the last one repeats.
 - `expect_request`: the request the client must send (`path`, `method`, and
   optional `headers` and `form`).
+- `expect_calls` (optional): the exact number of requests per path.
 - `expect`: `outcome` `accept` or `reject`; a reject carries the canonical OAuth
-  `error` code and HTTP `status`.
+  `error` code and HTTP `status`. A JWKS accept carries the resulting `keys`.
   UserInfo adds `www_authenticate` (the expected challenge; absent means the
   error response must carry no challenge) to a reject, and
   `claims` (typed standard claims) and `custom_claims` (claim-map entries) to an
   accept.
 
-The remaining capability files
-(client-credentials, authorization-code, etc.) are prose contracts
+The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

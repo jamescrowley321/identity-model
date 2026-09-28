@@ -42,11 +42,15 @@ type HTTPCase struct {
 
 // HTTPVector is one executable HTTP scenario.
 type HTTPVector struct {
-	Name          string                  `json:"name"`
-	Input         map[string]any          `json:"input"`
-	HTTP          map[string]HTTPResponse `json:"http"`
-	ExpectRequest *ExpectRequest          `json:"expect_request,omitempty"`
-	Expect        HTTPExpect              `json:"expect"`
+	Name  string                  `json:"name"`
+	Input map[string]any          `json:"input"`
+	HTTP  map[string]HTTPResponse `json:"http"`
+	// HTTPSequence serves the n-th response to the n-th request on a path;
+	// the last one repeats.
+	HTTPSequence  map[string][]HTTPResponse `json:"http_sequence,omitempty"`
+	ExpectRequest *ExpectRequest            `json:"expect_request,omitempty"`
+	ExpectCalls   map[string]int            `json:"expect_calls,omitempty"`
+	Expect        HTTPExpect                `json:"expect"`
 }
 
 // HTTPResponse is a canned response for one request path.
@@ -72,6 +76,8 @@ type HTTPExpect struct {
 	WWWAuthenticate string         `json:"www_authenticate,omitempty"`
 	Claims          map[string]any `json:"claims,omitempty"`
 	CustomClaims    map[string]any `json:"custom_claims,omitempty"`
+	// Keys is the expected key set, each key as its non-empty JWK members.
+	Keys []map[string]string `json:"keys,omitempty"`
 }
 
 // LoadHTTPCapability reads an HTTP vector file, rejecting unknown fields.
@@ -103,15 +109,16 @@ type recordedRequest struct {
 // mockServer serves a vector's canned responses and records each request.
 type mockServer struct {
 	*httptest.Server
-	mu   sync.Mutex
-	seen map[string]recordedRequest
+	mu    sync.Mutex
+	seen  map[string]recordedRequest
+	calls map[string]int
 }
 
-// newMockServer starts a server that answers each path in v.HTTP with its
-// canned response and 404s anything else.
+// newMockServer starts a server that answers each path in v.HTTP (or
+// v.HTTPSequence) with its canned response and 404s anything else.
 func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 	t.Helper()
-	m := &mockServer{seen: map[string]recordedRequest{}}
+	m := &mockServer{seen: map[string]recordedRequest{}, calls: map[string]int{}}
 	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -123,9 +130,14 @@ func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 		}
 		m.mu.Lock()
 		m.seen[r.URL.Path] = recordedRequest{method: r.Method, header: r.Header.Clone(), form: form}
+		n := m.calls[r.URL.Path]
+		m.calls[r.URL.Path]++
 		m.mu.Unlock()
 
 		resp, ok := v.HTTP[r.URL.Path]
+		if seq := v.HTTPSequence[r.URL.Path]; len(seq) > 0 {
+			resp, ok = seq[min(n, len(seq)-1)], true
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -179,6 +191,18 @@ func (m *mockServer) assertRequest(t *testing.T, label string, want *ExpectReque
 	for k, v := range want.Form {
 		if have := got.form.Get(k); have != v {
 			t.Errorf("%s: form %s = %q, want %q", label, k, have, v)
+		}
+	}
+}
+
+// assertCalls checks the number of requests received on each path.
+func (m *mockServer) assertCalls(t *testing.T, label string, want map[string]int) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for p, n := range want {
+		if m.calls[p] != n {
+			t.Errorf("%s: %d requests to %s, want %d", label, m.calls[p], p, n)
 		}
 	}
 }
