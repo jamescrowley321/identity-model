@@ -116,9 +116,9 @@ class _Kind(Enum):
     FLOAT = "float"
     URL = "url"
     STRLIST = "strlist"
-    # NOTE: no BOOL kind. The only boolean-typed keys in the contract
-    # (spec/config.md §Test tier: TEST_REQUIRE_LIVE / TEST_REQUIRE_HTTPS) are
-    # test-tier harness keys the Python typed surface does not implement, so
+    # NOTE: no BOOL kind. The only boolean-typed key in the contract
+    # (spec/config.md §Test tier: TEST_REQUIRE_HTTPS) is a
+    # test-tier harness key the Python typed surface does not implement, so
     # conformance case CFG-107 (uniform bool parsing) is out of scope here and
     # a bool parser would be unreachable dead code. Add BOOL alongside the first
     # bool registry row if the test tier is ever adopted.

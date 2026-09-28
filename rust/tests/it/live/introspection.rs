@@ -4,8 +4,8 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `rust-integration` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `introspection: { enabled: true }`), runs the unit suite, then runs
-//! these with `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips
-//! fail).
+//! these with `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite
+//! fails).
 //!
 //! Run locally:
 //!
@@ -20,7 +20,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `introspection_endpoint` is
 //! resolved from the fetched discovery document (INTR-006). If
-//! `TEST_DISCO_ADDRESS` is unset the test skips (returns) rather than failing.
+//! `TEST_DISCO_ADDRESS` is unset the test fails.
 //!
 //! Introspection is only meaningful for opaque tokens (a provider cannot look up
 //! a self-contained JWT), so — mirroring the Go reference
@@ -42,8 +42,8 @@ use std::time::Duration;
 
 use rs_identity_model::{IdentityError, IntrospectionClient, TokenClient};
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::discover_or_skip;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// Mints an opaque access token from the `test-opaque` client via the
 /// client-credentials grant. node-oidc-provider issues opaque (non-JWT) tokens
@@ -78,23 +78,27 @@ async fn mint_opaque_token(
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn introspect_active() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_OPAQUE_CLIENT_ID"),
         env_nonempty("TEST_OPAQUE_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite(
+            "TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile",
+        );
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+    let Some(meta) = discover_or_fail(&issuer, allow_http).await else {
         return;
     };
     let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise introspection_endpoint");
+        fail_live_prerequisite("discovery document does not advertise introspection_endpoint");
         return;
     };
     assert!(
@@ -134,23 +138,27 @@ async fn introspect_active() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn introspect_inactive() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_OPAQUE_CLIENT_ID"),
         env_nonempty("TEST_OPAQUE_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite(
+            "TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile",
+        );
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+    let Some(meta) = discover_or_fail(&issuer, allow_http).await else {
         return;
     };
     let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise introspection_endpoint");
+        fail_live_prerequisite("discovery document does not advertise introspection_endpoint");
         return;
     };
 
@@ -180,20 +188,22 @@ async fn introspect_inactive() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn introspect_invalid_client() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(client_id) = env_nonempty("TEST_OPAQUE_CLIENT_ID") else {
-        skip_or_fail("TEST_OPAQUE_CLIENT_ID unset for this profile");
+        fail_live_prerequisite("TEST_OPAQUE_CLIENT_ID unset for this profile");
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+    let Some(meta) = discover_or_fail(&issuer, allow_http).await else {
         return;
     };
     let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise introspection_endpoint");
+        fail_live_prerequisite("discovery document does not advertise introspection_endpoint");
         return;
     };
 

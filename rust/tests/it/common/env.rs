@@ -1,5 +1,5 @@
 //! Provider selection from the shared `TEST_*` environment convention, and the
-//! skip-or-fail rule every live test is gated on.
+//! fail rule every live test is gated on.
 //!
 //! The Makefile sources a profile such as `.env.node-oidc` before running the
 //! live suite. `TEST_DISCO_ADDRESS` is the full discovery-document URL; the
@@ -11,7 +11,7 @@
 const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
 
 /// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset or blank so the caller can skip gracefully.
+/// variable is unset or blank.
 pub fn issuer_from_env() -> Option<String> {
     let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
     let disco = disco.trim();
@@ -34,16 +34,14 @@ pub fn env_nonempty(name: &str) -> Option<String> {
     if v.is_empty() { None } else { Some(v) }
 }
 
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it
-/// panics.
+/// Fails the test: a live prerequisite (reachable provider, sourced profile,
+/// client credentials, advertised endpoint) is missing.
 ///
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or an unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule, CONS-1.4 review). The Go
-/// suite's `integrationtest.SkipUnreachable` is the same rule.
-pub fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
+/// Live tests are `#[ignore]`-gated and run only via
+/// `make test-integration-rust`, which boots the fixture and sources
+/// `.env.node-oidc` first — so a missing prerequisite there is always a bug,
+/// never a reason to skip (mechanical-gate rule, CONS-1.4 review). The Go
+/// integration suite follows the same rule.
+pub fn fail_live_prerequisite(msg: &str) {
+    panic!("{msg}");
 }

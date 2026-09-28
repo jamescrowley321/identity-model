@@ -13,25 +13,27 @@ use rs_identity_model::{
     validate_token_with_jwks,
 };
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::{client_credentials_token, discover_or_skip};
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::{client_credentials_token, discover_or_fail};
 
 /// Discovers the live provider and acquires a real client-credentials token,
-/// returning `None` (after a SKIP) when the profile/provider is unavailable.
+/// failing when the profile/provider is unavailable.
 async fn live_token_and_meta() -> Option<(String, ProviderMetadata, JwksClient)> {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return None;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
         return None;
     };
     let allow_http = issuer.starts_with("http://");
-    let meta = discover_or_skip(&issuer, allow_http).await?;
+    let meta = discover_or_fail(&issuer, allow_http).await?;
     let token = client_credentials_token(&meta.token_endpoint, &client_id, &client_secret).await;
     let jwks = JwksClient::builder()
         .allow_http(allow_http)

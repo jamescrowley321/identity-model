@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -17,14 +17,12 @@
 //! `.env.node-oidc` profile the Makefile sources). `TEST_DISCO_ADDRESS` is the
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. Point `TEST_DISCO_ADDRESS` at
-//! another provider to run the same test there. If it is unset the test skips
-//! (returns) rather than failing, so `cargo test -- --ignored` is safe without
-//! a provider configured.
+//! another provider to run the same test there. If it is unset the test fails.
 
 use rs_identity_model::DiscoveryClient;
 use std::time::Duration;
 
-use crate::common::env::{issuer_from_env, skip_or_fail};
+use crate::common::env::{fail_live_prerequisite, issuer_from_env};
 
 // DISC-001 / DISC-002 / DISC-003 / DISC-004: fetch a real discovery document,
 // confirm the issuer matches and the required endpoints are populated, then a
@@ -33,7 +31,9 @@ use crate::common::env::{issuer_from_env, skip_or_fail};
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn discovers_real_provider() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
 

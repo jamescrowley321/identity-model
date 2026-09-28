@@ -3,8 +3,8 @@
 //! Every test here is `#[ignore]`-gated so a bare `cargo test` (no provider up)
 //! stays green. The `integration-tests-rust` CI job boots the local `infra/`
 //! node-oidc-provider (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1`, which turns every
-//! infrastructure skip into a failure.
+//! `cargo test -- --ignored` via `make test-integration-rust`, where every
+//! missing prerequisite is a failure.
 //!
 //! Run locally:
 //!
@@ -15,10 +15,10 @@
 //! ```
 //!
 //! Provider selection follows the shared `TEST_*` convention documented on
-//! [`crate::common::env`]. A test that needs a capability the selected profile
-//! lacks (an endpoint the discovery document does not advertise, a client type
-//! the profile does not define) skips with a reason; an unreachable provider
-//! is a skip locally and a failure under `TEST_REQUIRE_LIVE=1`.
+//! [`crate::common::env`]. A missing prerequisite — an unreachable provider,
+//! an unsourced profile, a client the profile does not define, an endpoint the
+//! discovery document does not advertise — fails; only the OP-behaviour probes
+//! in `id_token_validation` skip, with a reason.
 
 mod claims_validation;
 mod discovery;
