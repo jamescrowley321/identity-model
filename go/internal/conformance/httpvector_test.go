@@ -118,16 +118,21 @@ type recordedRequest struct {
 // mockServer serves a vector's canned responses and records each request.
 type mockServer struct {
 	*httptest.Server
-	mu    sync.Mutex
-	seen  map[string]recordedRequest
-	calls map[string]int
+	mu      sync.Mutex
+	seen    map[string]recordedRequest
+	history map[string][]recordedRequest
+	calls   map[string]int
 }
 
 // newMockServer starts a server that answers each path in v.HTTP (or
 // v.HTTPSequence) with its canned response and 404s anything else.
 func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 	t.Helper()
-	m := &mockServer{seen: map[string]recordedRequest{}, calls: map[string]int{}}
+	m := &mockServer{
+		seen:    map[string]recordedRequest{},
+		history: map[string][]recordedRequest{},
+		calls:   map[string]int{},
+	}
 	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -138,7 +143,9 @@ func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 			t.Errorf("parse request form: %v", err)
 		}
 		m.mu.Lock()
-		m.seen[r.URL.Path] = recordedRequest{method: r.Method, header: r.Header.Clone(), form: form}
+		rec := recordedRequest{method: r.Method, header: r.Header.Clone(), form: form}
+		m.seen[r.URL.Path] = rec
+		m.history[r.URL.Path] = append(m.history[r.URL.Path], rec)
 		n := m.calls[r.URL.Path]
 		m.calls[r.URL.Path]++
 		m.mu.Unlock()
