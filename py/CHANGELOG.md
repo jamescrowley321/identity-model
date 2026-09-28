@@ -2,6 +2,78 @@
 
 <!-- version list -->
 
+## v4.0.2 (2026-09-28)
+
+### Bug Fixes
+
+- Tolerate unusable JWKs across Python, Go and Rust; tighten no-kid key selection
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **jwks**: Define mistyped JWK members identically in all three languages
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **jwks**: Ignore unusable keys instead of rejecting the whole JWK Set
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **jwks**: Skip keys with mistyped members; type-check the alg header
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **jwks**: Skip unusable keys in Go and Rust too (JWKS-008)
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **jwt**: Reject alg=none and alg-mismatched keys in no-kid key selection
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+### Build System
+
+- Run lint and unit tests for Python, Go and Rust in pre-commit
+  ([#763](https://github.com/jamescrowley321/identity-model/pull/763),
+  [`5479f42`](https://github.com/jamescrowley321/identity-model/commit/5479f42215cfb0b0ec0216ec8367dc5847ac9a3d))
+
+### Chores
+
+- Sync uv.lock with 4.0.1
+  ([`748d12e`](https://github.com/jamescrowley321/identity-model/commit/748d12eaa9b90ef08942aa867120e6bbf6beac85))
+
+### Continuous Integration
+
+- Pin the OIDF conformance suite to release-v5.3.1
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- Stop the @claude review cancelling itself via its own result comment
+  ([#749](https://github.com/jamescrowley321/identity-model/pull/749),
+  [`fdb22a8`](https://github.com/jamescrowley321/identity-model/commit/fdb22a806a4f3f62e51a2902bd2716996e326559))
+
+- Stop the prerelease caller shadowing required ci contexts
+  ([#760](https://github.com/jamescrowley321/identity-model/pull/760),
+  [`3f118af`](https://github.com/jamescrowley321/identity-model/commit/3f118afbb4065e6044d3fe53dcfeef431a723fb3))
+
+- **deps)(deps**: Bump astral-sh/setup-uv in the github-actions group
+  ([#747](https://github.com/jamescrowley321/identity-model/pull/747),
+  [`0d66649`](https://github.com/jamescrowley321/identity-model/commit/0d6664918f90e4757b8ba0428bdd43886044ef66))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#748](https://github.com/jamescrowley321/identity-model/pull/748),
+  [`b30094e`](https://github.com/jamescrowley321/identity-model/commit/b30094eb455d3665663f3053ccd89fee5f4637b8))
+
+### Testing
+
+- Pin the no-kid alg rejections for the mutation gate
+  ([#764](https://github.com/jamescrowley321/identity-model/pull/764),
+  [`8a073d4`](https://github.com/jamescrowley321/identity-model/commit/8a073d40799d66b0539c4551c80c48077f397def))
+
+- **integration**: Fail instead of skipping when the expired token is missing
+  ([#732](https://github.com/jamescrowley321/identity-model/pull/732),
+  [`b55555c`](https://github.com/jamescrowley321/identity-model/commit/b55555cce7792360e918a461c090c7621c7c9e1b))
+
+
 ## v4.0.1 (2026-09-22)
 
 ### Bug Fixes
