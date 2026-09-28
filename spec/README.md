@@ -68,15 +68,34 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | JWKS | `vectors/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 
-Two capabilities carry executable vectors and a runner in **every language**:
+These capabilities carry executable vectors and a runner in **every language**:
 
 | capability | cases | vectors | Go | Python | Rust |
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
+| revocation | 5 | 7 | `go/internal/conformance/revocation_test.go` | `py/src/tests/unit/test_spec_revocation_conformance.py` | `rust/tests/spec_conformance_revocation.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
+A case a language does not meet yet is marked in that language's runner as an
+expected failure (Python: `xfail(strict=True)`) with a linked issue, so the
+suite fails once it starts passing.
+
+### HTTP vectors
+
+Capabilities that call an endpoint use HTTP vectors. Each vector carries:
+
+- `input`: the call's arguments (capability-specific).
+- `http`: canned responses keyed by request path: `status` and optional
+  `body_fixture` (relative to `test-fixtures/`). The runner serves them
+  from a local mock server and replaces the literal `https://server.example.com`
+  in a fixture with that server's base URL.
+- `expect_request`: the request the client must send (`path`, `method`, and
+  optional `headers` and `form`).
+- `expect`: `outcome` `accept` or `reject`; a reject carries the canonical OAuth
+  `error` code and HTTP `status`.
+
 The remaining capability files
 (client-credentials, authorization-code, userinfo, etc.) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

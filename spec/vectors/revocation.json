@@ -2,7 +2,6 @@
   "capability": "revocation",
   "spec": "RFC 7009 (OAuth 2.0 Token Revocation)",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc7009",
-  "required_fields": [],
   "tests": [
     {
       "id": "REV-001",
@@ -10,8 +9,64 @@
       "given": "Authenticated client credentials for the revocation endpoint and either a valid token or an already-expired/revoked/unknown token",
       "when": "Revoke is called with the token parameter",
       "then": "A POST application/x-www-form-urlencoded request carrying token is sent and any HTTP 200 response (empty body or empty JSON object) yields a success result; the response MUST NOT differ between valid and invalid/expired/unknown tokens, preventing token scanning",
-      "fixture": "revocation/revoke-success-empty.json",
-      "references": ["RFC 7009 §2.1", "RFC 7009 §2.2"]
+      "references": [
+        "RFC 7009 §2.1",
+        "RFC 7009 §2.2"
+      ],
+      "vectors": [
+        {
+          "name": "empty-body",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 200,
+              "body_fixture": "revocation/revoke-success-empty.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "empty-object-body",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 200,
+              "body_fixture": "revocation/revoke-success-empty-object.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "REV-002",
@@ -19,7 +74,67 @@
       "given": "A token and a token_type_hint of access_token or refresh_token",
       "when": "Revoke is called with the hint configured",
       "then": "The hint is sent as the token_type_hint form parameter; the token parameter is always present and the request succeeds regardless of hint correctness (the server MAY use the hint to optimize lookup but MUST accept the request even if it is incorrect)",
-      "references": ["RFC 7009 §2.1"]
+      "references": [
+        "RFC 7009 §2.1"
+      ],
+      "vectors": [
+        {
+          "name": "access-token-hint",
+          "input": {
+            "token": "the-token",
+            "token_type_hint": "access_token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 200,
+              "body_fixture": "revocation/revoke-success-empty.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token",
+              "token_type_hint": "access_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "refresh-token-hint",
+          "input": {
+            "token": "the-token",
+            "token_type_hint": "refresh_token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 200,
+              "body_fixture": "revocation/revoke-success-empty.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token",
+              "token_type_hint": "refresh_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "REV-003",
@@ -27,8 +142,40 @@
       "given": "A revocation request for a token type the server does not support revoking",
       "when": "Revoke is called and the endpoint replies HTTP 400 with an OAuth error body",
       "then": "A typed revocation error carrying error=unsupported_token_type (plus optional error_description, error_uri, and the HTTP status) is surfaced",
-      "fixture": "revocation/error-unsupported-token-type.json",
-      "references": ["RFC 7009 §2.2.1", "RFC 6749 §5.2"]
+      "references": [
+        "RFC 7009 §2.2.1",
+        "RFC 6749 §5.2"
+      ],
+      "vectors": [
+        {
+          "name": "unsupported-token-type",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 400,
+              "body_fixture": "revocation/error-unsupported-token-type.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "unsupported_token_type",
+            "status": 400
+          }
+        }
+      ]
     },
     {
       "id": "REV-004",
@@ -36,8 +183,40 @@
       "given": "Invalid client credentials",
       "when": "Revoke is called and the endpoint replies HTTP 401 with an OAuth error body",
       "then": "A typed revocation error carrying error=invalid_client (plus optional error_description, error_uri, and the HTTP status) is surfaced",
-      "fixture": "revocation/error-invalid-client.json",
-      "references": ["RFC 7009 §2.2.1", "RFC 6749 §5.2"]
+      "references": [
+        "RFC 7009 §2.2.1",
+        "RFC 6749 §5.2"
+      ],
+      "vectors": [
+        {
+          "name": "invalid-client",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/revoke": {
+              "status": 401,
+              "body_fixture": "revocation/error-invalid-client.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_client",
+            "status": 401
+          }
+        }
+      ]
     },
     {
       "id": "REV-005",
@@ -45,8 +224,43 @@
       "given": "A valid OIDC Discovery / Authorization Server Metadata document containing revocation_endpoint",
       "when": "The revocation endpoint is resolved from discovery and passed to Revoke",
       "then": "The revocation_endpoint URL from the discovery document is used rather than requiring manual configuration",
-      "fixture": "revocation/discovery-with-revocation.json",
-      "references": ["RFC 8414 §2"]
+      "references": [
+        "RFC 8414 §2"
+      ],
+      "vectors": [
+        {
+          "name": "endpoint-from-discovery",
+          "input": {
+            "token": "the-token",
+            "discover": true
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "revocation/discovery-with-revocation.json"
+            },
+            "/revoke": {
+              "status": 200,
+              "body_fixture": "revocation/revoke-success-empty.json"
+            }
+          },
+          "expect_request": {
+            "path": "/revoke",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "token": "the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "notes": "HTTP vectors. Each vector gives the call `input`, the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/; the literal https://server.example.com in a fixture is replaced with the mock server's base URL), the request the client must send (`expect_request`), and the outcome (`expect`). Client credentials are client_id=cid, client_secret=secret, sent as client_secret_basic. A reject carries the canonical OAuth `error` code and HTTP `status`."
 }
