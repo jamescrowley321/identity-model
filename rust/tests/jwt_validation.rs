@@ -208,7 +208,7 @@ fn signing_key() -> EncodingKey {
     EncodingKey::from_rsa_der(&std::fs::read(FIXTURE_DER).expect("read signing key DER"))
 }
 
-// JWT-001 / JWT-010: discover the live provider, fetch its real JWKS, then
+// JWT-001 / JWKS-004: discover the live provider, fetch its real JWKS, then
 // validate a token whose kid the provider does not publish. Key resolution must
 // force one JWKS refresh and surface KeyNotFound against the live endpoint.
 #[tokio::test]
@@ -241,7 +241,7 @@ async fn integration_forced_refresh_against_live_jwks() {
         .build();
 
     // Prime the cache with the provider's real key set so resolution of our
-    // unknown kid genuinely exercises the forced-refresh path (JWT-010).
+    // unknown kid genuinely exercises the forced-refresh path (JWKS-004).
     let set = jwks
         .fetch(&meta.jwks_uri)
         .await

@@ -104,10 +104,9 @@ cd rust && cargo test       # Rust unit tests
 make test-integration-rust  # Rust live integration suite
 ```
 
-Cross-language conformance (every language must pass every shared vector):
-```bash
-make spec-coverage
-```
+Cross-language conformance: each language's unit suite runs the shared vectors
+in `spec/vectors/` (`make test-unit`, `cd go && go test ./...`,
+`cd rust && cargo test`) and fails if any case is not executed.
 
 Run specific Python tests (from `py/`):
 ```bash

@@ -24,18 +24,13 @@ Two deliberate deviations from the Go runner, both semantics-preserving:
   PIM into the required behaviour via its ``require`` option. An intentional,
   documented default difference — see the PARITY NOTE in ``_execute``.
 
-Coverage: ``test_every_vector_case_is_parametrized`` is the runner-internal
-gate (every non-native case id must be executed; native cases must name a
-real Python test). When ``SPEC_COVERAGE_OUT`` is set (the cross-language
-coverage gate — ``tools/spec_coverage_gate.py`` — sets it and runs this file
-single-process), the executed ids are written there at interpreter exit.
+Coverage: a case without vectors fails module collection (``_vector_params``),
+and ``test_every_vector_case_is_parametrized`` checks every case id is
+parametrized.
 """
 
-import atexit
-from collections import Counter
 from datetime import UTC, datetime, timedelta
 import json
-import os
 from pathlib import Path
 import re
 
@@ -54,11 +49,6 @@ from py_identity_model.exceptions import (
     TokenExpiredException,
     TokenValidationException,
 )
-
-
-# The shared /spec + /infra trees are polyglot and live at the true repo root;
-# the Python package (and its native-test anchors) live under /py (parents[3]).
-_PY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _find_repo_root() -> Path:
@@ -84,27 +74,11 @@ _FIXTURE_ROOT = _REPO_ROOT / "spec" / "test-fixtures"
 
 _CAPABILITY = json.loads(_SPEC_FILE.read_text())
 _CASES = _CAPABILITY["tests"]
-_VECTOR_CASES = [c for c in _CASES if c.get("execution") != "native"]
-_NATIVE_CASES = [c for c in _CASES if c.get("execution") == "native"]
-
-# Python anchors for native-executed cases: the per-language equivalent of the
-# vector's Go `native_test`. Checked for existence by the coverage-gate test.
-_PYTHON_NATIVE_TESTS = {
-    "JWT-010": (
-        "src/tests/unit/test_aio_token_validation.py"
-        "::test_cached_path_refreshes_jwks_when_kid_not_in_cache"
-    ),
-}
 
 _SIGNING_JWK = json.loads(
     (_FIXTURE_ROOT / "validation" / "signing-key.jwk.json").read_text()
 )
 _PUBLIC_JWKS = json.loads((_FIXTURE_ROOT / "validation" / "jwks.json").read_text())
-
-#: Vectors that ran AND passed, per case id — counted per vector so the gate can
-#: verify each case ran every vector the spec carries, not merely that its id
-#: appeared. Recorded at the END of the test so a red vector is never covered.
-_EXECUTED: Counter[str] = Counter()
 
 _TIME_CLAIMS = frozenset({"exp", "nbf", "iat"})
 
@@ -284,9 +258,9 @@ def _assert_canonical_reject(err: PyIdentityModelException, expect: dict) -> Non
 
 def _vector_params() -> list:
     params = []
-    for case in _VECTOR_CASES:
+    for case in _CASES:
         vectors = case.get("vectors", [])
-        assert vectors, f"{case['id']}: no vectors and not marked native"
+        assert vectors, f"{case['id']}: case has no vectors"
         for idx, vector in enumerate(vectors):
             label = vector.get("name") or str(idx)
             params.append(pytest.param(case["id"], vector, id=f"{case['id']}-{label}"))
@@ -305,43 +279,10 @@ def test_spec_vector(case_id: str, vector: dict) -> None:
         _assert_canonical_reject(exc_info.value, expect)
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {expect['outcome']!r}")
-    _EXECUTED[case_id] += 1
 
 
 def test_every_vector_case_is_parametrized() -> None:
-    """Runner-internal coverage gate (mirrors the Go runner's).
-
-    Every non-native case id in /spec must be parametrized for execution, and
-    every native case must name a real Python test as its per-language anchor.
-    """
+    """Every case id in the spec file must be parametrized for execution."""
     parametrized = {p.values[0] for p in _vector_params()}
-    missing = {c["id"] for c in _VECTOR_CASES} - parametrized
+    missing = {c["id"] for c in _CASES} - parametrized
     assert not missing, f"vector cases not executed by the Python runner: {missing}"
-
-    for case in _NATIVE_CASES:
-        case_id = case["id"]
-        anchor = _PYTHON_NATIVE_TESTS.get(case_id)
-        assert anchor, f"native case {case_id} has no Python native-test anchor"
-        anchor_file, anchor_test = anchor.split("::", 1)
-        anchor_path = _PY_ROOT / anchor_file
-        assert anchor_path.is_file(), f"{case_id}: anchor file {anchor_file} missing"
-        assert anchor_test.split("::")[-1] in anchor_path.read_text(), (
-            f"{case_id}: anchor test {anchor_test} not found in {anchor_file}"
-        )
-
-
-def _write_coverage_report() -> None:
-    out = os.environ.get("SPEC_COVERAGE_OUT")
-    if not out or not _EXECUTED:
-        return
-    report = {
-        "language": "python",
-        "capability": _CAPABILITY["capability"],
-        "executed": sorted(_EXECUTED),
-        "executed_vectors": dict(sorted(_EXECUTED.items())),
-        "native": _PYTHON_NATIVE_TESTS,
-    }
-    Path(out).write_text(json.dumps(report, indent=2) + "\n")
-
-
-atexit.register(_write_coverage_report)

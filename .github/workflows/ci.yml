@@ -596,43 +596,6 @@ jobs:
       - name: Repo-tooling tests
         run: make test-tools
 
-  spec-vector-coverage:
-    # CONS-1.5 cross-language coverage gate: every language's thin runner must
-    # execute every executable vector id in spec/vectors (offline — no
-    # docker fixtures), and native cases must carry per-language test anchors.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-
-      - name: Set up Python + uv
-        uses: ./.github/actions/setup-python-uv
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-
-      - name: Set up Rust
-        run: rustup toolchain install stable --profile minimal && rustup default stable
-
-      - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            rust/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
-
-      - name: Spec vector-coverage gate
-        run: make spec-coverage
-
   publish-parity:
     # CONS-2.5 publishing-parity gate: a wheel freshly built from py/ must still
     # ship everything the latest PyPI release did. Directional — it fails only on
@@ -746,7 +709,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, spec-vector-coverage, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -770,7 +733,6 @@ jobs:
             "${{ needs.rust-checks.result }}" \
             "${{ needs.rust-mutation-gate.result }}" \
             "${{ needs.tools-tests.result }}" \
-            "${{ needs.spec-vector-coverage.result }}" \
             "${{ needs.publish-parity.result }}" \
             "${{ needs.example-tests.result }}" \
             "${{ needs.build.result }}" \

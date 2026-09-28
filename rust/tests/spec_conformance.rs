@@ -23,13 +23,10 @@
 //!   the same "signature does not verify under the kid-resolved key" semantic
 //!   through the same RS256 verification path.
 //!
-//! Coverage: `spec_validation_conformance` asserts every non-native case id
-//! executes and every native case names a real Rust test. When
-//! `SPEC_COVERAGE_OUT` is set (by `tools/spec_coverage_gate.py`), the executed
-//! ids are written there in the shared report shape.
+//! Coverage: `spec_validation_conformance` asserts every case id executes
+//! every vector it declares.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -47,20 +44,12 @@ const SIGNING_KEY_DER: &str = "../spec/test-fixtures/validation/signing-key.pkcs
 const JWKS_FIXTURE: &str = "../spec/test-fixtures/validation/jwks.json";
 const FIXTURE_KID: &str = "test-key-1";
 
-/// Rust anchors for native-executed cases: the per-language equivalent of the
-/// vector's Go `native_test`. Checked for existence by the coverage gate below.
-fn rust_native_tests() -> BTreeMap<&'static str, &'static str> {
-    BTreeMap::from([(
-        "JWT-010",
-        "rust/tests/jwt_validation.rs::integration_forced_refresh_against_live_jwks",
-    )])
-}
-
 // ── Vector schema (mirrors go/internal/conformance/spec.go) ─────────────────
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capability {
+    #[allow(dead_code)]
     capability: String,
     #[allow(dead_code)]
     spec: String,
@@ -89,18 +78,6 @@ struct Case {
     references: Vec<String>,
     #[serde(default)]
     vectors: Vec<TestVector>,
-    #[serde(default)]
-    execution: String,
-    #[serde(default)]
-    reason: String,
-    #[serde(default)]
-    native_test: String,
-}
-
-impl Case {
-    fn is_native(&self) -> bool {
-        self.execution == "native"
-    }
 }
 
 #[derive(Deserialize)]
@@ -368,43 +345,13 @@ fn spec_validation_conformance() {
     let jwks: JsonWebKeySet =
         serde_json::from_str(&std::fs::read_to_string(JWKS_FIXTURE).expect("read jwks fixture"))
             .expect("parse jwks fixture");
-    let native_anchors = rust_native_tests();
 
     let mut executed: Vec<String> = Vec::new();
     // Per-case vector counts, incremented only after a vector passes: a panic
     // ends the test, so a red vector is never reported as covered.
     let mut executed_vectors: BTreeMap<String, usize> = BTreeMap::new();
     for case in &capability.tests {
-        if case.is_native() {
-            assert!(
-                !case.reason.is_empty() && !case.native_test.is_empty(),
-                "{}: native execution requires reason + native_test",
-                case.id
-            );
-            // Coverage gate: the native case must name a real Rust test.
-            let anchor = native_anchors.get(case.id.as_str()).unwrap_or_else(|| {
-                panic!("native case {} has no Rust native-test anchor", case.id)
-            });
-            let (file, test_name) = anchor.split_once("::").expect("anchor format file::test");
-            let file = file.strip_prefix("rust/").unwrap_or(file);
-            assert!(
-                Path::new(file).is_file(),
-                "{}: anchor file {file} missing",
-                case.id
-            );
-            let body = std::fs::read_to_string(file).expect("read anchor file");
-            assert!(
-                body.contains(test_name),
-                "{}: anchor test {test_name} not found in {file}",
-                case.id
-            );
-            continue;
-        }
-        assert!(
-            !case.vectors.is_empty(),
-            "{}: no vectors and not marked native",
-            case.id
-        );
+        assert!(!case.vectors.is_empty(), "{}: no vectors", case.id);
         for (idx, vector) in case.vectors.iter().enumerate() {
             let label = if vector.name.is_empty() {
                 format!("{}[{idx}]", case.id)
@@ -445,48 +392,15 @@ fn spec_validation_conformance() {
         executed.push(case.id.clone());
     }
 
-    // Coverage gate: every non-native case must have been executed.
+    // Coverage: every case must have been executed.
     let missing: Vec<&str> = capability
         .tests
         .iter()
-        .filter(|c| !c.is_native() && !executed.contains(&c.id))
+        .filter(|c| !executed.contains(&c.id))
         .map(|c| c.id.as_str())
         .collect();
     assert!(
         missing.is_empty(),
         "vector cases not executed by the Rust runner: {missing:?}"
     );
-
-    write_coverage_report(
-        &capability.capability,
-        &executed,
-        &executed_vectors,
-        &native_anchors,
-    );
-}
-
-/// Emits the executed/native case ids and per-case vector counts for the cross-language coverage gate
-/// (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set. Same shape as
-/// the Python and Go runners.
-fn write_coverage_report(
-    capability: &str,
-    executed: &[String],
-    executed_vectors: &BTreeMap<String, usize>,
-    native: &BTreeMap<&'static str, &'static str>,
-) {
-    let Ok(out) = std::env::var("SPEC_COVERAGE_OUT") else {
-        return;
-    };
-    let report = json!({
-        "language": "rust",
-        "capability": capability,
-        "executed": executed,
-        "executed_vectors": executed_vectors,
-        "native": native,
-    });
-    std::fs::write(
-        &out,
-        format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
-    )
-    .unwrap_or_else(|e| panic!("write coverage report {out}: {e}"));
 }

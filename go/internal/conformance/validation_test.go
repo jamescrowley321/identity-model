@@ -2,13 +2,11 @@ package conformance
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -48,14 +46,8 @@ func TestValidationConformance(t *testing.T) {
 	executed := make(map[string]int, len(suite.Tests))
 	for _, tc := range suite.Tests {
 		t.Run(tc.ID, func(t *testing.T) {
-			if tc.IsNative() {
-				if tc.Reason == "" || tc.NativeTest == "" {
-					t.Fatalf("%s: native execution requires reason + native_test", tc.ID)
-				}
-				t.Skipf("native-executed by %s: %s", tc.NativeTest, tc.Reason)
-			}
 			if len(tc.Vectors) == 0 {
-				t.Fatalf("%s: no vectors and not marked native", tc.ID)
+				t.Fatalf("%s: no vectors", tc.ID)
 			}
 			for i, v := range tc.Vectors {
 				runVector(t, tc.ID, i, v, signingKey, keySet)
@@ -64,50 +56,13 @@ func TestValidationConformance(t *testing.T) {
 		})
 	}
 
-	// Coverage gate: every non-native case must have run every vector it declares.
+	// Coverage: every case must have run every vector it declares.
 	for _, tc := range suite.Tests {
-		if !tc.IsNative() && executed[tc.ID] != len(tc.Vectors) {
+		if executed[tc.ID] != len(tc.Vectors) {
 			t.Errorf("case %s: Go runner executed %d of %d vectors", tc.ID, executed[tc.ID], len(tc.Vectors))
 		}
 	}
 
-	writeCoverageReport(t, suite, executed)
-}
-
-// writeCoverageReport emits the executed/native case ids and the per-case vector
-// counts for the cross-language coverage gate (tools/spec_coverage_gate.py) when
-// SPEC_COVERAGE_OUT is set. Same shape as the Python and Rust runners.
-func writeCoverageReport(t *testing.T, suite *Capability, executed map[string]int) {
-	t.Helper()
-	out := os.Getenv("SPEC_COVERAGE_OUT")
-	if out == "" {
-		return
-	}
-	native := map[string]string{}
-	for _, tc := range suite.Tests {
-		if tc.IsNative() {
-			native[tc.ID] = tc.NativeTest
-		}
-	}
-	ids := make([]string, 0, len(executed))
-	for id := range executed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	report := map[string]any{
-		"language":         "go",
-		"capability":       suite.Capability,
-		"executed":         ids,
-		"executed_vectors": executed,
-		"native":           native,
-	}
-	b, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal coverage report: %v", err)
-	}
-	if err := os.WriteFile(out, append(b, '\n'), 0o644); err != nil {
-		t.Fatalf("write coverage report %s: %v", out, err)
-	}
 }
 
 func runVector(t *testing.T, id string, idx int, v Vector, signingKey *jose.JSONWebKey, keySet *jwks.JSONWebKeySet) {

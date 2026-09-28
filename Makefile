@@ -239,10 +239,6 @@ build-fastapi: ## Build the fastapi-identity-model wheel + sdist
 
 # ── Security gate ────────────────────────────────────────────────────
 
-.PHONY: spec-coverage
-spec-coverage: ## CONS-1.5: run the py/go/rust /spec vector runners + 100% per-language coverage gate
-	$(UVROOT) python tools/spec_coverage_gate.py
-
 .PHONY: publish-parity
 publish-parity: ## CONS-2.5: prove the /py build packages byte-for-byte vs the latest PyPI release
 	$(UVROOT) python tools/publish_parity.py --package py-identity-model

@@ -17,7 +17,7 @@ version into ``rust/Cargo.toml`` but before creating the release commit, and
 same commit. The tag therefore points at a tree cargo already agrees with.
 
 It lives in the repo-root ``tools/`` tree, with the other cross-language repo
-infrastructure (``spec_coverage_gate.py``), rather than under ``py/`` — it is
+infrastructure, rather than under ``py/`` — it is
 release machinery for the Rust crate, not part of the published Python package,
 and its tests run outside the library suite (``make test-tools``).
 

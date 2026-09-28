@@ -184,17 +184,6 @@
       ]
     },
     {
-      "id": "JWT-010",
-      "title": "kid not in cached JWKS triggers forced refresh",
-      "given": "A signed JWT whose kid is absent from the cached key set",
-      "when": "The token is validated",
-      "then": "A JWKS forced refresh is performed and key resolution retried before failing",
-      "references": ["RFC 7517 §4.5"],
-      "execution": "native",
-      "native_test": "TestValidate_KidNotFound_ForcesRefresh",
-      "reason": "Requires a JWKS endpoint whose served key set changes between the initial cached fetch and a forced refresh — a live HTTP interaction that a static token/fixture vector cannot express. Exercised by the package test against an httptest server."
-    },
-    {
       "id": "JWT-011",
       "title": "Tolerate clock skew",
       "given": "A signed JWT whose exp is marginally in the past within the configured skew",

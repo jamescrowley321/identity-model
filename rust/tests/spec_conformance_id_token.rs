@@ -13,11 +13,6 @@
 //! the crate's stable [`IdentityError::IdTokenValidation`] message shape lives
 //! here (`reason_marker`); the inputs and expected outcomes are the shared
 //! oracle.
-//!
-//! Wired into `tools/spec_coverage_gate.py`: when `SPEC_COVERAGE_OUT` is set
-//! this run emits the executed case ids the cross-language gate reads, and the
-//! gate fails by name if any language skipped a vector. With the variable unset
-//! it runs as an ordinary Rust test.
 
 use rs_identity_model::{
     Claims, IdTokenValidationOptions, IdentityError, validate_id_token_claims,
@@ -34,17 +29,12 @@ const SPEC_FILE: &str = "../spec/vectors/id-token.json";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Capability {
+    #[allow(dead_code)]
     capability: String,
     #[allow(dead_code)]
     spec: String,
     #[allow(dead_code)]
     spec_url: String,
-    /// Absent now that this capability is gated across python/go/rust. It
-    /// stays deserializable so a future capability can opt out again with
-    /// `"pending"` without breaking this runner.
-    #[allow(dead_code)]
-    #[serde(default)]
-    cross_language_coverage_gate: Option<String>,
     #[allow(dead_code)]
     #[serde(default)]
     notes: String,
@@ -163,12 +153,9 @@ fn spec_id_token_conformance() {
     let capability: Capability = serde_json::from_str(&raw).expect("parse id-token.json");
 
     // Per-case vector counts, incremented only after a vector passes — a panic
-    // ends the test, so a red vector is never counted. The old hardcoded
-    // `assert_eq!(executed, 30)` lived only here, so Python and Go could drop
-    // vectors from a case unnoticed; the gate now checks the counts in all three.
+    // ends the test, so a red vector is never counted.
     let mut executed = 0usize;
     let mut executed_vectors: BTreeMap<String, usize> = BTreeMap::new();
-    let mut executed_ids: Vec<String> = Vec::new();
     for case in &capability.tests {
         assert!(!case.vectors.is_empty(), "{}: no vectors", case.id);
         for (idx, vector) in case.vectors.iter().enumerate() {
@@ -223,7 +210,6 @@ fn spec_id_token_conformance() {
             executed_vectors.get(&case.id).copied().unwrap_or(0),
             case.vectors.len()
         );
-        executed_ids.push(case.id.clone());
     }
 
     // Cross-language parity: every vector the spec carries must have executed.
@@ -234,33 +220,4 @@ fn spec_id_token_conformance() {
         executed, total,
         "expected all {total} shared id-token vectors to execute, ran {executed}"
     );
-
-    executed_ids.sort();
-    write_coverage_report(&capability.capability, &executed_ids, &executed_vectors);
-}
-
-/// Emits the executed case ids and per-case vector counts for the cross-language coverage gate
-/// (tools/spec_coverage_gate.py) when SPEC_COVERAGE_OUT is set. Same report
-/// shape as the Python and Go legs; id-token declares no `execution: "native"`
-/// cases, so `native` is always empty.
-fn write_coverage_report(
-    capability: &str,
-    executed: &[String],
-    executed_vectors: &BTreeMap<String, usize>,
-) {
-    let Ok(out) = std::env::var("SPEC_COVERAGE_OUT") else {
-        return;
-    };
-    let report = serde_json::json!({
-        "language": "rust",
-        "capability": capability,
-        "executed": executed,
-        "executed_vectors": executed_vectors,
-        "native": serde_json::Map::new(),
-    });
-    std::fs::write(
-        &out,
-        format!("{}\n", serde_json::to_string_pretty(&report).unwrap()),
-    )
-    .unwrap_or_else(|e| panic!("write coverage report {out}: {e}"));
 }

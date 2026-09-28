@@ -32,10 +32,6 @@ const (
 	OutcomeReject = "reject"
 )
 
-// executionNative marks a case that cannot be expressed as a static vector and
-// is covered by a bespoke package test instead.
-const executionNative = "native"
-
 // Capability is one spec/vectors/<capability>.json file.
 type Capability struct {
 	Capability string `json:"capability"`
@@ -46,10 +42,7 @@ type Capability struct {
 }
 
 // Case is one conformance test id. The prose fields (Given/When/Then) are the
-// human contract; Vectors are the machine-executable form. A case with no
-// Vectors must set Execution="native" plus Reason and NativeTest, because some
-// behaviours (e.g. a forced JWKS refresh) cannot be expressed as a static
-// vector.
+// human contract; Vectors are the machine-executable form.
 type Case struct {
 	ID         string   `json:"id"`
 	Title      string   `json:"title"`
@@ -58,15 +51,8 @@ type Case struct {
 	Then       string   `json:"then"`
 	References []string `json:"references,omitempty"`
 
-	Vectors    []Vector `json:"vectors,omitempty"`
-	Execution  string   `json:"execution,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
-	NativeTest string   `json:"native_test,omitempty"`
+	Vectors []Vector `json:"vectors,omitempty"`
 }
-
-// IsNative reports whether the case is executed by a bespoke package test
-// rather than the declarative vector runner.
-func (c Case) IsNative() bool { return c.Execution == executionNative }
 
 // Vector is one executable check within a case.
 type Vector struct {

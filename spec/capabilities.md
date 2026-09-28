@@ -42,12 +42,10 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by the shared `spec/vectors` vectors through the `spec-vector-coverage` CI gate; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by each language executing the shared `spec/vectors` vectors in its unit suite — but only `validation` and `id-token` carry executable vectors today; the other files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
 > § **Revocation's status is hand-verified, not gate-enforced.** `revocation.json` is a prose
-> contract with no executable `vectors` array, so `tools/spec_coverage_gate.py` excludes the
-> capability from its inventory entirely and configures no revocation runner in any language — the
-> `spec-vector-coverage` gate passes over it vacuously. The `REV-001`..`REV-005` mapping lives in test
+> contract with no executable `vectors` array, so no language runs a revocation vector runner. The `REV-001`..`REV-005` mapping lives in test
 > comments, which no gate reads. Go additionally loads the named fixtures under
 > `spec/test-fixtures/revocation/`; Python and Rust reconstruct the bodies inline, so a fixture change
 > would break Go and leave the others green. Read `implemented` here as "a human checked the tests
@@ -63,7 +61,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > reality; it flips back to `implemented` when
 > [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574) lands.
 >
-> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so it is intentionally **not** enforced by `spec-vector-coverage` — the gate only inventories capabilities that carry executable vectors. It gates each (language, capability) pair independently, and fails closed on any capability that has executable vectors but no runner configured for some language. Each language flips to `implemented` when its Configuration epic lands the implementation together with the runner + gate extension. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
+> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so no language runs a vector runner for it. Each language flips to `implemented` when its Configuration epic lands the implementation together with its runner. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >
 > **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
 > Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
@@ -117,7 +115,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ### Token Introspection
 
 > **Vector-id anchoring.** `introspection.json`'s `INTR-001`…`INTR-006` are descriptive-only — they carry no
-> executable vectors, so `spec-vector-coverage` does not enforce them and each language anchors them by naming
+> executable vectors, so no runner enforces them and each language anchors them by naming
 > the id in the covering test. Current state: Go (`pkg/introspection/introspection_test.go`) and Rust
 > (`tests/introspection.rs`) anchor all six; Python anchors `INTR-001`, `-002`, `-004` and `-005` in
 > `test_introspection.py` / `test_aio_introspection.py`, and half of `-003` — it has no `client_secret_post`

@@ -17,21 +17,12 @@ model's exception surface lives here (``_REASON_MESSAGE``). Every reject path in
 the pure validator raises :class:`IdTokenValidationException`; the ``reason``
 label pins *which* profile rule fired.
 
-Wired into ``tools/spec_coverage_gate.py``: that gate enforces 100% vector
-coverage per (language, capability) pair, and Python, Go and Rust all ship an
-id-token runner. When ``SPEC_COVERAGE_OUT`` is set this suite emits the executed
-case ids the gate reads, and the gate fails by name if any language skipped a
-vector. With the variable unset it runs as an ordinary unit test.
 """
 
 from __future__ import annotations
 
-import atexit
-from collections import Counter
 import json
-import os
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -104,11 +95,6 @@ def _vector_params() -> list:
 
 
 _PARAMS = _vector_params()
-#: Vectors that ran AND passed, per case id. Counted per vector, not per case:
-#: the gate verifies each case ran every vector the spec carries for it, so a
-#: case that quietly lost four of its five vectors fails by name. Recorded at
-#: the END of the test so a red vector is never reported as covered.
-_EXECUTED: Counter[str] = Counter()
 
 
 @pytest.mark.unit
@@ -136,56 +122,14 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
         )
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {outcome!r}")
-    _EXECUTED[case_id] += 1
 
 
 @pytest.mark.unit
 def test_every_id_token_case_is_executed() -> None:
-    """Runner-internal coverage check: every vector case id runs.
-
-    The cross-language gate (``tools/spec_coverage_gate.py``) checks that every
-    language *executed* every case; this asserts the Python leg *parametrized*
-    every case in the first place, which the gate cannot see.
-    """
+    """Every case id in the spec file must be parametrized for execution."""
     executed = {p.values[0] for p in _PARAMS}
     declared = {c["id"] for c in _CASES}
     assert executed == declared, (
         f"ID-Token vector cases not parametrized by the Python runner: "
         f"{declared - executed}"
     )
-
-
-def _write_coverage_report() -> None:
-    """Emit this leg's executed case ids and per-case vector counts for the gate.
-
-    Same shape as the validation runner (test_spec_conformance.py) and the Go
-    and Rust legs: the gate reads one report per (language, capability) pair.
-    id-token has no ``execution: "native"`` cases, so ``native`` is always empty.
-    """
-    out = os.environ.get("SPEC_COVERAGE_OUT")
-    if not out or not _EXECUTED:
-        return
-    report = {
-        "language": "python",
-        "capability": _CAPABILITY["capability"],
-        "executed": sorted(_EXECUTED),
-        "executed_vectors": dict(sorted(_EXECUTED.items())),
-        "native": {},
-    }
-    try:
-        Path(out).write_text(json.dumps(report, indent=2) + "\n")
-    except OSError as exc:
-        # An exception raised inside an atexit callback is printed but does NOT
-        # change the process exit code, so a failed write would leave pytest
-        # green and surface downstream only as the gate's generic "no coverage
-        # report produced" — with the real cause (permissions, missing parent,
-        # full disk) nowhere in the logs. The Go and Rust legs fail loudly on
-        # write errors; say the same thing here, on the stream the gate shows.
-        print(
-            f"[spec-coverage] python/{report['capability']}: FAILED to write "
-            f"coverage report {out}: {exc}",
-            file=sys.stderr,
-        )
-
-
-atexit.register(_write_coverage_report)

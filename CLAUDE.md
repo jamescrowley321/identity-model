@@ -64,7 +64,7 @@ conformance/  # OIDF certification harness (Python)
 
 **`py/` holds only what ships in, or builds and tests, the published
 `py-identity-model` package. Anything that operates on the *repository* — the
-mutation gates, the spec-coverage gate, publish-parity, the semantic-release
+mutation gates, publish-parity, the semantic-release
 configs and commit parsers, the Cargo lock sync — lives in the repo-root
 `tools/` tree whatever language it targets, and its tests live in `tools/tests/`
 and run via `make test-tools`.**
@@ -84,7 +84,7 @@ CWD are separate questions.
 
 **Every path below that starts `src/…` or `packages/…` lives under `py/`.** Run Python tooling from `py/` (`cd py && uv run …`) or, preferably, via
 the repo-root `Makefile` targets, which already `cd` into `py/` for you
-(`make lint`, `make test-unit`, `make test-fastapi`, `make spec-coverage`,
+(`make lint`, `make test-unit`, `make test-fastapi`,
 `make test-integration-*`). Repo tooling has its own target, `make test-tools`,
 which runs from the repo root. The shared `.env.*` provider profiles stay at the
 repo root (they are read by the Python, Go, and Rust suites alike).
