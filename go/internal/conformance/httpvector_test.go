@@ -51,8 +51,9 @@ type HTTPVector struct {
 
 // HTTPResponse is a canned response for one request path.
 type HTTPResponse struct {
-	Status      int    `json:"status"`
-	BodyFixture string `json:"body_fixture,omitempty"`
+	Status      int               `json:"status"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	BodyFixture string            `json:"body_fixture,omitempty"`
 }
 
 // ExpectRequest is the request the client under test must send.
@@ -65,9 +66,12 @@ type ExpectRequest struct {
 
 // HTTPExpect is the asserted outcome of the call.
 type HTTPExpect struct {
-	Outcome string `json:"outcome"`
-	Error   string `json:"error,omitempty"`
-	Status  int    `json:"status,omitempty"`
+	Outcome         string         `json:"outcome"`
+	Error           string         `json:"error,omitempty"`
+	Status          int            `json:"status,omitempty"`
+	WWWAuthenticate string         `json:"www_authenticate,omitempty"`
+	Claims          map[string]any `json:"claims,omitempty"`
+	CustomClaims    map[string]any `json:"custom_claims,omitempty"`
 }
 
 // LoadHTTPCapability reads an HTTP vector file, rejecting unknown fields.
@@ -126,6 +130,9 @@ func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 			http.NotFound(w, r)
 			return
 		}
+		for k, val := range resp.Headers {
+			w.Header().Set(k, val)
+		}
 		var payload []byte
 		if resp.BodyFixture != "" {
 			raw, err := os.ReadFile(filepath.Join(fixtureRoot, resp.BodyFixture))
@@ -133,7 +140,7 @@ func newMockServer(t *testing.T, v HTTPVector) *mockServer {
 				t.Errorf("read fixture %s: %v", resp.BodyFixture, err)
 			}
 			payload = []byte(strings.ReplaceAll(string(raw), fixtureHost, m.URL))
-			if len(payload) > 0 {
+			if len(payload) > 0 && w.Header().Get("Content-Type") == "" {
 				w.Header().Set("Content-Type", "application/json")
 			}
 		}

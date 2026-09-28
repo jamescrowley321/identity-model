@@ -21,7 +21,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json` | implemented | implemented | implemented |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json` | in-progress‡ | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json` | implemented | implemented | implemented |
-| Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json` | implemented | implemented | implemented |
+| Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json`¶ | in-progress¶ | implemented | implemented |
 | Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json` | in-progress‡ | implemented | implemented |
@@ -50,6 +50,15 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error,
 > [#791](https://github.com/jamescrowley321/identity-model/issues/791)); its runner marks those
 > vectors as strict expected failures.
+>
+> ¶ **UserInfo is vector-enforced.** `userinfo.json` carries executable HTTP vectors that every
+> language runs. Python does not yet meet `UI-001` and `UI-007` (its `UserInfoResponse` has no typed
+> standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)), `UI-004`…`UI-006`
+> (it drops the `WWW-Authenticate` challenge,
+> [#769](https://github.com/jamescrowley321/identity-model/issues/769)) or `UI-003 missing-sub` (it accepts
+> a response with no `sub` unless an expected subject is supplied,
+> [#773](https://github.com/jamescrowley321/identity-model/issues/773)); its runner marks those as
+> strict expected failures, so Python is `in-progress`.
 >
 > ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
 > MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
@@ -109,6 +118,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 - Implementations MUST GET the `userinfo_endpoint` with `Authorization: Bearer {token}` and return typed standard claims plus an overflow map ([OIDC Core 1.0 §5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
 - When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)).
+- Implementations MUST let the caller supply the HTTP client and bound the request with a timeout. This is an API-shape contract with no vector (formerly `UI-008`); it is covered by Go `TestFetch_FunctionalOptions` (`go/pkg/userinfo/userinfo_test.go`), Rust `timeout_bounds_slow_endpoint` (`rust/src/userinfo/mod.rs`), and Python `TestSyncDI::test_userinfo_with_injected_client` / `TestAsyncDI::test_userinfo_with_injected_client` (`py/src/tests/unit/test_http_client_di.py`), which show only that `get_userinfo` accepts an injected `HTTPClient`, not that the request goes through it or that its timeout applies ([#775](https://github.com/jamescrowley321/identity-model/issues/775)).
 
 ## Capability Definitions (Extended Tier)
 

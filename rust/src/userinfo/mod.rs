@@ -8,7 +8,7 @@
 //! challenge; [`UserInfoClient::fetch_with_subject`] additionally rejects a
 //! `sub` that does not match the ID token's `sub` (§5.3.2).
 //!
-//! Behavioural contract: `spec/vectors/userinfo.json` (`UI-001`..`UI-008`);
+//! Behavioural contract: `spec/vectors/userinfo.json` (`UI-001`..`UI-007`);
 //! see also `spec/capabilities.md`.
 //!
 //! ```no_run
@@ -253,14 +253,15 @@ impl UserInfoClientBuilder {
 
     /// Uses `client` for the request instead of a default [`reqwest::Client`],
     /// letting callers share a connection pool or supply custom transport
-    /// configuration (UI-008).
+    /// configuration (see the UserInfo section of `spec/capabilities.md`).
     pub fn http_client(mut self, client: HttpClient) -> Self {
         self.http = Some(client);
         self
     }
 
     /// Bounds each request with a per-request timeout. A non-positive duration
-    /// is ignored and the default (30s) is retained (UI-008).
+    /// is ignored and the default (30s) is retained (see the UserInfo section
+    /// of `spec/capabilities.md`).
     pub fn timeout(mut self, timeout: Duration) -> Self {
         if !timeout.is_zero() {
             self.timeout = timeout;
@@ -522,8 +523,8 @@ mod tests {
         assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
     }
 
-    // UI-008: a custom http client is used and a short timeout bounds a slow
-    // endpoint.
+    // spec/capabilities.md (UserInfo): a custom http client is used and a
+    // short timeout bounds a slow endpoint.
     #[tokio::test]
     async fn timeout_bounds_slow_endpoint() {
         let server = MockServer::start().await;
