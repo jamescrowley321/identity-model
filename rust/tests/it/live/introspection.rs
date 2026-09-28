@@ -20,7 +20,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `introspection_endpoint` is
 //! resolved from the fetched discovery document (INTR-006). If
-//! `TEST_DISCO_ADDRESS` is unset the test skips (returns) rather than failing.
+//! `TEST_DISCO_ADDRESS` is unset the test fails.
 //!
 //! Introspection is only meaningful for opaque tokens (a provider cannot look up
 //! a self-contained JWT), so — mirroring the Go reference

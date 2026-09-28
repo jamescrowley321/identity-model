@@ -68,12 +68,12 @@ struct Live {
     client_secret: String,
     allow_http: bool,
     /// The proof algorithms the provider advertises, intersected with the two
-    /// this crate implements. Never empty — an empty intersection skips.
+    /// this crate implements. Never empty — an empty intersection fails.
     algorithms: Vec<DpopAlgorithm>,
 }
 
 /// Resolves the live profile, failing the test when a prerequisite is missing.
-async fn live_or_skip() -> Option<Live> {
+async fn live_or_fail() -> Option<Live> {
     let issuer = issuer_from_env().or_else(|| {
         fail_live_prerequisite(
             "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
@@ -215,7 +215,7 @@ fn cnf_jkt(claims: &rs_identity_model::Claims) -> String {
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn dpop_bound_client_credentials() {
-    let Some(live) = live_or_skip().await else {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -262,7 +262,7 @@ async fn dpop_bound_client_credentials() {
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn dpop_mismatched_proof_is_rejected() {
-    let Some(live) = live_or_skip().await else {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let key = DpopKey::generate(live.algorithms[0]).expect("generate DPoP key");
@@ -317,7 +317,7 @@ fn assert_dpop_rejection(err: &IdentityError, what: &str) {
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn dpop_ath_binds_a_live_token() {
-    let Some(live) = live_or_skip().await else {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let key = DpopKey::generate(live.algorithms[0]).expect("generate DPoP key");

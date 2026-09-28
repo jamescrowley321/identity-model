@@ -41,7 +41,7 @@ pub fn env_nonempty(name: &str) -> Option<String> {
 /// `make test-integration-rust`, which boots the fixture and sources
 /// `.env.node-oidc` first — so a missing prerequisite there is always a bug,
 /// never a reason to skip (mechanical-gate rule, CONS-1.4 review). The Go
-/// suite's `integrationtest.FailUnreachable` is the same rule.
+/// integration suite follows the same rule.
 pub fn fail_live_prerequisite(msg: &str) {
     panic!("{msg}");
 }

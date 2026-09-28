@@ -77,8 +77,8 @@ fn decode_payload(id_token: &str) -> Value {
 // adds the login/consent legs with the `nonce` + `max_age` this test needs.
 
 /// Runs the full headless auth-code + PKCE flow and returns the callback URL
-/// carrying the authorization `code`, or `None` when the provider has no
-/// headless devInteractions (caller skips).
+/// carrying the authorization `code`. A provider without headless
+/// devInteractions fails the test (the `None` arm is unreachable).
 async fn drive_auth_code_flow(
     http: &reqwest::Client,
     authorization_endpoint: &str,
@@ -120,7 +120,7 @@ async fn drive_auth_code_flow(
             "authorization endpoint rejected the request: {status} at {landed}"
         );
         // Providers without node-oidc's devInteractions redirect to a real
-        // browser login UI; skip rather than fail.
+        // browser login UI; the node-oidc make target always has them, so fail.
         if status.is_client_error()
             || status.is_server_error()
             || !landed.path().contains("/interaction/")
@@ -231,7 +231,7 @@ async fn validate_id_token_end_to_end() {
     )
     .await
     else {
-        return; // skipped: no headless devInteractions on this provider
+        return; // unreachable: fail_live_prerequisite panicked
     };
 
     let callback = url::Url::parse(&callback).expect("parse callback URL");

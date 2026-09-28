@@ -18,9 +18,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. There is no separate
 //! `TEST_JWKS_ADDRESS` locally, so the `jwks_uri` is resolved from the fetched
-//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test skips
-//! (returns) rather than failing, so `cargo test -- --ignored` is safe without
-//! a provider configured.
+//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test fails.
 
 use rs_identity_model::{DiscoveryClient, JwksClient};
 use std::time::Duration;

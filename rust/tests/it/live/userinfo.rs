@@ -18,7 +18,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `userinfo_endpoint` /
 //! `token_endpoint` are resolved from the fetched discovery document. If
-//! `TEST_DISCO_ADDRESS` is unset the test skips (returns) rather than failing.
+//! `TEST_DISCO_ADDRESS` is unset the test fails.
 //!
 //! Mirrors the Go reference (`go/pkg/userinfo/userinfo_integration_test.go`):
 //!
@@ -42,10 +42,10 @@ use rs_identity_model::{IdentityError, TokenClient, UserInfoClient};
 use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
 use crate::common::live::discover_or_fail;
 
-/// Discovers the live provider's endpoints, skipping the test when the provider
-/// is unreachable so a missing local stack does not fail CI-less runs. Returns
+/// Discovers the live provider's endpoints, failing the test when the provider
+/// is unreachable. Returns
 /// `(userinfo_endpoint, token_endpoint)`.
-async fn endpoints_or_skip(issuer: &str, allow_http: bool) -> Option<(String, String)> {
+async fn endpoints_or_fail(issuer: &str, allow_http: bool) -> Option<(String, String)> {
     let meta = discover_or_fail(issuer, allow_http).await?;
     let Some(userinfo) = meta.userinfo_endpoint.filter(|u| !u.is_empty()) else {
         fail_live_prerequisite("provider does not advertise a userinfo_endpoint");
@@ -68,7 +68,7 @@ async fn userinfo_bogus_token() {
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some((userinfo_endpoint, _token_endpoint)) = endpoints_or_skip(&issuer, allow_http).await
+    let Some((userinfo_endpoint, _token_endpoint)) = endpoints_or_fail(&issuer, allow_http).await
     else {
         return;
     };
@@ -129,7 +129,7 @@ async fn userinfo_client_credentials_token() {
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some((userinfo_endpoint, token_endpoint)) = endpoints_or_skip(&issuer, allow_http).await
+    let Some((userinfo_endpoint, token_endpoint)) = endpoints_or_fail(&issuer, allow_http).await
     else {
         return;
     };

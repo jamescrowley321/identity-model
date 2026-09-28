@@ -49,7 +49,7 @@ use crate::common::live::discover_or_fail;
 
 /// Discovers the live provider's `token_endpoint`, failing the test when the
 /// provider is unreachable.
-async fn token_endpoint_or_skip(issuer: &str, allow_http: bool) -> Option<String> {
+async fn token_endpoint_or_fail(issuer: &str, allow_http: bool) -> Option<String> {
     let meta = discover_or_fail(issuer, allow_http).await?;
     assert!(
         !meta.token_endpoint.is_empty(),
@@ -78,7 +78,7 @@ async fn client_credentials() {
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -122,7 +122,7 @@ async fn client_credentials_invalid_client() {
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -175,7 +175,7 @@ async fn authorization_code_pkce_rejected() {
         .unwrap_or_else(|| "http://localhost:3000/callback".into());
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -210,7 +210,7 @@ async fn authorization_code_pkce_rejected() {
 // HTTP client — no browser — then exchanges the callback code through
 // [`TokenClient::exchange_code`] with the PKCE verifier. Mirrors the Go
 // `TestIntegration_AuthorizationCode_PKCE_EndToEnd` and the Python suite's
-// `perform_auth_code_flow`. Skips (cleanly) on provider profiles without
+// `perform_auth_code_flow`. Fails on provider profiles without
 // devInteractions.
 
 #[tokio::test]
@@ -296,7 +296,8 @@ async fn authorization_code_pkce_end_to_end() {
         );
         // Providers without node-oidc's devInteractions redirect AWAY to a
         // real (or missing) browser login UI — e.g. IdentityServer's
-        // /Account/Login 404s in the headless fixture. Skip, don't fail.
+        // /Account/Login 404s in the headless fixture. The node-oidc make
+        // target always has them, so fail.
         if status.is_client_error()
             || status.is_server_error()
             || !landed.path().contains("/interaction/")
@@ -350,7 +351,7 @@ async fn authorization_code_pkce_end_to_end() {
     );
     let code = params.get("code").expect("callback carried no code");
 
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
     let client = TokenClient::builder()
