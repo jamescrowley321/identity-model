@@ -78,20 +78,18 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_53 b9f710520453d5
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_54 43acaaa6df27be03
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_55 77332bc01ec90cb3
 
-# ── #562 find_key_by_kid: no-kid signing-key kty pre-filter ───────────────────
+# ── #764 _no_kid_candidates: no-kid alg + kty pre-filter guard ───────────────
 #
-# Equivalent (class 3). The guard is `if len(signing_keys) > 1 and jwt_alg:` and
-# the block only ever *narrows* `signing_keys` to the alg-matching kty. Both
-# mutants change *when* the block runs, never its effect:
-#   _13  `> 1 or jwt_alg`  — additionally enters when len == 1 (narrowing a
-#        single key to itself is a no-op) or when len > 1 & jwt_alg is None
-#        (`_ALG_TO_KTY.get(None)` is None, so the inner `if expected_kty:` skips).
-#   _14  `>= 1 and jwt_alg` — signing_keys is always >= 1 after the sig fallback,
-#        so `>= 1` is always True; identical to `> 1` for every len > 1 case, and
-#        the extra len == 1 case narrows a single key to itself (no-op).
-# No input can observe a different selected key or algorithm: unkillable.
-py_identity_model.core.parsers.x_find_key_by_kid__mutmut_13 09a8e8c7e5d7c1aa
-py_identity_model.core.parsers.x_find_key_by_kid__mutmut_14 e4b9dbae66ea0835
+# Equivalent. The guard is `if len(signing_keys) > 1 and jwt_alg:` and both
+# filters inside only ever *narrow* signing_keys, each falling back to the
+# unfiltered list when narrowing would empty it.
+#   _27  `>= 1 and jwt_alg` — adds only the len == 1 case, where the alg filter
+#        yields [k] or [] (-> fallback [k]) and the kty filter likewise, so the
+#        result is [k] either way. len == 0 is False under both guards.
+# (The `or` twin is killed by TestNoKidAlgFilterGuard: with jwt_alg None the alg
+# filter would keep only alg-less keys and silently break a genuine tie.)
+# Replaces the #562 find_key_by_kid _13/_14 waivers: that guard moved here.
+py_identity_model.core.parsers.x__no_kid_candidates__mutmut_27 44e640e402d14b2b
 
 # ── #585 injectable discovery policy: sync default-None no-ops + log twins ─────
 #
