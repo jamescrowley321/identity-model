@@ -155,6 +155,15 @@ async fn run_vector(label: &str, vector: &HttpVector) {
             }
             other => panic!("{label}: expected sub mismatch, got {other:?}"),
         },
+        "reject" if expect.error == "missing_sub" => match result {
+            Err(IdentityError::Validation(msg)) => {
+                assert!(msg.contains("missing the sub claim"), "{label}: {msg}");
+            }
+            other => panic!("{label}: expected missing sub, got {other:?}"),
+        },
+        "reject" if !expect.error.is_empty() => {
+            panic!("{label}: unknown expected error {:?}", expect.error)
+        }
         "reject" => match result {
             Err(IdentityError::UserInfo {
                 status,

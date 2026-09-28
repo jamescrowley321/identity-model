@@ -11,6 +11,9 @@ Fixtures backing the `userinfo` conformance suite
   (`248289761001`) is the value used by the subject-consistency tests
   (UI-002 match, UI-003 mismatch).
 
+- `missing-sub.json` — a 200 UserInfo response with no `sub` claim, which
+  must be rejected with or without an expected subject (UI-003).
+
 - `server-error.html` — the non-JSON body of the HTTP 500 response (UI-006).
 
 The 401 and 403 responses carry no body; their status and `WWW-Authenticate`

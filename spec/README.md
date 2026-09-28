@@ -96,7 +96,8 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   optional `headers` and `form`).
 - `expect`: `outcome` `accept` or `reject`; a reject carries the canonical OAuth
   `error` code and HTTP `status`.
-  UserInfo adds `www_authenticate` (the expected challenge) to a reject, and
+  UserInfo adds `www_authenticate` (the expected challenge; absent means the
+  error response must carry no challenge) to a reject, and
   `claims` (typed standard claims) and `custom_claims` (claim-map entries) to an
   accept.
 
