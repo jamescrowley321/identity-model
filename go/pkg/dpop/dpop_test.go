@@ -531,10 +531,9 @@ func TestTransport_ResourceMode_DPoPSchemeAndAth(t *testing.T) {
 	}
 }
 
-// Adversarial: a proof whose iat is outside the acceptable window is rejected on
-// the iat field.
 // RFC 9449 §4.3: the embedded jwk must be a public key. go-jose refuses a
-// private one while parsing, so the rejection must still name jwk, not alg.
+// private one while parsing, so the rejection must still name jwk, not alg —
+// unless alg itself is not allowed, which stays an alg rejection.
 func TestVerifyProof_RejectsPrivateEmbeddedJWK(t *testing.T) {
 	key, err := GenerateKey(ES256)
 	if err != nil {
@@ -555,8 +554,21 @@ func TestVerifyProof_RejectsPrivateEmbeddedJWK(t *testing.T) {
 
 	_, err = VerifyProof(proof, http.MethodGet, "https://resource.example.com/r")
 	assertVerificationField(t, err, "jwk")
+
+	for _, alg := range []string{"HS256", "none"} {
+		header, _ := json.Marshal(map[string]any{
+			"typ": "dpop+jwt",
+			"alg": alg,
+			"jwk": json.RawMessage(private),
+		})
+		proof := enc(header) + "." + enc(claims) + "." + enc([]byte("sig"))
+		_, err := VerifyProof(proof, http.MethodGet, "https://resource.example.com/r")
+		assertVerificationField(t, err, "alg")
+	}
 }
 
+// Adversarial: a proof whose iat is outside the acceptable window is rejected on
+// the iat field.
 func TestVerifyProof_ExpiredIAT(t *testing.T) {
 	key, err := GenerateKey(ES256)
 	if err != nil {

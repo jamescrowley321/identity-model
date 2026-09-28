@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -107,9 +108,9 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 	jws, err := jose.ParseSigned(proof, asymmetricSigAlgs)
 	if err != nil {
 		// go-jose refuses an embedded jwk carrying private material while
-		// parsing; report that against jwk, not alg.
-		if embeddedJWKHasPrivateMembers(proof) {
-			return nil, &VerificationError{Field: "jwk", Reason: "embedded jwk must contain only the public key"}
+		// parsing; report that against jwk, not alg, when alg itself is allowed.
+		if asymmetricProofWithPrivateJWK(proof) {
+			return nil, &VerificationError{Field: "jwk", Reason: reasonPrivateJWK + ": " + err.Error()}
 		}
 		return nil, &VerificationError{Field: "alg", Reason: "not a DPoP proof signed with a supported asymmetric algorithm: " + err.Error()}
 	}
@@ -125,7 +126,7 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 		return nil, &VerificationError{Field: "jwk", Reason: "proof header is missing the embedded jwk"}
 	}
 	if !jwk.IsPublic() {
-		return nil, &VerificationError{Field: "jwk", Reason: "embedded jwk must contain only the public key"}
+		return nil, &VerificationError{Field: "jwk", Reason: reasonPrivateJWK}
 	}
 	switch jwk.Key.(type) {
 	case *ecdsa.PublicKey, *rsa.PublicKey:
@@ -201,9 +202,14 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 // material (RFC 7518 §6.2.2, §6.3.2, §6.4.1).
 var privateJWKMembers = []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
 
-// embeddedJWKHasPrivateMembers reports whether the proof's protected header
-// embeds a jwk with private or secret key members.
-func embeddedJWKHasPrivateMembers(proof string) bool {
+// reasonPrivateJWK is the rejection reason for an embedded jwk that carries
+// private or secret key material.
+const reasonPrivateJWK = "embedded jwk must contain only the public key"
+
+// asymmetricProofWithPrivateJWK reports whether the proof's protected header
+// names an allowed asymmetric alg and embeds a jwk with private or secret key
+// members. It reads compact serialization only, which is the DPoP form.
+func asymmetricProofWithPrivateJWK(proof string) bool {
 	encoded, _, ok := strings.Cut(proof, ".")
 	if !ok {
 		return false
@@ -213,9 +219,13 @@ func embeddedJWKHasPrivateMembers(proof string) bool {
 		return false
 	}
 	var header struct {
+		Alg string                     `json:"alg"`
 		JWK map[string]json.RawMessage `json:"jwk"`
 	}
-	if json.Unmarshal(raw, &header) != nil {
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return false
+	}
+	if !slices.Contains(asymmetricSigAlgs, jose.SignatureAlgorithm(header.Alg)) {
 		return false
 	}
 	for _, m := range privateJWKMembers {
