@@ -89,8 +89,9 @@ impl JwksClient {
     ///
     /// # Errors
     ///
-    /// - [`IdentityError::Validation`] — an empty or non-HTTPS `jwks_uri`, an
-    ///   empty key set, or a key missing required parameters (JWKS-002/007).
+    /// - [`IdentityError::Validation`] — an empty or non-HTTPS `jwks_uri`, or a
+    ///   key set with no usable key (JWKS-007). Individual unusable keys are
+    ///   skipped (JWKS-008).
     /// - [`IdentityError::Http`] — a transport failure or a non-2xx response.
     /// - [`IdentityError::Deserialization`] — a body that is not a valid JWK Set
     ///   (JWKS-007).
