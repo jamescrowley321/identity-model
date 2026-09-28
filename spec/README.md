@@ -75,6 +75,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | ID Token | `vectors/id-token.json` (IDT-001..011) — **executable vectors** | `test-fixtures/validation/` |
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
+| Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -86,6 +87,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | userinfo | 7 | 9 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/unit/test_spec_userinfo_conformance.py` | `rust/tests/spec_conformance_userinfo.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/jwks_test.go` | `py/src/tests/unit/test_spec_jwks_conformance.py` | `rust/tests/spec_conformance_jwks.rs` |
 | discovery | 10 | 12 | `go/internal/conformance/discovery_test.go` | `py/src/tests/unit/test_spec_discovery_conformance.py` | `rust/tests/spec_conformance_discovery.rs` |
+| introspection | 6 | 11 | `go/internal/conformance/introspection_test.go` | `py/src/tests/unit/test_spec_introspection_conformance.py` | `rust/tests/spec_conformance_introspection.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
@@ -105,15 +107,16 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
 - `http_sequence` (optional): a list of responses per path; the n-th request to
   the path gets the n-th response and the last one repeats.
 - `expect_request`: the request the client must send (`path`, `method`, and
-  optional `headers` and `form`).
+  optional `headers` and `form`). An empty expected header or form value means
+  it must be absent.
 - `expect_calls` (optional): the exact number of requests per path.
 - `expect`: `outcome` `accept` or `reject`; a reject carries the canonical
   `error` code, and optionally the HTTP `status` and the `fields` it names; an
   accept may carry `result` fields compared by exact equality. A JWKS accept
   carries the resulting `keys`. UserInfo adds `www_authenticate` (the expected
   challenge; absent means the error response must carry no challenge) to a
-  reject, and `claims` (typed standard claims) and `custom_claims` (claim-map
-  entries) to an accept.
+  reject. UserInfo and introspection accepts may carry `claims` (typed standard
+  members) and `custom_claims` (overflow-map entries).
 
-The remaining capability files (`introspection.json`, `token-exchange.json`, `client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+The remaining capability files (`token-exchange.json`, `client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
