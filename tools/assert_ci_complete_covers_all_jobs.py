@@ -450,15 +450,44 @@ class _ReadCollector:
                 self.add_script(run, cwd)
 
 
-def _paths_filters(changes: dict[str, Any]) -> dict[str, list[str]] | None:
+# Only plain `*`, `**`, `?` and literal characters are modelled. Anything else
+# picomatch gives meaning to -- a leading `!` negation (which makes the filter
+# order-dependent and can carve a read path OUT of a `**`), brace/extglob
+# alternation, character classes, escapes -- is rejected rather than guessed at,
+# so a filter this checker cannot evaluate exactly fails the gate closed.
+_UNSUPPORTED_GLOB = re.compile(r"^!|[\[\]{}()\\+@]")
+
+
+def _paths_filters(
+    changes: dict[str, Any], failures: list[Failure]
+) -> dict[str, list[str]] | None:
     for step in changes.get("steps") or []:
-        if str(step.get("uses") or "").startswith(PATHS_FILTER_ACTION):
-            filters = yaml.safe_load((step.get("with") or {}).get("filters") or "")
-            if isinstance(filters, dict):
-                return {
-                    str(name): [str(g) for g in (globs or [])]
-                    for name, globs in filters.items()
-                }
+        if not str(step.get("uses") or "").startswith(PATHS_FILTER_ACTION):
+            continue
+        filters = yaml.safe_load((step.get("with") or {}).get("filters") or "")
+        if not isinstance(filters, dict):
+            return None
+        parsed: dict[str, list[str]] = {}
+        for name, globs in filters.items():
+            parsed[str(name)] = []
+            if not isinstance(globs, list):
+                globs = [globs]
+            for glob in globs:
+                if not isinstance(glob, str) or _UNSUPPORTED_GLOB.search(glob):
+                    failures.append(
+                        Failure(
+                            "unsupported-filter-glob",
+                            CHANGES_JOB,
+                            f"filter '{name}' entry {glob!r} uses syntax this "
+                            "check cannot evaluate exactly (negation, "
+                            "alternation, classes, change-type maps); use "
+                            "plain `*` / `**` / `?` globs",
+                            subject=str(glob),
+                        )
+                    )
+                else:
+                    parsed[str(name)].append(glob)
+        return parsed
     return None
 
 
@@ -477,7 +506,7 @@ def _check_filter_coverage(
     gated = {name: outputs for name, outputs in gated.items() if outputs}
     if not gated:
         return failures
-    filters = _paths_filters(jobs.get(CHANGES_JOB) or {})
+    filters = _paths_filters(jobs.get(CHANGES_JOB) or {}, failures)
     if filters is None:
         return [
             Failure(

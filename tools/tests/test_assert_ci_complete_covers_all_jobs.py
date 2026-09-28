@@ -228,6 +228,41 @@ def test_filter_without_infra_is_rejected() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "glob",
+    [
+        # Negation: dorny excludes the path, a negation-blind matcher would
+        # still see `**` and call the read covered.
+        "!tools/mutation_security_native.py",
+        "tools/{mutation_security_native.py,other.py}",
+        "tools/[m]utation_security_native.py",
+        "tools/@(mutation_security_native.py)",
+    ],
+)
+def test_filter_glob_the_checker_cannot_evaluate_is_rejected(glob: str) -> None:
+    text = _mutate(
+        _real_text(),
+        "              - 'tools/**'\n",
+        f"              - 'tools/**'\n              - '{glob}'\n",
+    )
+    assert _failures(text) == {("unsupported-filter-glob", "changes", glob)}
+
+
+def test_change_type_filter_entry_is_rejected() -> None:
+    workflow = _load()
+    step = next(
+        s
+        for s in workflow["jobs"]["changes"]["steps"]
+        if str(s.get("uses", "")).startswith("dorny/paths-filter")
+    )
+    filters = yaml.safe_load(step["with"]["filters"])
+    filters["shared"].append({"added": "tools/**"})
+    step["with"]["filters"] = yaml.safe_dump(filters)
+    assert {(k, j) for k, j, _ in _failures(workflow)} == {
+        ("unsupported-filter-glob", "changes")
+    }
+
+
 # ── structural drift ─────────────────────────────────────────────────────────
 
 
