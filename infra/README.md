@@ -68,3 +68,20 @@ against both. `test-opaque` (opaque tokens for introspection/revocation),
 realm. Custom multi-tenant claims (`dct`, `tenants`) are injected by the
 node-oidc fixture; see
 [`node-oidc-provider/provider.js`](node-oidc-provider/provider.js).
+
+## Spec vector routes
+
+node-oidc-provider also serves the canned HTTP vectors in
+[`../spec/vectors/`](../spec/vectors/) (copied into the image at build time, so run compose with `--build` after changing them), ahead of
+the real OP — see
+[`node-oidc-provider/vectors.js`](node-oidc-provider/vectors.js):
+
+- `http://localhost:9010/v/{run}/{capability}/{case_id}/{vector}/{path}` answers
+  with `vector.http[path]`, or the n-th entry of `vector.http_sequence[path]`
+  for the n-th request; `https://server.example.com` in a fixture becomes the
+  vector's base URL. `{vector}` is the vector's name (index when unnamed);
+  `{run}` is any token, so concurrent runs keep separate request records.
+- `.../_check` returns `{"ok": bool, "diffs": [...]}`, comparing the requests
+  received against the vector's `expect_request` and `expect_calls`.
+
+Everything outside `/v/` is the real provider.

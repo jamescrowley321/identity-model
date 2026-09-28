@@ -12,12 +12,16 @@ services:
     build:
       context: ./node-oidc-provider
       dockerfile: Dockerfile
+      # Canned spec vectors served under /v/ (vectors.js).
+      additional_contexts:
+        spec: ../spec
     container_name: node-oidc-provider
     ports:
       - "127.0.0.1:9010:9010"
     environment:
       - ISSUER=http://localhost:9010
       - PORT=9010
+      - SPEC_DIR=/spec
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9010/.well-known/openid-configuration"]
       interval: 2s

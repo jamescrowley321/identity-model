@@ -1,6 +1,7 @@
 import { generateKeyPair, exportJWK, decodeJwt } from "jose";
 import Provider from "oidc-provider";
 import crypto from "node:crypto";
+import { vectorRoutes } from "./vectors.js";
 
 const PORT = parseInt(process.env.PORT || "9010", 10);
 if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
@@ -8,6 +9,7 @@ if (Number.isNaN(PORT) || PORT < 1 || PORT > 65535) {
   process.exit(1);
 }
 const ISSUER = process.env.ISSUER || `http://localhost:${PORT}`;
+const SPEC_DIR = process.env.SPEC_DIR || "/spec";
 
 // --- Key Generation ---
 
@@ -308,6 +310,7 @@ async function startProvider() {
   };
 
   const provider = new Provider(ISSUER, configuration);
+  provider.use(vectorRoutes({ issuer: ISSUER, specDir: SPEC_DIR }));
 
   // Allow HTTP (non-TLS) for local test fixture
   provider.proxy = true;
