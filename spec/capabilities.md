@@ -15,7 +15,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 | Tier | Capability | Spec | Conformance | Python | Go | Rust |
 |------|-----------|------|-------------|--------|----|----|
-| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json` | implemented | implemented | implemented |
+| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json`¶ | in-progress¶ | implemented | implemented |
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | in-progress¶ | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json`¶ | implemented | implemented | implemented |
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json`¶ | implemented | implemented | implemented |
@@ -42,7 +42,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors in its unit suite — `validation`, `id-token`, `revocation`, `userinfo`, `jwks` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors in its unit suite — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
 > ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language's runner executes in its unit suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust have no known gaps; Python's are:
 >
@@ -50,6 +50,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and ‡.
 > - **UserInfo** — Python: `UI-001` and `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)), `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)) and `UI-003 missing-sub` (it accepts a response with no `sub` unless an expected subject is supplied, [#773](https://github.com/jamescrowley321/identity-model/issues/773)), so Python is `in-progress`.
 > - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
+> - **OIDC Discovery** (including the cache TTL cases) — Python: `DISC-003` (no check that the document's issuer matches the requested issuer, [#574](https://github.com/jamescrowley321/identity-model/issues/574)) and `DISC-008 missing-multiple-fields` (neither `token_endpoint` nor `authorization_endpoint` is required, [#771](https://github.com/jamescrowley321/identity-model/issues/771)), so Python is `in-progress`.
 >
 > ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
 > MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
@@ -500,7 +501,7 @@ capabilities:
     spec_ref: "OpenID Connect Discovery 1.0"
     conformance_file: "spec/vectors/discovery.json"
     languages:
-      python: { status: implemented }
+      python: { status: in-progress }
       go: { status: implemented }
       rust: { status: implemented }
 ```
