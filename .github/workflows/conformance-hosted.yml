@@ -4,6 +4,14 @@ permissions:
   contents: read
 
 on:
+  # Runs continuously against the hosted suite, not just on demand: every merge
+  # to main plus a daily run, so drift in the library or the hosted suite shows
+  # up the day it happens. PRs are left to conformance.yml (the self-hosted
+  # suite), since fork PRs get no secrets.
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 8 * * *' # 08:00 UTC, after conformance (06:00) and nightly (07:00)
   workflow_dispatch:
     inputs:
       publish:
@@ -15,12 +23,36 @@ on:
           - summary
           - everything
 
+# One run at a time against the shared hosted account; never cancel a run
+# mid-plan, which would leave it half-finished on the suite.
+concurrency:
+  group: conformance-hosted
+  cancel-in-progress: false
+
 jobs:
   conformance-hosted:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
+      # A stale token makes the suite answer 302 -> login, which surfaces much
+      # later as an opaque HTTP error. Fail up front with the actual cause.
+      - name: Check CONFORMANCE_TOKEN
+        env:
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          if [ -z "$CONFORMANCE_TOKEN" ]; then
+            echo "::error::CONFORMANCE_TOKEN secret is not set"
+            exit 1
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $CONFORMANCE_TOKEN" \
+            https://www.certification.openid.net/api/plan)
+          if [ "$status" != "200" ]; then
+            echo "::error::certification.openid.net rejected CONFORMANCE_TOKEN (HTTP $status); generate a new token and update the secret"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -65,7 +97,7 @@ jobs:
             --output conformance/results/hosted/basic-rp-latest.json \
             --export-zip conformance/results/hosted/basic-rp-export.zip \
             --rp-logs-zip conformance/results/hosted/basic-rp-rp-logs.zip \
-            --publish "${{ inputs.publish }}" \
+            --publish "${{ inputs.publish || 'none' }}" \
             --verbose
 
       - name: Run Config RP conformance tests
@@ -78,7 +110,7 @@ jobs:
             --output conformance/results/hosted/config-rp-latest.json \
             --export-zip conformance/results/hosted/config-rp-export.zip \
             --rp-logs-zip conformance/results/hosted/config-rp-rp-logs.zip \
-            --publish "${{ inputs.publish }}" \
+            --publish "${{ inputs.publish || 'none' }}" \
             --verbose
 
       - name: Run Form Post Basic RP conformance tests
@@ -91,7 +123,7 @@ jobs:
             --output conformance/results/hosted/form-post-basic-rp-latest.json \
             --export-zip conformance/results/hosted/form-post-basic-rp-export.zip \
             --rp-logs-zip conformance/results/hosted/form-post-basic-rp-rp-logs.zip \
-            --publish "${{ inputs.publish }}" \
+            --publish "${{ inputs.publish || 'none' }}" \
             --verbose
 
       - name: Upload conformance results
