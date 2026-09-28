@@ -19,8 +19,10 @@ variable "github_repository" {
 # previous apply wrote survives. That is what kept this workspace on
 # execution-mode local and out of VCS.
 #
-# None of these carry a default. An empty default would push an empty string
-# into a live CI secret and break the suite it exists to feed, silently.
+# None of these carry a default, and each one that feeds a secret rejects an
+# empty value. An empty default would push an empty string into a live CI
+# secret and break the suite it exists to feed, silently. The one exception is
+# test_audience, where empty is a real value.
 
 variable "descope_expired_token" {
   type        = string
@@ -52,16 +54,31 @@ variable "descope_expired_token" {
 variable "test_disco_address" {
   type        = string
   description = "Ory discovery endpoint for the TEST_* integration suite"
+
+  validation {
+    condition     = length(trimspace(var.test_disco_address)) > 0
+    error_message = "test_disco_address must be non-empty; refusing to blank the live CI secret."
+  }
 }
 
 variable "test_jwks_address" {
   type        = string
   description = "Ory JWKS endpoint for the TEST_* integration suite"
+
+  validation {
+    condition     = length(trimspace(var.test_jwks_address)) > 0
+    error_message = "test_jwks_address must be non-empty; refusing to blank the live CI secret."
+  }
 }
 
 variable "test_client_id" {
   type        = string
   description = "Ory client id for the TEST_* integration suite"
+
+  validation {
+    condition     = length(trimspace(var.test_client_id)) > 0
+    error_message = "test_client_id must be non-empty; refusing to blank the live CI secret."
+  }
 }
 
 variable "test_client_secret" {
@@ -78,6 +95,11 @@ variable "test_client_secret" {
 variable "test_scope" {
   type        = string
   description = "Scope requested by the TEST_* integration suite"
+
+  validation {
+    condition     = length(trimspace(var.test_scope)) > 0
+    error_message = "test_scope must be non-empty; refusing to blank the live CI secret."
+  }
 }
 
 variable "test_audience" {
@@ -89,6 +111,10 @@ variable "test_audience" {
 variable "test_expired_token" {
   type        = string
   sensitive   = true
-  default     = ""
-  description = "An already-expired Ory token for negative tests. Empty is tolerated, matching the previous lookup() default."
+  description = "An already-expired Ory token for negative tests."
+
+  validation {
+    condition     = length(trimspace(var.test_expired_token)) > 0
+    error_message = "test_expired_token must be non-empty; refusing to blank the live CI secret."
+  }
 }
