@@ -49,7 +49,8 @@ docs = [
 # Load/soak harness (TH-1.5). NOT a root test dependency — locust pulls in gevent
 # and monkey-patches the stdlib, so it is opt-in via `uv run --group load`
 # (see `make test-harness-load`). src/tests/load/{locustfile,runner}.py defer
-# their locust/gevent imports and are pyrefly-excluded in the root lint env.
+# their locust/gevent imports; `make lint-py` adds this group so pyrefly
+# resolves them.
 load = [
     "locust>=2.31,<3",
 ]
@@ -125,26 +126,8 @@ dist_glob_patterns = ["dist/*"]
 upload_to_vcs_release = true
 
 [tool.pyrefly]
-# The root lint env installs only py-identity-model, so it can't resolve
-# fastapi/starlette imports. The package is type-checked in its own flow
-# (`make test-fastapi`) where the workspace is synced with --all-packages.
-project_excludes = [
-    "examples/fastapi/",
-    "examples/descope/",
-    "packages/fastapi-identity-model/",
-    "conformance/",
-    # Harness RS app imports the fastapi stack, unresolved in the root lint env
-    # (same rationale as packages/). Exercised via `make test-harness-rs`
-    # under `uv run --all-packages`.
-    "src/tests/harness/rs_app.py",
-    # Serves the mock OP under uvicorn (deferred import), unresolved in the root
-    # lint env; exercised via `make test-harness-matrix` under `--all-packages`.
-    "src/tests/harness/mock_op_server.py",
-    # Load/soak driver: deferred locust/gevent imports (the `load` group), which
-    # the root lint env does not install. Exercised via `make test-harness-load`.
-    "src/tests/load/locustfile.py",
-    "src/tests/load/runner.py",
-]
+# Checks the whole workspace: `make lint-py` runs with --all-packages and the
+# load group, so fastapi, uvicorn and locust imports all resolve.
 
 [tool.ruff]
 line-length = 88

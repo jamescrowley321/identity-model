@@ -98,9 +98,11 @@ make test-integration-descope     # Descope
 
 Go and Rust:
 ```bash
-make lint-go                # vet + golangci-lint + race-enabled unit tests
+make lint-go                # vet + golangci-lint
+make test-unit-go           # race-enabled Go unit tests
 make test-integration-go    # Go integration suite against the shared fixtures
-cd rust && cargo test       # Rust unit tests
+make lint-rust              # rustfmt + clippy
+make test-unit-rust         # Rust unit tests
 make test-integration-rust  # Rust live integration suite
 ```
 
@@ -117,18 +119,17 @@ uv run pytest src/tests/unit/test_discovery.py::test_specific_function -v
 
 ### Code Formatting and Linting
 
-Run all pre-commit checks (Ruff lint + format, pyrefly, coverage):
+Run all pre-commit checks (lint + unit tests for Python, Go and Rust):
 ```bash
 make lint
 ```
 
 ### Pre-commit Hooks
 
-Pre-commit hooks run automatically when you commit. They will:
-- Format code with Ruff
-- Check for linting issues
-- Validate type hints with pyrefly
-- Check for common issues
+Pre-commit hooks run automatically when you commit. Each hook is a make target and runs only when files in its language changed:
+- Python: ruff lint + format and pyrefly (`make lint-py`); unit tests for both packages (`make test-unit`, `make test-fastapi`)
+- Go: vet + golangci-lint (`make lint-go`); unit tests (`make test-unit-go`)
+- Rust: rustfmt + clippy (`make lint-rust`); unit tests (`make test-unit-rust`)
 
 If pre-commit fails, fix the issues and commit again.
 

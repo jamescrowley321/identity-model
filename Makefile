@@ -10,8 +10,12 @@ ACTION ?= create
 #            root are reached as ../.env.* .
 #   UVROOT — cwd=repo-root, py/ env, for commands whose paths are repo-root
 #            relative (conformance/, spec/, root .env globbing, mkdocs.yml).
-UVPY := uv run --directory py
-UVROOT := uv run --project py
+#
+# Both install every workspace member (fastapi-identity-model, the examples).
+# Without --all-packages, which tests run would depend on whatever last synced
+# the venv: tests needing a member importorskip and pass green when it's absent.
+UVPY := uv run --directory py --all-packages
+UVROOT := uv run --project py --all-packages
 
 # The release tooling, as ONE definition. `tools/` holds the drivers that decide
 # what gets released, so their tests must run against the same python-semantic-
@@ -37,7 +41,7 @@ PSR_TOOLING := --with "python-semantic-release==10.6.2" --with "gitpython>=3.1.5
 
 .PHONY: build-dist
 build-dist: ## Build wheel and sdist
-	cd py && uv sync && uv build
+	cd py && uv sync --all-packages && uv build
 
 .PHONY: upload-dist
 upload-dist: ## Publish package to PyPI
@@ -46,8 +50,14 @@ upload-dist: ## Publish package to PyPI
 # ── Lint ─────────────────────────────────────────────────────────────
 
 .PHONY: lint
-lint: ## Run all pre-commit hooks (ruff, pyrefly, coverage)
+lint: ## Run every pre-commit hook: lint + unit tests for Python, Go and Rust
 	$(UVROOT) pre-commit run -a
+
+.PHONY: lint-py
+lint-py: ## ruff lint + format (fixes in place, fails if it changed anything) and pyrefly over the whole workspace
+	$(UVROOT) ruff check --fix --exit-non-zero-on-fix
+	$(UVROOT) ruff format --exit-non-zero-on-format
+	$(UVPY) --group load pyrefly check
 
 # ── Tests ────────────────────────────────────────────────────────────
 
@@ -107,9 +117,12 @@ test-integration-keycloak: ## Run integration tests against Keycloak
 	$(INFRA_COMPOSE) down
 
 .PHONY: lint-go
-lint-go: ## Vet + golangci-lint (go/.golangci.yml) + race-enabled unit tests for the Go library
+lint-go: ## go vet + golangci-lint (go/.golangci.yml; same pinned version as CI)
 	cd go && go vet ./...
-	cd go && golangci-lint run ./...
+	cd go && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run ./...
+
+.PHONY: test-unit-go
+test-unit-go: ## Race-enabled unit tests for the Go library
 	cd go && go test -race ./...
 
 .PHONY: vuln-go
@@ -132,6 +145,10 @@ test-integration-go: ## Run Go integration tests against node-oidc (defaults) + 
 lint-rust: ## rustfmt check + clippy (warnings as errors) for the Rust library
 	cd rust && cargo fmt --all --check
 	cd rust && cargo clippy --all-targets --all-features -- -D warnings
+
+.PHONY: test-unit-rust
+test-unit-rust: ## Unit tests for the Rust library (live tests stay #[ignore]-gated)
+	cd rust && cargo test
 
 .PHONY: audit-rust
 audit-rust: ## Supply-chain scan of the Rust crate (cargo-deny: advisories/licenses/bans/sources)
@@ -157,7 +174,7 @@ test-harness-rs: ## Boot the RS (uvicorn) against node-oidc and run the TH-1.2 r
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Booting fastapi-identity-model RS under uvicorn (real HTTP)..."
-	$(UVPY) --all-packages pytest src/tests/integration/test_rs_boot.py -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests/integration/test_rs_boot.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
@@ -166,40 +183,40 @@ test-harness-matrix: ## Run the TH-1.3 token correctness matrix (mock-OP forged 
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Running the correctness matrix through the booted RS (real HTTP)..."
-	$(UVPY) --all-packages pytest src/tests/integration/test_correctness_matrix.py -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests/integration/test_correctness_matrix.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
 .PHONY: test-harness-ws
 test-harness-ws: ## Run the WebSocket auth + exact-exclusion correctness matrix (#598/#600) through the booted RS — real uvicorn + websockets client, self-contained (no Docker)
 	@echo "Running the WebSocket auth + exact-exclusion correctness matrix (real handshake)..."
-	$(UVPY) --all-packages pytest src/tests/integration/test_ws_correctness.py -m integration -p no:benchmark -v
+	$(UVPY) pytest src/tests/integration/test_ws_correctness.py -m integration -p no:benchmark -v
 
 .PHONY: test-harness-cross-issuer
 test-harness-cross-issuer: ## Real cross-issuer proof: a token from one Docker IdP (node-oidc/Keycloak) is rejected by an RS trusting the other
 	@echo "Starting node-oidc + Keycloak fixtures side by side..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider keycloak
 	@echo "Cross-presenting real tokens across issuers through the booted RS..."
-	$(UVPY) --all-packages pytest src/tests/integration/test_cross_issuer_real_idps.py -m integration -v || \
+	$(UVPY) pytest src/tests/integration/test_cross_issuer_real_idps.py -m integration -v || \
 		($(INFRA_COMPOSE) down; exit 1)
 	$(INFRA_COMPOSE) down
 
 .PHONY: test-harness-load
 test-harness-load: ## Run the TH-1.5 CI-short load profile (real Locust vs the booted RS + mock OP)
 	@echo "Driving the CI-short Locust profile through the booted RS (real HTTP)..."
-	$(UVPY) --group load --all-packages pytest src/tests/load/test_load_ci_short.py \
+	$(UVPY) --group load pytest src/tests/load/test_load_ci_short.py \
 		-m integration -p no:benchmark -v
 
 .PHONY: test-harness-load-nightly
 test-harness-load-nightly: ## (nightly) Long TTL-rollover / LRU-thrash / RSS-FD soak profile (S4/S7/S11/S12)
 	@echo "Driving the NIGHTLY soak profile (design §4 S4/S7/S11/S12) through the booted RS..."
-	$(UVPY) --group load --all-packages pytest src/tests/load/test_load_nightly.py \
+	$(UVPY) --group load pytest src/tests/load/test_load_nightly.py \
 		-m integration -p no:benchmark -v
 
 .PHONY: test-harness-load-capacity
 test-harness-load-capacity: ## (TH-4) Open-model ramp-to-breakpoint: find the goodput knee (C1/C2)
 	@echo "Ramping arrival rate to the goodput knee (co-located = directional numbers)..."
-	$(UVPY) --group load --all-packages pytest src/tests/load/test_load_capacity.py \
+	$(UVPY) --group load pytest src/tests/load/test_load_capacity.py \
 		-m integration -p no:benchmark -v
 
 .PHONY: test-benchmark
@@ -230,10 +247,8 @@ test-tools: ## Typecheck + test the repo-tooling drivers under tools/ — outsid
 # ── fastapi-identity-model package ───────────────────────────────────
 
 .PHONY: test-fastapi
-test-fastapi: ## Typecheck + unit-test the fastapi-identity-model package (80% coverage)
-	cd py && uv sync --all-packages
-	$(UVPY) --no-sync pyrefly check packages/fastapi-identity-model/fastapi_identity_model/
-	$(UVPY) --no-sync pytest packages/fastapi-identity-model/tests -v -n auto -p no:benchmark \
+test-fastapi: ## Unit-test the fastapi-identity-model package (80% coverage)
+	$(UVPY) pytest packages/fastapi-identity-model/tests -v -n auto -p no:benchmark \
 		--cov=fastapi_identity_model --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: build-fastapi
@@ -271,7 +286,7 @@ security-gate: mutation-security ## Aggregate mechanical security gate (Epic 19 
 # ── Pre-push ────────────────────────────────────────────────────────
 
 .PHONY: pre-push
-pre-push: lint test-fastapi test-integration-node-oidc test-integration-keycloak test-integration-go test-integration-rust conformance-test-harness test-examples ## Full local validation before push
+pre-push: lint test-integration-node-oidc test-integration-keycloak test-integration-go test-integration-rust conformance-test-harness test-examples ## Full local validation before push
 
 # ── Docs ─────────────────────────────────────────────────────────────
 

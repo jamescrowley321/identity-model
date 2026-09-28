@@ -35,11 +35,11 @@ For PRs that modify `pyproject.toml`, read the diff to understand the constraint
 gh pr diff <PR_NUMBER> -- pyproject.toml
 ```
 
-Also check `.pre-commit-config.yaml` — if a PR bumps a tool that's also pinned there (e.g., ruff), update the rev there too.
+Lint tools such as ruff are not pinned in `.pre-commit-config.yaml`: every hook is a make target running the version in `uv.lock`, so the lock update covers them.
 
 ## Step 4: Apply changes
 
-1. For **pyproject.toml constraint changes**: Edit `pyproject.toml` to update the version bounds. Also check if `.pre-commit-config.yaml` needs the same version bump (e.g., ruff rev).
+1. For **pyproject.toml constraint changes**: Edit `pyproject.toml` to update the version bounds.
 2. Run `uv sync` to regenerate `uv.lock` with all updates at once.
 3. Run `uv lock --upgrade` if `uv sync` alone doesn't pick up all the new versions.
 

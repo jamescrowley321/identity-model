@@ -47,8 +47,8 @@ def main() -> int:
 
     # mutmut calls this (``__main__.py`` ~line 374) once per source file while
     # generating mutants; returning a line set restricts mutation to those lines.
-    _mutmut_main.get_covered_lines_for_file = (
-        lambda filename, _covered_lines: covered_lines_for_file(filename, changed)
+    _mutmut_main.get_covered_lines_for_file = lambda filename, _covered_lines: (
+        covered_lines_for_file(filename, changed)
     )
 
     try:

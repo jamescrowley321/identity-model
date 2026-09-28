@@ -26,7 +26,7 @@ py-identity-model is a production-grade OIDC/OAuth2.0 helper library for Python 
    git checkout -b feat/my-feature main
    ```
 
-2. **Always run `make lint` before committing** — this runs all pre-commit hooks (ruff lint, ruff format, pyrefly typecheck, pytest coverage). If `ruff format` modifies files, re-stage them and commit again. Do NOT use `--no-verify` to skip hooks.
+2. **Always run `make lint` before committing** — this runs all pre-commit hooks: Python lint + typecheck (ruff, pyrefly) and unit tests (py-identity-model and fastapi-identity-model, 80% coverage), Go lint (vet, golangci-lint) and unit tests, Rust lint (rustfmt, clippy) and unit tests. Each hook is a make target (`lint-py`, `test-unit`, `test-fastapi`, `lint-go`, `test-unit-go`, `lint-rust`, `test-unit-rust`). If ruff fixes or reformats files, re-stage them and commit again. Do NOT use `--no-verify` to skip hooks.
    ```bash
    make lint                    # Run BEFORE every commit
    ```
@@ -40,7 +40,7 @@ py-identity-model is a production-grade OIDC/OAuth2.0 helper library for Python 
    ```bash
    make test-integration-node-oidc   # Local Docker fixture, no credentials needed
    ```
-   For changes that affect provider-specific behavior, also run `make test-integration-ory` and/or `make test-integration-descope`. Do NOT push fixture/conftest changes solely on the strength of lint passing — relying on CI to catch fixture regressions wastes a review cycle.
+   For changes that affect provider-specific behavior, also run `make test-integration-ory` and/or `make test-integration-descope`. Do NOT push fixture/conftest changes solely on the strength of `make lint` passing — relying on CI to catch fixture regressions wastes a review cycle.
 
 5. **Use conventional commits** — commit messages must follow the Angular convention (see Git Workflow section below). Commits to `main` trigger semantic-release version bumps.
 
@@ -190,11 +190,11 @@ cd py && uv run pytest src/tests/unit/test_discovery.py -v
 cd py && uv run pytest src/tests/unit/test_discovery.py::test_function_name -v
 ```
 
-**Coverage Requirements**: All test commands enforce 80% minimum coverage (enforced by pytest + pre-commit).
+**Coverage Requirements**: All test commands enforce 80% minimum coverage (enforced by pytest).
 
 ### Linting
 ```bash
-# Run all pre-commit hooks (ruff format, ruff check, pyrefly typecheck, coverage)
+# Run all pre-commit hooks (lint + unit tests for Python, Go and Rust)
 make lint
 
 # Auto-fix linting issues
@@ -256,7 +256,7 @@ Format: `<type>/<short-description>` (e.g., `feat/descope-integration`, `fix/jwk
 
 - **Unit tests**: Use `respx` to mock HTTP in `src/tests/unit/`. Sync tests use `@respx.mock` decorator, async tests use `@pytest.mark.asyncio` class + `@respx.mock` on methods.
 - **Integration tests**: Test against real identity providers in `src/tests/integration/`. Session-scoped fixtures in `conftest.py` cache discovery docs, JWKS, and tokens to avoid rate limits.
-- **Coverage**: Minimum 80% coverage required (enforced by pytest and pre-commit)
+- **Coverage**: Minimum 80% coverage required (enforced by pytest)
 
 ### HTTP Configuration
 
@@ -297,7 +297,7 @@ This repo is a `uv` workspace. Besides the core `py-identity-model` library
 
 - **`py/packages/fastapi-identity-model/`** — FastAPI OIDC middleware + relying-party
   login router, built on the core library. Independently versioned and published.
-  - Test + typecheck: `make test-fastapi`. Build: `make build-fastapi`.
+  - Test: `make test-fastapi`. Type-checked by `make lint` with the rest of the workspace. Build: `make build-fastapi`.
   - **Released automatically** by semantic-release: `feat(fastapi)`/`fix(fastapi)`
     commits on `main` bump the package's own version (config in the package
     `pyproject.toml`, invoked by the `release-fastapi-version` job in
