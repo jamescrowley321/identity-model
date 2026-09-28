@@ -65,6 +65,19 @@
           "expect": {
             "outcome": "accept"
           }
+        },
+        {
+          "name": "live-unknown-token",
+          "op": "live",
+          "input": {
+            "token": "unknown-token",
+            "endpoint_path": "/token/revocation",
+            "client_id": "test-opaque",
+            "client_secret": "test-opaque-secret"
+          },
+          "expect": {
+            "outcome": "accept"
+          }
         }
       ]
     },
@@ -215,6 +228,21 @@
             "error": "invalid_client",
             "status": 401
           }
+        },
+        {
+          "name": "live-wrong-secret",
+          "op": "live",
+          "input": {
+            "token": "unknown-token",
+            "endpoint_path": "/token/revocation",
+            "client_id": "test-opaque",
+            "client_secret": "wrong-secret"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_client",
+            "status": 401
+          }
         }
       ]
     },
@@ -262,5 +290,5 @@
       ]
     }
   ],
-  "notes": "HTTP vectors. Each vector gives the call `input`, the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/; the literal https://server.example.com in a fixture is replaced with the mock server's base URL), the request the client must send (`expect_request`), and the outcome (`expect`). Client credentials are client_id=cid, client_secret=secret, sent as client_secret_basic. A reject carries the canonical OAuth `error` code and HTTP `status`."
+  "notes": "HTTP vectors. Each canned vector gives the call `input`, the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/; the literal https://server.example.com in a fixture is replaced with the vector's base URL on the node-oidc fixture), the request the client must send (`expect_request`), and the outcome (`expect`). Client credentials default to client_id=cid, client_secret=secret, sent as client_secret_basic, against /revoke; `input` may override them with `client_id`, `client_secret` and `endpoint_path`. A vector with `op: \"live\"` calls the real node-oidc OP and carries no `http` or `expect_request`. A reject carries the canonical OAuth `error` code and HTTP `status`."
 }

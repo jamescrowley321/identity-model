@@ -4,7 +4,9 @@ The node-oidc fixture serves each vector's canned responses under its own base
 URL (infra/node-oidc-provider/vectors.js). Per vector, the capability's adapter
 calls py-identity-model against that base URL, the fixture's ``_check`` must
 report that the client sent the expected requests, and the adapter compares the
-result with ``expect``. The Go and Rust runners execute the same files.
+result with ``expect``. A vector with ``op: "live"`` goes to the real node-oidc
+OP instead, with no canned responses and no request check. The Go and Rust
+runners execute the same files.
 
 A vector py-identity-model does not meet yet is a strict ``xfail`` pinned to
 ``KnownGap``, raised exactly where the gap shows, so a fix (or a different
@@ -69,7 +71,7 @@ class Adapter(NamedTuple):
 
 
 def _revocation_call(base: str, inp: dict) -> Any:
-    endpoint = base + "/revoke"
+    endpoint = base + inp.get("endpoint_path", "/revoke")
     if inp.get("discover"):
         disco = get_discovery_document(
             DiscoveryDocumentRequest(address=base + _DISCO_PATH)
@@ -85,8 +87,8 @@ def _revocation_call(base: str, inp: dict) -> Any:
             address=endpoint,
             token=inp["token"],
             token_type_hint=inp.get("token_type_hint"),
-            client_id="cid",
-            client_secret="secret",
+            client_id=inp.get("client_id", "cid"),
+            client_secret=inp.get("client_secret", "secret"),
         )
     )
 
@@ -232,6 +234,7 @@ ADAPTERS: dict[str, Adapter] = {
 _KNOWN_GAPS = {
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
+    "REV-004-live-wrong-secret": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",
     "UI-001": "UserInfoResponse has no typed standard claims (#768)",
     "UI-003-missing-sub": "no-sub response accepted without expected_sub (#773)",
@@ -243,8 +246,12 @@ _KNOWN_GAPS = {
 }
 
 
+#: Fields the fixture serves or checks; a live vector must not carry them.
+_CANNED_FIELDS = ("http", "http_sequence", "expect_request", "expect_calls")
+
+
 def _is_http(vector: dict) -> bool:
-    return "http" in vector or "http_sequence" in vector
+    return "op" in vector or "http" in vector or "http_sequence" in vector
 
 
 def _params() -> list:
@@ -264,6 +271,10 @@ def _params() -> list:
                         "input", {}
                     ), f"{case['id']}-{key}: neither an HTTP nor a pure-logic vector"
                     continue
+                if "op" in vector:
+                    assert vector["op"] == "live", f"{case['id']}-{key}: op"
+                    canned = [f for f in _CANNED_FIELDS if f in vector]
+                    assert not canned, f"{case['id']}-{key}: live vector with {canned}"
                 param_id = f"{case['id']}-{key}"
                 reason = _KNOWN_GAPS.get(param_id) or _KNOWN_GAPS.get(case["id"])
                 marks = []
@@ -296,8 +307,12 @@ def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> N
     assert adapter, f"{capability}.json has HTTP vectors but no adapter"
     outcome = vector["expect"]["outcome"]
     assert outcome in ("accept", "reject"), f"{case_id}: unknown outcome {outcome!r}"
-    base = f"{VECTOR_OP}/v/{_RUN}/{capability}/{case_id}/{key}"
+    if vector.get("op") == "live":
+        result = adapter.call(VECTOR_OP, vector["input"])
+        adapter.expect(case_id, vector["expect"], result)
+        return
 
+    base = f"{VECTOR_OP}/v/{_RUN}/{capability}/{case_id}/{key}"
     result = adapter.call(base, vector["input"])
     response = httpx.get(base + "/_check", timeout=5)
     assert response.is_success, f"{case_id}: _check: {response.text}"

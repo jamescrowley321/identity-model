@@ -82,7 +82,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
-| revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| revocation | 5 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 
@@ -136,6 +136,19 @@ runner's responsibility.
 Expected nonempty form values require exactly one matching parameter: duplicate
 parameters fail even when their first value matches. An expected empty string
 continues to mean the field must be absent.
+
+#### Live vectors
+
+A vector with `"op": "live"` calls the real, certified node-oidc OP
+(`http://localhost:9010`) instead of canned responses. It carries no `http`,
+`http_sequence`, `expect_request` or `expect_calls` (a runner fails to load one
+that does), and its `expect` asserts only the outcome, canonical `error` and
+`status`, since tokens and timestamps vary. Its `input` uses static values from
+[`../infra/node-oidc-provider/provider.js`](../infra/node-oidc-provider/provider.js):
+a registered client (`client_id`, `client_secret`) and, where the OP's path
+differs from the canned one, `endpoint_path`. Live vectors cover what a
+conformant OP answers from static input; flows that need a minted token or a
+login stay in each language's integration tests.
 
 The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
