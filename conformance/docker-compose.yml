@@ -38,14 +38,15 @@ services:
         condition: service_healthy
 
   server:
-    # Pinned to a released tag, NOT :latest. :latest is a rolling build off the
-    # suite's main branch; between the 2026-08-31 (green) and 2026-09-01 (red)
-    # daily runs it drifted to a build that never transitions RP happy-path
-    # client tests to FINISHED, so run_tests.py polls them to a 120s TIMEOUT
-    # (5 failures in basic-rp) even though the RP completes auth + UserInfo(200)
-    # correctly. Pinning makes this gate reproducible. Bump deliberately after
-    # verifying a newer release passes locally. Last-known-good: v5.2.4 (2026-08-27).
-    image: registry.gitlab.com/openid/conformance-suite:release-v5.2.4
+    # Pinned to a released tag, NOT :latest, so this gate is reproducible.
+    # Bump deliberately after verifying a newer release passes.
+    #
+    # The earlier 5.2.4 pin blamed a suite regression for RP happy-path tests
+    # timing out after 2026-09-01. The real cause was ours: newer suites publish
+    # a JWK on an unsupported curve (P-9999) beside the signing key, and
+    # py-identity-model rejected the whole JWK Set over it, so the ID token
+    # never verified and the tests never FINISHED (fixed in #764).
+    image: registry.gitlab.com/openid/conformance-suite:release-v5.3.1
     environment:
       - BASE_URL=https://localhost.emobix.co.uk:8443
       # mTLS endpoints live on a second port; advertise them on the nginx alias
