@@ -306,8 +306,8 @@ This repo is a `uv` workspace. Besides the core `py-identity-model` library
     trusted publishing.
   - **Commit convention:** scope every commit that belongs to a non-Python
     release track. A custom scope-routed parser (`tools/release_parsers.py`)
-    drops commits scoped `(fastapi)`, `(go)`, `(rust)`, `(node)`, `(spec)`, or
-    `(infra)` from the core `py-identity-model` pipeline (and the fastapi
+    drops commits scoped `(fastapi)`, `(go)`, `(rust)`, `(node)`, `(spec)`,
+    `(infra)`, `(conformance)`, `(tools)`, or `(ci)` from the core `py-identity-model` pipeline (and the fastapi
     pipeline keeps only `(fastapi)`), so e.g. `feat(go)` or `feat(fastapi)`
     never bumps the Python library. Python releases use the `py-v{version}`
     tag format; Go/Rust use `go/vX.Y.Z` / `rust-vX.Y.Z`. The routing is

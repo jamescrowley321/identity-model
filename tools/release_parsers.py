@@ -31,7 +31,7 @@ pipeline only sees its own history:
 The split is scope-based, not path-based: an unscoped ``fix:`` that touches
 only ``go/`` still bumps the core. Scoping cross-track commits (``(fastapi)``,
 ``(go)``, ``(rust)``, ``(spec)``, ``(infra)``, ``(node)``, ``(conformance)``,
-``(tools)``) is therefore
+``(tools)``, ``(ci)``) is therefore
 load-bearing — see CLAUDE.md "Workspace Packages". The release workflow also
 path-guards on those directories as a second line of defence.
 """
@@ -61,7 +61,7 @@ PACKAGE_SCOPE = "fastapi"
 #: of an auth library, where it looks like a token-disclosure fix in the
 #: library itself. Nothing in either commit touches shipped code.
 NON_CORE_SCOPES = frozenset(
-    {PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra", "conformance", "tools"}
+    {PACKAGE_SCOPE, "go", "rust", "node", "spec", "infra", "conformance", "tools", "ci"}
 )
 
 

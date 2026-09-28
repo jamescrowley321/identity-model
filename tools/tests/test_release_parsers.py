@@ -84,6 +84,7 @@ NON_CORE = {
     "infra": "the shared IdP fixtures",
     "conformance": "the OIDF certification harness — ships nothing",
     "tools": "the repo gates and release machinery — ships nothing",
+    "ci": "the GitHub Actions workflows — ship nothing",
 }
 
 
