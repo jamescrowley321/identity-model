@@ -119,7 +119,7 @@ Legacy semantics (today's `fastapi-identity-model` `OIDCSettings.from_env`): emp
 
 ### Test tier (`TEST_*`)
 
-Harness/integration keys — same resolution machinery, tier `test`, excluded from client-group validation, never read by library runtime code: `TEST_DISCO_ADDRESS`, `TEST_JWKS_ADDRESS`, `TEST_CLIENT_ID`, `TEST_CLIENT_SECRET` (**secret**), `TEST_SCOPE`, `TEST_PKCE_PUBLIC_CLIENT_ID`, `TEST_REDIRECT_URI`, `TEST_OPAQUE_CLIENT_ID`, `TEST_OPAQUE_CLIENT_SECRET` (**secret**), `TEST_REQUIRE_LIVE` (bool), `TEST_REQUIRE_HTTPS` (bool). Registry rows for these carry no defaults (test config is always explicit). Their logical key IDs are mechanical: `test.` + the env name lowercased without the `TEST_` prefix (e.g. `TEST_REQUIRE_LIVE` → `test.require_live`).
+Harness/integration keys — same resolution machinery, tier `test`, excluded from client-group validation, never read by library runtime code: `TEST_DISCO_ADDRESS`, `TEST_JWKS_ADDRESS`, `TEST_CLIENT_ID`, `TEST_CLIENT_SECRET` (**secret**), `TEST_SCOPE`, `TEST_PKCE_PUBLIC_CLIENT_ID`, `TEST_REDIRECT_URI`, `TEST_OPAQUE_CLIENT_ID`, `TEST_OPAQUE_CLIENT_SECRET` (**secret**), `TEST_REQUIRE_HTTPS` (bool). Registry rows for these carry no defaults (test config is always explicit). Their logical key IDs are mechanical: `test.` + the env name lowercased without the `TEST_` prefix (e.g. `TEST_REQUIRE_HTTPS` → `test.require_https`).
 
 ## Error Taxonomy
 

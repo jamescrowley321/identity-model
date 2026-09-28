@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -18,7 +18,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `token_endpoint` is resolved
 //! from the fetched discovery document. If `TEST_DISCO_ADDRESS` is unset the
-//! test skips (returns) rather than failing.
+//! test fails.
 //!
 //! Mirrors the Go reference (`go/pkg/token/token_integration_test.go`):
 //!
@@ -44,13 +44,13 @@ use std::time::Duration;
 use rs_identity_model::{DiscoveryClient, IdentityError, PkceChallenge, TokenClient};
 
 use crate::common::authcode::follow_to_callback;
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::discover_or_skip;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
-/// Discovers the live provider's `token_endpoint`, skipping the test when the
-/// provider is unreachable so a missing local stack does not fail CI-less runs.
-async fn token_endpoint_or_skip(issuer: &str, allow_http: bool) -> Option<String> {
-    let meta = discover_or_skip(issuer, allow_http).await?;
+/// Discovers the live provider's `token_endpoint`, failing the test when the
+/// provider is unreachable.
+async fn token_endpoint_or_fail(issuer: &str, allow_http: bool) -> Option<String> {
+    let meta = discover_or_fail(issuer, allow_http).await?;
     assert!(
         !meta.token_endpoint.is_empty(),
         "discovery returned empty token_endpoint"
@@ -64,19 +64,21 @@ async fn token_endpoint_or_skip(issuer: &str, allow_http: bool) -> Option<String
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn client_credentials() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -109,16 +111,18 @@ async fn client_credentials() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn client_credentials_invalid_client() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(client_id) = env_nonempty("TEST_CLIENT_ID") else {
-        skip_or_fail("TEST_CLIENT_ID unset for this provider profile");
+        fail_live_prerequisite("TEST_CLIENT_ID unset for this provider profile");
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -158,18 +162,20 @@ async fn client_credentials_invalid_client() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn authorization_code_pkce_rejected() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(public_client_id) = env_nonempty("TEST_PKCE_PUBLIC_CLIENT_ID") else {
-        skip_or_fail("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
+        fail_live_prerequisite("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
         return;
     };
     let redirect_uri = env_nonempty("TEST_REDIRECT_URI")
         .unwrap_or_else(|| "http://localhost:3000/callback".into());
 
     let allow_http = issuer.starts_with("http://");
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
 
@@ -204,22 +210,24 @@ async fn authorization_code_pkce_rejected() {
 // HTTP client — no browser — then exchanges the callback code through
 // [`TokenClient::exchange_code`] with the PKCE verifier. Mirrors the Go
 // `TestIntegration_AuthorizationCode_PKCE_EndToEnd` and the Python suite's
-// `perform_auth_code_flow`. Skips (cleanly) on provider profiles without
+// `perform_auth_code_flow`. Fails on provider profiles without
 // devInteractions.
 
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn authorization_code_pkce_end_to_end() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(public_client_id) = env_nonempty("TEST_PKCE_PUBLIC_CLIENT_ID") else {
-        skip_or_fail("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
+        fail_live_prerequisite("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
         return;
     };
     let Some(redirect_uri) = env_nonempty("TEST_REDIRECT_URI") else {
-        skip_or_fail("TEST_REDIRECT_URI unset for this provider profile");
+        fail_live_prerequisite("TEST_REDIRECT_URI unset for this provider profile");
         return;
     };
 
@@ -231,7 +239,7 @@ async fn authorization_code_pkce_end_to_end() {
     let meta = match discovery.discover(&issuer).await {
         Ok(meta) => meta,
         Err(e) => {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider not reachable at {issuer} (run `make infra-up`): {e}"
             ));
             return;
@@ -288,12 +296,13 @@ async fn authorization_code_pkce_end_to_end() {
         );
         // Providers without node-oidc's devInteractions redirect AWAY to a
         // real (or missing) browser login UI — e.g. IdentityServer's
-        // /Account/Login 404s in the headless fixture. Skip, don't fail.
+        // /Account/Login 404s in the headless fixture. The node-oidc make
+        // target always has them, so fail.
         if status.is_client_error()
             || status.is_server_error()
             || !landed.path().contains("/interaction/")
         {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider has no devInteractions (landed on {landed} with {status}); headless flow unavailable"
             ));
             return;
@@ -342,7 +351,7 @@ async fn authorization_code_pkce_end_to_end() {
     );
     let code = params.get("code").expect("callback carried no code");
 
-    let Some(token_endpoint) = token_endpoint_or_skip(&issuer, allow_http).await else {
+    let Some(token_endpoint) = token_endpoint_or_fail(&issuer, allow_http).await else {
         return;
     };
     let client = TokenClient::builder()

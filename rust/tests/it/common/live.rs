@@ -5,12 +5,11 @@ use std::time::Duration;
 use rs_identity_model::{DiscoveryClient, ProviderMetadata};
 use serde_json::Value;
 
-use super::env::{env_nonempty, skip_or_fail};
+use super::env::{env_nonempty, fail_live_prerequisite};
 
-/// Discovers the live provider's metadata, skipping (see
-/// [`skip_or_fail`]) when it is unreachable so a missing local stack does not
-/// fail CI-less runs.
-pub async fn discover_or_skip(issuer: &str, allow_http: bool) -> Option<ProviderMetadata> {
+/// Discovers the live provider's metadata, failing (see
+/// [`fail_live_prerequisite`]) when it is unreachable.
+pub async fn discover_or_fail(issuer: &str, allow_http: bool) -> Option<ProviderMetadata> {
     let discovery = DiscoveryClient::builder()
         .allow_http(allow_http)
         .timeout(Duration::from_secs(5))
@@ -18,7 +17,7 @@ pub async fn discover_or_skip(issuer: &str, allow_http: bool) -> Option<Provider
     match discovery.discover(issuer).await {
         Ok(meta) => Some(meta),
         Err(e) => {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider not reachable at {issuer} (run `make infra-up`): {e}"
             ));
             None

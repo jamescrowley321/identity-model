@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -18,14 +18,12 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. There is no separate
 //! `TEST_JWKS_ADDRESS` locally, so the `jwks_uri` is resolved from the fetched
-//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test skips
-//! (returns) rather than failing, so `cargo test -- --ignored` is safe without
-//! a provider configured.
+//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test fails.
 
 use rs_identity_model::{DiscoveryClient, JwksClient};
 use std::time::Duration;
 
-use crate::common::env::{issuer_from_env, skip_or_fail};
+use crate::common::env::{fail_live_prerequisite, issuer_from_env};
 
 // JWKS-001 / JWKS-002 / JWKS-003 / JWKS-006: discover the provider, fetch its
 // real JWK Set, confirm it is non-empty with usable keys, resolve the first key
@@ -34,7 +32,9 @@ use crate::common::env::{issuer_from_env, skip_or_fail};
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn fetches_real_key_set() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
 

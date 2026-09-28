@@ -4,7 +4,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -16,7 +16,7 @@
 //!
 //! Provider selection follows the shared `TEST_*` convention (the
 //! `.env.node-oidc` profile the Makefile sources). If `TEST_DISCO_ADDRESS` is
-//! unset the test skips (returns) rather than failing.
+//! unset the test fails.
 //!
 //! What it proves (`validate_id_token_end_to_end`, OIDC Core §3.1.3.7):
 //! a genuine ID Token is minted through a real authorization-code + PKCE flow
@@ -49,7 +49,7 @@ use rs_identity_model::{
 use serde_json::Value;
 
 use crate::common::authcode::follow_to_callback;
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
 
 /// A fixed nonce/max_age sent on the authorization request so the OP echoes a
 /// `nonce` and an `auth_time` into the minted ID Token, exercising the
@@ -77,8 +77,8 @@ fn decode_payload(id_token: &str) -> Value {
 // adds the login/consent legs with the `nonce` + `max_age` this test needs.
 
 /// Runs the full headless auth-code + PKCE flow and returns the callback URL
-/// carrying the authorization `code`, or `None` when the provider has no
-/// headless devInteractions (caller skips).
+/// carrying the authorization `code`. A provider without headless
+/// devInteractions fails the test (the `None` arm is unreachable).
 async fn drive_auth_code_flow(
     http: &reqwest::Client,
     authorization_endpoint: &str,
@@ -120,12 +120,12 @@ async fn drive_auth_code_flow(
             "authorization endpoint rejected the request: {status} at {landed}"
         );
         // Providers without node-oidc's devInteractions redirect to a real
-        // browser login UI; skip rather than fail.
+        // browser login UI; the node-oidc make target always has them, so fail.
         if status.is_client_error()
             || status.is_server_error()
             || !landed.path().contains("/interaction/")
         {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider has no devInteractions (landed on {landed} with {status}); headless flow unavailable"
             ));
             return None;
@@ -169,15 +169,17 @@ async fn drive_auth_code_flow(
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn validate_id_token_end_to_end() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(client_id) = env_nonempty("TEST_PKCE_PUBLIC_CLIENT_ID") else {
-        skip_or_fail("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
+        fail_live_prerequisite("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
         return;
     };
     let Some(redirect_uri) = env_nonempty("TEST_REDIRECT_URI") else {
-        skip_or_fail("TEST_REDIRECT_URI unset for this provider profile");
+        fail_live_prerequisite("TEST_REDIRECT_URI unset for this provider profile");
         return;
     };
 
@@ -189,7 +191,7 @@ async fn validate_id_token_end_to_end() {
     let meta = match discovery.discover(&issuer).await {
         Ok(meta) => meta,
         Err(e) => {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider not reachable at {issuer} (run `make infra-up`): {e}"
             ));
             return;
@@ -229,7 +231,7 @@ async fn validate_id_token_end_to_end() {
     )
     .await
     else {
-        return; // skipped: no headless devInteractions on this provider
+        return; // unreachable: fail_live_prerequisite panicked
     };
 
     let callback = url::Url::parse(&callback).expect("parse callback URL");
