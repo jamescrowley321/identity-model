@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -105,6 +106,11 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 
 	jws, err := jose.ParseSigned(proof, asymmetricSigAlgs)
 	if err != nil {
+		// go-jose refuses an embedded jwk carrying private key material while
+		// parsing, with an untyped error; report that against jwk, not alg.
+		if strings.Contains(err.Error(), "invalid embedded jwk") {
+			return nil, &VerificationError{Field: "jwk", Reason: "embedded jwk must contain only the public key"}
+		}
 		return nil, &VerificationError{Field: "alg", Reason: "not a DPoP proof signed with a supported asymmetric algorithm: " + err.Error()}
 	}
 	if len(jws.Signatures) != 1 {

@@ -196,7 +196,7 @@ async fn integration_client_credentials_invalid_client() {
     }
 }
 
-// ACG-004 / ACG-005 / ACG-006 (partial): exchanging an invalid authorization
+// ACG-004 / ACG-005 (partial): exchanging an invalid authorization
 // code that carries a PKCE code_verifier reaches the live token endpoint and is
 // rejected with a typed TokenEndpoint error. Confirms request shape and live
 // error parsing independent of the end-to-end flow below.
