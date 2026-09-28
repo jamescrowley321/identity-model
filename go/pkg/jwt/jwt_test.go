@@ -281,7 +281,7 @@ func TestValidate_BadSignature(t *testing.T) {
 	}
 }
 
-// JWT-010: a kid absent from the cached set triggers a forced refresh, after
+// JWKS-004: a kid absent from the cached set triggers a forced refresh, after
 // which the now-published key resolves and verification succeeds.
 func TestValidate_KidNotFound_ForcesRefresh(t *testing.T) {
 	signing := loadSigningKey(t)
@@ -320,7 +320,7 @@ func TestValidate_KidNotFound_ForcesRefresh(t *testing.T) {
 	}
 }
 
-// JWT-010: a kid that never appears surfaces the descriptive key-not-found error.
+// JWKS-004: a kid that never appears surfaces the descriptive key-not-found error.
 func TestValidate_KidNeverFound(t *testing.T) {
 	placeholder, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

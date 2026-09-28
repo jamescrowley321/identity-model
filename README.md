@@ -56,8 +56,8 @@ enforced. It is:
   conformance vectors: inputs and expected outcomes expressed as canonical,
   cross-language error codes. This is the single source of truth for *what
   correct means*.
-- Each language runs those vectors through a thin executor, and a **cross-language
-  coverage gate** fails CI if any language skips any vector (`make spec-coverage`).
+- Each language runs those vectors through a thin executor in its unit suite,
+  and that executor fails if any case in the file is not executed.
 - **[`conformance/`](conformance/)** — the Python library is
   [**OpenID Certified®**](https://openid.net/certification/certified-openid-relying-parties-profiles/)
   by the OpenID Foundation as a Relying Party for the **Basic RP**, **Config RP**, and
@@ -89,8 +89,7 @@ cd rust && cargo test                                                # Rust
 
 The repo-root `Makefile` wraps the common flows: `make infra-up` brings the
 shared providers up, `make test-integration-{node-oidc,keycloak,go,rust}` run the
-integration suites, and `make spec-coverage` runs the cross-language conformance
-gate. See [`spec/README.md`](spec/README.md) and [`infra/README.md`](infra/README.md).
+integration suites. See [`spec/README.md`](spec/README.md) and [`infra/README.md`](infra/README.md).
 
 ## License
 

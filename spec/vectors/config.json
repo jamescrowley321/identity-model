@@ -2,7 +2,7 @@
   "capability": "configuration",
   "spec": "identity-model Configuration Contract (spec/config.md)",
   "spec_url": "https://github.com/jamescrowley321/identity-model/blob/main/spec/config.md",
-  "notes": "Prose contract: cases are proven by each language's own tests keyed to these ids. Promoting cases to executable vectors requires extending tools/spec_coverage_gate.py and every language runner to per-capability coverage reports in the same change. Id families: 1xx strict validation, 2xx legacy-mode equivalence, 3xx precedence/composition, 4xx redaction, 5xx source behavior. Error codes CFG-001..004 are defined in spec/config.md and are distinct from these test ids.",
+  "notes": "Prose contract: cases are proven by each language's own tests keyed to these ids. Promoting cases to executable vectors requires a runner in every language in the same change. Id families: 1xx strict validation, 2xx legacy-mode equivalence, 3xx precedence/composition, 4xx redaction, 5xx source behavior. Error codes CFG-001..004 are defined in spec/config.md and are distinct from these test ids.",
   "tests": [
     {
       "id": "CFG-101",

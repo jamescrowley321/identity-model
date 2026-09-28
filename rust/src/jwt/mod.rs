@@ -3,7 +3,7 @@
 //! [`validate_token`] verifies a compact-serialized JWT against an
 //! already-resolved [`JsonWebKey`]; [`validate_token_with_jwks`] resolves the
 //! signing key from a [`JwksClient`] by the token's `kid` — forcing one JWKS
-//! refresh on a miss (JWT-010) — before delegating to it. Both reject the
+//! refresh on a miss (JWKS-004) — before delegating to it. Both reject the
 //! unsecured `none` algorithm before any cryptographic work (JWT-003) and
 //! restrict acceptance to an asymmetric algorithm allowlist to defeat
 //! algorithm-confusion attacks. Behaviour is proven against the cross-language
@@ -138,7 +138,7 @@ pub fn validate_token(
 /// The `none` algorithm is rejected and the header `alg` is checked against the
 /// allowlist before the key is resolved, so a `none`/disallowed token never
 /// triggers a JWKS fetch. Key resolution forces one JWKS refresh and retries if
-/// the `kid` is not cached (JWT-010), supporting key rotation, before delegating
+/// the `kid` is not cached (JWKS-004), supporting key rotation, before delegating
 /// to [`validate_token`].
 ///
 /// # Errors

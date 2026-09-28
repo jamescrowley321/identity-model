@@ -1,11 +1,8 @@
 package conformance
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
-	"sort"
 	"testing"
 	"time"
 
@@ -17,12 +14,6 @@ import (
 // the canonical reason. It is the Go leg of the cross-language ID-Token profile
 // parity: it MUST agree with the Python reference runner
 // (py/src/tests/unit/test_id_token_conformance.py) on all vectors.
-//
-// This capability IS wired into the cross-language enforcement gate
-// (tools/spec_coverage_gate.py): when SPEC_COVERAGE_OUT is set the run writes a
-// per-capability coverage report the gate reads, and the gate fails if any
-// language skipped a vector. The in-test coverage assertion below is the
-// belt-and-braces check that every case ran at all.
 func TestIDTokenConformance(t *testing.T) {
 	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
@@ -50,48 +41,13 @@ func TestIDTokenConformance(t *testing.T) {
 		})
 	}
 
-	// Coverage gate: every case must have run every vector it declares. The
-	// id-token capability has no native-executed cases, so a short count is a
-	// silent skip.
+	// Coverage: every case must have run every vector it declares.
 	for _, tc := range suite.Tests {
 		if executed[tc.ID] != len(tc.Vectors) {
 			t.Errorf("case %s: Go id-token runner executed %d of %d vectors", tc.ID, executed[tc.ID], len(tc.Vectors))
 		}
 	}
 
-	writeIDTokenCoverageReport(t, suite, executed)
-}
-
-// writeIDTokenCoverageReport emits the executed case ids and the per-case vector
-// counts for the cross-language coverage gate (tools/spec_coverage_gate.py) when
-// SPEC_COVERAGE_OUT is set.
-// Same report shape as the validation runner; id-token declares no
-// execution: "native" cases, so the native map is always empty.
-func writeIDTokenCoverageReport(t *testing.T, suite *IDTokenCapability, executed map[string]int) {
-	t.Helper()
-	out := os.Getenv("SPEC_COVERAGE_OUT")
-	if out == "" {
-		return
-	}
-	ids := make([]string, 0, len(executed))
-	for id := range executed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	report := map[string]any{
-		"language":         "go",
-		"capability":       suite.Capability,
-		"executed":         ids,
-		"executed_vectors": executed,
-		"native":           map[string]string{},
-	}
-	b, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal id-token coverage report: %v", err)
-	}
-	if err := os.WriteFile(out, append(b, '\n'), 0o644); err != nil {
-		t.Fatalf("write id-token coverage report %s: %v", out, err)
-	}
 }
 
 func runIDTokenVector(t *testing.T, id string, idx int, v IDTokenVector) {

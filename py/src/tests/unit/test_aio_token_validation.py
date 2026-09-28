@@ -288,7 +288,7 @@ class TestAsyncSignatureRetry:
     @pytest.mark.asyncio
     @respx.mock
     async def test_cached_path_refreshes_jwks_when_kid_not_in_cache(self):
-        """Cached JWKS lookup with a kid not in cache forces a refresh.
+        """Cached JWKS lookup with a kid not in cache forces a refresh (JWKS-004).
 
         OIDC OPs rotate signing keys; when a token arrives with a kid that is
         not yet in the cached JWKS, the cache is stale. The library must

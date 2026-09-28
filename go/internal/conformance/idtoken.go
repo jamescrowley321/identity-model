@@ -15,12 +15,11 @@ import (
 
 // IDTokenCapability is spec/vectors/id-token.json.
 type IDTokenCapability struct {
-	Capability                string        `json:"capability"`
-	Spec                      string        `json:"spec"`
-	SpecURL                   string        `json:"spec_url"`
-	CrossLanguageCoverageGate string        `json:"cross_language_coverage_gate,omitempty"`
-	Notes                     string        `json:"notes,omitempty"`
-	Tests                     []IDTokenCase `json:"tests"`
+	Capability string        `json:"capability"`
+	Spec       string        `json:"spec"`
+	SpecURL    string        `json:"spec_url"`
+	Notes      string        `json:"notes,omitempty"`
+	Tests      []IDTokenCase `json:"tests"`
 }
 
 // IDTokenCase is one IDT-* conformance id with one or more vectors.

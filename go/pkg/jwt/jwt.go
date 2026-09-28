@@ -26,7 +26,7 @@ type joseHeader struct {
 // The flow is: parse the compact JWS, reject the "none" algorithm before any
 // crypto (JWT-003), confirm the header alg is in the allowlist (defeating
 // algorithm-confusion attacks), resolve the signing key from keySet by the
-// header kid — forcing one JWKS refresh on a miss (JWT-010) — verify the
+// header kid — forcing one JWKS refresh on a miss (JWKS-004) — verify the
 // signature (JWT-001/009), then validate the registered and configured claims
 // (JWT-002/004/005/006/007/008/011/012/013).
 //

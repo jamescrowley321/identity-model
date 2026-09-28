@@ -14,9 +14,9 @@ This directory is the **single source of truth** for what every identity-model l
 ## How It's Used
 
 1. A capability is specified in `capabilities.md` with RFC references and normative requirements.
-2. Its observable behaviors become test cases in `vectors/<capability>.json`. Each case carries the human contract (`id`, `title`, `given`, `when`, `then`, `references`) and, where expressible, one or more **executable `vectors`** (see below). A case that cannot be expressed as a static vector (e.g. a live JWKS refresh) sets `execution: "native"` with a `reason` and `native_test`.
+2. Its observable behaviors become test cases in `vectors/<capability>.json`. Each case carries the human contract (`id`, `title`, `given`, `when`, `then`, `references`) and, where expressible, one or more **executable `vectors`** (see below).
 3. Each language implements a **thin conformance runner** that loads these JSON files and executes the vectors against its own implementation — using `test-fixtures/` for static inputs and the shared provider in [`../infra`](../infra) for live integration. It is *thin* because the vectors carry both inputs and expected outcomes; only the mapping of canonical outcomes to that language's API/error types is per-language. Go's runner lives in [`../go/internal/conformance`](../go/internal/conformance).
-4. CI gates merges: a language that marks a capability `implemented` in `capabilities.md` MUST pass its conformance vectors, and each runner asserts **full coverage** — every case id must be executed or explicitly `native`, so a language cannot silently skip a case.
+4. CI gates merges: a language that marks a capability `implemented` in `capabilities.md` MUST pass its conformance vectors, and each runner asserts **full coverage** — every case id must be executed, so a language cannot silently skip a case.
 
 ## Conformance Test Definition Shape
 
@@ -72,15 +72,11 @@ Two capabilities carry executable vectors and a runner in **every language**:
 
 | capability | cases | vectors | Go | Python | Rust |
 | --- | --- | --- | --- | --- | --- |
-| validation | 12 + 1 native | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
+| validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
 
-Each runner asserts full coverage internally, and the **cross-language coverage
-gate** (`tools/spec_coverage_gate.py`, `make spec-coverage`, CI job
-`spec-vector-coverage`) fails by name on any missing `(language, case)` pair —
-and on any case that ran *fewer vectors than the spec carries for it*, since a
-case id appearing in a report says nothing about how many of its vectors ran.
-A capability leaves the gate only via the gate's own `OPTED_OUT` set, never
-through a marker in its vector file. The remaining capability files
+Each runner runs in its language's ordinary unit suite and fails if any case in
+the file is not executed, or runs fewer vectors than the spec carries for it.
+The remaining capability files
 (client-credentials, authorization-code, userinfo, etc.) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
