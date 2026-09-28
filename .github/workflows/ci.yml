@@ -174,15 +174,8 @@ jobs:
       - name: Set up Python + uv
         uses: ./.github/actions/setup-python-uv
 
-      - name: Start node-oidc-provider fixture
-        run: docker compose -f infra/docker-compose.yml up -d --build --wait node-oidc-provider
-
       - name: Integration Tests (node-oidc-provider)
-        run: uv run --directory py pytest src/tests -m integration --env-file=../.env.node-oidc -v
-
-      - name: Tear down node-oidc-provider fixture
-        if: always()
-        run: docker compose -f infra/docker-compose.yml down
+        run: make test-integration-node-oidc
 
   integration-tests-keycloak:
     runs-on: ubuntu-latest
@@ -195,11 +188,8 @@ jobs:
       - name: Set up Python + uv
         uses: ./.github/actions/setup-python-uv
 
-      - name: Start Keycloak fixture
-        run: docker compose -f infra/docker-compose.yml up -d --build --wait keycloak
-
       - name: Integration Tests (Keycloak)
-        run: uv run --directory py pytest src/tests -m integration --env-file=../.env.keycloak -v
+        run: make test-integration-keycloak
 
       - name: Upload token characterization (Keycloak)
         if: always()
@@ -208,10 +198,6 @@ jobs:
           name: token-characterization-keycloak
           path: py/token_characterization_*.md
           if-no-files-found: ignore
-
-      - name: Tear down Keycloak fixture
-        if: always()
-        run: docker compose -f infra/docker-compose.yml down
 
   integration-tests-cross-issuer:
     # Both Docker IdPs up side by side so a REAL token minted by one is rejected

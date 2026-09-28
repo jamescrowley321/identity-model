@@ -63,7 +63,7 @@ from ..harness import (
     ProviderConfig,
     TokenSource,
 )
-from .test_utils import get_config
+from .test_utils import _is_valid_jwt_format, get_config
 
 
 @pytest.hookimpl(trylast=True)
@@ -171,6 +171,25 @@ def test_config(env_file, provider_slug, tmp_path_factory):
     lock_file = root_tmp_dir / f"{provider_slug}_test_config.lock"
     with FileLock(str(lock_file)):
         return get_config(env_file)
+
+
+@pytest.fixture(scope="session")
+def expired_token(test_config) -> str:
+    """An already-expired JWT for the tests marked ``expired_token``.
+
+    Fails rather than skips. In CI the value is a write-only GitHub secret, so
+    a blank or malformed one can't be noticed any other way, and skipping would
+    switch off the expiry-rejection tests with the job still green. Suites with
+    no expired token leave these tests out in their make target.
+    """
+    token = test_config["TEST_EXPIRED_TOKEN"]
+    if not _is_valid_jwt_format(token):
+        pytest.fail(
+            "TEST_EXPIRED_TOKEN is missing or not a JWT; tests marked "
+            "expired_token need one. In CI, re-mint it and re-apply "
+            "infra/descope."
+        )
+    return token
 
 
 @pytest.fixture(scope="session")
