@@ -43,9 +43,17 @@ DEFAULT_ISSUER = "http://mock-op.local"
 DEFAULT_TOKEN_LIFETIME = 300  # seconds — mirrors the real-IdP 300s TTL (design §3)
 
 
-def _b64url_uint(value: int) -> str:
-    """Encode an unsigned integer as base64url (JWK ``n``/``e``/``x``/``y``)."""
-    length = (value.bit_length() + 7) // 8 or 1
+# P-256 coordinates are 32 bytes (RFC 7518 §6.2.1.2).
+_P256_COORD_BYTES = 32
+
+
+def _b64url_uint(value: int, length: int | None = None) -> str:
+    """Encode an unsigned integer as base64url (JWK ``n``/``e``/``x``/``y``).
+
+    ``length`` fixes the byte width: EC coordinates must be the full curve size
+    (RFC 7518 §6.2.1.2), or a coordinate with a leading zero byte is rejected.
+    """
+    length = length or (value.bit_length() + 7) // 8 or 1
     return base64.urlsafe_b64encode(value.to_bytes(length, "big")).rstrip(b"=").decode()
 
 
@@ -87,8 +95,8 @@ def _ec_signing_key(kid: str) -> SigningKey:
         "alg": "ES256",
         "kid": kid,
         "crv": "P-256",
-        "x": _b64url_uint(numbers.x),
-        "y": _b64url_uint(numbers.y),
+        "x": _b64url_uint(numbers.x, _P256_COORD_BYTES),
+        "y": _b64url_uint(numbers.y, _P256_COORD_BYTES),
     }
     return SigningKey(alg="ES256", kid=kid, private_key=private_key, public_jwk=jwk)
 
