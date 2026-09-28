@@ -1,3 +1,5 @@
+//go:build integration
+
 package conformance
 
 import (
@@ -10,23 +12,6 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/jwks"
 )
 
-// TestJWKSConformance drives every vector in jwks.json against one
-// jwks.FetchKeySet handle per vector.
-func TestJWKSConformance(t *testing.T) {
-	suite := LoadHTTPCapability(t, "jwks.json")
-
-	for _, tc := range suite.Tests {
-		t.Run(tc.ID, func(t *testing.T) {
-			if len(tc.Vectors) == 0 {
-				t.Fatalf("%s: no vectors", tc.ID)
-			}
-			for i, v := range tc.Vectors {
-				runJWKSVector(t, vectorLabel(tc.ID, i, v), v)
-			}
-		})
-	}
-}
-
 // jwksErrors maps the canonical reject codes to the Go sentinel errors.
 var jwksErrors = map[string]error{
 	"malformed":     jwks.ErrParse,
@@ -34,12 +19,13 @@ var jwksErrors = map[string]error{
 	"key_not_found": jwks.ErrKeyNotFound,
 }
 
-func runJWKSVector(t *testing.T, label string, v HTTPVector) {
+// runJWKSVector is the jwks.json adapter: one jwks.FetchKeySet handle per
+// vector, driven through input.steps.
+func runJWKSVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
 	jwks.ClearCache()
-	srv := newMockServer(t, v)
 	ctx := context.Background()
-	uri := srv.URL + "/jwks"
+	uri := base + "/jwks"
 
 	var set *jwks.JSONWebKeySet
 	var got []jwks.JSONWebKey
@@ -101,8 +87,6 @@ func runJWKSVector(t *testing.T, label string, v HTTPVector) {
 	default:
 		t.Fatalf("%s: unknown expected outcome %q", label, v.Expect.Outcome)
 	}
-	srv.assertRequest(t, label, v.ExpectRequest)
-	srv.assertCalls(t, label, v.ExpectCalls)
 }
 
 // jwkMembers returns the key's non-empty modelled JWK members.
