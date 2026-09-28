@@ -159,7 +159,7 @@ func TestIntegration_AuthorizationCode_PKCE_EndToEnd(t *testing.T) {
 	}
 }
 
-// ACG-004/ACG-005/ACG-006 (live, partial): exchanging an invalid authorization
+// ACG-004/ACG-005 (live, partial): exchanging an invalid authorization
 // code carrying a PKCE code_verifier reaches the live token endpoint and is
 // rejected with a typed TokenError. This confirms the request shape (grant
 // type, code, code_verifier) and live error parsing independent of the

@@ -6,7 +6,7 @@ import (
 )
 
 // ACG-003: S256Challenge must match the RFC 7636 Appendix B worked example
-// exactly. See spec/test-fixtures/token/pkce-appendix-b.json.
+// exactly. See ACG-003 in spec/vectors/authorization-code.json.
 func TestS256Challenge_RFC7636AppendixB(t *testing.T) {
 	const (
 		verifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"

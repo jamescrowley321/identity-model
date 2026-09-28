@@ -33,7 +33,8 @@
 //!   successful claims response. The positive end-user path (an authorization_code
 //!   access token whose `sub` matches the ID token) requires an interactive
 //!   `/authorize` login and is documented rather than asserted — the same
-//!   deferral as token ACG-006.
+//!   reason the live PKCE round-trip has no vector (see the Authorization Code
+//!   requirements in `spec/capabilities.md`).
 
 use std::time::Duration;
 
@@ -155,7 +156,8 @@ async fn integration_userinfo_bogus_token() {
 // Known gap: the positive end-user path (a real access token issued via the
 // authorization_code flow, whose claims include a sub matching the ID token)
 // requires an interactive browser login at /authorize and is documented here
-// rather than asserted (same deferral as token ACG-006).
+// rather than asserted (the same reason the live PKCE round-trip has no vector;
+// see the Authorization Code requirements in spec/capabilities.md).
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn integration_userinfo_client_credentials_token() {

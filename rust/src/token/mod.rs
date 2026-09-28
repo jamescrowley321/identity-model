@@ -15,7 +15,7 @@
 //!
 //! Behavioural contract: `spec/vectors/client-credentials.json`
 //! (`CC-001`..`CC-006`), `spec/vectors/authorization-code.json`
-//! (`ACG-001`..`ACG-006`), and `spec/vectors/token-exchange.json`
+//! (`ACG-001`..`ACG-005`), and `spec/vectors/token-exchange.json`
 //! (`EXCH-001`..`EXCH-006`); see also `spec/capabilities.md`.
 //!
 //! ```no_run
