@@ -356,7 +356,12 @@ def _covered(path: str, is_dir: bool, globs: list[str]) -> bool:
 
 
 _SHELL_OPERATORS = {"&&", "||", ";", "|", "&"}
-_PATH_INPUTS = ("working-directory", "work-dir", "manifest-path")
+_PATH_INPUTS = (
+    "working-directory",
+    "work-dir",
+    "manifest-path",
+    "cache-dependency-path",
+)
 
 
 def _make_recipes(makefile: pathlib.Path) -> dict[str, tuple[list[str], list[str]]]:
@@ -396,12 +401,14 @@ class _ReadCollector:
 
     def add(self, token: str, cwd: str = "") -> None:
         token = token.strip()
+        if "=" in token:
+            # `--env-file=../.env.x` / `VAR=path`: the value is the read.
+            token = token.split("=", 1)[1]
         if (
             not token
             or "$" in token
             or token.startswith(("-", "/", "~"))
             or "://" in token
-            or "=" in token
         ):
             return
         path = posixpath.normpath(posixpath.join(cwd, token))
@@ -495,7 +502,8 @@ class _ReadCollector:
                 if isinstance(value, str) and (
                     key.endswith("-file") or key in _PATH_INPUTS
                 ):
-                    self.add(value)
+                    for entry in value.splitlines():
+                        self.add(entry)
             run = step.get("run")
             if isinstance(run, str):
                 self.add_script(run, cwd)

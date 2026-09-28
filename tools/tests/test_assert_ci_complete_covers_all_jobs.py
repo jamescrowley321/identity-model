@@ -234,6 +234,28 @@ def test_filter_covering_the_driver_but_not_its_allowlists_is_rejected() -> None
     }
 
 
+def test_cache_dependency_path_outside_the_filter_is_rejected() -> None:
+    workflow = _load()
+    setup_go = next(
+        s
+        for s in workflow["jobs"]["go-checks"]["steps"]
+        if str(s.get("uses", "")).startswith("actions/setup-go")
+    )
+    setup_go["with"]["cache-dependency-path"] = "go/go.sum\nspec/../README.md"
+    assert _failures(workflow) == {("filter-misses-read", "go-checks", "README.md")}
+
+
+def test_key_value_argument_path_outside_the_filter_is_rejected() -> None:
+    workflow = _load()
+    workflow["jobs"]["go-checks"]["steps"].append(
+        {
+            "working-directory": "go",
+            "run": "go test --env-file=../.env.keycloak ./...",
+        }
+    )
+    assert _failures(workflow) == {("filter-misses-read", "go-checks", ".env.keycloak")}
+
+
 def test_filter_without_env_profile_is_rejected() -> None:
     text = _mutate(_real_text(), "              - '.env.identityserver'\n", "")
     assert _failures(text) == {
