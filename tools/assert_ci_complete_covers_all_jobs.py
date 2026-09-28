@@ -27,10 +27,12 @@ Keys are not enough; the values are checked too, structurally:
   local files and directories its steps name (``working-directory``,
   ``*-file`` / ``work-dir`` / ``manifest-path`` inputs, local actions, paths
   in ``run:`` scripts and in the recipes of the ``make`` targets they call).
-  Each is resolved against the checked-out tree. A read the filter misses is a
-  PR that could change that input, skip the job, and have ci-complete call the
-  skip justified. This is a floor, not a proof: a file reached only
-  indirectly (e.g. opened by a script the job runs) is not discovered.
+  Python drivers found that way are followed one step further: repo paths
+  they build from string literals (``REPO_ROOT / "tools" / "x.txt"``) count as
+  reads too, recursively. Each is resolved against the checked-out tree. A
+  read the filter misses is a PR that could change that input, skip the job,
+  and have ci-complete call the skip justified. This is a floor, not a proof:
+  a path assembled at runtime from non-literals is not discovered.
 
 What this CANNOT prove: that the job list is the right one. It reads the same
 ci.yml the pull request is editing, so deleting a job from ``needs:``,
@@ -48,6 +50,7 @@ Exits non-zero with a specific message naming the offending jobs.
 
 from __future__ import annotations
 
+import ast
 from collections import Counter
 from dataclasses import dataclass
 import pathlib
@@ -406,7 +409,55 @@ class _ReadCollector:
             return
         target = self.root / path
         if target.exists():
+            first_visit = path not in self.found
             self.found[path] = target.is_dir()
+            if first_visit and target.suffix == ".py" and target.is_file():
+                self.add_python(path)
+
+    def add_python(self, path: str) -> None:
+        """Follow the repo paths a Python driver builds from literals.
+
+        Covers the two shapes this repo's drivers use -- a path-joining chain
+        like ``REPO_ROOT / "tools" / "x_allowlist.txt"`` and a plain
+        ``"tools/x.txt"`` literal -- resolved against both the repo root and
+        the script's own directory. Paths assembled at runtime from
+        non-literals are not discovered.
+        """
+        try:
+            tree = ast.parse((self.root / path).read_text())
+        except (OSError, SyntaxError, ValueError):
+            return
+        here = posixpath.dirname(path)
+        candidates: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                parts: list[str] = []
+                cursor: ast.expr = node
+                while isinstance(cursor, ast.BinOp) and isinstance(cursor.op, ast.Div):
+                    right = cursor.right
+                    if isinstance(right, ast.Constant) and isinstance(right.value, str):
+                        parts.insert(0, right.value)
+                    else:
+                        parts = []
+                    cursor = cursor.left
+                if parts:
+                    candidates.append("/".join(parts))
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "/" in node.value
+                and "\n" not in node.value
+            ):
+                candidates.append(node.value)
+        for candidate in candidates:
+            for base in ("", here):
+                resolved = posixpath.normpath(posixpath.join(base, candidate))
+                if (
+                    resolved not in (".", "")
+                    and not resolved.startswith(("..", "/"))
+                    and (self.root / resolved).is_file()
+                ):
+                    self.add(resolved)
 
     def add_script(self, script: str, cwd: str = "") -> None:
         for tokens in _shell_tokens(script):

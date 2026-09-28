@@ -209,7 +209,28 @@ def test_filter_without_tools_and_makefile_is_rejected() -> None:
     assert _failures(text) == {
         ("filter-misses-read", job, path)
         for job in ("go-mutation-gate", "rust-mutation-gate")
-        for path in ("Makefile", "tools/mutation_security_native.py")
+        for path in (
+            "Makefile",
+            "tools/mutation_security_native.py",
+            "tools/mutation_security_go_allowlist.txt",
+            "tools/mutation_security_rust_allowlist.txt",
+        )
+    }
+
+
+def test_filter_covering_the_driver_but_not_its_allowlists_is_rejected() -> None:
+    # The allowlists are never named in ci.yml or the Makefile; the driver
+    # builds their paths as REPO_ROOT / "tools" / "..._allowlist.txt". A filter
+    # narrowed to just the driver would let a waiver-only PR skip the gates.
+    text = _mutate(
+        _real_text(),
+        "              - 'tools/**'\n",
+        "              - 'tools/mutation_security_native.py'\n",
+    )
+    assert _failures(text) == {
+        ("filter-misses-read", job, f"tools/mutation_security_{lang}_allowlist.txt")
+        for job in ("go-mutation-gate", "rust-mutation-gate")
+        for lang in ("go", "rust")
     }
 
 
