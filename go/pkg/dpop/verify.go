@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -105,6 +106,11 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 
 	jws, err := jose.ParseSigned(proof, asymmetricSigAlgs)
 	if err != nil {
+		// go-jose refuses an embedded jwk carrying private material while
+		// parsing; report that against jwk, not alg.
+		if embeddedJWKHasPrivateMembers(proof) {
+			return nil, &VerificationError{Field: "jwk", Reason: "embedded jwk must contain only the public key"}
+		}
 		return nil, &VerificationError{Field: "alg", Reason: "not a DPoP proof signed with a supported asymmetric algorithm: " + err.Error()}
 	}
 	if len(jws.Signatures) != 1 {
@@ -189,4 +195,33 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 		Ath:        claims.Ath,
 		Nonce:      claims.Nonce,
 	}, nil
+}
+
+// privateJWKMembers are the JWK members that carry private or secret key
+// material (RFC 7518 §6.2.2, §6.3.2, §6.4.1).
+var privateJWKMembers = []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
+
+// embeddedJWKHasPrivateMembers reports whether the proof's protected header
+// embeds a jwk with private or secret key members.
+func embeddedJWKHasPrivateMembers(proof string) bool {
+	encoded, _, ok := strings.Cut(proof, ".")
+	if !ok {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return false
+	}
+	var header struct {
+		JWK map[string]json.RawMessage `json:"jwk"`
+	}
+	if json.Unmarshal(raw, &header) != nil {
+		return false
+	}
+	for _, m := range privateJWKMembers {
+		if _, ok := header.JWK[m]; ok {
+			return true
+		}
+	}
+	return false
 }
