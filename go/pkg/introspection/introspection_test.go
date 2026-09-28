@@ -95,7 +95,7 @@ func TestIntrospect_ActiveToken(t *testing.T) {
 	if ir.Exp != 1419356238 || ir.Iat != 1419350238 || ir.Nbf != 1419350238 {
 		t.Errorf("exp/iat/nbf = %d/%d/%d", ir.Exp, ir.Iat, ir.Nbf)
 	}
-	if ir.Sub != "Z5O3upPC88QrAjx00dis" || ir.Iss != "https://server.example.com/" {
+	if ir.Sub != "Z5O3upPC88QrAjx00dis" || ir.Iss != "https://issuer.example.com/" {
 		t.Errorf("sub/iss = %q/%q", ir.Sub, ir.Iss)
 	}
 	if ir.Jti != "d3f5c9a1-2b7e-4c1a-9e8f-0a1b2c3d4e5f" {

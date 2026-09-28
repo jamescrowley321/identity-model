@@ -184,7 +184,14 @@ func (m *mockServer) assertRequest(t *testing.T, label string, want *ExpectReque
 	if got.method != want.Method {
 		t.Errorf("%s: method = %s, want %s", label, got.method, want.Method)
 	}
+	// An empty expected header or form value means the key must be absent.
 	for k, v := range want.Headers {
+		if v == "" {
+			if n := len(got.header.Values(k)); n != 0 {
+				t.Errorf("%s: header %s present %d time(s), want absent", label, k, n)
+			}
+			continue
+		}
 		// Content-Type may carry parameters (charset); compare the media type.
 		have := got.header.Get(k)
 		if strings.EqualFold(k, "content-type") {
@@ -195,7 +202,9 @@ func (m *mockServer) assertRequest(t *testing.T, label string, want *ExpectReque
 		}
 	}
 	for k, v := range want.Form {
-		if have := got.form.Get(k); have != v {
+		if _, ok := got.form[k]; v == "" && ok {
+			t.Errorf("%s: form %s = %q, want absent", label, k, got.form.Get(k))
+		} else if have := got.form.Get(k); have != v {
 			t.Errorf("%s: form %s = %q, want %q", label, k, have, v)
 		}
 	}
