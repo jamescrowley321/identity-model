@@ -1,27 +1,55 @@
+# Every hook is a make target, so pre-commit, CI and a manual run all use the
+# same definition. `make lint` runs them all.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-  # Ruff version.
-    rev: v0.14.1
-    hooks:
-      # Run the linter.
-      - id: ruff
-        args: [ --fix ]
-      # Run the formatter.
-      - id: ruff-format
   - repo: local
     hooks:
-      - id: pyrefly-check
-        name: pyrefly check
-        entry: uv run --directory py pyrefly check
+      - id: lint-py
+        name: python lint + typecheck (ruff, pyrefly)
+        entry: make lint-py
         language: system
+        files: ^(py|tools|conformance)/
         types_or: [python, pyi]
         pass_filenames: false
         require_serial: true
-      - id: pytest-coverage
-        name: pytest coverage check (80% minimum)
-        entry: uv run --directory py pytest src/tests -m unit -q -n auto --cov=src/py_identity_model --cov-report=term-missing:skip-covered --cov-fail-under=80 --ignore=src/tests/benchmarks -p no:benchmark
+      - id: test-unit
+        name: python unit tests (py-identity-model)
+        entry: make test-unit
         language: system
-        types: [python]
+        files: ^(py|spec)/
         pass_filenames: false
         require_serial: true
-
+      - id: test-fastapi
+        name: python unit tests (fastapi-identity-model)
+        entry: make test-fastapi
+        language: system
+        files: ^(py|spec)/
+        pass_filenames: false
+        require_serial: true
+      - id: lint-go
+        name: go lint (vet, golangci-lint)
+        entry: make lint-go
+        language: system
+        files: ^go/
+        pass_filenames: false
+        require_serial: true
+      - id: test-unit-go
+        name: go unit tests
+        entry: make test-unit-go
+        language: system
+        files: ^(go|spec)/
+        pass_filenames: false
+        require_serial: true
+      - id: lint-rust
+        name: rust lint (rustfmt, clippy)
+        entry: make lint-rust
+        language: system
+        files: ^rust/
+        pass_filenames: false
+        require_serial: true
+      - id: test-unit-rust
+        name: rust unit tests
+        entry: make test-unit-rust
+        language: system
+        files: ^(rust|spec)/
+        pass_filenames: false
+        require_serial: true

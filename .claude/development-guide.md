@@ -134,10 +134,11 @@ make lint
 uv run pre-commit run -a
 ```
 
-The pre-commit configuration includes:
-- **ruff** - Python linting with auto-fix
-- **ruff-format** - Code formatting
-- **pyrefly** - Type checking
+Each pre-commit hook is a make target and runs only when its language's files change:
+- **lint-py** - ruff lint + format (auto-fix) and pyrefly over the whole Python workspace
+- **test-unit**, **test-fastapi** - Python unit tests with 80% coverage
+- **lint-go**, **test-unit-go** - go vet + golangci-lint, race-enabled unit tests
+- **lint-rust**, **test-unit-rust** - rustfmt + clippy, unit tests
 
 Location: `.pre-commit-config.yaml`
 
@@ -302,7 +303,7 @@ make lint
 - `make test` - Runs all 176 unit and integration tests with coverage reporting
 - `make test-integration-ory` - Validates against real Ory identity provider
 - `make test-examples` - Ensures Docker-based examples work correctly
-- `make lint` - Runs ruff linting, formatting, and pyrefly type checking
+- `make lint` - Runs every pre-commit hook: lint and unit tests for Python, Go and Rust
 
 **Required Checklist Before Push:**
 - ✅ All tests pass (`make test`)

@@ -82,7 +82,7 @@ jobs:
         uses: ./.github/actions/setup-python-uv
 
       - name: Lint
-        run: make lint
+        run: make lint-py
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -109,7 +109,7 @@ jobs:
       - name: Set up Python + uv
         uses: ./.github/actions/setup-python-uv
 
-      - name: fastapi-identity-model typecheck + tests
+      - name: fastapi-identity-model tests
         run: make test-fastapi
 
   integration-tests-ory:
