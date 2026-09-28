@@ -69,9 +69,46 @@ def test_a_draft_pull_request_does_not_trigger_a_review(gate):
     assert "github.event.pull_request.draft == false" in gate
 
 
+@pytest.fixture(scope="module")
+def concurrency_group(workflow) -> str:
+    return " ".join(workflow["jobs"]["claude"]["concurrency"]["group"].split())
+
+
 def test_a_retrigger_supersedes_rather_than_queues(workflow):
     """Stacking was the cost: each toggle bought another sequential session."""
-    assert workflow["concurrency"]["cancel-in-progress"] is True
+    assert workflow["jobs"]["claude"]["concurrency"]["cancel-in-progress"] is True
+
+
+def test_concurrency_is_not_workflow_level(workflow):
+    """A workflow-level group is entered by every run before any job `if:`.
+
+    So the review's own result comment (an issue_comment run whose only job is
+    skipped) cancelled the review that posted it (#745).
+    """
+    assert "concurrency" not in workflow
+
+
+def test_a_run_that_cannot_review_gets_its_own_group(concurrency_group):
+    """Belt to the job-level braces: whatever order GitHub resolves concurrency
+    and `if:` in, a run outside the trigger gate lands in a per-run group and
+    cannot cancel an in-flight review (#745)."""
+    assert "format('noop-{0}', github.run_id)" in concurrency_group
+
+
+def test_the_concurrency_key_checks_the_same_guards_as_the_gate(concurrency_group):
+    """If the shared-group branch is wider than the `if:`, a skipped run (an
+    outsider's PR toggled ready, a bot comment) cancels a running review."""
+    assert "github.event.pull_request.draft == false" in concurrency_group
+    for field in (
+        "github.event.pull_request.author_association",
+        "github.event.comment.author_association",
+        "github.event.review.author_association",
+        "github.event.issue.author_association",
+    ):
+        assert field in concurrency_group, field
+    assert "contains(github.event.comment.body, '@claude')" in concurrency_group
+    assert "contains(github.event.review.body, '@claude')" in concurrency_group
+    assert "startsWith(github.event.issue.body, '@claude')" in concurrency_group
 
 
 def test_every_branch_of_the_gate_checks_an_association(gate):

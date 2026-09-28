@@ -94,24 +94,6 @@ on:
   issues:
     types: [opened]
 
-# Per pull request or issue, superseding rather than queueing.
-#
-# `cancel-in-progress: false` made re-triggers STACK: each draft->ready toggle,
-# each re-assign, bought another sequential 30-minute Opus session against the
-# shared subscription window rather than replacing the one already running.
-#
-# On a global ceiling (#704's third suggestion): GitHub concurrency gives one
-# group per run, so a single block cannot both supersede per pull request and
-# cap total parallelism. A constant group would cap it, but GitHub keeps only
-# ONE pending run per group — a review legitimately queued for another pull
-# request would be cancelled while pending, and a silently dropped review reads
-# exactly like a review that found nothing. That trade is worse than the burst
-# it prevents. Total spend is bounded instead by the trigger surface above and
-# by `timeout-minutes` below; burst is not bounded, deliberately.
-concurrency:
-  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: true
-
 permissions: {}
 
 jobs:
@@ -126,6 +108,54 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
       (github.event_name == 'issues' && (startsWith(github.event.issue.body, '@claude') || startsWith(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    # Per pull request or issue, superseding rather than queueing.
+    #
+    # `cancel-in-progress: false` made re-triggers STACK: each draft->ready
+    # toggle, each re-assign, bought another sequential 30-minute Opus session
+    # against the shared subscription window rather than replacing the one
+    # already running.
+    #
+    # JOB-level, not workflow-level, and the group key is gated (#745). A
+    # workflow-level group is entered by EVERY run the moment it is created,
+    # before any job `if:` is evaluated. So the review's own result comment
+    # (claude[bot] -> issue_comment -> a run whose only job is skipped) cancelled
+    # the review that posted it, and so did any other comment on the pull request
+    # while a review ran. The check read `cancelled` on every successful review,
+    # and a re-review after a BLOCK could be cancelled before it posted.
+    #
+    # Two layers, so the fix does not rest on one undocumented ordering:
+    #   1. Job level: a job skipped by its `if:` should never be queued, so it
+    #      should never enter the group.
+    #   2. The group key repeats the trigger gate in coarse form. Only an event
+    #      that could actually start a review — a non-draft pull_request opened
+    #      by an OWNER/MEMBER/COLLABORATOR, or such a person's comment, review
+    #      or issue mentioning @claude — lands in `claude-<n>-review`.
+    #      Everything else (bot comments, plain human comments, outsiders'
+    #      @claude, an outsider toggling their PR draft->ready while a
+    #      maintainer-requested review runs) gets a group unique to its own
+    #      run, so even if GitHub resolved concurrency before `if:`, it could
+    #      cancel nothing. Keep this key in step with the `if:` below: if it
+    #      drifts wider, a skipped run can cancel a review again; if it drifts
+    #      narrower, a real re-trigger runs alongside instead of superseding.
+    #
+    # On a global ceiling (#704's third suggestion): GitHub concurrency gives
+    # one group per run, so a single block cannot both supersede per pull
+    # request and cap total parallelism. A constant group would cap it, but
+    # GitHub keeps only ONE pending run per group — a review legitimately queued
+    # for another pull request would be cancelled while pending, and a silently
+    # dropped review reads exactly like a review that found nothing. That trade
+    # is worse than the burst it prevents. Total spend is bounded instead by the
+    # trigger surface above and by `timeout-minutes` below; burst is not
+    # bounded, deliberately.
+    concurrency:
+      group: >-
+        claude-${{ github.event.issue.number || github.event.pull_request.number }}-${{
+        ((github.event_name == 'pull_request' && github.event.pull_request.draft == false && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) ||
+        (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association || github.event.review.author_association || github.event.issue.author_association) &&
+        (contains(github.event.comment.body, '@claude') || contains(github.event.review.body, '@claude') ||
+        (github.event_name == 'issues' && (startsWith(github.event.issue.body, '@claude') || startsWith(github.event.issue.title, '@claude'))))))
+        && 'review' || format('noop-{0}', github.run_id) }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     # A default review is five lenses, so five subagents. Without a ceiling a
     # wedged review sits there spending subscription usage until the job's own
