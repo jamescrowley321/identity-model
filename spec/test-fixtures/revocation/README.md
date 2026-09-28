@@ -19,10 +19,9 @@ Fixtures backing the `revocation` conformance suite
   Discovery document containing `revocation_endpoint`, used to resolve the
   endpoint URL from discovery (REV-005, RFC 8414 §2).
 
-The `token_type_hint` body parameter (REV-002) and the `client_secret_basic` vs
-`client_secret_post` request shapes are asserted against the request the client
-emits and so are constructed inline in the unit tests via `httptest` rather than
-as static response fixtures.
+The `token_type_hint` body parameter (REV-002) and the `client_secret_basic`
+request shape are asserted by each vector's `expect_request` rather than stored
+as fixtures.
 
 RFC 7009 §2.1 requires the revocation endpoint to return HTTP 200 regardless of
 whether the token was valid, expired, already revoked, or unknown, so that a

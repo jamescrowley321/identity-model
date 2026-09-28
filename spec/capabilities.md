@@ -42,14 +42,14 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by each language executing the shared `spec/vectors` vectors in its unit suite — but only `validation` and `id-token` carry executable vectors today; the other files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows with a `Conformance` file, presence is also enforced by each language executing the shared `spec/vectors` vectors in its unit suite — but only `validation`, `id-token` and `revocation` carry executable vectors today; the other files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
-> § **Revocation's status is hand-verified, not gate-enforced.** `revocation.json` is a prose
-> contract with no executable `vectors` array, so no language runs a revocation vector runner. The `REV-001`..`REV-005` mapping lives in test
-> comments, which no gate reads. Go additionally loads the named fixtures under
-> `spec/test-fixtures/revocation/`; Python and Rust reconstruct the bodies inline, so a fixture change
-> would break Go and leave the others green. Read `implemented` here as "a human checked the tests
-> against the vectors", not as a machine-enforced claim.
+> § **Revocation is vector-enforced.** `revocation.json` carries executable HTTP vectors that every
+> language runs. Python does not yet meet `REV-005` (its discovery response has no
+> `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)) or
+> `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error,
+> [#791](https://github.com/jamescrowley321/identity-model/issues/791)); its runner marks those
+> vectors as strict expected failures.
 >
 > ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
 > MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
