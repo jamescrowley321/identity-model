@@ -9,8 +9,54 @@
       "given": "A reachable jwks_uri returning a valid JWK Set",
       "when": "The key set is fetched",
       "then": "A typed key set is returned containing all keys",
-      "fixture": "jwks/valid.json",
-      "references": ["RFC 7517 §5"]
+      "references": [
+        "RFC 7517 \u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "fetch-valid-set",
+          "input": {
+            "steps": [
+              "fetch"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/jwks",
+            "method": "GET"
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              },
+              {
+                "kty": "EC",
+                "kid": "ec-sig-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-002",
@@ -18,8 +64,47 @@
       "given": "A JWK Set containing an RSA and an EC signing key",
       "when": "Keys are deserialized",
       "then": "Each key exposes kty/kid/use/alg; RSA exposes n/e; EC exposes crv/x/y",
-      "fixture": "jwks/valid.json",
-      "references": ["RFC 7517 §4"]
+      "references": [
+        "RFC 7517 \u00a74"
+      ],
+      "vectors": [
+        {
+          "name": "rsa-and-ec-parameters",
+          "input": {
+            "steps": [
+              "fetch"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              },
+              {
+                "kty": "EC",
+                "kid": "ec-sig-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-003",
@@ -27,16 +112,145 @@
       "given": "A cached JWK Set",
       "when": "resolve_key(kid) is called with a present kid",
       "then": "The matching key is returned",
-      "fixture": "jwks/valid.json",
-      "references": ["RFC 7517 §4.5"]
+      "references": [
+        "RFC 7517 \u00a74.5"
+      ],
+      "vectors": [
+        {
+          "name": "resolve-cached-kid",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "ec-sig-key"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "EC",
+                "kid": "ec-sig-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-004",
       "title": "Key-not-found triggers forced refresh then retry",
       "given": "A kid not present in the cached set",
       "when": "Key resolution is attempted",
-      "then": "A forced refresh is performed and resolution retried before a key-not-found error",
-      "references": ["RFC 7517 §5"]
+      "then": "A forced refresh is performed and resolution retried before a key-not-found error; a second miss within the refresh cooldown fails without another fetch",
+      "references": [
+        "RFC 7517 \u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "rotated-kid-found-after-refresh",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "ec-rotated-key"
+          },
+          "http_sequence": {
+            "/jwks": [
+              {
+                "status": 200,
+                "body_fixture": "jwks/valid.json"
+              },
+              {
+                "status": 200,
+                "body_fixture": "jwks/rotated.json"
+              }
+            ]
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "EC",
+                "kid": "ec-rotated-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kid-absent-after-refresh",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "unknown-key"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        },
+        {
+          "name": "refresh-cooldown-suppresses-second-miss",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve",
+              "resolve"
+            ],
+            "kids": [
+              "unknown-key-a",
+              "unknown-key-b"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-005",
@@ -44,7 +258,51 @@
       "given": "A successful JWKS fetch",
       "when": "The key set is requested again within the TTL",
       "then": "No HTTP request is made and the cached set is returned",
-      "references": ["RFC 7517 §5"]
+      "references": [
+        "RFC 7517 \u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "second-fetch-served-from-cache",
+          "input": {
+            "steps": [
+              "fetch",
+              "fetch"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              },
+              {
+                "kty": "EC",
+                "kid": "ec-sig-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-006",
@@ -52,7 +310,49 @@
       "given": "A signature verification failure",
       "when": "force_refresh() is invoked",
       "then": "The cached set is invalidated and re-fetched from the provider",
-      "references": ["RFC 7517 §5"]
+      "references": [
+        "RFC 7517 \u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "force-refresh-refetches",
+          "input": {
+            "steps": [
+              "fetch",
+              "force_refresh"
+            ]
+          },
+          "http_sequence": {
+            "/jwks": [
+              {
+                "status": 200,
+                "body_fixture": "jwks/valid.json"
+              },
+              {
+                "status": 200,
+                "body_fixture": "jwks/rotated.json"
+              }
+            ]
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "EC",
+                "kid": "ec-rotated-key",
+                "use": "sig",
+                "alg": "ES256",
+                "crv": "P-256",
+                "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-007",
@@ -60,8 +360,47 @@
       "given": "A jwks_uri returning invalid JSON or an empty key set",
       "when": "The key set is fetched",
       "then": "A descriptive deserialization/validation error is raised",
-      "fixture": "jwks/empty.json",
-      "references": ["RFC 7517 §5"]
+      "references": [
+        "RFC 7517 \u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "empty-key-set",
+          "input": {
+            "steps": [
+              "fetch"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/empty.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "empty_key_set"
+          }
+        },
+        {
+          "name": "malformed-json",
+          "input": {
+            "steps": [
+              "fetch"
+            ]
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/malformed.txt"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "malformed"
+          }
+        }
+      ]
     },
     {
       "id": "JWKS-008",
@@ -69,8 +408,145 @@
       "given": "A JWK Set whose usable signing key sits beside keys with an unknown kty, curve or alg, or missing or mistyped parameters (the OpenID conformance suite publishes such keys)",
       "when": "The key set is fetched and a key is resolved by kid",
       "then": "Members that fail validation, or whose kty/kid/use/alg/n/e/crv/x/y is not a string, are skipped, not fatal; the usable key resolves. An explicit null counts as absent, so such a key is kept. A member that is not a JSON object, or a set with no usable key, is still a JWKS-007 error",
-      "fixture": "jwks/unusable-keys.json",
-      "references": ["RFC 7517 §5", "RFC 7517 §4.4"]
+      "references": [
+        "RFC 7517 \u00a75",
+        "RFC 7517 \u00a74.4"
+      ],
+      "vectors": [
+        {
+          "name": "resolve-beside-unusable",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "rsa-sig-key"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/unusable-keys.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              }
+            ]
+          }
+        },
+        {
+          "name": "null-alg-kept",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "usable-rsa-null-alg"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/unusable-keys.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "usable-rsa-null-alg",
+                "use": "sig",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              }
+            ]
+          }
+        },
+        {
+          "name": "missing-n-skipped",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "unusable-rsa-missing-n"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/unusable-keys.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        },
+        {
+          "name": "mistyped-use-skipped",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "unusable-rsa-mistyped-use"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/unusable-keys.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        },
+        {
+          "name": "mistyped-n-skipped",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "unusable-rsa-mistyped-n"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/unusable-keys.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "notes": "HTTP vectors. The key set is served at /jwks. `input.steps` are the calls made in order against one client (`fetch` the key set, `resolve` `input.kid`, or the next of `input.kids` when given, with a forced refresh on a miss, `force_refresh` the set); the result is the last step's keys (a resolved key is a one-key list). A `key_not_found` from a `resolve` before the last step does not end the run; any other error does. Automatic refreshes on a miss are rate-limited per jwks_uri by a refresh cooldown (5s by default in every language). `http_sequence` serves the n-th listed response for the n-th request to a path (the last one repeats); `expect_calls` is the exact number of requests per path. `expect.keys` lists each key's non-empty kty/kid/use/alg/n/e/crv/x/y. A reject carries a canonical `error`: `malformed` (not a JWK Set document), `empty_key_set`, or `key_not_found`."
 }
