@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -734,6 +735,32 @@ class TestGetJwksUnsupportedKeys:
 
         assert result.is_successful is True
         assert result.keys == [jwks_from_dict(_SIGNING_KEY)]
+
+    @respx.mock
+    def test_shared_unusable_keys_fixture(self):
+        """JWKS-008 against the fixture Go and Rust also run."""
+        fixture = next(
+            (
+                parent / "spec" / "test-fixtures" / "jwks" / "unusable-keys.json"
+                for parent in Path(__file__).resolve().parents
+                if (parent / "spec" / "test-fixtures" / "jwks").is_dir()
+            ),
+            None,
+        )
+        assert fixture is not None, "spec/test-fixtures/jwks not found"
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(200, json=json.loads(fixture.read_text()))
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is True
+        assert result.keys is not None
+        kids = {key.kid for key in result.keys}
+        assert "rsa-sig-key" in kids
+        assert "unusable-rsa-missing-n" not in kids
+        assert "unusable-ec-unknown-crv-key" not in kids
 
     @respx.mock
     def test_set_with_no_usable_key_fails(self):

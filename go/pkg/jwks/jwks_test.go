@@ -445,6 +445,24 @@ func TestFetchKeySet_Empty(t *testing.T) {
 	}
 }
 
+// JWKS-008: keys the client cannot use are skipped, not fatal. The fixture
+// carries the OpenID conformance suite's unusable keys plus an RSA key missing
+// its modulus beside the real signing key.
+func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
+	freshCache(t)
+	srv, _ := newServer(t, http.StatusOK, fixture(t, "unusable-keys.json"))
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+	if _, ok := set.ResolveKey("rsa-sig-key"); !ok {
+		t.Errorf("ResolveKey(rsa-sig-key) not found")
+	}
+	if _, ok := set.ResolveKey("unusable-rsa-missing-n"); ok {
+		t.Errorf("ResolveKey(unusable-rsa-missing-n) found, want it skipped")
+	}
+}
+
 // AC singleflight: concurrent callers collapse to a single HTTP request.
 func TestFetchKeySet_Singleflight(t *testing.T) {
 	freshCache(t)

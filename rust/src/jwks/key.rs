@@ -103,20 +103,32 @@ impl JsonWebKeySet {
     ///
     /// - [`IdentityError::Deserialization`] — the body is not a valid JWK Set
     ///   document (JWKS-007).
-    /// - [`IdentityError::Validation`] — a key is missing required parameters, or
-    ///   the set contains no keys (JWKS-007).
+    /// - [`IdentityError::Validation`] — no key in the set is usable: every key is
+    ///   missing required parameters, or the set is empty (JWKS-007). Individual
+    ///   unusable keys are skipped (JWKS-008).
     pub(crate) fn parse(body: &[u8]) -> Result<Self> {
         // JWKS-007: a non-JSON body, or one whose "keys" member is not an array,
         // is a deserialization error.
-        let set: JsonWebKeySet = serde_json::from_slice(body)
+        let mut set: JsonWebKeySet = serde_json::from_slice(body)
             .map_err(|e| IdentityError::Deserialization(format!("parse JWK Set: {e}")))?;
 
-        // JWKS-002: every key must carry the parameters its type requires.
-        for key in &set.keys {
-            key.validate()?;
-        }
+        // JWKS-002: a key must carry the parameters its type requires.
+        // JWKS-008 (RFC 7517 §5): one that doesn't is skipped rather than
+        // failing the set, so an unusable key cannot block a usable one.
+        let mut first_invalid = None;
+        set.keys.retain(|key| match key.validate() {
+            Ok(()) => true,
+            Err(e) => {
+                first_invalid.get_or_insert(e);
+                false
+            }
+        });
 
-        // JWKS-007: an empty (or absent) key set yields no usable keys.
+        // No usable key: report why the keys were rejected, else JWKS-007's
+        // empty-set error.
+        if let Some(e) = first_invalid.filter(|_| set.keys.is_empty()) {
+            return Err(e);
+        }
         if set.keys.is_empty() {
             return Err(IdentityError::Validation(
                 "JWK Set contains no keys".to_string(),
@@ -220,6 +232,21 @@ mod tests {
             IdentityError::Validation(msg) => assert!(msg.contains('e'), "{msg}"),
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    // JWKS-008: keys the client cannot use are skipped, not fatal. The fixture
+    // carries the OpenID conformance suite's unusable keys plus an RSA key
+    // missing its modulus beside the real signing key.
+    #[test]
+    fn skips_unusable_keys() {
+        let body = include_str!("../../../spec/test-fixtures/jwks/unusable-keys.json");
+        let set = JsonWebKeySet::parse(body.as_bytes()).expect("usable key survives");
+
+        assert!(set.find("rsa-sig-key").is_some(), "signing key resolves");
+        assert!(
+            set.find("unusable-rsa-missing-n").is_none(),
+            "invalid key is skipped"
+        );
     }
 
     // A key missing kty is rejected (RFC 7517 §4.1).

@@ -65,7 +65,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
-| JWKS | `vectors/jwks.json` (JWKS-001..007) | `test-fixtures/jwks/` |
+| JWKS | `vectors/jwks.json` (JWKS-001..008) | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 
 Two capabilities carry executable vectors and a runner in **every language**:

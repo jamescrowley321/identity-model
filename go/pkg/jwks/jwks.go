@@ -3,6 +3,7 @@ package jwks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -247,17 +248,32 @@ func parseKeySet(body []byte, uri string) ([]JSONWebKey, error) {
 		return nil, &ParseError{Err: err}
 	}
 
+	// JWKS-008 (RFC 7517 §5): a key that fails validation is skipped, so an
+	// unusable key cannot block resolution of a usable one. A key that is not
+	// valid JSON still fails the whole document.
 	keys := make([]JSONWebKey, 0, len(doc.Keys))
+	var firstInvalid error
 	for _, raw := range doc.Keys {
 		k, err := parseKey(raw)
+		var iErr *InvalidKeyError
+		if errors.As(err, &iErr) {
+			if firstInvalid == nil {
+				firstInvalid = err
+			}
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
 	}
 
-	// JWKS-007: an empty (or absent) key set yields no usable keys.
+	// No usable key: report why the keys were rejected, else JWKS-007's
+	// empty-set error.
 	if len(keys) == 0 {
+		if firstInvalid != nil {
+			return nil, firstInvalid
+		}
 		return nil, &EmptyKeySetError{URI: uri}
 	}
 	return keys, nil
