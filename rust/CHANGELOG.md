@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v0.6.2 (2026-09-28)
+
+### Bug Fixes
+
+- **rust**: Document that unusable JWKs are skipped (JWKS-008)
+  ([#798](https://github.com/jamescrowley321/identity-model/pull/798),
+  [`fb78337`](https://github.com/jamescrowley321/identity-model/commit/fb783373e5e0d47320024f03e4160f550b797210))
+
+
 ## v0.6.1 (2026-09-20)
 
 ### Bug Fixes
