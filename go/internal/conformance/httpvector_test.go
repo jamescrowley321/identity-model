@@ -84,6 +84,9 @@ type HTTPExpect struct {
 	Fields []string `json:"fields,omitempty"`
 	// Result holds fields of an accepted result, compared by exact equality.
 	Result map[string]any `json:"result,omitempty"`
+	// ErrorDescription and ErrorURI are a reject's optional OAuth error members.
+	ErrorDescription string `json:"error_description,omitempty"`
+	ErrorURI         string `json:"error_uri,omitempty"`
 }
 
 // LoadHTTPCapability reads an HTTP vector file, rejecting unknown fields.

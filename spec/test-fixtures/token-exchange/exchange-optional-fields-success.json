@@ -1,0 +1,8 @@
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.optional.tok",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 1800,
+  "scope": "https://api.example.com/read",
+  "refresh_token": "8xLOxBtZp8.refresh.tok"
+}

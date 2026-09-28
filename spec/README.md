@@ -76,6 +76,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
+| Token Exchange | `vectors/token-exchange.json` (EXCH-001..006) — **executable vectors** | `test-fixtures/token-exchange/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -88,6 +89,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | jwks | 7 | 10 | `go/internal/conformance/jwks_test.go` | `py/src/tests/unit/test_spec_jwks_conformance.py` | `rust/tests/spec_conformance_jwks.rs` |
 | discovery | 10 | 12 | `go/internal/conformance/discovery_test.go` | `py/src/tests/unit/test_spec_discovery_conformance.py` | `rust/tests/spec_conformance_discovery.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/introspection_test.go` | `py/src/tests/unit/test_spec_introspection_conformance.py` | `rust/tests/spec_conformance_introspection.rs` |
+| token-exchange | 6 | 14 | `go/internal/conformance/token_exchange_test.go` | `py/src/tests/unit/test_spec_token_exchange_conformance.py` | `rust/tests/spec_conformance_token_exchange.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
@@ -111,7 +113,8 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   it must be absent.
 - `expect_calls` (optional): the exact number of requests per path.
 - `expect`: `outcome` `accept` or `reject`; a reject carries the canonical
-  `error` code, and optionally the HTTP `status` and the `fields` it names; an
+  `error` code, and optionally the HTTP `status`, the `fields` it names, and the
+  OAuth `error_description` and `error_uri`; an
   accept may carry `result` fields compared by exact equality. A JWKS accept
   carries the resulting `keys`. UserInfo adds `www_authenticate` (the expected
   challenge; absent means the error response must carry no challenge) to a
