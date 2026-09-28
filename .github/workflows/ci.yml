@@ -351,15 +351,13 @@ jobs:
   integration-tests-go:
     # Go suite vs the shared infra/ fixtures: node-oidc default profile, then
     # the same tests re-run against the IdentityServer profile (CONS-1.4).
-    # TEST_REQUIRE_LIVE=1 turns provider-unreachable skips into failures so a
-    # URL/profile drift cannot green-skip the whole leg; -v keeps remaining
-    # skips visible in the log.
+    # The make target boots the fixtures and runs the -tags=integration suite,
+    # where an unreachable provider fails rather than skips, so a URL/profile
+    # drift cannot green-skip the whole leg; -v keeps remaining skips visible.
     # Runs only when go/ or the shared spec/infra changed (CONS-2.4).
     needs: changes
     if: ${{ needs.changes.outputs.go == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
     runs-on: ubuntu-latest
-    env:
-      TEST_REQUIRE_LIVE: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -372,21 +370,8 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
 
-      - name: Start node-oidc-provider + IdentityServer fixtures
-        run: docker compose -f infra/docker-compose.yml up -d --build --wait node-oidc-provider identityserver
-
-      - name: Go integration tests (node-oidc default profile)
-        working-directory: go
-        run: go test -v -tags=integration -count=1 ./...
-
-      - name: Go integration tests (IdentityServer profile)
-        run: |
-          set -a && . ./.env.identityserver && set +a
-          cd go && go test -v -tags=integration -count=1 ./...
-
-      - name: Tear down fixtures
-        if: always()
-        run: docker compose -f infra/docker-compose.yml down
+      - name: Go integration tests (node-oidc + IdentityServer profiles)
+        run: make test-integration-go
 
   go-checks:
     # Static analysis + race-enabled unit tests for the Go library, mirroring the

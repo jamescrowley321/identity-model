@@ -40,7 +40,7 @@ func TestIntegration_Validate_AgainstLiveJWKS(t *testing.T) {
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
+		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
 
 	var jopts []jwks.Option

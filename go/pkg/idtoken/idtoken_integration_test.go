@@ -56,7 +56,7 @@ func obtainLiveIDToken(t *testing.T, ctx context.Context) liveIDTokenResult {
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
+		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
 	if cfg.AuthorizationEndpoint == "" {
 		t.Skip("provider advertises no authorization_endpoint")
