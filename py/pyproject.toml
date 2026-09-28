@@ -300,6 +300,7 @@ markers = [
     "unit: marks tests as unit tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "benchmark: marks tests as performance benchmarks",
+    "expired_token: needs TEST_EXPIRED_TOKEN; the node-oidc and Keycloak make targets leave these out",
 ]
 # Async test configuration
 asyncio_mode = "auto"

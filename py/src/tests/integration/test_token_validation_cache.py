@@ -28,7 +28,6 @@ from py_identity_model.sync.token_validation import (
 
 from .conftest import DEFAULT_VALIDATION_OPTIONS as DEFAULT_OPTIONS
 from .test_utils import (
-    _is_valid_jwt_format,
     count_upstream_fetches,
     get_alternate_provider_expired_token,
 )
@@ -172,17 +171,16 @@ class TestCacheIsolationBetweenProviders:
             f"Expected kid/key mismatch error, got: {exc_info.value}"
         )
 
-    def test_expired_token_from_same_provider_fails(self, test_config, require_https):
+    @pytest.mark.expired_token
+    def test_expired_token_from_same_provider_fails(
+        self, test_config, expired_token, require_https
+    ):
         """
         Test that an expired token from the same provider fails with
         the correct error (expiration, not cache issues).
 
         This ensures the cache doesn't bypass expiration checks.
         """
-        expired_token = test_config.get("TEST_EXPIRED_TOKEN", "")
-        if not expired_token or not _is_valid_jwt_format(expired_token):
-            pytest.skip("TEST_EXPIRED_TOKEN not configured or not a valid JWT")
-
         # Descope session tokens use a different issuer format than OIDC discovery.
         # Disable issuer verification so we test expiration, not issuer mismatch.
         expired_options = {**DEFAULT_OPTIONS, "verify_iss": False}
@@ -194,7 +192,7 @@ class TestCacheIsolationBetweenProviders:
 
         with pytest.raises(TokenExpiredException):
             validate_token(
-                jwt=test_config["TEST_EXPIRED_TOKEN"],
+                jwt=expired_token,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
                 token_validation_config=validation_config,
             )

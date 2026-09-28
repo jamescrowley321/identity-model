@@ -76,6 +76,9 @@ test-integration-descope: ## Run integration tests against Descope
 # One compose file serves every language suite; targets start only the
 # provider(s) they need. See infra/README.md.
 INFRA_COMPOSE := docker compose -f infra/docker-compose.yml
+# The local fixtures can't mint an already-expired token, so their suites
+# leave out the tests that need one. Ory and Descope run everything.
+LOCAL_FIXTURE_TESTS := -m "integration and not expired_token"
 
 .PHONY: infra-up
 infra-up: ## Start the Go/Rust default provider pair (node-oidc :9010 + IdentityServer :9001)
@@ -90,7 +93,7 @@ test-integration-node-oidc: ## Run integration tests against node-oidc-provider
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Running integration tests against node-oidc-provider..."
-	$(UVPY) pytest src/tests -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests $(LOCAL_FIXTURE_TESTS) --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
@@ -99,7 +102,7 @@ test-integration-keycloak: ## Run integration tests against Keycloak
 	@echo "Starting Keycloak fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait keycloak
 	@echo "Running integration tests against Keycloak..."
-	$(UVPY) pytest src/tests -m integration --env-file=../.env.keycloak -v || \
+	$(UVPY) pytest src/tests $(LOCAL_FIXTURE_TESTS) --env-file=../.env.keycloak -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
