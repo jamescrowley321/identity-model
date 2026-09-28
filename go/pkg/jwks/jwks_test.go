@@ -458,7 +458,10 @@ func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
 	if _, ok := set.ResolveKey("rsa-sig-key"); !ok {
 		t.Errorf("ResolveKey(rsa-sig-key) not found")
 	}
-	for _, kid := range []string{"unusable-rsa-missing-n", "unusable-rsa-mistyped-use"} {
+	if _, ok := set.ResolveKey("usable-rsa-null-alg"); !ok {
+		t.Errorf("ResolveKey(usable-rsa-null-alg) not found; null must count as absent")
+	}
+	for _, kid := range []string{"unusable-rsa-missing-n", "unusable-rsa-mistyped-use", "unusable-rsa-mistyped-n"} {
 		if _, ok := set.ResolveKey(kid); ok {
 			t.Errorf("ResolveKey(%s) found, want it skipped", kid)
 		}

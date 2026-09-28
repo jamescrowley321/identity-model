@@ -68,7 +68,7 @@
       "title": "Ignore keys the client cannot use",
       "given": "A JWK Set whose usable signing key sits beside keys with an unknown kty, curve or alg, or missing or mistyped parameters (the OpenID conformance suite publishes such keys)",
       "when": "The key set is fetched and a key is resolved by kid",
-      "then": "Members that fail validation or carry mistyped parameters are skipped, not fatal; the usable key resolves. A member that is not a JSON object, or a set with no usable key, is still a JWKS-007 error",
+      "then": "Members that fail validation, or whose kty/kid/use/alg/n/e/crv/x/y is not a string, are skipped, not fatal; the usable key resolves. An explicit null counts as absent, so such a key is kept. A member that is not a JSON object, or a set with no usable key, is still a JWKS-007 error",
       "fixture": "jwks/unusable-keys.json",
       "references": ["RFC 7517 §5", "RFC 7517 §4.4"]
     }

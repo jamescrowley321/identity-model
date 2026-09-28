@@ -762,6 +762,8 @@ class TestGetJwksUnsupportedKeys:
         assert "unusable-rsa-missing-n" not in kids
         assert "unusable-ec-unknown-crv-key" not in kids
         assert "unusable-rsa-mistyped-use" not in kids
+        assert "unusable-rsa-mistyped-n" not in kids
+        assert "usable-rsa-null-alg" in kids
 
     @pytest.mark.parametrize(
         "mistyped",

@@ -456,6 +456,11 @@ def _extract_jwks_keys(
     return raw_keys, None
 
 
+# The parameters every language models as strings (JWKS-008). A non-string
+# value makes the key unusable; null counts as absent.
+_JWK_STRING_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
+
+
 def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None]:
     """Build JsonWebKeys, ignoring members the client cannot use.
 
@@ -470,6 +475,16 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     keys: list[JsonWebKey] = []
     skipped: list[str] = []
     for key in raw_keys:
+        mistyped = [
+            name
+            for name in _JWK_STRING_MEMBERS
+            if key.get(name) is not None and not isinstance(key[name], str)
+        ]
+        if mistyped:
+            reason = f"mistyped parameter(s) {mistyped}: expected a string"
+            logger.warning("Ignoring unusable JWK kid=%r: %s", key.get("kid"), reason)
+            skipped.append(reason)
+            continue
         try:
             keys.append(jwks_from_dict(key))
         # A mistyped member (e.g. "use": 1) raises TypeError/AttributeError

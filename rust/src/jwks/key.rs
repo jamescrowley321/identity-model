@@ -17,33 +17,67 @@ use crate::{IdentityError, Result};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonWebKey {
     /// Key type, e.g. `RSA` or `EC` (RFC 7517 §4.1, required).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub kty: String,
     /// Key ID used to select a key by the `kid` JOSE header (§4.5).
-    #[serde(default, rename = "kid", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        rename = "kid",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub kid: String,
     /// Public key use, e.g. `sig` (§4.2).
-    #[serde(default, rename = "use", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        rename = "use",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub use_: String,
     /// Algorithm the key is intended for, e.g. `RS256` (§4.4).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub alg: String,
 
     /// RSA modulus (RFC 7518 §6.3.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub n: String,
     /// RSA exponent (RFC 7518 §6.3.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub e: String,
 
     /// EC curve, e.g. `P-256` (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub crv: String,
     /// EC x coordinate (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub x: String,
     /// EC y coordinate (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub y: String,
 
     /// Key parameters not modelled above (e.g. `x5c`, `x5t`). Preserved so
@@ -86,6 +120,15 @@ impl JsonWebKey {
             _ => Ok(()),
         }
     }
+}
+
+/// Deserializes an optional string, treating an explicit JSON `null` as absent
+/// (JWKS-008), the same as a missing member.
+fn null_as_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// A parsed JWK Set (RFC 7517 §5). `keys` holds the keys in document order.
@@ -262,7 +305,15 @@ mod tests {
         let set = JsonWebKeySet::parse(body.as_bytes()).expect("usable key survives");
 
         assert!(set.find("rsa-sig-key").is_some(), "signing key resolves");
-        for kid in ["unusable-rsa-missing-n", "unusable-rsa-mistyped-use"] {
+        assert!(
+            set.find("usable-rsa-null-alg").is_some(),
+            "null counts as absent"
+        );
+        for kid in [
+            "unusable-rsa-missing-n",
+            "unusable-rsa-mistyped-use",
+            "unusable-rsa-mistyped-n",
+        ] {
             assert!(set.find(kid).is_none(), "{kid} is skipped");
         }
     }
