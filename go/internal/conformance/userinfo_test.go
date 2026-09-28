@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jamescrowley321/identity-model/go/pkg/userinfo"
@@ -58,12 +59,22 @@ func runUserInfoVector(t *testing.T, label string, v HTTPVector) {
 			}
 		}
 	case OutcomeReject:
-		if v.Expect.Error == "subject_mismatch" {
+		switch v.Expect.Error {
+		case "":
+		case "subject_mismatch":
 			var sm *userinfo.SubjectMismatchError
 			if !errors.As(err, &sm) {
 				t.Fatalf("%s: expected SubjectMismatchError, got %v", label, err)
 			}
 			return
+		case "missing_sub":
+			var re *userinfo.RequestError
+			if !errors.As(err, &re) || !strings.Contains(err.Error(), "missing sub") {
+				t.Fatalf("%s: expected missing-sub RequestError, got %v", label, err)
+			}
+			return
+		default:
+			t.Fatalf("%s: unknown expected error %q", label, v.Expect.Error)
 		}
 		var ue *userinfo.UserInfoError
 		if !errors.As(err, &ue) {

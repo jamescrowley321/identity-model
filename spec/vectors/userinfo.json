@@ -105,10 +105,10 @@
     },
     {
       "id": "UI-003",
-      "title": "Subject consistency mismatch errors",
-      "given": "An expected subject different from the UserInfo sub",
+      "title": "Subject consistency mismatch or missing sub errors",
+      "given": "An expected subject different from the UserInfo sub, or a UserInfo response with no sub",
       "when": "Fetch is invoked with subject validation enabled",
-      "then": "A subject-mismatch error is raised",
+      "then": "A subject-mismatch error is raised; a response without sub is rejected whether or not an expected subject is supplied",
       "references": [
         "§5.3.2"
       ],
@@ -135,6 +135,53 @@
           "expect": {
             "outcome": "reject",
             "error": "subject_mismatch"
+          }
+        },
+        {
+          "name": "missing-sub-with-expected-sub",
+          "input": {
+            "token": "the-token",
+            "expected_sub": "248289761001"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/missing-sub.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_sub"
+          }
+        },
+        {
+          "name": "missing-sub",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/missing-sub.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_sub"
           }
         }
       ]
@@ -319,5 +366,5 @@
       ]
     }
   ],
-  "notes": "HTTP vectors. Each vector gives the call `input` (`token`, and `expected_sub` to enable subject validation), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). An accept may carry `claims` (standard §5.1 claims, each of which MUST be a typed field with that value) and `custom_claims` (non-standard claims, each of which MUST be reachable in the response claim map with that value). A reject carries either `error: subject_mismatch` or the HTTP `status` of the error response plus the `www_authenticate` challenge when the endpoint sent one. UI-008 (custom HTTP client and timeout) is an API-shape contract, not data; see spec/capabilities.md."
+  "notes": "HTTP vectors. Each vector gives the call `input` (`token`, and `expected_sub` to enable subject validation), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). An accept may carry `claims` (standard §5.1 claims, each of which MUST be a typed field with that value) and `custom_claims` (non-standard claims, each of which MUST be reachable in the response claim map with that value). A reject carries `error: subject_mismatch`, `error: missing_sub` (a 200 response with no `sub` claim), or the HTTP `status` of the error response plus the `www_authenticate` challenge when the endpoint sent one. The custom HTTP client and timeout requirement is an API-shape contract, not data; see spec/capabilities.md."
 }

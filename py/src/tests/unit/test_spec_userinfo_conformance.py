@@ -11,6 +11,7 @@ HTTP status (or the subject mismatch) in that message.
 
 import json
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -34,12 +35,27 @@ _CASES = json.loads((_REPO_ROOT / "spec" / "vectors" / "userinfo.json").read_tex
 ]
 _BASE = "https://server.example.com"
 
-#: Cases py-identity-model does not meet yet. Strict, so a fix fails the suite
-#: until the entry is removed.
+_NO_TYPED_CLAIMS = (
+    "UserInfoResponse has no typed standard claims (#768)",
+    AttributeError,
+)
+_NO_CHALLENGE = (
+    "UserInfoResponse does not carry the WWW-Authenticate challenge (#769)",
+    AttributeError,
+)
+
+#: Cases (or single vectors, by param id) py-identity-model does not meet yet.
+#: Strict, so a fix fails the suite until the entry is removed.
 _KNOWN_GAPS = {
-    "UI-001": "UserInfoResponse has no typed standard claims (#768)",
-    "UI-004": "UserInfoResponse does not carry the WWW-Authenticate challenge (#769)",
-    "UI-007": "UserInfoResponse has no typed standard claims (#768)",
+    "UI-001": _NO_TYPED_CLAIMS,
+    "UI-003-missing-sub": (
+        "a response with no sub is accepted without expected_sub (#773)",
+        AssertionError,
+    ),
+    "UI-004": _NO_CHALLENGE,
+    "UI-005": _NO_CHALLENGE,
+    "UI-006": _NO_CHALLENGE,
+    "UI-007": _NO_TYPED_CLAIMS,
 }
 
 
@@ -47,20 +63,16 @@ def _params() -> list:
     params = []
     for case in _CASES:
         assert case.get("vectors"), f"{case['id']}: case has no vectors"
-        marks = []
-        if case["id"] in _KNOWN_GAPS:
-            marks.append(
-                pytest.mark.xfail(
-                    reason=_KNOWN_GAPS[case["id"]], raises=AttributeError, strict=True
-                )
-            )
         for idx, vector in enumerate(case["vectors"]):
-            label = vector.get("name") or str(idx)
-            params.append(
-                pytest.param(
-                    case["id"], vector, id=f"{case['id']}-{label}", marks=marks
+            param_id = f"{case['id']}-{vector.get('name') or idx}"
+            gap = _KNOWN_GAPS.get(param_id) or _KNOWN_GAPS.get(case["id"])
+            marks = []
+            if gap:
+                reason, raises = gap
+                marks.append(
+                    pytest.mark.xfail(reason=reason, raises=raises, strict=True)
                 )
-            )
+            params.append(pytest.param(case["id"], vector, id=param_id, marks=marks))
     return params
 
 
@@ -85,6 +97,9 @@ def _assert_request(route: respx.Route, want: dict) -> None:
     for name, value in want.get("headers", {}).items():
         have = request.headers.get(name, "")
         assert have == value, f"header {name}: {have!r} != {value!r}"
+    form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+    for name, value in want.get("form", {}).items():
+        assert form.get(name) == value, f"form {name}: {form.get(name)!r} != {value!r}"
 
 
 @pytest.mark.parametrize(("case_id", "vector"), _params())
@@ -113,11 +128,15 @@ def test_userinfo_vector(case_id: str, vector: dict) -> None:
             assert getattr(response, name) == value, f"typed claim {name}"
     elif expect["outcome"] == "reject":
         assert not response.is_successful, f"{case_id}: expected reject"
-        if expect.get("error") == "subject_mismatch":
+        error = expect.get("error")
+        if error == "subject_mismatch":
             assert "sub mismatch" in (response.error or "")
             return
+        if error == "missing_sub":
+            assert "missing required 'sub' claim" in (response.error or "")
+            return
+        assert not error, f"{case_id}: unknown expected error {error!r}"
         assert f"status code: {expect['status']}" in (response.error or "")
-        if "www_authenticate" in expect:
-            assert response.www_authenticate == expect["www_authenticate"]
+        assert response.www_authenticate == expect.get("www_authenticate")
     else:
         pytest.fail(f"{case_id}: unknown expected outcome {expect['outcome']!r}")

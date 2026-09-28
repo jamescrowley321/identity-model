@@ -262,7 +262,7 @@ func TestFetch_CustomClaimsPreserved(t *testing.T) {
 	}
 }
 
-// UI-008: WithHTTPClient routes the request through the supplied client and
+// spec/capabilities.md (UserInfo): WithHTTPClient routes the request through the supplied client and
 // WithTimeout bounds a slow endpoint.
 func TestFetch_FunctionalOptions(t *testing.T) {
 	srv, _ := claimsServer(t)
