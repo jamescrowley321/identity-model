@@ -4,8 +4,8 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `revocation: { enabled: true }`), runs the unit suite, then runs
-//! these with `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips
-//! fail).
+//! these with `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite
+//! fails).
 //!
 //! Run locally:
 //!
@@ -38,7 +38,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `revocation_endpoint` is
 //! resolved from the fetched discovery document (`REV-005`). If
-//! `TEST_DISCO_ADDRESS` is unset the test skips rather than failing.
+//! `TEST_DISCO_ADDRESS` is unset the test fails.
 //!
 //! Revocation is only meaningful for opaque tokens — a provider cannot revoke a
 //! self-contained JWT it does not track — so, mirroring the introspection suite,
@@ -47,109 +47,56 @@
 
 use std::time::Duration;
 
-use rs_identity_model::{
-    DiscoveryClient, IdentityError, IntrospectionClient, RevocationClient, TokenClient,
-};
+use rs_identity_model::{IdentityError, IntrospectionClient, RevocationClient, TokenClient};
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test.
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-/// Discovers the live provider's metadata, skipping when it is unreachable so a
-/// missing local stack does not fail CI-less runs.
-async fn discover_or_skip(
-    issuer: &str,
-    allow_http: bool,
-) -> Option<rs_identity_model::ProviderMetadata> {
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    match discovery.discover(issuer).await {
-        Ok(meta) => Some(meta),
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            None
-        }
-    }
-}
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// Everything a revocation test needs from the live provider, resolved once.
 struct Live {
     meta: rs_identity_model::ProviderMetadata,
     revocation_endpoint: String,
     /// Resolved up front so a provider offering revocation but not introspection
-    /// skips the suite rather than panicking part-way through a test that has
-    /// already minted a live token.
+    /// fails before, not part-way through, a test that has already minted a
+    /// live token.
     introspection_endpoint: String,
     client_id: String,
     client_secret: String,
     allow_http: bool,
 }
 
-/// Resolves the live profile, or returns `None` having already logged the skip.
-async fn live_or_skip() -> Option<Live> {
+/// Resolves the live profile, failing the test when a prerequisite is missing.
+async fn live_or_fail() -> Option<Live> {
     let issuer = issuer_from_env().or_else(|| {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         None
     })?;
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_OPAQUE_CLIENT_ID"),
         env_nonempty("TEST_OPAQUE_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite(
+            "TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile",
+        );
         return None;
     };
 
     // Case-insensitive: the client's own scheme gate lowercases, and a merely
     // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
     let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
-    let meta = discover_or_skip(&issuer, allow_http).await?;
+    let meta = discover_or_fail(&issuer, allow_http).await?;
 
     // REV-005: the endpoint comes from the discovery document, never a constant.
     let Some(revocation_endpoint) = meta.revocation_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise revocation_endpoint");
+        fail_live_prerequisite("discovery document does not advertise revocation_endpoint");
         return None;
     };
     // Introspection is how these tests prove a revocation landed; it is optional
-    // and independent of revocation, so its absence is a skip, not a failure.
+    // on the node-oidc profile, so its absence fails the test up front.
     let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise introspection_endpoint");
+        fail_live_prerequisite("discovery document does not advertise introspection_endpoint");
         return None;
     };
     assert!(
@@ -222,8 +169,8 @@ fn revocation_client(live: &Live) -> RevocationClient {
 // information, so the only proof is asking a second endpoint.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_opaque_token_takes_effect_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_opaque_token_takes_effect() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -250,8 +197,8 @@ async fn integration_revoke_opaque_token_takes_effect_live() {
 // a token-scanning oracle.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_is_indistinguishable_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_is_indistinguishable() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let client = revocation_client(&live);
@@ -289,8 +236,8 @@ async fn integration_revoke_is_indistinguishable_live() {
 // reject on it. A mock cannot prove the provider honours that.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_tolerates_wrong_hint_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_tolerates_wrong_hint() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -310,8 +257,8 @@ async fn integration_revoke_tolerates_wrong_hint_live() {
 // REV-002: omitting the hint entirely is valid — it is an OPTIONAL parameter.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_without_hint_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_without_hint() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -330,8 +277,8 @@ async fn integration_revoke_without_hint_live() {
 // request and left it live.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_invalid_client_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_invalid_client() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -391,19 +338,21 @@ async fn integration_revoke_invalid_client_live() {
 // oracle the rest of the file guards against.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_revoke_rejects_another_clients_token_live() {
-    let Some(live) = live_or_skip().await else {
+async fn revoke_rejects_another_clients_token() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let (Some(other_id), Some(other_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset; no second client to test with");
+        fail_live_prerequisite(
+            "TEST_CLIENT_ID/TEST_CLIENT_SECRET unset; no second client to test with",
+        );
         return;
     };
     if other_id == live.client_id {
-        skip_or_fail("TEST_CLIENT_ID is the same client as TEST_OPAQUE_CLIENT_ID");
+        fail_live_prerequisite("TEST_CLIENT_ID is the same client as TEST_OPAQUE_CLIENT_ID");
         return;
     }
 

@@ -7,7 +7,7 @@
 //! *reason* wording is language-specific and intentionally not asserted.
 //!
 //! This runner reads the bespoke vector file directly — it is deliberately *not*
-//! routed through the generic `spec_conformance.rs` machinery — parses it with
+//! routed through the generic `conformance::validation` machinery — parses it with
 //! `serde_json`, builds each validator from its `validator` spec, and runs it
 //! against the case `claims`.
 //!
@@ -17,7 +17,7 @@
 //! whose only public constructor is the real validation pipeline
 //! ([`rs_identity_model::validate_token`]) — `Claims::from_value` is
 //! crate-private and the type is not `Deserialize`. So, mirroring
-//! `tests/claims_validation.rs`, each case's `claims` object is minted into a
+//! `local::claims_validation`, each case's `claims` object is minted into a
 //! genuinely signed RS256 token (with the shared `spec/test-fixtures/validation`
 //! key, augmented with `iat`/`exp` so the standard registered-claim checks pass)
 //! and decoded back into a `Claims`; the built validator is then run against that
@@ -29,18 +29,16 @@
 //! shared contract requires (see the inline unit tests in
 //! `src/jwt/claims_validation.rs`).
 
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use rs_identity_model::{
-    BoxedClaimsValidator, Claims, CombineMode, IdentityError, JsonWebKey, ValidationOptions, boxed,
+    BoxedClaimsValidator, Claims, CombineMode, IdentityError, ValidationOptions, boxed,
     combine_claims_validators, require_claim_value, require_claims, require_scopes, validate_token,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-const VECTORS_FILE: &str = "../spec/test-fixtures/claims-validation/vectors.json";
-const FIXTURE_DIR: &str = "../spec/test-fixtures/validation";
-const FIXTURE_KID: &str = "test-key-1";
+use crate::common::fixtures::{mint, now_unix, public_key};
 
+const VECTORS_FILE: &str = "../spec/test-fixtures/claims-validation/vectors.json";
 // --- vector model ------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -73,37 +71,6 @@ struct Reject {
     claim: Option<String>,
 }
 
-// --- fixture helpers (mirroring tests/claims_validation.rs) -------------------
-
-fn read_fixture(name: &str) -> Vec<u8> {
-    std::fs::read(format!("{FIXTURE_DIR}/{name}"))
-        .unwrap_or_else(|e| panic!("read fixture {name}: {e}"))
-}
-
-fn signing_key() -> EncodingKey {
-    EncodingKey::from_rsa_der(&read_fixture("signing-key.pkcs1.der"))
-}
-
-fn public_key() -> JsonWebKey {
-    let jwks: Value =
-        serde_json::from_slice(&read_fixture("jwks.json")).expect("parse jwks fixture");
-    serde_json::from_value(jwks["keys"][0].clone()).expect("deserialize fixture key")
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_secs() as i64
-}
-
-/// Mints a genuinely signed RS256 token (`kid=test-key-1`) carrying `claims`.
-fn mint(claims: Value) -> String {
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(FIXTURE_KID.to_string());
-    jsonwebtoken::encode(&header, &claims, &signing_key()).expect("sign token")
-}
-
 /// Decodes a vector `claims` object into a typed [`Claims`] through the real
 /// pipeline. The object is augmented with `iat`/`exp` (only when absent) so the
 /// standard registered-claim checks pass; no issuer/audience is configured, so
@@ -111,7 +78,7 @@ fn mint(claims: Value) -> String {
 /// decode failure is a runner bug, surfaced by the caller with the case id.
 fn decode_claims(claims: &Value) -> Result<Claims, IdentityError> {
     let mut obj: Map<String, Value> = claims.as_object().cloned().unwrap_or_default();
-    let n = now();
+    let n = now_unix();
     obj.entry("iat").or_insert_with(|| json!(n - 5));
     obj.entry("exp").or_insert_with(|| json!(n + 3600));
     validate_token(

@@ -1,7 +1,7 @@
 //! End-to-end DPoP check: a real HTTP resource server that enforces DPoP,
 //! exercised by a real client over a TCP socket.
 //!
-//! `tests/dpop.rs` asserts each RFC 9449 rule in isolation. This file asserts they
+//! `conformance::dpop` asserts each RFC 9449 rule in isolation. This file asserts they
 //! compose into the property DPoP exists for: **a stolen access token is useless
 //! without the private key it was bound to**. That property is not visible in any
 //! single unit assertion, because it emerges from the proof signature, the

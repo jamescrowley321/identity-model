@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -18,51 +18,23 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. There is no separate
 //! `TEST_JWKS_ADDRESS` locally, so the `jwks_uri` is resolved from the fetched
-//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test skips
-//! (returns) rather than failing, so `cargo test -- --ignored` is safe without
-//! a provider configured.
+//! discovery document. If `TEST_DISCO_ADDRESS` is unset the test fails.
 
 use rs_identity_model::{DiscoveryClient, JwksClient};
 use std::time::Duration;
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it
-/// panics. CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule, CONS-1.4 review).
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
-
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
+use crate::common::env::{fail_live_prerequisite, issuer_from_env};
 
 // JWKS-001 / JWKS-002 / JWKS-003 / JWKS-006: discover the provider, fetch its
 // real JWK Set, confirm it is non-empty with usable keys, resolve the first key
 // by its kid, and force a refresh without losing the keys.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_fetches_real_key_set() {
+async fn fetches_real_key_set() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
 

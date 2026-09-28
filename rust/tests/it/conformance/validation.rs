@@ -52,7 +52,7 @@ const FIXTURE_KID: &str = "test-key-1";
 fn rust_native_tests() -> BTreeMap<&'static str, &'static str> {
     BTreeMap::from([(
         "JWT-010",
-        "rust/tests/jwt_validation.rs::integration_forced_refresh_against_live_jwks",
+        "rust/tests/it/live/jwt_validation.rs::forced_refresh_against_live_jwks",
     )])
 }
 

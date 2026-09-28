@@ -118,13 +118,29 @@ RUNNERS: list[tuple[str, str, Path, list[str]]] = [
         "rust",
         "validation",
         REPO_ROOT / "rust",
-        ["cargo", "test", "--test", "spec_conformance"],
+        [
+            "cargo",
+            "test",
+            "--test",
+            "it",
+            "--",
+            "--exact",
+            "conformance::validation::spec_validation_conformance",
+        ],
     ),
     (
         "rust",
         "id-token",
         REPO_ROOT / "rust",
-        ["cargo", "test", "--test", "spec_conformance_id_token"],
+        [
+            "cargo",
+            "test",
+            "--test",
+            "it",
+            "--",
+            "--exact",
+            "conformance::id_token::spec_id_token_conformance",
+        ],
     ),
 ]
 

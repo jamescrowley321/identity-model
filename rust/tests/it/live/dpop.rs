@@ -4,7 +4,7 @@
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `dPoP: { enabled: true }`, `dPoPSigningAlgValues: ["RS256",
 //! "ES256"]`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -14,7 +14,7 @@
 //! make infra-down
 //! ```
 //!
-//! ## Why these exist when `tests/dpop.rs` already covers DPOP-001..008
+//! ## Why these exist when `conformance::dpop` already covers DPOP-001..008
 //!
 //! The offline suite proves this crate is self-consistent: a proof it generates
 //! is one it verifies, against claims it chose. Every assertion there is
@@ -39,8 +39,8 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. A provider whose discovery
 //! document does not advertise `dpop_signing_alg_values_supported` has the
-//! feature switched off, so the suite skips rather than fails — keeping the
-//! Keycloak/IdentityServer/Descope profiles green.
+//! feature switched off, so the suite fails: it runs only against the
+//! node-oidc profile, which enables DPoP.
 //!
 //! The `test-client-credentials` client is used because node-oidc-provider
 //! issues it a JWT access token (via the `urn:test:api` default resource),
@@ -51,49 +51,15 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderValue};
 use rs_identity_model::{
-    DiscoveryClient, DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, IdentityError,
-    JwksClient, ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
+    DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, IdentityError, JwksClient,
+    ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
 };
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// The discovery member whose presence means the provider has DPoP enabled.
 const DPOP_ALGS_METADATA: &str = "dpop_signing_alg_values_supported";
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when the
-/// variable is unset so the caller can skip gracefully.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test.
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
 
 /// Everything a DPoP test needs from the live provider, resolved once.
 struct Live {
@@ -102,45 +68,35 @@ struct Live {
     client_secret: String,
     allow_http: bool,
     /// The proof algorithms the provider advertises, intersected with the two
-    /// this crate implements. Never empty — an empty intersection skips.
+    /// this crate implements. Never empty — an empty intersection fails.
     algorithms: Vec<DpopAlgorithm>,
 }
 
-/// Resolves the live profile, or returns `None` having already logged the skip.
-async fn live_or_skip() -> Option<Live> {
+/// Resolves the live profile, failing the test when a prerequisite is missing.
+async fn live_or_fail() -> Option<Live> {
     let issuer = issuer_from_env().or_else(|| {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         None
     })?;
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this profile");
         return None;
     };
 
     // Case-insensitive: the client's own scheme gate lowercases, and a merely
     // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
     let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
-    let discovery = DiscoveryClient::builder()
-        .allow_http(allow_http)
-        .timeout(Duration::from_secs(5))
-        .build();
-    let meta = match discovery.discover(&issuer).await {
-        Ok(meta) => meta,
-        Err(e) => {
-            skip_or_fail(&format!(
-                "provider not reachable at {issuer} (run `make infra-up`): {e}"
-            ));
-            return None;
-        }
-    };
+    let meta = discover_or_fail(&issuer, allow_http).await?;
 
     // The capability gate: a provider with DPoP switched off advertises nothing,
-    // and every profile that does not support it skips here rather than failing.
+    // so a profile that does not support it fails here.
     let Some(advertised) = meta.extra.get(DPOP_ALGS_METADATA) else {
-        skip_or_fail(&format!(
+        fail_live_prerequisite(&format!(
             "discovery document does not advertise {DPOP_ALGS_METADATA}; DPoP not enabled"
         ));
         return None;
@@ -159,7 +115,7 @@ async fn live_or_skip() -> Option<Live> {
         .filter(|alg| advertised.iter().any(|a| a == alg.as_str()))
         .collect();
     if algorithms.is_empty() {
-        skip_or_fail(&format!(
+        fail_live_prerequisite(&format!(
             "provider advertises {DPOP_ALGS_METADATA}={advertised:?}, none of which this crate implements"
         ));
         return None;
@@ -258,8 +214,8 @@ fn cnf_jkt(claims: &rs_identity_model::Claims) -> String {
 // offline suite cannot catch.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_bound_client_credentials_live() {
-    let Some(live) = live_or_skip().await else {
+async fn dpop_bound_client_credentials() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
 
@@ -305,8 +261,8 @@ async fn integration_dpop_bound_client_credentials_live() {
 // true if the provider is reading the proof at all.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_mismatched_proof_is_rejected_live() {
-    let Some(live) = live_or_skip().await else {
+async fn dpop_mismatched_proof_is_rejected() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let key = DpopKey::generate(live.algorithms[0]).expect("generate DPoP key");
@@ -353,15 +309,15 @@ fn assert_dpop_rejection(err: &IdentityError, what: &str) {
 // token round-trips through this crate's resource-server verifier, and the
 // thumbprint that verifier reports is the one the provider put in `cnf.jkt`.
 //
-// This is the join the offline suite cannot make. `tests/dpop.rs` verifies
+// This is the join the offline suite cannot make. `conformance::dpop` verifies
 // proofs over tokens it invented; here the token is one the provider minted and
 // bound, so a resource server following RFC 9449 §7 — compare the verified
 // proof's thumbprint against the token's `cnf.jkt`, then its `ath` against the
 // presented token — is exercised against real material end to end.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_dpop_ath_binds_a_live_token_live() {
-    let Some(live) = live_or_skip().await else {
+async fn dpop_ath_binds_a_live_token() {
+    let Some(live) = live_or_fail().await else {
         return;
     };
     let key = DpopKey::generate(live.algorithms[0]).expect("generate DPoP key");

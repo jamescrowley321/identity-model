@@ -123,7 +123,7 @@ fn client_for(server: &MockServer) -> TokenClient {
 // EXCH-001: a real HTTP impersonation exchange returns the parsed issued-token
 // trio (access_token, issued_token_type, token_type) plus expires_in.
 #[tokio::test]
-async fn integration_impersonation_exchange_over_http() {
+async fn impersonation_exchange_over_http() {
     let server = exchange_endpoint("exchange-impersonation-success.json").await;
 
     let issued = client_for(&server)
@@ -153,7 +153,7 @@ async fn integration_impersonation_exchange_over_http() {
 // the two flows, so a client that dropped the actor token would get the
 // impersonation body back and fail this assertion.
 #[tokio::test]
-async fn integration_delegation_exchange_over_http() {
+async fn delegation_exchange_over_http() {
     let server = exchange_endpoint("exchange-impersonation-success.json").await;
 
     let issued = client_for(&server)
@@ -183,7 +183,7 @@ async fn integration_delegation_exchange_over_http() {
 // SAML2 issued_token_type, and is accepted rather than rejected for not being
 // a Bearer token (RFC 8693 §2.2.1).
 #[tokio::test]
-async fn integration_non_bearer_n_a_token_type() {
+async fn non_bearer_n_a_token_type() {
     let server = exchange_endpoint("exchange-n_a-token-type.json").await;
 
     let issued = client_for(&server)
@@ -203,7 +203,7 @@ async fn integration_non_bearer_n_a_token_type() {
 // real HTTP 400 and an OAuth error body; the client surfaces it as a typed
 // TokenEndpoint error rather than a transport failure or an empty success.
 #[tokio::test]
-async fn integration_expired_subject_token_is_a_typed_error() {
+async fn expired_subject_token_is_a_typed_error() {
     let server = exchange_endpoint("exchange-impersonation-success.json").await;
 
     let err = client_for(&server)
@@ -237,7 +237,7 @@ async fn integration_expired_subject_token_is_a_typed_error() {
 // (RFC 8693 §2.2 REQUIRES it). The client must reject it rather than hand back
 // a TokenResponse whose issued type is silently unknown.
 #[tokio::test]
-async fn integration_success_without_issued_token_type_is_rejected() {
+async fn success_without_issued_token_type_is_rejected() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -269,7 +269,7 @@ async fn integration_success_without_issued_token_type_is_rejected() {
 // empty string, so the client must reject the response rather than hand back a
 // token whose type is silently blank.
 #[tokio::test]
-async fn integration_success_without_token_type_is_rejected() {
+async fn success_without_token_type_is_rejected() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -305,7 +305,7 @@ async fn integration_success_without_token_type_is_rejected() {
 // Adversarial: a server that does not implement the grant at all answers
 // unsupported_grant_type; the client surfaces the code rather than masking it.
 #[tokio::test]
-async fn integration_unsupported_grant_is_surfaced() {
+async fn unsupported_grant_is_surfaced() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/token"))
