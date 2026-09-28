@@ -77,6 +77,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
 | Token Exchange | `vectors/token-exchange.json` (EXCH-001..006) — **executable vectors** | `test-fixtures/token-exchange/` |
+| Client Credentials | `vectors/client-credentials.json` (CC-001..006) — **executable vectors** | `test-fixtures/token/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -90,6 +91,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | discovery | 10 | 12 | `go/internal/conformance/discovery_test.go` | `py/src/tests/unit/test_spec_discovery_conformance.py` | `rust/tests/spec_conformance_discovery.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/introspection_test.go` | `py/src/tests/unit/test_spec_introspection_conformance.py` | `rust/tests/spec_conformance_introspection.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/token_exchange_test.go` | `py/src/tests/unit/test_spec_token_exchange_conformance.py` | `rust/tests/spec_conformance_token_exchange.rs` |
+| client-credentials | 6 | 8 | `go/internal/conformance/client_credentials_test.go` | `py/src/tests/unit/test_spec_client_credentials_conformance.py` | `rust/tests/spec_conformance_client_credentials.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
@@ -121,5 +123,5 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   reject. UserInfo and introspection accepts may carry `claims` (typed standard
   members) and `custom_claims` (overflow-map entries).
 
-The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+The remaining capability files (`authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
