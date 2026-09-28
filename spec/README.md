@@ -82,16 +82,15 @@ These capabilities carry executable vectors and a runner in **every language**:
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
-| revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_revocation.rs` |
-| userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_userinfo.rs` |
-| jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_jwks.rs` |
+| revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
 in that language's node-oidc integration target (Python:
 `make test-integration-node-oidc`; Go: `make test-integration-go`, where
-`go/internal/conformance/httpvector_test.go` drives the per-capability adapters
-listed below). Each runner fails if any case in the file is
+`go/internal/conformance/httpvector_test.go`; Rust: `make test-integration-rust`). Each runner fails if any case in the file is
 not executed, or runs fewer vectors than the spec carries for it.
 A case a language does not meet yet is marked in that language's runner as an
 expected failure (Python: `xfail(strict=True)`) with a linked issue, so the
