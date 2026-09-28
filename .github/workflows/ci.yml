@@ -66,6 +66,9 @@ jobs:
               - 'spec/**'
               - 'infra/**'
               - '.github/workflows/ci.yml'
+              # Sourced by the Go and Rust integration legs (#642).
+              - '.env.node-oidc'
+              - '.env.identityserver'
 
   lint:
     runs-on: ubuntu-latest
