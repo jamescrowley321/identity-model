@@ -109,20 +109,39 @@ impl JsonWebKeySet {
     pub(crate) fn parse(body: &[u8]) -> Result<Self> {
         // JWKS-007: a non-JSON body, or one whose "keys" member is not an array,
         // is a deserialization error.
-        let mut set: JsonWebKeySet = serde_json::from_slice(body)
+        #[derive(Deserialize)]
+        struct RawSet {
+            #[serde(default)]
+            keys: Vec<serde_json::Value>,
+        }
+        let raw: RawSet = serde_json::from_slice(body)
             .map_err(|e| IdentityError::Deserialization(format!("parse JWK Set: {e}")))?;
 
         // JWKS-002: a key must carry the parameters its type requires.
-        // JWKS-008 (RFC 7517 §5): one that doesn't is skipped rather than
-        // failing the set, so an unusable key cannot block a usable one.
+        // JWKS-008 (RFC 7517 §5): one that doesn't, or that has a mistyped
+        // parameter, is skipped rather than failing the set, so an unusable key
+        // cannot block a usable one. A member that is not a JSON object still
+        // leaves the document malformed (JWKS-007).
+        let mut set = JsonWebKeySet { keys: Vec::new() };
         let mut first_invalid = None;
-        set.keys.retain(|key| match key.validate() {
-            Ok(()) => true,
-            Err(e) => {
-                first_invalid.get_or_insert(e);
-                false
+        for member in raw.keys {
+            if !member.is_object() {
+                return Err(IdentityError::Deserialization(format!(
+                    "parse JWK Set: member is not an object: {member}"
+                )));
             }
-        });
+            let checked = serde_json::from_value::<JsonWebKey>(member)
+                .map_err(|e| {
+                    IdentityError::Validation(format!("JWK has a mistyped parameter: {e}"))
+                })
+                .and_then(|key| key.validate().map(|()| key));
+            match checked {
+                Ok(key) => set.keys.push(key),
+                Err(e) => {
+                    first_invalid.get_or_insert(e);
+                }
+            }
+        }
 
         // No usable key: report why the keys were rejected, else JWKS-007's
         // empty-set error.
@@ -243,10 +262,25 @@ mod tests {
         let set = JsonWebKeySet::parse(body.as_bytes()).expect("usable key survives");
 
         assert!(set.find("rsa-sig-key").is_some(), "signing key resolves");
-        assert!(
-            set.find("unusable-rsa-missing-n").is_none(),
-            "invalid key is skipped"
-        );
+        for kid in ["unusable-rsa-missing-n", "unusable-rsa-mistyped-use"] {
+            assert!(set.find(kid).is_none(), "{kid} is skipped");
+        }
+    }
+
+    // JWKS-007: a member that is not a JSON object leaves the document
+    // malformed; unlike an unusable key (JWKS-008) it is not skipped.
+    #[test]
+    fn non_object_member_is_deserialization_error() {
+        for member in ["null", r#""key""#] {
+            let body = format!(
+                r#"{{ "keys": [ {member}, {{"kty":"RSA","kid":"good","n":"a","e":"AQAB"}} ] }}"#
+            );
+            let err = JsonWebKeySet::parse(body.as_bytes()).expect_err("non-object errors");
+            assert!(
+                matches!(err, IdentityError::Deserialization(_)),
+                "{member}: expected Deserialization, got {err:?}"
+            );
+        }
     }
 
     // A key missing kty is rejected (RFC 7517 §4.1).

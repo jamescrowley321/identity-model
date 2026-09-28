@@ -459,7 +459,8 @@ def _extract_jwks_keys(
 def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None]:
     """Build JsonWebKeys, ignoring members the client cannot use.
 
-    RFC 7517 §5: a key with an unknown curve or missing parameters is skipped
+    RFC 7517 §5: a key with an unknown curve, or missing or mistyped
+    parameters, is skipped
     rather than rejecting the whole set, so an unrelated key cannot block
     verification against a usable one. A set with no usable key is an error.
 
@@ -471,7 +472,9 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     for key in raw_keys:
         try:
             keys.append(jwks_from_dict(key))
-        except ConfigurationException as e:
+        # A mistyped member (e.g. "use": 1) raises TypeError/AttributeError
+        # from JsonWebKey's validators rather than ConfigurationException.
+        except (ConfigurationException, TypeError, AttributeError) as e:
             logger.warning("Ignoring unusable JWK kid=%r: %s", key.get("kid"), e)
             skipped.append(str(e))
     if raw_keys and not keys:

@@ -761,6 +761,29 @@ class TestGetJwksUnsupportedKeys:
         assert "rsa-sig-key" in kids
         assert "unusable-rsa-missing-n" not in kids
         assert "unusable-ec-unknown-crv-key" not in kids
+        assert "unusable-rsa-mistyped-use" not in kids
+
+    @pytest.mark.parametrize(
+        "mistyped",
+        [{"use": 1}, {"key_ops": 1}],
+        ids=["use", "key_ops"],
+    )
+    @respx.mock
+    def test_key_with_mistyped_member_is_ignored(self, mistyped):
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "keys": [{**_SIGNING_KEY, "kid": "bad", **mistyped}, _SIGNING_KEY]
+                },
+            )
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is True
+        assert result.keys == [jwks_from_dict(_SIGNING_KEY)]
 
     @respx.mock
     def test_set_with_no_usable_key_fails(self):

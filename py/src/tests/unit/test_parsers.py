@@ -249,6 +249,14 @@ class TestNoKidSelectionWithUnusableKeys:
 
         assert key == self.SIGNING
 
+    @pytest.mark.parametrize("alg", [1, ["RS256"]], ids=["int", "list"])
+    @pytest.mark.parametrize("multiple_keys", [True, False], ids=["multi", "single"])
+    def test_non_string_alg_is_a_typed_rejection(self, alg, multiple_keys):
+        keys = [self.UNKNOWN_ALG, self.SIGNING] if multiple_keys else [self.SIGNING]
+
+        with pytest.raises(TokenValidationException, match="'alg'"):
+            find_key_by_kid(None, keys, jwt_alg=alg)
+
     def test_alg_none_is_rejected_before_key_selection(self):
         with pytest.raises(
             TokenValidationException,

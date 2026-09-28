@@ -39,6 +39,21 @@ _ALG_TO_KTY: dict[str, str] = {
 }
 
 
+def _reject_non_string_alg(jwt_alg: object) -> None:
+    """Reject a non-string ``alg`` header with a typed exception.
+
+    PyJWT's get_unverified_header type-checks only ``kid`` and ``crit``, so an
+    ``alg`` of ``1`` would otherwise raise an untyped AttributeError from the
+    string handling below (F-01: the PyIdentityModelException contract).
+    """
+    if jwt_alg is not None and not isinstance(jwt_alg, str):
+        raise TokenValidationException(
+            "Invalid 'alg' header: expected a string",
+            token_part="header",
+            details={"alg_type": type(jwt_alg).__name__},
+        )
+
+
 def _validate_key_alg_consistency(
     key: JsonWebKey,
     jwt_alg: str | None,
@@ -52,6 +67,7 @@ def _validate_key_alg_consistency(
     Raises:
         TokenValidationException: If the key type does not match the algorithm.
     """
+    _reject_non_string_alg(jwt_alg)
     if not jwt_alg:
         return
 
@@ -171,6 +187,7 @@ def _no_kid_candidates(
     Raises:
         TokenValidationException: If ``jwt_alg`` is ``none``.
     """
+    _reject_non_string_alg(jwt_alg)
     if jwt_alg and jwt_alg.lower() == "none":
         raise TokenValidationException(
             "Algorithm 'none' is not permitted for signed-token validation",

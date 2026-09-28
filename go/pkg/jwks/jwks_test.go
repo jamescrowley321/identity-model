@@ -458,8 +458,25 @@ func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
 	if _, ok := set.ResolveKey("rsa-sig-key"); !ok {
 		t.Errorf("ResolveKey(rsa-sig-key) not found")
 	}
-	if _, ok := set.ResolveKey("unusable-rsa-missing-n"); ok {
-		t.Errorf("ResolveKey(unusable-rsa-missing-n) found, want it skipped")
+	for _, kid := range []string{"unusable-rsa-missing-n", "unusable-rsa-mistyped-use"} {
+		if _, ok := set.ResolveKey(kid); ok {
+			t.Errorf("ResolveKey(%s) found, want it skipped", kid)
+		}
+	}
+}
+
+// JWKS-007: a member that is not a JSON object leaves the document malformed;
+// unlike an unusable key (JWKS-008) it is not skipped.
+func TestFetchKeySet_NonObjectMemberIsParseError(t *testing.T) {
+	for name, member := range map[string]string{"null": `null`, "string": `"key"`} {
+		t.Run(name, func(t *testing.T) {
+			freshCache(t)
+			srv, _ := newServer(t, http.StatusOK, keySetJSON(member, `{"kty":"RSA","kid":"good","n":"AQAB","e":"AQAB"}`))
+			_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			if !errors.Is(err, ErrParse) {
+				t.Fatalf("err = %v, want ErrParse", err)
+			}
+		})
 	}
 }
 
