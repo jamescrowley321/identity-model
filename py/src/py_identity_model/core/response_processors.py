@@ -12,7 +12,7 @@ import socket
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from ..exceptions import DiscoveryException
+from ..exceptions import ConfigurationException, DiscoveryException
 from ..logging_config import logger
 from .discovery_policy import DiscoveryPolicy
 from .http_utils import get_max_jwks_keys, get_max_jwks_size
@@ -20,6 +20,7 @@ from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
     DiscoveryDocumentResponse,
+    JsonWebKey,
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
@@ -455,6 +456,29 @@ def _extract_jwks_keys(
     return raw_keys, None
 
 
+def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None]:
+    """Build JsonWebKeys, ignoring members the client cannot use.
+
+    RFC 7517 §5: a key with an unknown curve or missing parameters is skipped
+    rather than rejecting the whole set, so an unrelated key cannot block
+    verification against a usable one. A set with no usable key is an error.
+
+    Returns:
+        ``(keys, None)`` on success, ``([], error)`` when no key is usable.
+    """
+    keys: list[JsonWebKey] = []
+    skipped: list[str] = []
+    for key in raw_keys:
+        try:
+            keys.append(jwks_from_dict(key))
+        except ConfigurationException as e:
+            logger.warning("Ignoring unusable JWK kid=%r: %s", key.get("kid"), e)
+            skipped.append(str(e))
+    if raw_keys and not keys:
+        return [], f"JWKS has no usable keys: {'; '.join(skipped)}"
+    return keys, None
+
+
 def parse_jwks_response(response: httpx.Response) -> JwksResponse:
     """
     Parse JWKS HTTP response.
@@ -508,10 +532,11 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
 
         response_json = response.json()
         raw_keys, keys_error = _extract_jwks_keys(response_json)
+        keys: list[JsonWebKey] = []
+        if not keys_error:
+            keys, keys_error = _build_jwks_keys(raw_keys)
         if keys_error:
             return JwksResponse(is_successful=False, error=keys_error)
-
-        keys = [jwks_from_dict(key) for key in raw_keys]
         cache_control = response.headers.get("cache-control")
         return JwksResponse(is_successful=True, keys=keys, cache_control=cache_control)
 
