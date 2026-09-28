@@ -59,7 +59,8 @@ func (e *KeyNotFoundError) Error() string {
 }
 
 // InvalidKeyError reports that a key failed parameter validation (JWKS-002,
-// RFC 7517 §4). Kid identifies the offending key when present; Reason explains
+// RFC 7517 §4). A fetch returns it only when no key in the set is usable
+// (JWKS-008). Kid identifies the offending key when present; Reason explains
 // the failure.
 type InvalidKeyError struct {
 	Kid    string
