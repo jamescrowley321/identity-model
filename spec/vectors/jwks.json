@@ -129,6 +129,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/valid.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -169,6 +173,12 @@
               "resolve"
             ],
             "kid": "ec-rotated-key"
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
           },
           "http_sequence": {
             "/jwks": [
@@ -213,6 +223,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/valid.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -240,6 +254,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/valid.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -426,6 +444,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/unusable-keys.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -458,6 +480,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/unusable-keys.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -489,6 +515,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/unusable-keys.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -512,6 +542,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/unusable-keys.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
@@ -535,6 +569,10 @@
             "/jwks": {
               "status": 200,
               "body_fixture": "jwks/unusable-keys.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
             }
           },
           "expect_calls": {
