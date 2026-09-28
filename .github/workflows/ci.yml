@@ -83,7 +83,6 @@ jobs:
               # that the native jobs' `if:` and ci-complete's SKIP_ALLOWED read.
               - '.github/workflows/**'
               - '.github/actions/**'
-              - '.github/scripts/**'
               # Provider profiles sourced by the Go and Rust integration legs
               # (see the `set -a && . ./.env.*` steps below) and by the
               # node-oidc Python leg. Editing one changes what those suites run
@@ -813,9 +812,10 @@ jobs:
           #
           # These mirrors can drift from the `if:` they copy. They drift CLOSED:
           # a mismatch makes a legitimate skip look unjustified and fails the
-          # gate, which is noisy but safe, and the accompanying
-          # assert_ci_complete_covers_all_jobs.py step catches the structural
-          # half before it gets that far.
+          # gate, which is noisy but safe. The accompanying
+          # tools/assert_ci_complete_covers_all_jobs.py step parses both sides
+          # and fails unless each value here is the logical negation of its
+          # job's `if:` (and each RESULTS value reads its own job).
           SKIP_ALLOWED: |
             integration-tests-ory=${{ !inputs.run-ory-integration }}
             integration-tests-descope=${{ !inputs.run-descope-integration }}
@@ -889,5 +889,5 @@ jobs:
         # results loop has already passed without ever looking at it, and this
         # is what turns that into a failure.
         run: >-
-          uv run --with pyyaml --no-project
-          python .github/scripts/assert_ci_complete_covers_all_jobs.py
+          uv run --with pyyaml==6.0.3 --no-project
+          python tools/assert_ci_complete_covers_all_jobs.py
