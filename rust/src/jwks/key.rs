@@ -17,33 +17,67 @@ use crate::{IdentityError, Result};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonWebKey {
     /// Key type, e.g. `RSA` or `EC` (RFC 7517 §4.1, required).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub kty: String,
     /// Key ID used to select a key by the `kid` JOSE header (§4.5).
-    #[serde(default, rename = "kid", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        rename = "kid",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub kid: String,
     /// Public key use, e.g. `sig` (§4.2).
-    #[serde(default, rename = "use", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        rename = "use",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub use_: String,
     /// Algorithm the key is intended for, e.g. `RS256` (§4.4).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub alg: String,
 
     /// RSA modulus (RFC 7518 §6.3.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub n: String,
     /// RSA exponent (RFC 7518 §6.3.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub e: String,
 
     /// EC curve, e.g. `P-256` (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub crv: String,
     /// EC x coordinate (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub x: String,
     /// EC y coordinate (RFC 7518 §6.2.1).
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "null_as_empty",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub y: String,
 
     /// Key parameters not modelled above (e.g. `x5c`, `x5t`). Preserved so
@@ -88,6 +122,15 @@ impl JsonWebKey {
     }
 }
 
+/// Deserializes an optional string, treating an explicit JSON `null` as absent
+/// (JWKS-008), the same as a missing member.
+fn null_as_empty<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// A parsed JWK Set (RFC 7517 §5). `keys` holds the keys in document order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JsonWebKeySet {
@@ -103,20 +146,51 @@ impl JsonWebKeySet {
     ///
     /// - [`IdentityError::Deserialization`] — the body is not a valid JWK Set
     ///   document (JWKS-007).
-    /// - [`IdentityError::Validation`] — a key is missing required parameters, or
-    ///   the set contains no keys (JWKS-007).
+    /// - [`IdentityError::Validation`] — no key in the set is usable: every key is
+    ///   missing required parameters, or the set is empty (JWKS-007). Individual
+    ///   unusable keys are skipped (JWKS-008).
     pub(crate) fn parse(body: &[u8]) -> Result<Self> {
         // JWKS-007: a non-JSON body, or one whose "keys" member is not an array,
         // is a deserialization error.
-        let set: JsonWebKeySet = serde_json::from_slice(body)
+        #[derive(Deserialize)]
+        struct RawSet {
+            #[serde(default)]
+            keys: Vec<serde_json::Value>,
+        }
+        let raw: RawSet = serde_json::from_slice(body)
             .map_err(|e| IdentityError::Deserialization(format!("parse JWK Set: {e}")))?;
 
-        // JWKS-002: every key must carry the parameters its type requires.
-        for key in &set.keys {
-            key.validate()?;
+        // JWKS-002: a key must carry the parameters its type requires.
+        // JWKS-008 (RFC 7517 §5): one that doesn't, or that has a mistyped
+        // parameter, is skipped rather than failing the set, so an unusable key
+        // cannot block a usable one. A member that is not a JSON object still
+        // leaves the document malformed (JWKS-007).
+        let mut set = JsonWebKeySet { keys: Vec::new() };
+        let mut first_invalid = None;
+        for member in raw.keys {
+            if !member.is_object() {
+                return Err(IdentityError::Deserialization(format!(
+                    "parse JWK Set: member is not an object: {member}"
+                )));
+            }
+            let checked = serde_json::from_value::<JsonWebKey>(member)
+                .map_err(|e| {
+                    IdentityError::Validation(format!("JWK has a mistyped parameter: {e}"))
+                })
+                .and_then(|key| key.validate().map(|()| key));
+            match checked {
+                Ok(key) => set.keys.push(key),
+                Err(e) => {
+                    first_invalid.get_or_insert(e);
+                }
+            }
         }
 
-        // JWKS-007: an empty (or absent) key set yields no usable keys.
+        // No usable key: report why the keys were rejected, else JWKS-007's
+        // empty-set error.
+        if let Some(e) = first_invalid.filter(|_| set.keys.is_empty()) {
+            return Err(e);
+        }
         if set.keys.is_empty() {
             return Err(IdentityError::Validation(
                 "JWK Set contains no keys".to_string(),
@@ -219,6 +293,44 @@ mod tests {
         match err {
             IdentityError::Validation(msg) => assert!(msg.contains('e'), "{msg}"),
             other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    // JWKS-008: keys the client cannot use are skipped, not fatal. The fixture
+    // carries the OpenID conformance suite's unusable keys plus an RSA key
+    // missing its modulus beside the real signing key.
+    #[test]
+    fn skips_unusable_keys() {
+        let body = include_str!("../../../spec/test-fixtures/jwks/unusable-keys.json");
+        let set = JsonWebKeySet::parse(body.as_bytes()).expect("usable key survives");
+
+        assert!(set.find("rsa-sig-key").is_some(), "signing key resolves");
+        assert!(
+            set.find("usable-rsa-null-alg").is_some(),
+            "null counts as absent"
+        );
+        for kid in [
+            "unusable-rsa-missing-n",
+            "unusable-rsa-mistyped-use",
+            "unusable-rsa-mistyped-n",
+        ] {
+            assert!(set.find(kid).is_none(), "{kid} is skipped");
+        }
+    }
+
+    // JWKS-007: a member that is not a JSON object leaves the document
+    // malformed; unlike an unusable key (JWKS-008) it is not skipped.
+    #[test]
+    fn non_object_member_is_deserialization_error() {
+        for member in ["null", r#""key""#] {
+            let body = format!(
+                r#"{{ "keys": [ {member}, {{"kty":"RSA","kid":"good","n":"a","e":"AQAB"}} ] }}"#
+            );
+            let err = JsonWebKeySet::parse(body.as_bytes()).expect_err("non-object errors");
+            assert!(
+                matches!(err, IdentityError::Deserialization(_)),
+                "{member}: expected Deserialization, got {err:?}"
+            );
         }
     }
 

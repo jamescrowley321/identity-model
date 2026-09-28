@@ -3,6 +3,7 @@ package jwks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -247,17 +248,32 @@ func parseKeySet(body []byte, uri string) ([]JSONWebKey, error) {
 		return nil, &ParseError{Err: err}
 	}
 
+	// JWKS-008 (RFC 7517 §5): a key that fails validation or has a mistyped
+	// parameter is skipped, so an unusable key cannot block resolution of a
+	// usable one. A member that is not a JSON object still fails the document.
 	keys := make([]JSONWebKey, 0, len(doc.Keys))
+	var firstInvalid error
 	for _, raw := range doc.Keys {
 		k, err := parseKey(raw)
+		var iErr *InvalidKeyError
+		if errors.As(err, &iErr) {
+			if firstInvalid == nil {
+				firstInvalid = err
+			}
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
 		keys = append(keys, k)
 	}
 
-	// JWKS-007: an empty (or absent) key set yields no usable keys.
+	// No usable key: report why the keys were rejected, else JWKS-007's
+	// empty-set error.
 	if len(keys) == 0 {
+		if firstInvalid != nil {
+			return nil, firstInvalid
+		}
 		return nil, &EmptyKeySetError{URI: uri}
 	}
 	return keys, nil
@@ -295,16 +311,25 @@ func cloneKeys(keys []JSONWebKey) []JSONWebKey {
 // parseKey decodes and validates a single JWK, preserving unmodelled parameters
 // in Extra (RFC 7517 §4).
 func parseKey(raw json.RawMessage) (JSONWebKey, error) {
-	var k JSONWebKey
-	if err := json.Unmarshal(raw, &k); err != nil {
-		return JSONWebKey{}, &ParseError{Err: err}
-	}
-	// Preserve only unmodelled parameters in Extra. Decoding into a map then
-	// dropping the modelled keys keeps Extra true to its contract.
+	// A member that is not a JSON object leaves the document malformed
+	// (JWKS-007).
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return JSONWebKey{}, &ParseError{Err: err}
 	}
+	if m == nil { // JSON null decodes to a nil map without error
+		return JSONWebKey{}, &ParseError{Err: errors.New("JWK Set member is null, not an object")}
+	}
+	// An object with a mistyped parameter (e.g. "use": 1) is one unusable key,
+	// which parseKeySet skips (JWKS-008).
+	var k JSONWebKey
+	if err := json.Unmarshal(raw, &k); err != nil {
+		var kid string
+		_ = json.Unmarshal(m["kid"], &kid)
+		return JSONWebKey{}, &InvalidKeyError{Kid: kid, Reason: "mistyped parameter: " + err.Error()}
+	}
+	// Preserve only unmodelled parameters in Extra. Decoding into a map then
+	// dropping the modelled keys keeps Extra true to its contract.
 	for name := range m {
 		if _, modelled := modelledKeyFields[name]; modelled {
 			delete(m, name)

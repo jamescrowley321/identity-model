@@ -39,6 +39,21 @@ _ALG_TO_KTY: dict[str, str] = {
 }
 
 
+def _reject_non_string_alg(jwt_alg: object) -> None:
+    """Reject a non-string ``alg`` header with a typed exception.
+
+    PyJWT's get_unverified_header type-checks only ``kid`` and ``crit``, so an
+    ``alg`` of ``1`` would otherwise raise an untyped AttributeError from the
+    string handling below (F-01: the PyIdentityModelException contract).
+    """
+    if jwt_alg is not None and not isinstance(jwt_alg, str):
+        raise TokenValidationException(
+            "Invalid 'alg' header: expected a string",
+            token_part="header",
+            details={"alg_type": type(jwt_alg).__name__},
+        )
+
+
 def _validate_key_alg_consistency(
     key: JsonWebKey,
     jwt_alg: str | None,
@@ -52,6 +67,7 @@ def _validate_key_alg_consistency(
     Raises:
         TokenValidationException: If the key type does not match the algorithm.
     """
+    _reject_non_string_alg(jwt_alg)
     if not jwt_alg:
         return
 
@@ -159,6 +175,48 @@ def jwks_from_dict(keys_dict: dict) -> JsonWebKey:
     )
 
 
+def _no_kid_candidates(
+    keys: list[JsonWebKey],
+    jwt_alg: str | None,
+) -> list[JsonWebKey]:
+    """Narrow a JWK Set to the keys that could verify a token with no ``kid``.
+
+    Rejects ``alg=none`` first, so that refusal never depends on how many
+    keys the set happens to hold.
+
+    Raises:
+        TokenValidationException: If ``jwt_alg`` is ``none``.
+    """
+    _reject_non_string_alg(jwt_alg)
+    if jwt_alg and jwt_alg.lower() == "none":
+        raise TokenValidationException(
+            "Algorithm 'none' is not permitted for signed-token validation",
+            token_part="header",
+            details={"alg": jwt_alg},
+        )
+
+    # Per RFC 7517 §4.2, filter to signing keys (use="sig" or use omitted)
+    signing_keys = [k for k in keys if k.use in (None, "sig")]
+    if not signing_keys:
+        signing_keys = keys  # Fall back to all keys if none marked for signing
+
+    if len(signing_keys) > 1 and jwt_alg:
+        # RFC 7517 §4.4: a key that declares a different ``alg`` cannot
+        # verify this token, so it must not make the choice ambiguous.
+        alg_filtered = [k for k in signing_keys if k.alg in (None, jwt_alg)]
+        if alg_filtered:
+            signing_keys = alg_filtered
+
+        # Further filter by key type matching the JWT algorithm
+        expected_kty = _ALG_TO_KTY.get(jwt_alg)
+        if expected_kty:
+            kty_filtered = [k for k in signing_keys if k.kty == expected_kty]
+            if kty_filtered:
+                signing_keys = kty_filtered
+
+    return signing_keys
+
+
 def find_key_by_kid(
     kid: str | None,
     keys: list[JsonWebKey],
@@ -189,18 +247,7 @@ def find_key_by_kid(
         raise TokenValidationException("No keys available in JWKS response")
 
     if kid is None:
-        # Per RFC 7517 §4.2, filter to signing keys (use="sig" or use omitted)
-        signing_keys = [k for k in keys if k.use in (None, "sig")]
-        if not signing_keys:
-            signing_keys = keys  # Fall back to all keys if none marked for signing
-
-        # Further filter by key type matching the JWT algorithm
-        if len(signing_keys) > 1 and jwt_alg:
-            expected_kty = _ALG_TO_KTY.get(jwt_alg)
-            if expected_kty:
-                kty_filtered = [k for k in signing_keys if k.kty == expected_kty]
-                if kty_filtered:
-                    signing_keys = kty_filtered
+        signing_keys = _no_kid_candidates(keys, jwt_alg)
 
         if len(signing_keys) == 1:
             logger.warning(
@@ -270,19 +317,8 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     logger.debug(f"Looking for key with kid: {kid}")
 
     if kid is None:
-        # Per RFC 7517 §4.2, filter to signing keys (use="sig" or use omitted)
-        signing_keys = [k for k in keys if k.use in (None, "sig")]
-        if not signing_keys:
-            signing_keys = keys  # Fall back to all keys if none marked for signing
-
-        # Further filter by key type matching the JWT algorithm
         jwt_alg = headers.get("alg")
-        if len(signing_keys) > 1 and jwt_alg:
-            expected_kty = _ALG_TO_KTY.get(jwt_alg)
-            if expected_kty:
-                kty_filtered = [k for k in signing_keys if k.kty == expected_kty]
-                if kty_filtered:
-                    signing_keys = kty_filtered
+        signing_keys = _no_kid_candidates(keys, jwt_alg)
 
         if len(signing_keys) == 1:
             logger.warning(

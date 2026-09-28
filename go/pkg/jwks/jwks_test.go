@@ -445,6 +445,44 @@ func TestFetchKeySet_Empty(t *testing.T) {
 	}
 }
 
+// JWKS-008: keys the client cannot use are skipped, not fatal. The fixture
+// carries the OpenID conformance suite's unusable keys plus an RSA key missing
+// its modulus beside the real signing key.
+func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
+	freshCache(t)
+	srv, _ := newServer(t, http.StatusOK, fixture(t, "unusable-keys.json"))
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+	if _, ok := set.ResolveKey("rsa-sig-key"); !ok {
+		t.Errorf("ResolveKey(rsa-sig-key) not found")
+	}
+	if _, ok := set.ResolveKey("usable-rsa-null-alg"); !ok {
+		t.Errorf("ResolveKey(usable-rsa-null-alg) not found; null must count as absent")
+	}
+	for _, kid := range []string{"unusable-rsa-missing-n", "unusable-rsa-mistyped-use", "unusable-rsa-mistyped-n"} {
+		if _, ok := set.ResolveKey(kid); ok {
+			t.Errorf("ResolveKey(%s) found, want it skipped", kid)
+		}
+	}
+}
+
+// JWKS-007: a member that is not a JSON object leaves the document malformed;
+// unlike an unusable key (JWKS-008) it is not skipped.
+func TestFetchKeySet_NonObjectMemberIsParseError(t *testing.T) {
+	for name, member := range map[string]string{"null": `null`, "string": `"key"`} {
+		t.Run(name, func(t *testing.T) {
+			freshCache(t)
+			srv, _ := newServer(t, http.StatusOK, keySetJSON(member, `{"kty":"RSA","kid":"good","n":"AQAB","e":"AQAB"}`))
+			_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			if !errors.Is(err, ErrParse) {
+				t.Fatalf("err = %v, want ErrParse", err)
+			}
+		})
+	}
+}
+
 // AC singleflight: concurrent callers collapse to a single HTTP request.
 func TestFetchKeySet_Singleflight(t *testing.T) {
 	freshCache(t)

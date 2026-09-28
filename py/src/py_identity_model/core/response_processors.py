@@ -12,7 +12,7 @@ import socket
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from ..exceptions import DiscoveryException
+from ..exceptions import ConfigurationException, DiscoveryException
 from ..logging_config import logger
 from .discovery_policy import DiscoveryPolicy
 from .http_utils import get_max_jwks_keys, get_max_jwks_size
@@ -20,6 +20,7 @@ from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
     DiscoveryDocumentResponse,
+    JsonWebKey,
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
@@ -455,6 +456,47 @@ def _extract_jwks_keys(
     return raw_keys, None
 
 
+# The parameters every language models as strings (JWKS-008). A non-string
+# value makes the key unusable; null counts as absent.
+_JWK_STRING_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
+
+
+def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None]:
+    """Build JsonWebKeys, ignoring members the client cannot use.
+
+    RFC 7517 §5: a key with an unknown curve, or missing or mistyped
+    parameters, is skipped
+    rather than rejecting the whole set, so an unrelated key cannot block
+    verification against a usable one. A set with no usable key is an error.
+
+    Returns:
+        ``(keys, None)`` on success, ``([], error)`` when no key is usable.
+    """
+    keys: list[JsonWebKey] = []
+    skipped: list[str] = []
+    for key in raw_keys:
+        mistyped = [
+            name
+            for name in _JWK_STRING_MEMBERS
+            if key.get(name) is not None and not isinstance(key[name], str)
+        ]
+        if mistyped:
+            reason = f"mistyped parameter(s) {mistyped}: expected a string"
+            logger.warning("Ignoring unusable JWK kid=%r: %s", key.get("kid"), reason)
+            skipped.append(reason)
+            continue
+        try:
+            keys.append(jwks_from_dict(key))
+        # A mistyped member (e.g. "use": 1) raises TypeError/AttributeError
+        # from JsonWebKey's validators rather than ConfigurationException.
+        except (ConfigurationException, TypeError, AttributeError) as e:
+            logger.warning("Ignoring unusable JWK kid=%r: %s", key.get("kid"), e)
+            skipped.append(str(e))
+    if raw_keys and not keys:
+        return [], f"JWKS has no usable keys: {'; '.join(skipped)}"
+    return keys, None
+
+
 def parse_jwks_response(response: httpx.Response) -> JwksResponse:
     """
     Parse JWKS HTTP response.
@@ -508,10 +550,11 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
 
         response_json = response.json()
         raw_keys, keys_error = _extract_jwks_keys(response_json)
+        keys: list[JsonWebKey] = []
+        if not keys_error:
+            keys, keys_error = _build_jwks_keys(raw_keys)
         if keys_error:
             return JwksResponse(is_successful=False, error=keys_error)
-
-        keys = [jwks_from_dict(key) for key in raw_keys]
         cache_control = response.headers.get("cache-control")
         return JwksResponse(is_successful=True, keys=keys, cache_control=cache_control)
 

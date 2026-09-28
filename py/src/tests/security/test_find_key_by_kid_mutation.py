@@ -138,3 +138,43 @@ class TestNoKidSelection:
             find_key_by_kid(None, keys, jwt_alg="RS256")
         assert exc.value.details["available_kids"] == []
         assert exc.value.details["key_count"] == len(keys)
+
+
+class TestHeaderAlgRejections:
+    """Exact pins for the typed rejections of an unusable ``alg`` header."""
+
+    @pytest.mark.parametrize("alg", ["none", "NONE"])
+    def test_alg_none_rejected_before_no_kid_selection(self, alg):
+        keys = [_rsa(kid="a", alg="RS256"), _rsa(kid="b", alg="RS256")]
+        with pytest.raises(TokenValidationException) as exc:
+            find_key_by_kid(None, keys, jwt_alg=alg)
+        assert exc.value.message == (
+            "Algorithm 'none' is not permitted for signed-token validation"
+        )
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"alg": alg}
+
+    @pytest.mark.parametrize(
+        ("alg", "alg_type"), [(1, "int"), (["RS256"], "list")], ids=["int", "list"]
+    )
+    @pytest.mark.parametrize("kid", [None, "a"], ids=["no-kid", "kid"])
+    def test_non_string_alg_is_typed_rejection(self, alg, alg_type, kid):
+        keys = [_rsa(kid="a", alg="RS256"), _rsa(kid="b", alg="RS256")]
+        with pytest.raises(TokenValidationException) as exc:
+            find_key_by_kid(kid, keys, jwt_alg=alg)
+        assert exc.value.message == "Invalid 'alg' header: expected a string"
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"alg_type": alg_type}
+
+
+class TestNoKidAlgFilterGuard:
+    def test_without_token_alg_a_keys_declared_alg_does_not_break_the_tie(self):
+        # With no token alg there is nothing to compare a key's alg against,
+        # so two signing keys stay ambiguous even when only one declares alg.
+        keys = [_rsa(kid="plain"), _rsa(kid="declared", alg="RS256")]
+        with pytest.raises(TokenValidationException) as exc:
+            find_key_by_kid(None, keys, jwt_alg=None)
+        assert exc.value.details == {
+            "available_kids": ["plain", "declared"],
+            "key_count": 2,
+        }

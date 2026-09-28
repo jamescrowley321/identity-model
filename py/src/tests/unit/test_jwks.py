@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -691,6 +692,116 @@ class TestGetJwks:
             _ = result.keys
         assert result.error is not None
         assert "Unhandled exception during JWKS request" in result.error
+
+
+_SIGNING_KEY = {
+    "kty": "RSA",
+    "use": "sig",
+    "alg": "RS256",
+    "kid": "signing",
+    "n": "example_n",
+    "e": "AQAB",
+}
+_UNSUPPORTED_CURVE_KEY = {
+    "kty": "EC",
+    "use": "sig",
+    "kid": "unsupported-curve",
+    "crv": "P-9999",
+    "x": "example_x",
+    "y": "example_y",
+}
+
+
+class TestGetJwksUnsupportedKeys:
+    """RFC 7517 §5: a JWK Set member the client cannot use is ignored.
+
+    The hosted OpenID conformance suite publishes an EC key on curve
+    ``P-9999`` next to its real signing key. Rejecting the whole set over it
+    made every ID token unverifiable, so the happy path failed and every
+    negative test "passed" for the wrong reason.
+    """
+
+    @respx.mock
+    def test_unsupported_key_is_ignored(self):
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                json={"keys": [_UNSUPPORTED_CURVE_KEY, _SIGNING_KEY]},
+            )
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is True
+        assert result.keys == [jwks_from_dict(_SIGNING_KEY)]
+
+    @respx.mock
+    def test_shared_unusable_keys_fixture(self):
+        """JWKS-008 against the fixture Go and Rust also run."""
+        fixture = next(
+            (
+                parent / "spec" / "test-fixtures" / "jwks" / "unusable-keys.json"
+                for parent in Path(__file__).resolve().parents
+                if (parent / "spec" / "test-fixtures" / "jwks").is_dir()
+            ),
+            None,
+        )
+        assert fixture is not None, "spec/test-fixtures/jwks not found"
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(200, json=json.loads(fixture.read_text()))
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is True
+        assert result.keys is not None
+        kids = {key.kid for key in result.keys}
+        assert "rsa-sig-key" in kids
+        assert "unusable-rsa-missing-n" not in kids
+        assert "unusable-ec-unknown-crv-key" not in kids
+        assert "unusable-rsa-mistyped-use" not in kids
+        assert "unusable-rsa-mistyped-n" not in kids
+        assert "usable-rsa-null-alg" in kids
+
+    @pytest.mark.parametrize(
+        "mistyped",
+        [{"use": 1}, {"key_ops": 1}],
+        ids=["use", "key_ops"],
+    )
+    @respx.mock
+    def test_key_with_mistyped_member_is_ignored(self, mistyped):
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "keys": [{**_SIGNING_KEY, "kid": "bad", **mistyped}, _SIGNING_KEY]
+                },
+            )
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is True
+        assert result.keys == [jwks_from_dict(_SIGNING_KEY)]
+
+    @respx.mock
+    def test_set_with_no_usable_key_fails(self):
+        url = "https://example.com/jwks"
+        respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                json={"keys": [_UNSUPPORTED_CURVE_KEY]},
+            )
+        )
+
+        result = get_jwks(JwksRequest(address=url))
+
+        assert result.is_successful is False
+        assert result.error is not None
+        assert "Unsupported curve: P-9999" in result.error
 
 
 class TestGetJwksSchemeValidation:
