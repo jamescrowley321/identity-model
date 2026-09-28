@@ -69,7 +69,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
-| OIDC Discovery | `vectors/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
+| OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
 | JWKS | `vectors/jwks.json` (JWKS-001..007) — **executable vectors** | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 | ID Token | `vectors/id-token.json` (IDT-001..011) — **executable vectors** | `test-fixtures/validation/` |
@@ -85,6 +85,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | revocation | 5 | 7 | `go/internal/conformance/revocation_test.go` | `py/src/tests/unit/test_spec_revocation_conformance.py` | `rust/tests/spec_conformance_revocation.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/unit/test_spec_userinfo_conformance.py` | `rust/tests/spec_conformance_userinfo.rs` |
 | jwks | 7 | 10 | `go/internal/conformance/jwks_test.go` | `py/src/tests/unit/test_spec_jwks_conformance.py` | `rust/tests/spec_conformance_jwks.rs` |
+| discovery | 10 | 12 | `go/internal/conformance/discovery_test.go` | `py/src/tests/unit/test_spec_discovery_conformance.py` | `rust/tests/spec_conformance_discovery.rs` |
 
 Each runner runs in its language's ordinary unit suite and fails if any case in
 the file is not executed, or runs fewer vectors than the spec carries for it.
@@ -106,12 +107,13 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
 - `expect_request`: the request the client must send (`path`, `method`, and
   optional `headers` and `form`).
 - `expect_calls` (optional): the exact number of requests per path.
-- `expect`: `outcome` `accept` or `reject`; a reject carries the canonical OAuth
-  `error` code and HTTP `status`. A JWKS accept carries the resulting `keys`.
-  UserInfo adds `www_authenticate` (the expected challenge; absent means the
-  error response must carry no challenge) to a reject, and
-  `claims` (typed standard claims) and `custom_claims` (claim-map entries) to an
-  accept.
+- `expect`: `outcome` `accept` or `reject`; a reject carries the canonical
+  `error` code, and optionally the HTTP `status` and the `fields` it names; an
+  accept may carry `result` fields compared by exact equality. A JWKS accept
+  carries the resulting `keys`. UserInfo adds `www_authenticate` (the expected
+  challenge; absent means the error response must carry no challenge) to a
+  reject, and `claims` (typed standard claims) and `custom_claims` (claim-map
+  entries) to an accept.
 
 The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

@@ -22,11 +22,13 @@ const fixtureHost = "https://server.example.com"
 // HTTPCapability is a spec/vectors/<capability>.json file whose vectors drive
 // an HTTP client against canned responses.
 type HTTPCapability struct {
-	Capability string     `json:"capability"`
-	Spec       string     `json:"spec"`
-	SpecURL    string     `json:"spec_url"`
-	Notes      string     `json:"notes,omitempty"`
-	Tests      []HTTPCase `json:"tests"`
+	Capability string `json:"capability"`
+	Spec       string `json:"spec"`
+	SpecURL    string `json:"spec_url"`
+	Notes      string `json:"notes,omitempty"`
+	// RequiredFields lists the fields the capability's response must carry.
+	RequiredFields []string   `json:"required_fields,omitempty"`
+	Tests          []HTTPCase `json:"tests"`
 }
 
 // HTTPCase is one conformance test id with its HTTP vectors.
@@ -78,6 +80,10 @@ type HTTPExpect struct {
 	CustomClaims    map[string]any `json:"custom_claims,omitempty"`
 	// Keys is the expected key set, each key as its non-empty JWK members.
 	Keys []map[string]string `json:"keys,omitempty"`
+	// Fields names what a reject reports, e.g. missing metadata fields.
+	Fields []string `json:"fields,omitempty"`
+	// Result holds fields of an accepted result, compared by exact equality.
+	Result map[string]any `json:"result,omitempty"`
 }
 
 // LoadHTTPCapability reads an HTTP vector file, rejecting unknown fields.
