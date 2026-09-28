@@ -2,9 +2,6 @@
   "capability": "userinfo",
   "spec": "OpenID Connect Core 1.0 §5.3 / §5.1",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#UserInfo",
-  "required_fields": [
-    "sub"
-  ],
   "tests": [
     {
       "id": "UI-001",
@@ -12,8 +9,64 @@
       "given": "A reachable userinfo_endpoint and a valid access token",
       "when": "Fetch is invoked with the access token",
       "then": "The request carries an Authorization: Bearer header and the typed standard §5.1 claims are returned",
-      "fixture": "userinfo/standard-claims.json",
-      "references": ["§5.3", "§5.1", "§5.3.1"]
+      "references": [
+        "§5.3",
+        "§5.1",
+        "§5.3.1"
+      ],
+      "vectors": [
+        {
+          "name": "standard-claims",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/standard-claims.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "claims": {
+              "sub": "248289761001",
+              "name": "Jane Doe",
+              "given_name": "Jane",
+              "family_name": "Doe",
+              "middle_name": "Quinn",
+              "nickname": "Janie",
+              "preferred_username": "j.doe",
+              "profile": "https://example.com/janedoe",
+              "picture": "https://example.com/janedoe/me.jpg",
+              "website": "https://blog.example.com/janedoe",
+              "email": "janedoe@example.com",
+              "email_verified": true,
+              "gender": "female",
+              "birthdate": "1972-03-31",
+              "zoneinfo": "Europe/Paris",
+              "locale": "en-US",
+              "phone_number": "+1 (425) 555-1212",
+              "phone_number_verified": false,
+              "address": {
+                "formatted": "1234 Hollywood Blvd.\nLos Angeles, CA 90210\nUSA",
+                "street_address": "1234 Hollywood Blvd.",
+                "locality": "Los Angeles",
+                "region": "CA",
+                "postal_code": "90210",
+                "country": "USA"
+              },
+              "updated_at": 1700000000
+            }
+          }
+        }
+      ]
     },
     {
       "id": "UI-002",
@@ -21,8 +74,34 @@
       "given": "An expected subject equal to the UserInfo sub",
       "when": "Fetch is invoked with subject validation enabled",
       "then": "The response is returned without error",
-      "fixture": "userinfo/standard-claims.json",
-      "references": ["§5.3.2"]
+      "references": [
+        "§5.3.2"
+      ],
+      "vectors": [
+        {
+          "name": "subject-match",
+          "input": {
+            "token": "the-token",
+            "expected_sub": "248289761001"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/standard-claims.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "UI-003",
@@ -30,8 +109,35 @@
       "given": "An expected subject different from the UserInfo sub",
       "when": "Fetch is invoked with subject validation enabled",
       "then": "A subject-mismatch error is raised",
-      "fixture": "userinfo/standard-claims.json",
-      "references": ["§5.3.2"]
+      "references": [
+        "§5.3.2"
+      ],
+      "vectors": [
+        {
+          "name": "subject-mismatch",
+          "input": {
+            "token": "the-token",
+            "expected_sub": "another-subject"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/standard-claims.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "subject_mismatch"
+          }
+        }
+      ]
     },
     {
       "id": "UI-004",
@@ -39,7 +145,38 @@
       "given": "A userinfo_endpoint that returns HTTP 401 with a WWW-Authenticate header",
       "when": "Fetch is invoked",
       "then": "A typed error carrying the status and the WWW-Authenticate challenge is raised",
-      "references": ["§5.3.3", "RFC 6750 §3"]
+      "references": [
+        "§5.3.3",
+        "RFC 6750 §3"
+      ],
+      "vectors": [
+        {
+          "name": "invalid-token-challenge",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 401,
+              "headers": {
+                "WWW-Authenticate": "Bearer error=\"invalid_token\", error_description=\"The access token expired\""
+              }
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "status": 401,
+            "www_authenticate": "Bearer error=\"invalid_token\", error_description=\"The access token expired\""
+          }
+        }
+      ]
     },
     {
       "id": "UI-005",
@@ -47,7 +184,34 @@
       "given": "A userinfo_endpoint that returns HTTP 403",
       "when": "Fetch is invoked",
       "then": "A typed error carrying the 403 status is raised",
-      "references": ["§5.3.3", "RFC 6750 §3"]
+      "references": [
+        "§5.3.3",
+        "RFC 6750 §3"
+      ],
+      "vectors": [
+        {
+          "name": "forbidden",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 403
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "status": 403
+          }
+        }
+      ]
     },
     {
       "id": "UI-006",
@@ -55,7 +219,37 @@
       "given": "A userinfo_endpoint that returns HTTP 500 with a non-JSON body",
       "when": "Fetch is invoked",
       "then": "A descriptive request error carrying the status is raised",
-      "references": ["§5.3"]
+      "references": [
+        "§5.3"
+      ],
+      "vectors": [
+        {
+          "name": "server-error-html",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 500,
+              "headers": {
+                "Content-Type": "text/html"
+              },
+              "body_fixture": "userinfo/server-error.html"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "status": 500
+          }
+        }
+      ]
     },
     {
       "id": "UI-007",
@@ -63,16 +257,67 @@
       "given": "A UserInfo response containing standard and non-standard claims",
       "when": "Fetch is invoked",
       "then": "Custom claims are accessible via the response claim map and standard claims remain typed",
-      "fixture": "userinfo/standard-claims.json",
-      "references": ["§5.1", "§5.1.2"]
-    },
-    {
-      "id": "UI-008",
-      "title": "Apply functional options",
-      "given": "A custom HTTP client and request timeout supplied via options",
-      "when": "Fetch is invoked",
-      "then": "The supplied client is used for the request and the timeout bounds a slow endpoint",
-      "references": ["§5.3"]
+      "references": [
+        "§5.1",
+        "§5.1.2"
+      ],
+      "vectors": [
+        {
+          "name": "custom-claims",
+          "input": {
+            "token": "the-token"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/standard-claims.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "claims": {
+              "sub": "248289761001",
+              "name": "Jane Doe",
+              "given_name": "Jane",
+              "family_name": "Doe",
+              "middle_name": "Quinn",
+              "nickname": "Janie",
+              "preferred_username": "j.doe",
+              "profile": "https://example.com/janedoe",
+              "picture": "https://example.com/janedoe/me.jpg",
+              "website": "https://blog.example.com/janedoe",
+              "email": "janedoe@example.com",
+              "email_verified": true,
+              "gender": "female",
+              "birthdate": "1972-03-31",
+              "zoneinfo": "Europe/Paris",
+              "locale": "en-US",
+              "phone_number": "+1 (425) 555-1212",
+              "phone_number_verified": false,
+              "address": {
+                "formatted": "1234 Hollywood Blvd.\nLos Angeles, CA 90210\nUSA",
+                "street_address": "1234 Hollywood Blvd.",
+                "locality": "Los Angeles",
+                "region": "CA",
+                "postal_code": "90210",
+                "country": "USA"
+              },
+              "updated_at": 1700000000
+            },
+            "custom_claims": {
+              "department": "Engineering"
+            }
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "notes": "HTTP vectors. Each vector gives the call `input` (`token`, and `expected_sub` to enable subject validation), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). An accept may carry `claims` (standard §5.1 claims, each of which MUST be a typed field with that value) and `custom_claims` (non-standard claims, each of which MUST be reachable in the response claim map with that value). A reject carries either `error: subject_mismatch` or the HTTP `status` of the error response plus the `www_authenticate` challenge when the endpoint sent one. UI-008 (custom HTTP client and timeout) is an API-shape contract, not data; see spec/capabilities.md."
 }

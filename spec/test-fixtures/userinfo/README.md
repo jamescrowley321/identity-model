@@ -11,5 +11,7 @@ Fixtures backing the `userinfo` conformance suite
   (`248289761001`) is the value used by the subject-consistency tests
   (UI-002 match, UI-003 mismatch).
 
-The error responses (401/403/5xx) and the subject-mismatch case are constructed
-inline in the unit tests via `httptest`, so they are not duplicated here.
+- `server-error.html` — the non-JSON body of the HTTP 500 response (UI-006).
+
+The 401 and 403 responses carry no body; their status and `WWW-Authenticate`
+header are given inline in the vectors.
