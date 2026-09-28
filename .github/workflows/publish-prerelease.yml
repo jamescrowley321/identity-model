@@ -18,7 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # Not `ci`: that would duplicate build.yml's required `ci / *` contexts.
+  ci-prerelease:
     uses: ./.github/workflows/ci.yml
     with:
       run-descope-integration: true
@@ -32,7 +33,7 @@ jobs:
     secrets: inherit
 
   publish-prerelease:
-    needs: ci
+    needs: ci-prerelease
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the pre-release and upload the wheel
