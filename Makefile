@@ -109,6 +109,9 @@ test-integration-node-oidc: ## Run integration tests against node-oidc-provider
 	@echo "Running integration tests against node-oidc-provider..."
 	$(UVPY) pytest src/tests $(LOCAL_FIXTURE_TESTS) --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
+	@echo "Running spec HTTP vectors against the node-oidc vector routes..."
+	$(UVPY) pytest src/tests/spec_vectors -v || \
+		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
 .PHONY: test-integration-keycloak
