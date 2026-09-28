@@ -4,7 +4,7 @@
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `dPoP: { enabled: true }`, `dPoPSigningAlgValues: ["RS256",
 //! "ES256"]`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -39,8 +39,8 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix. A provider whose discovery
 //! document does not advertise `dpop_signing_alg_values_supported` has the
-//! feature switched off, so the suite skips rather than fails — keeping the
-//! Keycloak/IdentityServer/Descope profiles green.
+//! feature switched off, so the suite fails: it runs only against the
+//! node-oidc profile, which enables DPoP.
 //!
 //! The `test-client-credentials` client is used because node-oidc-provider
 //! issues it a JWT access token (via the `urn:test:api` default resource),
@@ -55,8 +55,8 @@ use rs_identity_model::{
     ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
 };
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::discover_or_skip;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// The discovery member whose presence means the provider has DPoP enabled.
 const DPOP_ALGS_METADATA: &str = "dpop_signing_alg_values_supported";
@@ -72,29 +72,31 @@ struct Live {
     algorithms: Vec<DpopAlgorithm>,
 }
 
-/// Resolves the live profile, or returns `None` having already logged the skip.
+/// Resolves the live profile, failing the test when a prerequisite is missing.
 async fn live_or_skip() -> Option<Live> {
     let issuer = issuer_from_env().or_else(|| {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         None
     })?;
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this profile");
         return None;
     };
 
     // Case-insensitive: the client's own scheme gate lowercases, and a merely
     // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
     let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
-    let meta = discover_or_skip(&issuer, allow_http).await?;
+    let meta = discover_or_fail(&issuer, allow_http).await?;
 
     // The capability gate: a provider with DPoP switched off advertises nothing,
-    // and every profile that does not support it skips here rather than failing.
+    // so a profile that does not support it fails here.
     let Some(advertised) = meta.extra.get(DPOP_ALGS_METADATA) else {
-        skip_or_fail(&format!(
+        fail_live_prerequisite(&format!(
             "discovery document does not advertise {DPOP_ALGS_METADATA}; DPoP not enabled"
         ));
         return None;
@@ -113,7 +115,7 @@ async fn live_or_skip() -> Option<Live> {
         .filter(|alg| advertised.iter().any(|a| a == alg.as_str()))
         .collect();
     if algorithms.is_empty() {
-        skip_or_fail(&format!(
+        fail_live_prerequisite(&format!(
             "provider advertises {DPOP_ALGS_METADATA}={advertised:?}, none of which this crate implements"
         ));
         return None;

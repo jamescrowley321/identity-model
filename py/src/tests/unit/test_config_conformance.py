@@ -187,7 +187,7 @@ def test_config_vector(scenario, monkeypatch):
     expect = scenario["expect"]
 
     # Skip cases that reference a logical key the strict registry doesn't carry
-    # (e.g. CFG-107 test.require_live bool parsing, declared out of scope).
+    # (e.g. CFG-107 test.require_https bool parsing, declared out of scope).
     referenced: set[str] = set(expect.get("config", {}))
     err = expect.get("error", {})
     referenced |= set(err.get("keys", []))

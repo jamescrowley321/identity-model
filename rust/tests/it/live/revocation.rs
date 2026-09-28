@@ -4,8 +4,8 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `revocation: { enabled: true }`), runs the unit suite, then runs
-//! these with `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips
-//! fail).
+//! these with `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite
+//! fails).
 //!
 //! Run locally:
 //!
@@ -49,8 +49,8 @@ use std::time::Duration;
 
 use rs_identity_model::{IdentityError, IntrospectionClient, RevocationClient, TokenClient};
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::discover_or_skip;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// Everything a revocation test needs from the live provider, resolved once.
 struct Live {
@@ -68,31 +68,35 @@ struct Live {
 /// Resolves the live profile, or returns `None` having already logged the skip.
 async fn live_or_skip() -> Option<Live> {
     let issuer = issuer_from_env().or_else(|| {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         None
     })?;
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_OPAQUE_CLIENT_ID"),
         env_nonempty("TEST_OPAQUE_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile");
+        fail_live_prerequisite(
+            "TEST_OPAQUE_CLIENT_ID/TEST_OPAQUE_CLIENT_SECRET unset for this profile",
+        );
         return None;
     };
 
     // Case-insensitive: the client's own scheme gate lowercases, and a merely
     // capitalised TEST_DISCO_ADDRESS should not silently skip the whole suite.
     let allow_http = issuer.to_ascii_lowercase().starts_with("http://");
-    let meta = discover_or_skip(&issuer, allow_http).await?;
+    let meta = discover_or_fail(&issuer, allow_http).await?;
 
     // REV-005: the endpoint comes from the discovery document, never a constant.
     let Some(revocation_endpoint) = meta.revocation_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise revocation_endpoint");
+        fail_live_prerequisite("discovery document does not advertise revocation_endpoint");
         return None;
     };
     // Introspection is how these tests prove a revocation landed; it is optional
     // and independent of revocation, so its absence is a skip, not a failure.
     let Some(introspection_endpoint) = meta.introspection_endpoint.clone() else {
-        skip_or_fail("discovery document does not advertise introspection_endpoint");
+        fail_live_prerequisite("discovery document does not advertise introspection_endpoint");
         return None;
     };
     assert!(
@@ -342,11 +346,13 @@ async fn revoke_rejects_another_clients_token() {
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset; no second client to test with");
+        fail_live_prerequisite(
+            "TEST_CLIENT_ID/TEST_CLIENT_SECRET unset; no second client to test with",
+        );
         return;
     };
     if other_id == live.client_id {
-        skip_or_fail("TEST_CLIENT_ID is the same client as TEST_OPAQUE_CLIENT_ID");
+        fail_live_prerequisite("TEST_CLIENT_ID is the same client as TEST_OPAQUE_CLIENT_ID");
         return;
     }
 

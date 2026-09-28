@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -39,16 +39,16 @@ use std::time::Duration;
 
 use rs_identity_model::{IdentityError, TokenClient, UserInfoClient};
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
-use crate::common::live::discover_or_skip;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
+use crate::common::live::discover_or_fail;
 
 /// Discovers the live provider's endpoints, skipping the test when the provider
 /// is unreachable so a missing local stack does not fail CI-less runs. Returns
 /// `(userinfo_endpoint, token_endpoint)`.
 async fn endpoints_or_skip(issuer: &str, allow_http: bool) -> Option<(String, String)> {
-    let meta = discover_or_skip(issuer, allow_http).await?;
+    let meta = discover_or_fail(issuer, allow_http).await?;
     let Some(userinfo) = meta.userinfo_endpoint.filter(|u| !u.is_empty()) else {
-        skip_or_fail("provider does not advertise a userinfo_endpoint");
+        fail_live_prerequisite("provider does not advertise a userinfo_endpoint");
         return None;
     };
     Some((userinfo, meta.token_endpoint))
@@ -61,7 +61,9 @@ async fn endpoints_or_skip(issuer: &str, allow_http: bool) -> Option<(String, St
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn userinfo_bogus_token() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
 
@@ -113,14 +115,16 @@ async fn userinfo_bogus_token() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn userinfo_client_credentials_token() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
         return;
     };
 
@@ -130,7 +134,7 @@ async fn userinfo_client_credentials_token() {
         return;
     };
     if token_endpoint.is_empty() {
-        skip_or_fail("provider does not advertise a token_endpoint");
+        fail_live_prerequisite("provider does not advertise a token_endpoint");
         return;
     }
 
@@ -148,7 +152,7 @@ async fn userinfo_client_credentials_token() {
     let tok = match token_client.client_credentials(Some("openid")).await {
         Ok(tok) => tok,
         Err(e) => {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "client_credentials with openid scope unavailable: {e}"
             ));
             return;

@@ -13,7 +13,7 @@
 //! | `live::`        | a real OIDC provider          | `#[ignore]`; `cargo test -- --ignored` |
 //!
 //! `common::` holds the helpers those modules share: provider selection from
-//! the `TEST_*` environment, the skip-or-fail rule, fixture-key loading and the
+//! the `TEST_*` environment, the fail rule, fixture-key loading and the
 //! headless authorization-code driver. Inline unit tests stay next to the code
 //! they cover under `src/`, as usual.
 //!

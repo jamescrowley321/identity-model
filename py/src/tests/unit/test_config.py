@@ -253,10 +253,10 @@ def test_non_finite_floats_are_rejected(key, raw):
 
 
 # NOTE (CFG-107, uniform bool parsing): out of scope for the Python typed
-# surface. The only boolean-typed keys in the contract are the test-tier
-# TEST_REQUIRE_LIVE / TEST_REQUIRE_HTTPS harness keys (spec/config.md §Test
-# tier), which this registry does not implement, so there is no bool key to
-# exercise and no bool parser to test. The strict-bool-parsing.json fixture is
+# surface. The only boolean-typed key in the contract is the test-tier
+# TEST_REQUIRE_HTTPS harness key (spec/config.md §Test tier), which this
+# registry does not implement, so there is no bool key to exercise and no bool
+# parser to test. The strict-bool-parsing.json fixture is
 # proven by the languages that implement the test tier.
 
 

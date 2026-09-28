@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -18,7 +18,7 @@
 //! full discovery-document URL; the issuer is that URL minus the
 //! `/.well-known/openid-configuration` suffix, and `jwks_uri` is resolved from
 //! the fetched discovery document. If `TEST_DISCO_ADDRESS` is unset the test
-//! skips (returns) rather than failing.
+//! fails.
 //!
 //! What it proves:
 //!
@@ -42,9 +42,9 @@ use rs_identity_model::{IdentityError, JwksClient, ValidationOptions};
 use serde_json::json;
 use std::time::Duration;
 
-use crate::common::env::{env_nonempty, issuer_from_env, skip_or_fail};
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
 use crate::common::fixtures::{FIXTURE_KID, signing_key};
-use crate::common::live::{client_credentials_token, discover_or_skip};
+use crate::common::live::{client_credentials_token, discover_or_fail};
 
 // AC-9 / JWT-001 / JWT-009: acquire a real client-credentials token, validate it
 // end-to-end against the live JWKS, then confirm a tampered copy is rejected.
@@ -52,19 +52,21 @@ use crate::common::live::{client_credentials_token, discover_or_skip};
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn client_credentials_validate_and_tamper() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let (Some(client_id), Some(client_secret)) = (
         env_nonempty("TEST_CLIENT_ID"),
         env_nonempty("TEST_CLIENT_SECRET"),
     ) else {
-        skip_or_fail("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
+        fail_live_prerequisite("TEST_CLIENT_ID/TEST_CLIENT_SECRET unset for this provider profile");
         return;
     };
 
     let allow_http = issuer.starts_with("http://");
-    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+    let Some(meta) = discover_or_fail(&issuer, allow_http).await else {
         return;
     };
     assert!(
@@ -119,14 +121,16 @@ async fn client_credentials_validate_and_tamper() {
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
 async fn forced_refresh_against_live_jwks() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
 
     // Local fixtures serve plain HTTP; allow it for http:// issuers only.
     let allow_http = issuer.starts_with("http://");
 
-    let Some(meta) = discover_or_skip(&issuer, allow_http).await else {
+    let Some(meta) = discover_or_fail(&issuer, allow_http).await else {
         return;
     };
     assert!(
