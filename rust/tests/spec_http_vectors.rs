@@ -25,17 +25,22 @@ const VECTORS_DIR: &str = "../spec/vectors";
 const VECTOR_OP: &str = "http://localhost:9010";
 /// Bounds each request to the fixture itself (not the library's calls).
 const FIXTURE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Fields the fixture serves or checks; a live vector must not carry them.
+const CANNED_FIELDS: [&str; 4] = ["http", "http_sequence", "expect_request", "expect_calls"];
 /// Capabilities with an adapter, keyed by vector file name.
 const ADAPTERS: &[&str] = &["jwks", "revocation", "userinfo"];
 
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
-/// and checks `expect_request`/`expect_calls`, so the runner only reads the
-/// rest; those fields are declared so an unknown field still fails loading.
+/// and checks `expect_request`/`expect_calls`, so the runner does not read
+/// them; they are declared so an unknown field still fails loading.
+/// `op: "live"` sends the call to the real node-oidc OP.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HttpVector {
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    op: String,
     input: BTreeMap<String, Value>,
     #[serde(default, rename = "http")]
     _http: Value,
@@ -113,12 +118,15 @@ async fn revocation_call(label: &str, base: &str, v: &HttpVector) -> Result<(), 
             .revocation_endpoint
             .unwrap_or_else(|| panic!("{label}: no revocation_endpoint"))
     } else {
-        format!("{base}/revoke")
+        format!(
+            "{base}{}",
+            v.input_str("endpoint_path").unwrap_or("/revoke")
+        )
     };
     let client = RevocationClient::builder()
         .revocation_endpoint(endpoint)
-        .client_id("cid")
-        .client_secret("secret")
+        .client_id(v.input_str("client_id").unwrap_or("cid"))
+        .client_secret(v.input_str("client_secret").unwrap_or("secret"))
         .allow_http(true)
         .build()
         .expect("build revocation client");
@@ -287,22 +295,30 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
 
 // --- runner -------------------------------------------------------------------
 
-/// Calls the capability's adapter, checks the requests, then the outcome.
+/// Calls the capability's adapter, checks the requests (canned vectors
+/// only), then the outcome.
 async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
+    let live = v.op == "live";
     match capability {
         "jwks" => {
             let result = jwks_call(base, v).await;
-            check_requests(label, base).await;
+            if !live {
+                check_requests(label, base).await;
+            }
             jwks_expect(label, &v.expect, result);
         }
         "revocation" => {
             let result = revocation_call(label, base, v).await;
-            check_requests(label, base).await;
+            if !live {
+                check_requests(label, base).await;
+            }
             revocation_expect(label, &v.expect, result);
         }
         "userinfo" => {
             let result = userinfo_call(base, v).await;
-            check_requests(label, base).await;
+            if !live {
+                check_requests(label, base).await;
+            }
             userinfo_expect(label, &v.expect, result);
         }
         other => panic!("{label}: {other}.json has HTTP vectors but no adapter"),
@@ -349,7 +365,10 @@ async fn spec_http_vectors() {
                 assert!(!vectors.is_empty(), "{id}: case has no vectors");
             }
             for (idx, raw) in vectors.into_iter().enumerate() {
-                if raw.get("http").is_none() && raw.get("http_sequence").is_none() {
+                if raw.get("op").is_none()
+                    && raw.get("http").is_none()
+                    && raw.get("http_sequence").is_none()
+                {
                     // In an adapted file, a vector that is not HTTP must be
                     // pure logic; anything else is a dropped HTTP vector.
                     assert!(
@@ -357,6 +376,15 @@ async fn spec_http_vectors() {
                         "{id}[{idx}]: neither an HTTP nor a pure-logic vector"
                     );
                     continue;
+                }
+                if raw.get("op").is_some() {
+                    assert_eq!(raw["op"], "live", "{id}[{idx}]: op");
+                    for k in CANNED_FIELDS {
+                        assert!(
+                            raw.get(k).is_none(),
+                            "{id}[{idx}]: a live vector carries {k}"
+                        );
+                    }
                 }
                 let v: HttpVector = serde_json::from_value(raw)
                     .unwrap_or_else(|e| panic!("{id}[{idx}]: decode vector: {e}"));
@@ -366,7 +394,11 @@ async fn spec_http_vectors() {
                     v.name.clone()
                 };
                 let label = format!("{id} ({key})");
-                let base = format!("{VECTOR_OP}/v/{run}/{capability}/{id}/{key}");
+                let base = if v.op == "live" {
+                    VECTOR_OP.to_string()
+                } else {
+                    format!("{VECTOR_OP}/v/{run}/{capability}/{id}/{key}")
+                };
                 run_vector(capability, &label, &base, &v).await;
                 executed += 1;
             }

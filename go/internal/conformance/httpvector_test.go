@@ -25,9 +25,11 @@ const vectorOP = "http://localhost:9010"
 
 // HTTPVector is one executable HTTP scenario. The fixture serves http and
 // http_sequence and checks expect_request and expect_calls; they are decoded
-// here only so an unknown field fails loading.
+// here only so an unknown field fails loading. Op "live" sends the call to the
+// real node-oidc OP instead, and such a vector carries none of those four.
 type HTTPVector struct {
 	Name          string                    `json:"name"`
+	Op            string                    `json:"op,omitempty"`
 	Input         map[string]any            `json:"input"`
 	HTTP          map[string]HTTPResponse   `json:"http"`
 	HTTPSequence  map[string][]HTTPResponse `json:"http_sequence,omitempty"`
@@ -118,8 +120,12 @@ func TestHTTPVectors(t *testing.T) {
 				if key == "" {
 					key = fmt.Sprint(i)
 				}
-				base := fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
 				t.Run(tc.id+"/"+key, func(t *testing.T) {
+					if v.Op == "live" {
+						adapter(t, label, vectorOP, v)
+						return
+					}
+					base := fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
 					defer checkRequests(t, label, base)
 					adapter(t, label, base, v)
 				})
@@ -145,7 +151,8 @@ type indexedVector struct {
 }
 
 // loadHTTPCases returns every case in file with its HTTP vectors (those with
-// http or http_sequence), decoding each strictly. Other vectors are skipped.
+// op, http or http_sequence), decoding each strictly. Other vectors are
+// skipped.
 func loadHTTPCases(t *testing.T, file string) []httpCase {
 	t.Helper()
 	b, err := os.ReadFile(file)
@@ -170,7 +177,8 @@ func loadHTTPCases(t *testing.T, file string) []httpCase {
 		for idx, fields := range tc.Vectors {
 			_, h := fields["http"]
 			_, hs := fields["http_sequence"]
-			if !h && !hs {
+			_, op := fields["op"]
+			if !h && !hs && !op {
 				var input map[string]json.RawMessage
 				_ = json.Unmarshal(fields["input"], &input)
 				if _, logic := input["operation"]; !logic {
@@ -184,6 +192,16 @@ func loadHTTPCases(t *testing.T, file string) []httpCase {
 			var v HTTPVector
 			if err := dec.Decode(&v); err != nil {
 				t.Fatalf("%s %s: decode vector: %v", filepath.Base(file), tc.ID, err)
+			}
+			if op && v.Op != "live" {
+				t.Fatalf("%s %s: unknown op %q", filepath.Base(file), tc.ID, v.Op)
+			}
+			if op {
+				for _, k := range []string{"http", "http_sequence", "expect_request", "expect_calls"} {
+					if _, ok := fields[k]; ok {
+						t.Fatalf("%s %s: a live vector carries %s", filepath.Base(file), tc.ID, k)
+					}
+				}
 			}
 			c.vectors = append(c.vectors, indexedVector{idx: idx, v: v})
 		}
@@ -232,6 +250,17 @@ func randomToken(t *testing.T) string {
 func inputString(v HTTPVector, key string) string {
 	s, _ := v.Input[key].(string)
 	return s
+}
+
+// inputOr returns a string input field, or def when the field is absent. A
+// present "" is kept, as in the Python and Rust runners.
+func inputOr(v HTTPVector, key, def string) string {
+	if raw, ok := v.Input[key]; ok {
+		if s, ok := raw.(string); ok {
+			return s
+		}
+	}
+	return def
 }
 
 // vectorLabel names a vector in failure messages.

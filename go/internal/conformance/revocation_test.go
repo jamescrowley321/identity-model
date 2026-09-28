@@ -16,7 +16,7 @@ func runRevocationVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
 	ctx := context.Background()
 
-	endpoint := base + "/revoke"
+	endpoint := base + inputOr(v, "endpoint_path", "/revoke")
 	if discover, _ := v.Input["discover"].(bool); discover {
 		discovery.ClearCache()
 		cfg, err := discovery.FetchConfiguration(ctx, base, discovery.WithInsecureAllowHTTP())
@@ -30,7 +30,7 @@ func runRevocationVector(t *testing.T, label, base string, v HTTPVector) {
 	if hint := inputString(v, "token_type_hint"); hint != "" {
 		opts = append(opts, revocation.WithTokenTypeHint(hint))
 	}
-	err := revocation.Revoke(ctx, endpoint, "cid", "secret", inputString(v, "token"), opts...)
+	err := revocation.Revoke(ctx, endpoint, inputOr(v, "client_id", "cid"), inputOr(v, "client_secret", "secret"), inputString(v, "token"), opts...)
 
 	switch v.Expect.Outcome {
 	case OutcomeAccept:
