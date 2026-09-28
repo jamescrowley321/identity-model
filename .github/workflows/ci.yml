@@ -71,7 +71,18 @@ jobs:
             shared:
               - 'spec/**'
               - 'infra/**'
-              - '.github/workflows/ci.yml'
+              # The mutation gates run `make mutation-security-{go,rust}`, which
+              # executes tools/mutation_security_native.py (GO_SURFACE /
+              # RUST_SURFACE) against tools/mutation_security_{go,rust}_allowlist.txt.
+              # A PR that only adds a waiver or narrows a surface must run the
+              # gate it is weakening, not skip it as "nothing changed".
+              - 'tools/**'
+              - 'Makefile'
+              # All workflows, not just this one: the callers (build.yml,
+              # nightly.yml, publish-prerelease.yml, ...) set the `inputs.*`
+              # that the native jobs' `if:` and ci-complete's SKIP_ALLOWED read.
+              - '.github/workflows/**'
+              - '.github/actions/**'
               - '.github/scripts/**'
               # Provider profiles sourced by the Go and Rust integration legs
               # (see the `set -a && . ./.env.*` steps below) and by the
