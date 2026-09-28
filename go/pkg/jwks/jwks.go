@@ -92,8 +92,8 @@ type JSONWebKeySet struct {
 }
 
 // FetchKeySet fetches, parses and caches the JWK Set at jwksURI (typically the
-// jwks_uri from discovery). It returns a [JSONWebKeySet] containing all keys
-// (JWKS-001, RFC 7517 §5).
+// jwks_uri from discovery). It returns a [JSONWebKeySet] of the usable keys
+// (JWKS-001, RFC 7517 §5); a key that fails validation is skipped (JWKS-008).
 //
 // Results are cached with a configurable TTL (default 24h, see [WithCacheTTL]);
 // a cache hit within the TTL makes no HTTP request (JWKS-005), and concurrent

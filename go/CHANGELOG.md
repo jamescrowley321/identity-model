@@ -12,6 +12,13 @@ requires — resolvable as
 
 ## Unreleased
 
+### Fixed
+
+- `pkg/jwks`: a JWK Set member that fails validation or has a mistyped
+  parameter is now skipped instead of failing the whole set, so one unusable
+  key no longer blocks resolution of a usable one (RFC 7517 §5, JWKS-008). A
+  set with no usable key still fails, with the first key's `InvalidKeyError`.
+
 ### Changed
 
 - `pkg/token`: `TokenExchange` now rejects three request/response shapes it
