@@ -8,6 +8,7 @@ through the mock OP's discovery + JWKS documents.
 
 from __future__ import annotations
 
+from cryptography.hazmat.primitives.asymmetric import ec
 import httpx
 import jwt
 import pytest
@@ -26,6 +27,7 @@ HTTP_TOO_MANY_REQUESTS = 429
 HTTP_SERVICE_UNAVAILABLE = 503
 PUBLISHED_KEY_COUNT = 2
 OVERSIZED_PADDING = 50
+P256_COORD_BITS = 256
 
 
 def _client(mock: MockOP) -> AsyncHTTPClient:
@@ -343,3 +345,26 @@ async def test_stats_route_reads_and_resets() -> None:
             "token": 0,
             "introspect": 0,
         }
+
+
+def _p256_key_with_short_x() -> ec.EllipticCurvePrivateKey:
+    """A deterministic P-256 key whose ``x`` has a leading zero byte."""
+    for scalar in range(1, 10_000):
+        key = ec.derive_private_key(scalar, ec.SECP256R1())
+        if key.public_key().public_numbers().x.bit_length() <= P256_COORD_BITS - 8:
+            return key
+    raise AssertionError("no short-x P-256 key in range")
+
+
+def test_ec_jwk_keeps_full_width_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A coordinate with a leading zero byte is still published as 32 bytes.
+
+    Otherwise PyJWT rejects the JWK and every ES256 token fails (a ~1/128 flake).
+    """
+    key = _p256_key_with_short_x()
+    monkeypatch.setattr(mock_op_mod.ec, "generate_private_key", lambda _curve: key)
+    signing_key = mock_op_mod._ec_signing_key("short-x")
+
+    token = jwt.encode({"sub": "s"}, key, algorithm="ES256", headers={"kid": "short-x"})
+    public = jwt.PyJWK(signing_key.public_jwk).key
+    assert jwt.decode(token, public, algorithms=["ES256"]) == {"sub": "s"}
