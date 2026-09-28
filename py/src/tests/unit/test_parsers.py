@@ -221,6 +221,42 @@ def _create_jwt_without_kid(alg: str = "RS256") -> str:
     return f"{header_b64}.{payload_b64}.{fake_sig}"
 
 
+class TestNoKidSelectionWithUnusableKeys:
+    """No-kid key selection against a JWK Set carrying keys the RP can't use.
+
+    Newer OpenID conformance suites publish such keys (unknown ``alg``,
+    unknown ``kty``) next to the real signing key; see
+    AddUnusableKeysToServerPublicJwks in the suite.
+    """
+
+    SIGNING = JsonWebKey(kty="RSA", kid="signing", alg="RS256", n="abc", e="AQAB")
+    UNKNOWN_ALG = JsonWebKey(
+        kty="RSA", kid="unusable-rsa-unknown-alg-key", alg="RS9999", n="def", e="AQAB"
+    )
+
+    def test_key_declaring_another_alg_is_not_a_candidate(self):
+        key_dict, alg = find_key_by_kid(
+            None, [self.UNKNOWN_ALG, self.SIGNING], jwt_alg="RS256"
+        )
+
+        assert (key_dict, alg) == (self.SIGNING.as_dict(), "RS256")
+
+    def test_deprecated_lookup_skips_key_declaring_another_alg(self):
+        jwt = _create_jwt_without_kid("RS256")
+
+        with pytest.warns(DeprecationWarning, match="get_public_key_from_jwk"):
+            key = get_public_key_from_jwk(jwt, [self.UNKNOWN_ALG, self.SIGNING])
+
+        assert key == self.SIGNING
+
+    def test_alg_none_is_rejected_before_key_selection(self):
+        with pytest.raises(
+            TokenValidationException,
+            match="Algorithm 'none' is not permitted",
+        ):
+            find_key_by_kid(None, [self.UNKNOWN_ALG, self.SIGNING], jwt_alg="none")
+
+
 class TestExtractKidFromJwt:
     """Tests for the extract_kid_from_jwt function."""
 
@@ -308,11 +344,11 @@ class TestGetPublicKeyFromJwk:
         assert key.alg == "RS256"
 
     def test_get_public_key_no_kid_multiple_signing_keys_error(self):
-        """When JWT has no kid and JWKS has multiple signing keys, raise an error."""
+        """When JWT has no kid and several keys could verify it, raise an error."""
         jwt = _create_jwt_without_kid()
         keys = [
             JsonWebKey(kty="RSA", kid="key1", alg="RS256", n="abc", e="def"),
-            JsonWebKey(kty="RSA", kid="key2", alg="RS384", n="ghi", e="jkl"),
+            JsonWebKey(kty="RSA", kid="key2", alg="RS256", n="ghi", e="jkl"),
         ]
 
         with pytest.raises(TokenValidationException) as exc_info:
