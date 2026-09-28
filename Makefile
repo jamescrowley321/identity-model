@@ -134,10 +134,10 @@ test-integration-go: ## Run Go integration tests against node-oidc (defaults) + 
 	@echo "Starting node-oidc-provider + IdentityServer fixtures..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider identityserver
 	@echo "Running Go integration tests (node-oidc default profile)..."
-	(cd go && go test -tags=integration -count=1 ./...) || \
+	(cd go && go test -v -tags=integration -count=1 ./...) || \
 		($(INFRA_COMPOSE) down && exit 1)
 	@echo "Running Go integration tests (IdentityServer profile)..."
-	set -a && . ./.env.identityserver && set +a && (cd go && go test -tags=integration -count=1 ./...) || \
+	set -a && . ./.env.identityserver && set +a && (cd go && go test -v -tags=integration -count=1 ./...) || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 

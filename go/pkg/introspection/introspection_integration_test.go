@@ -30,7 +30,7 @@ func introspectionEndpoint(t *testing.T, ctx context.Context, tc integrationtest
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, discovery.WithInsecureAllowHTTP())
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
+		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
 	if cfg.IntrospectionEndpoint == "" {
 		t.Skip("discovery returned no introspection_endpoint")
@@ -44,7 +44,7 @@ func endpoints(t *testing.T, ctx context.Context, tc integrationtest.Config) (to
 	introspectEP = introspectionEndpoint(t, ctx, tc)
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, discovery.WithInsecureAllowHTTP())
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable: %v", err)
+		integrationtest.FailUnreachable(t, "provider not reachable: %v", err)
 	}
 	if cfg.TokenEndpoint == "" {
 		t.Fatal("discovery returned no token_endpoint")

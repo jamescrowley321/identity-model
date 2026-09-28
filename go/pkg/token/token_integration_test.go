@@ -22,7 +22,7 @@ func tokenEndpoint(t *testing.T, ctx context.Context, tc integrationtest.Config)
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
+		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
 	if cfg.TokenEndpoint == "" {
 		t.Fatalf("discovery returned no token_endpoint")
@@ -115,7 +115,7 @@ func TestIntegration_AuthorizationCode_PKCE_EndToEnd(t *testing.T) {
 	}
 	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
 	if err != nil {
-		integrationtest.SkipUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
+		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
 	if cfg.AuthorizationEndpoint == "" {
 		t.Skip("provider advertises no authorization_endpoint")
