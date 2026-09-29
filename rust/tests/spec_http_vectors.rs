@@ -339,7 +339,10 @@ async fn spec_http_vectors() {
         let spec: Value =
             serde_json::from_str(&std::fs::read_to_string(&file).expect("read vector file"))
                 .unwrap_or_else(|e| panic!("parse {}: {e}", file.display()));
-        for case in spec["tests"].as_array().into_iter().flatten() {
+        let cases = spec["tests"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{}: no tests", file.display()));
+        for case in cases {
             let id = case["id"].as_str().expect("case id");
             let vectors = case["vectors"].as_array().cloned().unwrap_or_default();
             if ADAPTERS.contains(&capability) {
@@ -347,6 +350,12 @@ async fn spec_http_vectors() {
             }
             for (idx, raw) in vectors.into_iter().enumerate() {
                 if raw.get("http").is_none() && raw.get("http_sequence").is_none() {
+                    // In an adapted file, a vector that is not HTTP must be
+                    // pure logic; anything else is a dropped HTTP vector.
+                    assert!(
+                        !ADAPTERS.contains(&capability) || raw["input"].get("operation").is_some(),
+                        "{id}[{idx}]: neither an HTTP nor a pure-logic vector"
+                    );
                     continue;
                 }
                 let v: HttpVector = serde_json::from_value(raw)

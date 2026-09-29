@@ -88,10 +88,12 @@ These capabilities carry executable vectors and a runner in **every language**:
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
-in that language's node-oidc integration target (Python:
-`make test-integration-node-oidc`; Go: `make test-integration-go`, where
-`go/internal/conformance/httpvector_test.go`; Rust: `make test-integration-rust`). Each runner fails if any case in the file is
-not executed, or runs fewer vectors than the spec carries for it.
+in that language's node-oidc integration target: Python in
+`make test-integration-node-oidc`, Go in `make test-integration-go`, Rust in
+`make test-integration-rust`. Each runner fails if any case in the file is not
+executed, or runs fewer vectors than the spec carries for it; in a file with an
+HTTP adapter, a vector that is neither HTTP nor pure logic (`input.operation`)
+fails too.
 A case a language does not meet yet is marked in that language's runner as an
 expected failure (Python: `xfail(strict=True)`) with a linked issue, so the
 suite fails once it starts passing.
