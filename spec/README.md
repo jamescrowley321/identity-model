@@ -78,6 +78,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
 | Token Exchange | `vectors/token-exchange.json` (EXCH-001..006) — **executable vectors** | `test-fixtures/token-exchange/` |
 | Client Credentials | `vectors/client-credentials.json` (CC-001..006) — **executable vectors** | `test-fixtures/token/` |
+| Authorization Code + PKCE | `vectors/authorization-code.json` (ACG-001..005) — **executable vectors** | `test-fixtures/authorization-code/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -92,6 +93,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| authorization-code | 5 | 6 | `go/internal/conformance/httpvector_test.go` (adapter: `authorization_code_test.go`), `logic_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | `rust/tests/spec_http_vectors.rs`, `rust/tests/spec_logic_vectors.rs` |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
@@ -148,5 +150,14 @@ Expected nonempty form values require exactly one matching parameter: duplicate
 parameters fail even when their first value matches. An expected empty string
 continues to mean the field must be absent.
 
-The remaining capability files (`authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+#### Pure-logic vectors
+
+A pure-logic case in an HTTP capability (e.g. PKCE) is a vector with no `http`:
+`input.operation` names the function and `expect.result` carries its output.
+Each language runs them in-process in its unit suite — Python
+`py/src/tests/unit/test_spec_logic_vectors.py`, Go
+`go/internal/conformance/logic_test.go`, Rust `rust/tests/spec_logic_vectors.rs`
+— and fails on an operation it has no runner for.
+
+The remaining capability files (`config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

@@ -76,6 +76,7 @@ type httpAdapter func(t *testing.T, label, base string, v HTTPVector)
 
 // httpAdapters is keyed by vector file name (spec/vectors/<name>.json).
 var httpAdapters = map[string]httpAdapter{
+	"authorization-code": runAuthorizationCodeVector,
 	"client-credentials": runClientCredentialsVector,
 	"discovery":          runDiscoveryVector,
 	"introspection":      runIntrospectionVector,

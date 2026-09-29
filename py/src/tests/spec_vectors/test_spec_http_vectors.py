@@ -30,6 +30,7 @@ from py_identity_model import (
 )
 from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import TokenValidationException
 from py_identity_model.sync import token_validation
@@ -41,6 +42,7 @@ from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.revocation import TokenRevocationRequest, revoke_token
 from py_identity_model.sync.token_client import (
     ClientCredentialsTokenRequest,
+    request_authorization_code_token,
     request_client_credentials_token,
 )
 from py_identity_model.sync.token_exchange import (
@@ -220,6 +222,36 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
             "UserInfoResponse does not carry the WWW-Authenticate challenge (#769)"
         )
     assert response.www_authenticate == expect.get("www_authenticate")
+
+
+# --- authorization-code -------------------------------------------------------
+#
+# The HTTP vectors (the code exchange). The pure-logic PKCE vectors
+# (input.operation) run in-process in src/tests/unit/test_spec_logic_vectors.py.
+
+
+def _authorization_code_call(base: str, inp: dict) -> Any:
+    return request_authorization_code_token(
+        AuthorizationCodeTokenRequest(
+            address=base + "/token",
+            client_id="cid",
+            code=inp["code"],
+            redirect_uri=inp["redirect_uri"],
+            code_verifier=inp.get("code_verifier"),
+            client_secret=inp.get("client_secret"),
+        )
+    )
+
+
+def _authorization_code_expect(case_id: str, expect: dict, response: Any) -> None:
+    if expect["outcome"] == "accept":
+        _token_exchange_expect(case_id, expect, response)
+        return
+    assert not response.is_successful, f"{case_id}: expected reject"
+    assert f"status code: {expect['status']}" in (response.error or "")
+    # The error code appears in the raw body (and in the error_uri), so a
+    # substring check proves nothing until the error is typed (#791).
+    raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
 
 
 # --- client-credentials -------------------------------------------------------
@@ -482,6 +514,7 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
 
 
 ADAPTERS: dict[str, Adapter] = {
+    "authorization-code": Adapter(_authorization_code_call, _authorization_code_expect),
     "client-credentials": Adapter(_client_credentials_call, _client_credentials_expect),
     "discovery": Adapter(_discovery_call, _discovery_expect),
     "introspection": Adapter(_introspection_call, _introspection_expect),
@@ -493,6 +526,10 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "ACG-001-public-client": "no typed token members (#783)",
+    "ACG-001-confidential-client-basic": "no typed token members (#783)",
+    "ACG-004-code-verifier": "no typed token members (#783)",
+    "ACG-005-invalid-grant": "token errors are untyped (#791)",
     "CC-003-client-secret-post": "no client_secret_post for client credentials (#574)",
     "CC-004-invalid-client": "token errors are untyped (#791)",
     "CC-006-extra-params": "ClientCredentialsTokenRequest has no extra parameters (#778)",
