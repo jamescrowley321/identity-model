@@ -78,11 +78,15 @@ var httpAdapters = map[string]httpAdapter{
 // fixture. A file with HTTP vectors but no adapter fails, as does a case in an
 // adapted file that has no vectors.
 func TestHTTPVectors(t *testing.T) {
-	resp, err := http.Get(vectorOP + "/.well-known/openid-configuration")
+	probe := &http.Client{Timeout: 5 * time.Second}
+	resp, err := probe.Get(vectorOP + "/.well-known/openid-configuration")
 	if err != nil {
 		integrationtest.FailUnreachable(t, "node-oidc fixture not reachable at %s (run `make infra-up`): %v", vectorOP, err)
 	}
 	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("node-oidc fixture at %s: discovery answered %d", vectorOP, resp.StatusCode)
+	}
 
 	run := randomToken(t)
 	files, err := filepath.Glob(filepath.Join(specVectorsDir, "*.json"))
@@ -93,15 +97,23 @@ func TestHTTPVectors(t *testing.T) {
 		capability := strings.TrimSuffix(filepath.Base(file), ".json")
 		adapter := httpAdapters[capability]
 		for _, tc := range loadHTTPCases(t, file) {
-			if adapter != nil && len(tc.vectors) == 0 {
+			if adapter != nil && tc.total == 0 {
 				t.Errorf("%s: case has no vectors", tc.id)
 			}
-			for i, v := range tc.vectors {
+			if adapter != nil {
+				for _, i := range tc.dropped {
+					t.Errorf("%s[%d]: neither an HTTP nor a pure-logic vector", tc.id, i)
+				}
+			}
+			for _, iv := range tc.vectors {
+				i, v := iv.idx, iv.v
 				label := vectorLabel(tc.id, i, v)
 				if adapter == nil {
 					t.Errorf("%s: %s.json has HTTP vectors but no adapter", label, capability)
 					continue
 				}
+				// The fixture and the other runners index the case's full
+				// vector list, so an unnamed vector keeps its original index.
 				key := v.Name
 				if key == "" {
 					key = fmt.Sprint(i)
@@ -116,10 +128,20 @@ func TestHTTPVectors(t *testing.T) {
 	}
 }
 
-// httpCase is one case id with its HTTP vectors.
+// httpCase is one case id with its HTTP vectors. total counts every vector in
+// the case; dropped lists the indexes of vectors that are neither HTTP nor pure
+// logic (input.operation).
 type httpCase struct {
 	id      string
-	vectors []HTTPVector
+	total   int
+	vectors []indexedVector
+	dropped []int
+}
+
+// indexedVector is an HTTP vector with its index in the case's vector list.
+type indexedVector struct {
+	idx int
+	v   HTTPVector
 }
 
 // loadHTTPCases returns every case in file with its HTTP vectors (those with
@@ -139,13 +161,21 @@ func loadHTTPCases(t *testing.T, file string) []httpCase {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		t.Fatalf("decode %s: %v", file, err)
 	}
+	if len(raw.Tests) == 0 {
+		t.Fatalf("%s defines no tests", filepath.Base(file))
+	}
 	cases := make([]httpCase, 0, len(raw.Tests))
 	for _, tc := range raw.Tests {
-		c := httpCase{id: tc.ID}
-		for _, fields := range tc.Vectors {
+		c := httpCase{id: tc.ID, total: len(tc.Vectors)}
+		for idx, fields := range tc.Vectors {
 			_, h := fields["http"]
 			_, hs := fields["http_sequence"]
 			if !h && !hs {
+				var input map[string]json.RawMessage
+				_ = json.Unmarshal(fields["input"], &input)
+				if _, logic := input["operation"]; !logic {
+					c.dropped = append(c.dropped, idx)
+				}
 				continue
 			}
 			vb, _ := json.Marshal(fields)
@@ -155,7 +185,7 @@ func loadHTTPCases(t *testing.T, file string) []httpCase {
 			if err := dec.Decode(&v); err != nil {
 				t.Fatalf("%s %s: decode vector: %v", filepath.Base(file), tc.ID, err)
 			}
-			c.vectors = append(c.vectors, v)
+			c.vectors = append(c.vectors, indexedVector{idx: idx, v: v})
 		}
 		cases = append(cases, c)
 	}
