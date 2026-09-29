@@ -251,14 +251,19 @@ def _params() -> list:
     params = []
     for path in sorted(_VECTORS_DIR.glob("*.json")):
         capability = path.stem
-        for case in json.loads(path.read_text()).get("tests", []):
+        for case in json.loads(path.read_text())["tests"]:
             vectors = case.get("vectors", [])
             if capability in ADAPTERS:
                 assert vectors, f"{case['id']}: case has no vectors"
             for idx, vector in enumerate(vectors):
-                if not _is_http(vector):
-                    continue
                 key = vector.get("name") or str(idx)
+                if not _is_http(vector):
+                    # In an adapted file, a vector that is not HTTP must be
+                    # pure logic; anything else is a dropped HTTP vector.
+                    assert capability not in ADAPTERS or "operation" in vector.get(
+                        "input", {}
+                    ), f"{case['id']}-{key}: neither an HTTP nor a pure-logic vector"
+                    continue
                 param_id = f"{case['id']}-{key}"
                 reason = _KNOWN_GAPS.get(param_id) or _KNOWN_GAPS.get(case["id"])
                 marks = []
@@ -289,9 +294,13 @@ def _vector_op() -> None:
 def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> None:
     adapter = ADAPTERS.get(capability)
     assert adapter, f"{capability}.json has HTTP vectors but no adapter"
+    outcome = vector["expect"]["outcome"]
+    assert outcome in ("accept", "reject"), f"{case_id}: unknown outcome {outcome!r}"
     base = f"{VECTOR_OP}/v/{_RUN}/{capability}/{case_id}/{key}"
 
     result = adapter.call(base, vector["input"])
-    check = httpx.get(base + "/_check", timeout=5).json()
+    response = httpx.get(base + "/_check", timeout=5)
+    assert response.is_success, f"{case_id}: _check: {response.text}"
+    check = response.json()
     assert check["ok"], f"{case_id}: {check['diffs']}"
     adapter.expect(case_id, vector["expect"], result)
