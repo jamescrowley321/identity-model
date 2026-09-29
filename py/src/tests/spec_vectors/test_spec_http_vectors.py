@@ -15,6 +15,7 @@ failure) fails the suite until the entry is removed.
 
 import base64
 from collections.abc import Callable
+import inspect
 import json
 from pathlib import Path
 import time
@@ -24,12 +25,20 @@ import uuid
 import httpx
 import pytest
 
-from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
+from py_identity_model import (
+    ClientAuthMethod,
+    DiscoveryDocumentRequest,
+    get_discovery_document,
+)
 from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import TokenValidationException
 from py_identity_model.sync import token_validation
+from py_identity_model.sync.introspection import (
+    TokenIntrospectionRequest,
+    introspect_token,
+)
 from py_identity_model.sync.revocation import TokenRevocationRequest, revoke_token
 from py_identity_model.sync.token_validation import (
     _discover_and_resolve_key,
@@ -229,6 +238,59 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
     assert text in error, f"{case_id}: {text!r} not in {error!r}"
 
 
+# --- introspection ------------------------------------------------------------
+
+
+def _introspection_call(base: str, inp: dict) -> Any:
+    endpoint = base + "/introspect"
+    if inp.get("discover"):
+        disco = get_discovery_document(
+            DiscoveryDocumentRequest(address=base + _DISCO_PATH)
+        )
+        assert disco.is_successful, disco.error
+        assert disco.introspection_endpoint, "discovery has no introspection_endpoint"
+        endpoint = disco.introspection_endpoint
+    kwargs: dict[str, Any] = {}
+    if inp.get("client_auth") == "client_secret_post":
+        if (
+            "client_auth_method"
+            not in inspect.signature(TokenIntrospectionRequest).parameters
+        ):
+            raise KnownGap("TokenIntrospectionRequest has no client_auth_method")
+        kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
+    return introspect_token(
+        TokenIntrospectionRequest(
+            address=endpoint,
+            token=inp["token"],
+            token_type_hint=inp.get("token_type_hint"),
+            client_id="cid",
+            client_secret=inp.get("client_secret", "secret"),
+            **kwargs,
+        )
+    )
+
+
+def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
+    if expect["outcome"] == "accept":
+        assert response.is_successful, f"{case_id}: {response.error}"
+        claims = response.claims or {}
+        for name, value in expect.get("custom_claims", {}).items():
+            assert claims.get(name) == value, f"overflow member {name}"
+        # Until the typed members land (#772), check active in the raw map.
+        if "active" in expect.get("claims", {}):
+            assert claims.get("active") is expect["claims"]["active"], "active"
+        for name, value in expect.get("claims", {}).items():
+            if not hasattr(response, name):
+                raise KnownGap(f"{case_id}: no typed member {name} (#772)")
+            assert getattr(response, name) == value, f"typed member {name}"
+        return
+    if response.is_successful and expect["error"] == "malformed":
+        raise KnownGap(f"{case_id}: malformed response accepted (#782)")
+    assert not response.is_successful, f"{case_id}: expected reject"
+    assert expect["error"] in (response.error or "")
+    assert f"status code: {expect['status']}" in (response.error or "")
+
+
 # --- jwks ---------------------------------------------------------------------
 #
 # py-identity-model keeps its JWKS cache inside token validation, so the steps
@@ -308,6 +370,7 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
 
 ADAPTERS: dict[str, Adapter] = {
     "discovery": Adapter(_discovery_call, _discovery_expect),
+    "introspection": Adapter(_introspection_call, _introspection_expect),
     "revocation": Adapter(_revocation_call, _revocation_expect),
     "userinfo": Adapter(_userinfo_call, _userinfo_expect),
     "jwks": Adapter(_jwks_call, _jwks_expect),
@@ -315,6 +378,11 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "INTR-001-active-token": "no typed §2.2 introspection members (#772)",
+    "INTR-001-missing-active": "a response with no active member is accepted (#782)",
+    "INTR-001-active-not-boolean": "a non-boolean active member is accepted (#782)",
+    "INTR-002-inactive-token": "no typed §2.2 introspection members (#772)",
+    "INTR-003-client-secret-post": "no client_secret_post for introspection (#574)",
     "DISC-003-issuer-mismatch": "no issuer-match check (#574)",
     "DISC-008-missing-multiple-fields": "token_endpoint not required (#771)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",

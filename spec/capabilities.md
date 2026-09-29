@@ -24,7 +24,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json`¶ | in-progress¶ | implemented | implemented |
 | Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
-| Extended | Token Introspection | RFC 7662 | `introspection.json` | in-progress‡ | implemented | implemented |
+| Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress‡ | implemented | implemented |
 | Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress‡ | implemented | implemented |
 | Extended | Token Exchange | RFC 8693 | `token-exchange.json` | in-progress‡ | implemented | implemented |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
@@ -42,7 +42,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors (token vectors in its unit suite, HTTP vectors against the node-oidc fixture in its integration target) — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors (token vectors in its unit suite, HTTP vectors against the node-oidc fixture in its integration target) — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery`, `introspection` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
 > ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language's runner executes in its unit suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust have no known gaps; Python's are:
 >
@@ -51,6 +51,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > - **UserInfo** — Python: `UI-001` and `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)), `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)) and `UI-003 missing-sub` (it accepts a response with no `sub` unless an expected subject is supplied, [#773](https://github.com/jamescrowley321/identity-model/issues/773)), so Python is `in-progress`.
 > - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
 > - **OIDC Discovery** (including the cache TTL cases) — Python: `DISC-003` (no check that the document's issuer matches the requested issuer, [#574](https://github.com/jamescrowley321/identity-model/issues/574)) and `DISC-008 missing-multiple-fields` (neither `token_endpoint` nor `authorization_endpoint` is required, [#771](https://github.com/jamescrowley321/identity-model/issues/771)), so Python is `in-progress`.
+> - **Token Introspection** — Python: `INTR-001` and `INTR-002` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)) and `INTR-003 client-secret-post` (‡).
 >
 > ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
 > MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
@@ -115,16 +116,6 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ## Capability Definitions (Extended Tier)
 
 ### Token Introspection
-
-> **Vector-id anchoring.** `introspection.json`'s `INTR-001`…`INTR-006` are descriptive-only — they carry no
-> executable vectors, so no runner enforces them and each language anchors them by naming
-> the id in the covering test. Current state: Go (`pkg/introspection/introspection_test.go`) and Rust
-> (`tests/introspection.rs`) anchor all six; Python anchors `INTR-001`, `-002`, `-004` and `-005` in
-> `test_introspection.py` / `test_aio_introspection.py`, and half of `-003` — it has no `client_secret_post`
-> path to anchor (see ‡ above). **`INTR-006` (resolving the endpoint from the discovery document) has no Python
-> anchor**: Python's `introspect_token` takes the endpoint on the request, so discovery resolution is a caller
-> step rather than library behaviour. Recorded here as a real asymmetry rather than left silently missing.
-
 
 - Implementations MUST POST to the introspection endpoint as
   `application/x-www-form-urlencoded` with the `token` parameter (REQUIRED) and

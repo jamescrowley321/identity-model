@@ -75,10 +75,11 @@ type httpAdapter func(t *testing.T, label, base string, v HTTPVector)
 
 // httpAdapters is keyed by vector file name (spec/vectors/<name>.json).
 var httpAdapters = map[string]httpAdapter{
-	"discovery":  runDiscoveryVector,
-	"jwks":       runJWKSVector,
-	"revocation": runRevocationVector,
-	"userinfo":   runUserInfoVector,
+	"discovery":     runDiscoveryVector,
+	"introspection": runIntrospectionVector,
+	"jwks":          runJWKSVector,
+	"revocation":    runRevocationVector,
+	"userinfo":      runUserInfoVector,
 }
 
 // TestHTTPVectors runs every HTTP vector in spec/vectors against the node-oidc
