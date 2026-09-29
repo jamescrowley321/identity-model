@@ -1,4 +1,5 @@
 {
   "error": "invalid_request",
-  "error_description": "actor_token_type is required when actor_token is present"
+  "error_description": "the subject_token_type is not supported for this client",
+  "error_uri": "https://docs.example.org/oauth/errors#invalid_request"
 }

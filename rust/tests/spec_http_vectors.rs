@@ -15,7 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rs_identity_model::{
     ClientAuthMethod, DiscoveryClient, IdentityError, Introspection, IntrospectionClient,
-    JsonWebKey, JwksClient, ProviderMetadata, RevocationClient, UserInfoClient, UserInfoResponse,
+    JsonWebKey, JwksClient, ProviderMetadata, RevocationClient, TokenClient, TokenExchangeRequest,
+    TokenResponse, UserInfoClient, UserInfoResponse,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -39,6 +40,7 @@ const ADAPTERS: &[&str] = &[
     "introspection",
     "jwks",
     "revocation",
+    "token-exchange",
     "userinfo",
 ];
 
@@ -85,6 +87,10 @@ struct Expect {
     fields: Vec<String>,
     #[serde(default)]
     result: BTreeMap<String, Value>,
+    #[serde(default)]
+    error_description: Option<String>,
+    #[serde(default)]
+    error_uri: Option<String>,
 }
 
 impl HttpVector {
@@ -160,6 +166,91 @@ fn revocation_expect(label: &str, expect: &Expect, result: Result<(), IdentityEr
         "reject" => match result {
             Err(IdentityError::TokenEndpoint { error, status, .. }) => {
                 assert_eq!(error, expect.error, "{label}: error code");
+                assert_eq!(status, expect.status, "{label}: status");
+            }
+            other => panic!("{label}: expected TokenEndpoint error, got {other:?}"),
+        },
+        other => panic!("{label}: unknown expected outcome {other:?}"),
+    }
+}
+
+// --- token-exchange -----------------------------------------------------------
+
+async fn token_exchange_call(base: &str, v: &HttpVector) -> Result<TokenResponse, IdentityError> {
+    let input = |k: &str| v.input_str(k).unwrap_or_default().to_string();
+    let mut request =
+        TokenExchangeRequest::new(input("subject_token"), input("subject_token_type"));
+    if v.input.contains_key("actor_token") {
+        request = request.actor_token(input("actor_token"), input("actor_token_type"));
+    }
+    if v.input.contains_key("requested_token_type") {
+        request = request.requested_token_type(input("requested_token_type"));
+    }
+    if v.input.contains_key("audience") {
+        request = request.audience(input("audience"));
+    }
+    if v.input.contains_key("resource") {
+        request = request.resource(input("resource"));
+    }
+    if v.input.contains_key("scope") {
+        request = request.scope(input("scope"));
+    }
+    let auth_method = match v.input_str("client_auth") {
+        Some("client_secret_post") => ClientAuthMethod::ClientSecretPost,
+        _ => ClientAuthMethod::ClientSecretBasic,
+    };
+    let client = TokenClient::builder()
+        .token_endpoint(format!("{base}/token"))
+        .client_id("cid")
+        .client_secret("secret")
+        .auth_method(auth_method)
+        .allow_http(true)
+        .build()
+        .expect("build token client");
+    client.token_exchange(&request).await
+}
+
+/// The token response's fields, as JSON values; absent optional ones omitted.
+fn token_result_fields(r: &TokenResponse) -> BTreeMap<&'static str, Value> {
+    let mut fields = BTreeMap::from([
+        ("access_token", json!(r.access_token)),
+        ("token_type", json!(r.token_type)),
+        ("expires_in", json!(r.expires_in)),
+    ]);
+    for (key, value) in [
+        ("scope", &r.scope),
+        ("refresh_token", &r.refresh_token),
+        ("issued_token_type", &r.issued_token_type),
+    ] {
+        if let Some(v) = value {
+            fields.insert(key, json!(v));
+        }
+    }
+    fields
+}
+
+fn token_expect(label: &str, expect: &Expect, result: Result<TokenResponse, IdentityError>) {
+    match expect.outcome.as_str() {
+        "accept" => {
+            let response = result.unwrap_or_else(|e| panic!("{label}: expected accept, got: {e}"));
+            let got = token_result_fields(&response);
+            for (key, value) in &expect.result {
+                assert_eq!(got.get(key.as_str()), Some(value), "{label}: {key}");
+            }
+        }
+        "reject" => match result {
+            Err(IdentityError::TokenEndpoint {
+                error,
+                description,
+                error_uri,
+                status,
+            }) => {
+                assert_eq!(error, expect.error, "{label}: error code");
+                assert_eq!(
+                    description, expect.error_description,
+                    "{label}: description"
+                );
+                assert_eq!(error_uri, expect.error_uri, "{label}: error_uri");
                 assert_eq!(status, expect.status, "{label}: status");
             }
             other => panic!("{label}: expected TokenEndpoint error, got {other:?}"),
@@ -502,6 +593,13 @@ async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
                 check_requests(label, base).await;
             }
             revocation_expect(label, &v.expect, result);
+        }
+        "token-exchange" => {
+            let result = token_exchange_call(base, v).await;
+            if !live {
+                check_requests(label, base).await;
+            }
+            token_expect(label, &v.expect, result);
         }
         "userinfo" => {
             let result = userinfo_call(base, v).await;
