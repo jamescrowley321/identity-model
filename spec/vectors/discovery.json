@@ -18,8 +18,55 @@
       "given": "A reachable issuer with a valid .well-known/openid-configuration",
       "when": "Discovery is invoked",
       "then": "Returned metadata contains all required fields with correct types",
-      "fixture": "discovery/valid.json",
-      "references": ["§3", "§4.1", "§4.2"]
+      "references": [
+        "\u00a73",
+        "\u00a74.1",
+        "\u00a74.2"
+      ],
+      "vectors": [
+        {
+          "name": "valid-document",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "authorization_endpoint": "https://server.example.com/auth",
+              "token_endpoint": "https://server.example.com/token",
+              "jwks_uri": "https://server.example.com/jwks",
+              "response_types_supported": [
+                "code",
+                "id_token",
+                "code id_token"
+              ],
+              "subject_types_supported": [
+                "public"
+              ],
+              "id_token_signing_alg_values_supported": [
+                "RS256",
+                "ES256"
+              ],
+              "userinfo_endpoint": "https://server.example.com/userinfo",
+              "scopes_supported": [
+                "openid",
+                "profile",
+                "email",
+                "offline_access"
+              ]
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DISC-002",
@@ -27,8 +74,42 @@
       "given": "A discovery document missing zero required fields",
       "when": "Field validation runs",
       "then": "Validation passes and all seven required fields are accessible",
-      "fixture": "discovery/valid.json",
-      "references": ["§3"]
+      "references": [
+        "\u00a73"
+      ],
+      "vectors": [
+        {
+          "name": "all-required-fields",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "authorization_endpoint": "https://server.example.com/auth",
+              "token_endpoint": "https://server.example.com/token",
+              "jwks_uri": "https://server.example.com/jwks",
+              "response_types_supported": [
+                "code",
+                "id_token",
+                "code id_token"
+              ],
+              "subject_types_supported": [
+                "public"
+              ],
+              "id_token_signing_alg_values_supported": [
+                "RS256",
+                "ES256"
+              ]
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DISC-003",
@@ -36,8 +117,25 @@
       "given": "A discovery document whose issuer differs from the requested issuer",
       "when": "Discovery is invoked",
       "then": "An issuer-mismatch error is raised",
-      "fixture": "discovery/issuer-mismatch.json",
-      "references": ["§4.3"]
+      "references": [
+        "\u00a74.3"
+      ],
+      "vectors": [
+        {
+          "name": "issuer-mismatch",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/issuer-mismatch.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "issuer_mismatch"
+          }
+        }
+      ]
     },
     {
       "id": "DISC-004",
@@ -45,7 +143,33 @@
       "given": "A successful discovery fetch",
       "when": "Discovery is invoked again before the TTL expires",
       "then": "No HTTP request is made and the cached document is returned",
-      "references": ["§4"]
+      "references": [
+        "\u00a74"
+      ],
+      "vectors": [
+        {
+          "name": "second-call-within-ttl",
+          "input": {
+            "cache_ttl_seconds": 60,
+            "calls_at_seconds": [
+              0,
+              30
+            ]
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/.well-known/openid-configuration": 1
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "DISC-005",
@@ -53,7 +177,33 @@
       "given": "A cached discovery document whose TTL has expired",
       "when": "Discovery is invoked",
       "then": "A new HTTP request is made and the cache is refreshed",
-      "references": ["§4"]
+      "references": [
+        "\u00a74"
+      ],
+      "vectors": [
+        {
+          "name": "call-after-ttl-expiry",
+          "input": {
+            "cache_ttl_seconds": 60,
+            "calls_at_seconds": [
+              0,
+              120
+            ]
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/.well-known/openid-configuration": 2
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "DISC-006",
@@ -61,7 +211,39 @@
       "given": "An issuer whose discovery endpoint returns HTTP 404 or 500",
       "when": "Discovery is invoked",
       "then": "A transport/HTTP error is raised with the status code",
-      "references": ["§4.2"]
+      "references": [
+        "\u00a74.2"
+      ],
+      "vectors": [
+        {
+          "name": "not-found",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 404
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "http_status",
+            "status": 404
+          }
+        },
+        {
+          "name": "server-error",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 500
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "http_status",
+            "status": 500
+          }
+        }
+      ]
     },
     {
       "id": "DISC-007",
@@ -69,7 +251,25 @@
       "given": "An issuer whose discovery endpoint returns a non-JSON body",
       "when": "Discovery is invoked",
       "then": "A parse/deserialization error is raised",
-      "references": ["§4.2"]
+      "references": [
+        "\u00a74.2"
+      ],
+      "vectors": [
+        {
+          "name": "non-json-body",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/not-json.txt"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "parse"
+          }
+        }
+      ]
     },
     {
       "id": "DISC-008",
@@ -77,8 +277,46 @@
       "given": "A discovery document that omits one or more required fields",
       "when": "Field validation runs",
       "then": "A validation error is raised identifying the missing field(s)",
-      "fixture": "discovery/missing-jwks-uri.json",
-      "references": ["§3"]
+      "references": [
+        "\u00a73"
+      ],
+      "vectors": [
+        {
+          "name": "missing-jwks-uri",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/missing-jwks-uri.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "jwks_uri"
+            ]
+          }
+        },
+        {
+          "name": "missing-multiple-fields",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/missing-multiple-fields.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "token_endpoint",
+              "subject_types_supported"
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "DISC-009",
@@ -86,8 +324,29 @@
       "given": "A discovery document containing extra fields not defined in the spec",
       "when": "Discovery is invoked",
       "then": "Extra fields are ignored (not rejected) and required fields remain accessible",
-      "fixture": "discovery/valid.json",
-      "references": ["§3"]
+      "references": [
+        "\u00a73"
+      ],
+      "vectors": [
+        {
+          "name": "unknown-field-ignored",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "token_endpoint": "https://server.example.com/token",
+              "jwks_uri": "https://server.example.com/jwks"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DISC-010",
@@ -95,7 +354,31 @@
       "given": "An issuer URL using http:// (not HTTPS)",
       "when": "Discovery is invoked in production mode",
       "then": "An error is raised indicating HTTPS is required (configurable for development)",
-      "references": ["§3"]
+      "references": [
+        "\u00a73"
+      ],
+      "vectors": [
+        {
+          "name": "http-issuer-rejected",
+          "input": {
+            "require_https": true
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_calls": {
+            "/.well-known/openid-configuration": 0
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "https_required"
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, http_status (with `status`), parse, missing_fields (with `fields`, in required_fields order), https_required."
 }
