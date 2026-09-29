@@ -1,0 +1,5 @@
+{
+  "error": "invalid_client",
+  "error_description": "client authentication failed",
+  "error_uri": "https://docs.example.com/errors#invalid_client"
+}
