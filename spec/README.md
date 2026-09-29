@@ -77,6 +77,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
 | Token Exchange | `vectors/token-exchange.json` (EXCH-001..006) — **executable vectors** | `test-fixtures/token-exchange/` |
+| Client Credentials | `vectors/client-credentials.json` (CC-001..006) — **executable vectors** | `test-fixtures/token/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -90,6 +91,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
@@ -146,5 +148,5 @@ differs from the canned one, `endpoint_path`. Live vectors cover what a
 conformant OP answers from static input; flows that need a minted token or a
 login stay in each language's integration tests.
 
-The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+The remaining capability files (`authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

@@ -39,7 +39,12 @@ from py_identity_model.sync.introspection import (
     TokenIntrospectionRequest,
     introspect_token,
 )
+from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.revocation import TokenRevocationRequest, revoke_token
+from py_identity_model.sync.token_client import (
+    ClientCredentialsTokenRequest,
+    request_client_credentials_token,
+)
 from py_identity_model.sync.token_exchange import (
     TokenExchangeRequest,
     exchange_token,
@@ -216,6 +221,51 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
             "UserInfoResponse does not carry the WWW-Authenticate challenge (#769)"
         )
     assert response.www_authenticate == expect.get("www_authenticate")
+
+
+# --- client-credentials -------------------------------------------------------
+
+
+def _require_cc_field(name: str, gap: str) -> None:
+    if name not in ClientCredentialsTokenRequest.__dataclass_fields__:
+        raise KnownGap(f"ClientCredentialsTokenRequest has no {name} ({gap})")
+
+
+def _client_credentials_call(base: str, inp: dict) -> Any:
+    kwargs: dict[str, Any] = {}
+    if inp.get("client_auth") == "client_secret_post":
+        _require_cc_field("client_auth_method", "#574")
+        kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
+    if "extra_params" in inp:
+        _require_cc_field("extra_params", "#778")
+        kwargs["extra_params"] = inp["extra_params"]
+    request = ClientCredentialsTokenRequest(
+        address=base + "/token",
+        client_id="cid",
+        client_secret=inp.get("client_secret", "secret"),
+        scope=" ".join(inp["scopes"]) if "scopes" in inp else None,
+        **kwargs,
+    )
+    http_client = None
+    if "http_client_headers" in inp:
+        http_client = HTTPClient(
+            client=httpx.Client(headers=inp["http_client_headers"])
+        )
+    return request_client_credentials_token(request, http_client)
+
+
+def _client_credentials_expect(case_id: str, expect: dict, response: Any) -> None:
+    if expect["outcome"] == "accept":
+        assert response.is_successful, f"{case_id}: {response.error}"
+        assert response.token is not None
+        for name, value in expect.get("result", {}).items():
+            assert response.token.get(name) == value, f"{case_id}: {name}"
+        return
+    assert not response.is_successful, f"{case_id}: expected reject"
+    assert f"status code: {expect['status']}" in (response.error or "")
+    # The error code appears in the raw body (and in the error_uri), so a
+    # substring check proves nothing until the error is typed (#791).
+    raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
 
 
 # --- discovery ----------------------------------------------------------------
@@ -425,6 +475,7 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
 
 
 ADAPTERS: dict[str, Adapter] = {
+    "client-credentials": Adapter(_client_credentials_call, _client_credentials_expect),
     "discovery": Adapter(_discovery_call, _discovery_expect),
     "introspection": Adapter(_introspection_call, _introspection_expect),
     "revocation": Adapter(_revocation_call, _revocation_expect),
@@ -435,6 +486,9 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "CC-003-client-secret-post": "no client_secret_post for client credentials (#574)",
+    "CC-004-invalid-client": "token errors are untyped (#791)",
+    "CC-006-extra-params": "ClientCredentialsTokenRequest has no extra parameters (#778)",
     "EXCH-001-impersonation": "no typed token-exchange members (#783)",
     "EXCH-001-client-secret-post": "no client_secret_post for token exchange (#574)",
     "EXCH-002-delegation": "no typed token-exchange members (#783)",
