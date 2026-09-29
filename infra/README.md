@@ -80,7 +80,8 @@ the real OP — see
   with `vector.http[path]`, or the n-th entry of `vector.http_sequence[path]`
   for the n-th request; `https://server.example.com` in a fixture becomes the
   vector's base URL. `{vector}` is the vector's name (index when unnamed);
-  `{run}` is any token, so concurrent runs keep separate request records.
+  `{run}` is any token of `[A-Za-z0-9_.-]`, so concurrent runs keep
+  separate request records.
 - `.../_check` returns `{"ok": bool, "diffs": [...]}`, comparing the requests
   received against the vector's `expect_request` and `expect_calls`.
 

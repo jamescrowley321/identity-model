@@ -47,45 +47,56 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-// Compares the recorded requests against expect_calls and expect_request. An
-// expected "" header or form value means the field must be absent.
-function check(vector, seen) {
+// Compares one recorded request against expect_request. An expected "" header
+// or form value means the field must be absent.
+function checkRequest(want, got, label) {
   const diffs = [];
-  for (const [p, count] of Object.entries(vector.expect_calls || {})) {
-    const have = seen.get(p)?.count ?? 0;
-    if (have !== count) diffs.push(`requests to ${p} = ${have}, want ${count}`);
-  }
-  const want = vector.expect_request;
-  if (!want) return diffs;
-  const got = seen.get(want.path);
-  if (!got) return [...diffs, `no request to ${want.path}`];
   if (got.method !== want.method) {
-    diffs.push(`method = ${got.method}, want ${want.method}`);
+    diffs.push(`${label}method = ${got.method}, want ${want.method}`);
   }
   for (const [name, value] of Object.entries(want.headers || {})) {
     let have = got.headers[name.toLowerCase()];
     if (value === "") {
-      if (have !== undefined) diffs.push(`header ${name} = ${JSON.stringify(have)}, want absent`);
+      if (have !== undefined) diffs.push(`${label}header ${name} = ${JSON.stringify(have)}, want absent`);
       continue;
     }
     if (have !== undefined && name.toLowerCase() === "content-type") {
       have = have.split(";")[0].trim();
     }
-    if (have !== value) diffs.push(`header ${name} = ${JSON.stringify(have ?? null)}, want ${JSON.stringify(value)}`);
+    if (have !== value) diffs.push(`${label}header ${name} = ${JSON.stringify(have ?? null)}, want ${JSON.stringify(value)}`);
   }
   for (const [name, value] of Object.entries(want.form || {})) {
     if (value === "") {
-      if (got.form.has(name)) diffs.push(`form ${name} = ${JSON.stringify(got.form.get(name))}, want absent`);
+      if (got.form.has(name)) diffs.push(`${label}form ${name} = ${JSON.stringify(got.form.get(name))}, want absent`);
       continue;
     }
     const have = got.form.get(name);
-    if (have !== value) diffs.push(`form ${name} = ${JSON.stringify(have)}, want ${JSON.stringify(value)}`);
+    if (have !== value) diffs.push(`${label}form ${name} = ${JSON.stringify(have)}, want ${JSON.stringify(value)}`);
   }
   return diffs;
 }
 
+// Compares the recorded requests (path -> list, in order) against
+// expect_calls, and every request to expect_request.path against
+// expect_request.
+function check(vector, seen) {
+  const diffs = [];
+  for (const [p, count] of Object.entries(vector.expect_calls || {})) {
+    const have = seen.get(p)?.length ?? 0;
+    if (have !== count) diffs.push(`requests to ${p} = ${have}, want ${count}`);
+  }
+  const want = vector.expect_request;
+  if (!want) return diffs;
+  const got = seen.get(want.path) || [];
+  if (got.length === 0) return [...diffs, `no request to ${want.path}`];
+  got.forEach((req, i) => {
+    diffs.push(...checkRequest(want, req, got.length > 1 ? `request ${i + 1}: ` : ""));
+  });
+  return diffs;
+}
+
 export function vectorRoutes({ issuer, specDir }) {
-  const requests = new Map(); // base path -> Map(request path -> recorded request)
+  const requests = new Map(); // base path -> Map(request path -> [recorded request])
 
   return async (ctx, next) => {
     const m = ROUTE.exec(ctx.path);
@@ -117,13 +128,13 @@ export function vectorRoutes({ issuer, specDir }) {
     const body = await readBody(ctx.req);
     if (!requests.has(basePath)) requests.set(basePath, new Map());
     const seen = requests.get(basePath);
-    const count = (seen.get(subPath)?.count ?? 0) + 1;
-    seen.set(subPath, {
+    if (!seen.has(subPath)) seen.set(subPath, []);
+    seen.get(subPath).push({
       method: ctx.method,
       headers: { ...ctx.headers },
       form: new URLSearchParams(body),
-      count,
     });
+    const count = seen.get(subPath).length;
 
     const sequence = vector.http_sequence?.[subPath];
     const resp = sequence
@@ -135,10 +146,16 @@ export function vectorRoutes({ issuer, specDir }) {
     }
     let payload = "";
     if (resp.body_fixture) {
-      payload = readFixture(specDir, resp.body_fixture).replaceAll(
-        FIXTURE_HOST,
-        issuer + basePath,
-      );
+      try {
+        payload = readFixture(specDir, resp.body_fixture).replaceAll(
+          FIXTURE_HOST,
+          issuer + basePath,
+        );
+      } catch (err) {
+        ctx.status = 500;
+        ctx.body = { error: `body_fixture ${resp.body_fixture}: ${err.message}` };
+        return;
+      }
     }
     for (const [name, value] of Object.entries(resp.headers || {})) {
       ctx.set(name, value);
@@ -148,6 +165,6 @@ export function vectorRoutes({ issuer, specDir }) {
     }
     // Body before status: a null body would otherwise turn the status into 204.
     ctx.body = payload || null;
-    ctx.status = resp.status;
+    ctx.status = resp.status ?? 200;
   };
 }
