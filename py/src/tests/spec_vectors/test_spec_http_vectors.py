@@ -39,6 +39,10 @@ from py_identity_model.sync.introspection import (
     introspect_token,
 )
 from py_identity_model.sync.revocation import TokenRevocationRequest, revoke_token
+from py_identity_model.sync.token_exchange import (
+    TokenExchangeRequest,
+    exchange_token,
+)
 from py_identity_model.sync.token_validation import (
     _discover_and_resolve_key,
     _get_cached_jwks,
@@ -115,6 +119,59 @@ def _revocation_expect(case_id: str, expect: dict, response: Any) -> None:
     assert f"status code: {expect['status']}" in (response.error or "")
     # The error code appears in the raw body (and in any error_uri), so a
     # substring check proves nothing until the error is typed (#791).
+    raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
+
+
+# --- token-exchange -----------------------------------------------------------
+
+
+def _token_exchange_call(base: str, inp: dict) -> Any:
+    kwargs: dict[str, Any] = {}
+    if inp.get("client_auth") == "client_secret_post":
+        if (
+            "client_auth_method"
+            not in inspect.signature(TokenExchangeRequest).parameters
+        ):
+            raise KnownGap("TokenExchangeRequest has no client_auth_method")
+        kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
+    return exchange_token(
+        TokenExchangeRequest(
+            address=base + "/token",
+            client_id="cid",
+            client_secret="secret",
+            subject_token=inp["subject_token"],
+            subject_token_type=inp["subject_token_type"],
+            actor_token=inp.get("actor_token"),
+            actor_token_type=inp.get("actor_token_type"),
+            resource=inp.get("resource"),
+            audience=inp.get("audience"),
+            scope=inp.get("scope"),
+            requested_token_type=inp.get("requested_token_type"),
+            **kwargs,
+        )
+    )
+
+
+def _token_exchange_expect(case_id: str, expect: dict, response: Any) -> None:
+    if expect["outcome"] == "accept":
+        assert response.is_successful, f"{case_id}: {response.error}"
+        assert response.token is not None
+        result = expect.get("result", {})
+        # Until the typed members land (#783), check the raw values first.
+        for name, value in result.items():
+            assert response.token.get(name) == value, f"{case_id}: {name}"
+        for name, value in result.items():
+            if not hasattr(response, name):
+                raise KnownGap(f"{case_id}: no typed member {name} (#783)")
+            assert getattr(response, name) == value, f"{case_id}: typed {name}"
+        return
+    assert not response.is_successful, f"{case_id}: expected reject"
+    message = response.error or ""
+    assert f"status code: {expect['status']}" in message
+    if "error_uri" in expect and expect["error_uri"] not in message:
+        raise KnownGap(f"{case_id}: error_uri missing from {message!r}")
+    # The error members appear in the raw body, so substring checks prove
+    # nothing until the error is typed (#791).
     raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
 
 
@@ -379,12 +436,20 @@ ADAPTERS: dict[str, Adapter] = {
     "discovery": Adapter(_discovery_call, _discovery_expect),
     "introspection": Adapter(_introspection_call, _introspection_expect),
     "revocation": Adapter(_revocation_call, _revocation_expect),
+    "token-exchange": Adapter(_token_exchange_call, _token_exchange_expect),
     "userinfo": Adapter(_userinfo_call, _userinfo_expect),
     "jwks": Adapter(_jwks_call, _jwks_expect),
 }
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "EXCH-001-impersonation": "no typed token-exchange members (#783)",
+    "EXCH-001-client-secret-post": "no client_secret_post for token exchange (#574)",
+    "EXCH-002-delegation": "no typed token-exchange members (#783)",
+    "EXCH-005-n_a-token-type": "no typed token-exchange members (#783)",
+    "EXCH-005-optional-fields": "no typed token-exchange members (#783)",
+    "EXCH-006-invalid-grant": "token-exchange errors are untyped (#791)",
+    "EXCH-006-invalid-request": "the error_uri is dropped from the error (#777)",
     "INTR-001-active-token": "no typed §2.2 introspection members (#772)",
     "INTR-001-missing-active": "a response with no active member is accepted (#782)",
     "INTR-001-active-not-boolean": "a non-boolean active member is accepted (#782)",
