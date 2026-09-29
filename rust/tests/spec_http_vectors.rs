@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rs_identity_model::{
-    DiscoveryClient, IdentityError, JsonWebKey, JwksClient, RevocationClient, UserInfoClient,
-    UserInfoResponse,
+    DiscoveryClient, IdentityError, JsonWebKey, JwksClient, ProviderMetadata, RevocationClient,
+    UserInfoClient, UserInfoResponse,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -27,8 +27,14 @@ const VECTOR_OP: &str = "http://localhost:9010";
 const FIXTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Fields the fixture serves or checks; a live vector must not carry them.
 const CANNED_FIELDS: [&str; 4] = ["http", "http_sequence", "expect_request", "expect_calls"];
+/// Placeholder host in fixtures and expected results; the fixture serves it
+/// rewritten to the vector's base URL.
+const FIXTURE_HOST: &str = "https://server.example.com";
+/// Wall-clock time one vector second maps to: the discovery cache has no
+/// injectable clock, so TTL vectors run scaled down in real time.
+const SPEC_SECOND: Duration = Duration::from_millis(50);
 /// Capabilities with an adapter, keyed by vector file name.
-const ADAPTERS: &[&str] = &["jwks", "revocation", "userinfo"];
+const ADAPTERS: &[&str] = &["discovery", "jwks", "revocation", "userinfo"];
 
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
 /// and checks `expect_request`/`expect_calls`, so the runner does not read
@@ -69,6 +75,10 @@ struct Expect {
     custom_claims: BTreeMap<String, Value>,
     #[serde(default)]
     keys: Vec<BTreeMap<String, String>>,
+    #[serde(default)]
+    fields: Vec<String>,
+    #[serde(default)]
+    result: BTreeMap<String, Value>,
 }
 
 impl HttpVector {
@@ -218,6 +228,74 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
     }
 }
 
+// --- discovery ----------------------------------------------------------------
+
+/// One `DiscoveryClient`, called at each `input.calls_at_seconds` offset.
+async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, IdentityError> {
+    let require_https = v.input.get("require_https").and_then(Value::as_bool) == Some(true);
+    let mut builder = DiscoveryClient::builder().allow_http(!require_https);
+    if let Some(ttl) = v.input.get("cache_ttl_seconds").and_then(Value::as_u64) {
+        builder = builder.cache_ttl(SPEC_SECOND * u32::try_from(ttl).expect("ttl fits u32"));
+    }
+    let client = builder.build();
+    let offsets: Vec<u64> = match v.input.get("calls_at_seconds") {
+        Some(at) => serde_json::from_value(at.clone()).expect("calls_at_seconds"),
+        None => vec![0],
+    };
+    let start = tokio::time::Instant::now();
+    let mut result = Err(IdentityError::Validation("no call made".into()));
+    for at in offsets {
+        let offset = SPEC_SECOND * u32::try_from(at).expect("offset fits u32");
+        tokio::time::sleep_until(start + offset).await;
+        result = client.discover(base).await;
+        if result.is_err() {
+            break;
+        }
+    }
+    result
+}
+
+fn discovery_expect(
+    label: &str,
+    base: &str,
+    expect: &Expect,
+    result: Result<ProviderMetadata, IdentityError>,
+) {
+    match expect.outcome.as_str() {
+        "accept" => {
+            let metadata = result.unwrap_or_else(|e| panic!("{label}: expected accept, got: {e}"));
+            let got = serde_json::to_value(&metadata).expect("serialize metadata");
+            let want = serde_json::to_string(&expect.result)
+                .expect("serialize expected result")
+                .replace(FIXTURE_HOST, base);
+            let want: BTreeMap<String, Value> =
+                serde_json::from_str(&want).expect("parse expected result");
+            for (key, value) in &want {
+                assert_eq!(got.get(key), Some(value), "{label}: {key}");
+            }
+        }
+        "reject" => match (expect.error.as_str(), result) {
+            ("issuer_mismatch", Err(IdentityError::Validation(msg))) => {
+                assert!(msg.contains("issuer mismatch"), "{label}: {msg}");
+            }
+            ("http_status", Err(IdentityError::Http(msg))) => {
+                let status = format!("unexpected HTTP status {} ", expect.status);
+                assert!(msg.contains(&status), "{label}: {msg}");
+            }
+            ("parse", Err(IdentityError::Deserialization(_))) => {}
+            ("missing_fields", Err(IdentityError::Validation(msg))) => {
+                let fields = format!("missing required field(s): {}", expect.fields.join(", "));
+                assert!(msg.ends_with(&fields), "{label}: {msg}");
+            }
+            ("https_required", Err(IdentityError::Validation(msg))) => {
+                assert!(msg.contains("must use https"), "{label}: {msg}");
+            }
+            (code, other) => panic!("{label}: expected {code}, got {other:?}"),
+        },
+        other => panic!("{label}: unknown expected outcome {other:?}"),
+    }
+}
+
 // --- jwks ---------------------------------------------------------------------
 
 /// The key's non-empty modelled JWK members.
@@ -300,6 +378,13 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
 async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
     let live = v.op == "live";
     match capability {
+        "discovery" => {
+            let result = discovery_call(base, v).await;
+            if !live {
+                check_requests(label, base).await;
+            }
+            discovery_expect(label, base, &v.expect, result);
+        }
         "jwks" => {
             let result = jwks_call(base, v).await;
             if !live {

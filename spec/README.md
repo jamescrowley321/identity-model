@@ -69,7 +69,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
-| OIDC Discovery | `vectors/discovery.json` (DISC-001..010) | `test-fixtures/discovery/` |
+| OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
 | JWKS | `vectors/jwks.json` (JWKS-001..008) — **executable vectors** | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 | ID Token | `vectors/id-token.json` (IDT-001..011) — **executable vectors** | `test-fixtures/validation/` |
@@ -85,6 +85,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | revocation | 5 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
@@ -114,12 +115,14 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
 - `expect_request`: the request the client must send (`path`, `method`, and
   optional `headers` and `form`).
 - `expect_calls` (optional): the exact number of requests per path.
-- `expect`: `outcome` `accept` or `reject`; a reject carries the canonical OAuth
-  `error` code and HTTP `status`. A JWKS accept carries the resulting `keys`.
-  UserInfo adds `www_authenticate` (the expected challenge; absent means the
-  error response must carry no challenge) to a reject, and
-  `claims` (typed standard claims) and `custom_claims` (claim-map entries) to an
-  accept.
+- `expect`: `outcome` `accept` or `reject`; a reject carries the canonical
+  `error` code, and optionally the HTTP `status` and the `fields` it names; an
+  accept may carry `result` fields compared by exact equality (with
+  `https://server.example.com` read as the vector's base URL). A JWKS accept
+  carries the resulting `keys`. UserInfo adds `www_authenticate` (the expected
+  challenge; absent means the error response must carry no challenge) to a
+  reject, and `claims` (typed standard claims) and `custom_claims` (claim-map
+  entries) to an accept.
 
 The fixture checks `expect_request` and `expect_calls` itself (`{base}/_check`),
 so a runner only calls the client and maps its result to `expect`.
@@ -137,5 +140,5 @@ differs from the canned one, `endpoint_path`. Live vectors cover what a
 conformant OP answers from static input; flows that need a minted token or a
 login stay in each language's integration tests.
 
-The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+The remaining capability files (`introspection.json`, `token-exchange.json`, `client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
