@@ -37,6 +37,7 @@ const FIXTURE_HOST: &str = "https://server.example.com";
 const SPEC_SECOND: Duration = Duration::from_millis(50);
 /// Capabilities with an adapter, keyed by vector file name.
 const ADAPTERS: &[&str] = &[
+    "authorization-code",
     "client-credentials",
     "discovery",
     "introspection",
@@ -325,6 +326,32 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
         },
         other => panic!("{label}: unknown expected outcome {other:?}"),
     }
+}
+
+// --- authorization-code -------------------------------------------------------
+//
+// The HTTP vectors (the code exchange). The pure-logic PKCE vectors
+// (input.operation) run in-process in tests/spec_logic_vectors.rs.
+
+async fn authorization_code_call(
+    base: &str,
+    v: &HttpVector,
+) -> Result<TokenResponse, IdentityError> {
+    let mut builder = TokenClient::builder()
+        .token_endpoint(format!("{base}/token"))
+        .client_id("cid")
+        .allow_http(true);
+    if let Some(secret) = v.input_str("client_secret") {
+        builder = builder.client_secret(secret);
+    }
+    let client = builder.build().expect("build token client");
+    client
+        .exchange_code(
+            v.input_str("code").unwrap_or_default(),
+            v.input_str("redirect_uri").unwrap_or_default(),
+            v.input_str("code_verifier"),
+        )
+        .await
 }
 
 // --- client-credentials -------------------------------------------------------
@@ -628,6 +655,13 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
 async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
     let live = v.op == "live";
     match capability {
+        "authorization-code" => {
+            let result = authorization_code_call(base, v).await;
+            if !live {
+                check_requests(label, base).await;
+            }
+            token_expect(label, &v.expect, result);
+        }
         "client-credentials" => {
             let result = client_credentials_call(base, v).await;
             if !live {
