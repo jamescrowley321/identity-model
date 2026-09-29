@@ -12,6 +12,8 @@ suites (`spec/vectors/client-credentials.json`,
   (`error: invalid_client` with `error_description` and `error_uri`) that
   CC-004 must surface as a typed token error. Its `error_uri` is not the
   fixture host, so the runners' host substitution leaves it unchanged.
-- `pkce-appendix-b.json` — the [RFC 7636 Appendix B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B)
-  worked example. `S256Challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")`
-  MUST equal `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM` (ACG-003).
+- Authorization code token bodies live in
+  [`../authorization-code/`](../authorization-code/). The
+  [RFC 7636 Appendix B](https://www.rfc-editor.org/rfc/rfc7636#appendix-B)
+  PKCE values are carried inline by `ACG-003` in
+  `spec/vectors/authorization-code.json`.
