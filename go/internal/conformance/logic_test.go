@@ -12,13 +12,18 @@ import (
 )
 
 // logicVector is a pure-logic vector: input.operation names what to run and
-// expect.result what it must produce. It needs no HTTP.
+// expect what it must produce. A vector with http or http_sequence is an HTTP
+// vector that also names an operation; TestHTTPVectors runs it.
 type logicVector struct {
-	Name   string         `json:"name"`
-	Input  map[string]any `json:"input"`
-	Expect struct {
+	Name         string          `json:"name"`
+	Input        map[string]any  `json:"input"`
+	HTTP         json.RawMessage `json:"http"`
+	HTTPSequence json.RawMessage `json:"http_sequence"`
+	Expect       struct {
 		Outcome string         `json:"outcome"`
 		Result  map[string]any `json:"result"`
+		Error   string         `json:"error"`
+		Fields  []string       `json:"fields"`
 	} `json:"expect"`
 }
 
@@ -35,7 +40,16 @@ var logicOperations = map[string]func(t *testing.T, label string, v logicVector)
 			t.Errorf("%s: code_challenge = %q, want %v", label, got, want)
 		}
 	},
+	"create_proof": runCreateProofVector,
+	"ath":          runAthVector,
+	"thumbprint":   runThumbprintVector,
+	"verify_proof": runVerifyProofVector,
+	"generate_key": runGenerateKeyVector,
 }
+
+// rejectingOperations check a reject outcome themselves; every other operation
+// must expect accept.
+var rejectingOperations = map[string]bool{"verify_proof": true, "generate_key": true}
 
 // TestLogicVectors runs every pure-logic vector (input.operation) in
 // spec/vectors in-process. HTTP vectors in the same files run in
@@ -66,7 +80,7 @@ func TestLogicVectors(t *testing.T) {
 					t.Fatalf("%s %s[%d]: %v", filepath.Base(file), tc.ID, i, err)
 				}
 				op, ok := v.Input["operation"].(string)
-				if !ok {
+				if !ok || v.HTTP != nil || v.HTTPSequence != nil {
 					continue
 				}
 				key := v.Name
@@ -79,7 +93,7 @@ func TestLogicVectors(t *testing.T) {
 					if !ok {
 						t.Fatalf("%s: no runner for operation %q", label, op)
 					}
-					if v.Expect.Outcome != OutcomeAccept {
+					if v.Expect.Outcome != OutcomeAccept && !rejectingOperations[op] {
 						t.Fatalf("%s: outcome = %q, want accept", label, v.Expect.Outcome)
 					}
 					check(t, label, v)

@@ -2,10 +2,13 @@
 //
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/{path}  -> canned response
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_check  -> request check
+//   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_requests -> recorded requests
 //
 // The canned response is vector.http[path], or the n-th entry of
 // vector.http_sequence[path] for the n-th request (the last one repeats).
-// _check compares what was received against expect_request and expect_calls.
+// _check compares what was received against expect_request and expect_calls,
+// then clears the record. _requests returns it unchanged, for a runner that
+// must inspect a generated value such as a DPoP proof.
 //
 // {vector} is the vector's name, or its index when unnamed. {run} is any token
 // the caller picks so concurrent runs of the same vector keep separate request
@@ -115,6 +118,20 @@ export function vectorRoutes({ issuer, specDir }) {
     if (!vector) {
       ctx.status = 404;
       ctx.body = { error: `no vector ${capability}/${caseId}/${vectorKey}` };
+      return;
+    }
+
+    if (subPath === "/_requests") {
+      const seen = requests.get(basePath) || new Map();
+      const out = {};
+      for (const [p, list] of seen) {
+        out[p] = list.map((r) => ({
+          method: r.method,
+          headers: r.headers,
+          form: Object.fromEntries(r.form),
+        }));
+      }
+      ctx.body = { requests: out };
       return;
     }
 

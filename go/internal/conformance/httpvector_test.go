@@ -81,6 +81,7 @@ var httpAdapters = map[string]httpAdapter{
 	"authorization-code": runAuthorizationCodeVector,
 	"client-credentials": runClientCredentialsVector,
 	"discovery":          runDiscoveryVector,
+	"dpop":               runDPoPVector,
 	"introspection":      runIntrospectionVector,
 	"jwks":               runJWKSVector,
 	"revocation":         runRevocationVector,

@@ -83,6 +83,10 @@ the real OP — see
   `{run}` is any token of `[A-Za-z0-9_.-]`, so concurrent runs keep
   separate request records.
 - `.../_check` returns `{"ok": bool, "diffs": [...]}`, comparing the requests
-  received against the vector's `expect_request` and `expect_calls`.
+  received against the vector's `expect_request` and `expect_calls`, then
+  clears them.
+- `.../_requests` returns `{"requests": {path: [{method, headers, form}]}}`,
+  the requests received so far, for a runner that must inspect a generated
+  value such as a DPoP proof.
 
 Everything outside `/v/` is the real provider.

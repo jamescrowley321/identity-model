@@ -46,6 +46,9 @@ const ADAPTERS: &[&str] = &[
     "token-exchange",
     "userinfo",
 ];
+/// Capabilities rs-identity-model does not implement; their vectors are
+/// skipped rather than failing as "no adapter".
+const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
 
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
 /// and checks `expect_request`/`expect_calls`, so the runner does not read
@@ -742,6 +745,9 @@ async fn spec_http_vectors() {
             .file_stem()
             .and_then(|s| s.to_str())
             .expect("file name");
+        if NOT_IMPLEMENTED.contains(&capability) {
+            continue;
+        }
         let spec: Value =
             serde_json::from_str(&std::fs::read_to_string(&file).expect("read vector file"))
                 .unwrap_or_else(|e| panic!("parse {}: {e}", file.display()));
