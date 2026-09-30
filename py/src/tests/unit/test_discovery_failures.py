@@ -17,9 +17,13 @@ from py_identity_model.core.discovery_policy import DiscoveryPolicy
 
 
 ADDRESS = "https://server.example.com/.well-known/openid-configuration"
-VALID = json.loads(
-    (Path(__file__).parents[4] / "spec/test-fixtures/discovery/valid.json").read_text()
+# Mutation tests copy this module under py/mutants/, changing its depth.
+_VALID_FIXTURE = next(
+    parent / "spec/test-fixtures/discovery/valid.json"
+    for parent in Path(__file__).resolve().parents
+    if (parent / "spec/test-fixtures/discovery/valid.json").is_file()
 )
+VALID = json.loads(_VALID_FIXTURE.read_text())
 
 
 @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
