@@ -6,10 +6,14 @@
   "description": "OIDC provider test fixture for py-identity-model integration tests",
   "main": "provider.js",
   "scripts": {
-    "start": "node provider.js"
+    "start": "node provider.js",
+    "test": "node --test vectors.test.js"
   },
   "dependencies": {
     "jose": "^6.0.11",
     "oidc-provider": "^9.7.1"
+  },
+  "devDependencies": {
+    "koa": "3.2.0"
   }
 }

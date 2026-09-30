@@ -6,6 +6,8 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
+	"strings"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -105,6 +107,11 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 
 	jws, err := jose.ParseSigned(proof, asymmetricSigAlgs)
 	if err != nil {
+		// go-jose refuses an embedded jwk carrying private material while
+		// parsing; report that against jwk, not alg, when alg itself is allowed.
+		if asymmetricProofWithPrivateJWK(proof) {
+			return nil, &VerificationError{Field: "jwk", Reason: reasonPrivateJWK + ": " + err.Error()}
+		}
 		return nil, &VerificationError{Field: "alg", Reason: "not a DPoP proof signed with a supported asymmetric algorithm: " + err.Error()}
 	}
 	if len(jws.Signatures) != 1 {
@@ -119,7 +126,7 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 		return nil, &VerificationError{Field: "jwk", Reason: "proof header is missing the embedded jwk"}
 	}
 	if !jwk.IsPublic() {
-		return nil, &VerificationError{Field: "jwk", Reason: "embedded jwk must contain only the public key"}
+		return nil, &VerificationError{Field: "jwk", Reason: reasonPrivateJWK}
 	}
 	switch jwk.Key.(type) {
 	case *ecdsa.PublicKey, *rsa.PublicKey:
@@ -189,4 +196,42 @@ func VerifyProof(proof, expectedHTM, expectedHTU string, opts ...VerifyOption) (
 		Ath:        claims.Ath,
 		Nonce:      claims.Nonce,
 	}, nil
+}
+
+// privateJWKMembers are the JWK members that carry private or secret key
+// material (RFC 7518 §6.2.2, §6.3.2, §6.4.1).
+var privateJWKMembers = []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
+
+// reasonPrivateJWK is the rejection reason for an embedded jwk that carries
+// private or secret key material.
+const reasonPrivateJWK = "embedded jwk must contain only the public key"
+
+// asymmetricProofWithPrivateJWK reports whether the proof's protected header
+// names an allowed asymmetric alg and embeds a jwk with private or secret key
+// members. It reads compact serialization only, which is the DPoP form.
+func asymmetricProofWithPrivateJWK(proof string) bool {
+	encoded, _, ok := strings.Cut(proof, ".")
+	if !ok {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return false
+	}
+	var header struct {
+		Alg string                     `json:"alg"`
+		JWK map[string]json.RawMessage `json:"jwk"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return false
+	}
+	if !slices.Contains(asymmetricSigAlgs, jose.SignatureAlgorithm(header.Alg)) {
+		return false
+	}
+	for _, m := range privateJWKMembers {
+		if _, ok := header.JWK[m]; ok {
+			return true
+		}
+	}
+	return false
 }

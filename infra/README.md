@@ -78,11 +78,39 @@ the real OP — see
 
 - `http://localhost:9010/v/{run}/{capability}/{case_id}/{vector}/{path}` answers
   with `vector.http[path]`, or the n-th entry of `vector.http_sequence[path]`
-  for the n-th request; `https://server.example.com` in a fixture becomes the
-  vector's base URL. `{vector}` is the vector's name (index when unnamed);
-  `{run}` is any token of `[A-Za-z0-9_.-]`, so concurrent runs keep
-  separate request records.
+  for the n-th request (the last response repeats). Both
+  `https://server.example.com` and `https://provider.example.com` in a fixture
+  become the vector's base URL. `{vector}` is the vector's name (index when
+  unnamed); `{run}` must be a **unique token per suite invocation**, using
+  `[A-Za-z0-9_.-]`. Use a UUID or random token, including when multiple
+  language suites share the container; a vector name alone is not unique.
 - `.../_check` returns `{"ok": bool, "diffs": [...]}`, comparing the requests
-  received against the vector's `expect_request` and `expect_calls`.
+  received against the vector's `expect_request` and `expect_calls`. It checks
+  every recorded request to `expect_request.path` and preserves the records
+  and sequence position, so repeated checks return the same result. An expected
+  `""` header or form value requires the field to be absent; present-but-empty
+  fails. Request positions are reserved on arrival, so concurrent response
+  sequences follow arrival order. Checks fail while any request body is pending.
+- **POST** `.../_reset` clears this vector's records, fixture errors and
+  sequence position. Use it after a completed run to release capacity, or
+  before intentionally restarting the vector. GET returns 405.
+
+Request bodies are limited to 16 KiB (413 on overflow), records to 64 requests
+per vector run (429), and retained vector runs to 256 (503 for new runs when
+full). Existing active runs are preserved. Records expire after 10 minutes of
+inactivity; use a fresh run token for a new execution after expiry. `_check`
+fails when records are missing, except for explicit zero-call expectations.
+Fixture read errors and per-run limit failures also make `_check` fail until
+reset, so a negative vector cannot pass because its fixture is broken.
+Missing fixtures return 404, other fixture read failures return 500; the error
+names the capability, case, vector and fixture path.
+
+Run the fixture's Node tests with `make test-infra-vectors` (requires Node 22
+or later). CI runs the same target before the node-oidc integration suite.
+To build the image outside Compose, supply the spec build context:
+
+```bash
+docker build --build-context spec=./spec -t node-oidc-provider infra/node-oidc-provider
+```
 
 Everything outside `/v/` is the real provider.
