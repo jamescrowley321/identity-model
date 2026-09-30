@@ -12,7 +12,12 @@ import socket
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from ..exceptions import ConfigurationException, DiscoveryException
+from ..exceptions import (
+    ConfigurationException,
+    DiscoveryException,
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+)
 from ..logging_config import logger
 from .discovery_policy import DiscoveryPolicy
 from .http_utils import get_max_jwks_keys, get_max_jwks_size
@@ -204,7 +209,7 @@ def validate_and_parse_discovery_response(
     try:
         response_json = response.json()
     except ValueError as e:
-        raise DiscoveryException(f"Invalid JSON response: {e!s}") from e
+        raise DiscoveryParseError(f"Invalid JSON response: {e!s}") from e
 
     # Validate required parameters
     validate_required_parameters(response_json)
@@ -217,9 +222,10 @@ def validate_and_parse_discovery_response(
 
     # Enforce require_key_set policy
     if (policy is None or policy.require_key_set) and not response_json.get("jwks_uri"):
-        raise DiscoveryException(
+        raise DiscoveryMissingFieldsError(
             "Discovery document does not contain a jwks_uri, "
-            "required by policy (require_key_set=True)"
+            "required by policy (require_key_set=True)",
+            ("jwks_uri",),
         )
 
     # Normalize policy for endpoint validation: treat None as strict defaults

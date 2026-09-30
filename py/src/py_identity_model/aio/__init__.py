@@ -98,6 +98,7 @@ from .device_auth import (
 from .discovery import (
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
     get_discovery_document,
 )
 from .id_token import validate_id_token
@@ -201,6 +202,7 @@ __all__ = [
     "DiscoveryDocumentResponse",
     # Discovery Policy
     "DiscoveryEndpoint",
+    "DiscoveryErrorKind",
     "DiscoveryPolicy",
     "FAPIValidationResult",
     # JWKS

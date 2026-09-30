@@ -442,6 +442,27 @@ class DiscoveryDocumentRequest(BaseRequest):
     policy: DiscoveryPolicy | None = None
 
 
+class DiscoveryErrorKind(Enum):
+    """Why discovery failed, set on ``DiscoveryDocumentResponse.error_kind``."""
+
+    UNEXPECTED_STATUS = "unexpected_status"
+    """The endpoint returned a non-success HTTP status; see ``status_code``."""
+    INVALID_JSON = "invalid_json"
+    """The response body could not be decoded as JSON."""
+    MISSING_FIELDS = "missing_fields"
+    """A required-field check failed; see ``missing_fields``."""
+    HTTPS_REQUIRED = "https_required"
+    """A URL violated the policy's HTTPS requirement."""
+    INVALID_CONFIGURATION = "invalid_configuration"
+    """Another URL or configuration check failed."""
+    INVALID_DOCUMENT = "invalid_document"
+    """Another discovery document check failed."""
+    NETWORK_ERROR = "network_error"
+    """The HTTP transport failed."""
+    UNEXPECTED_ERROR = "unexpected_error"
+    """An unclassified exception occurred."""
+
+
 @dataclass(repr=False, eq=False)
 class DiscoveryDocumentResponse(BaseResponse):
     """Response from an OpenID Connect discovery document fetch.
@@ -503,6 +524,12 @@ class DiscoveryDocumentResponse(BaseResponse):
             "tls_client_certificate_bound_access_tokens",
         }
     )
+
+    # Structured diagnostics are keyword-only to preserve positional callers.
+    # The legacy error string remains available for display.
+    error_kind: DiscoveryErrorKind | None = field(default=None, kw_only=True)
+    status_code: int | None = field(default=None, kw_only=True)
+    missing_fields: tuple[str, ...] = field(default=(), kw_only=True)
 
     # Core OpenID Connect endpoints
     issuer: str | None = None
