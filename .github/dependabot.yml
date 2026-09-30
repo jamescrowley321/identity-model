@@ -6,7 +6,7 @@ version: 2
 # stages pass. Security alerts create their own PRs outside any group.
 updates:
   - package-ecosystem: "uv"
-    directory: "/"
+    directory: "/py"
     schedule:
       interval: "daily"
       time: "03:00"
