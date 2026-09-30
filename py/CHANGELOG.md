@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v4.0.4 (2026-09-30)
+
+### Bug Fixes
+
+- Require patched PyJWT and AnyIO versions
+  ([#830](https://github.com/jamescrowley321/identity-model/pull/830),
+  [`72a2ad6`](https://github.com/jamescrowley321/identity-model/commit/72a2ad65dbd705a4700b26246d8afc490fd79494))
+
+### Chores
+
+- Sync uv.lock with 4.0.3
+  ([`8c80e46`](https://github.com/jamescrowley321/identity-model/commit/8c80e4650a52a227fab30e1aaec0aa2b150c5e36))
+
+- **deps)(deps**: Update uvicorn requirement
+  ([#829](https://github.com/jamescrowley321/identity-model/pull/829),
+  [`f145669`](https://github.com/jamescrowley321/identity-model/commit/f1456691dd86029efaa4424d6080508b93d940df))
+
+### Continuous Integration
+
+- **deps**: Bump undici from 7.29.0 to 7.30.0 in /infra/node-oidc-provider
+  ([#800](https://github.com/jamescrowley321/identity-model/pull/800),
+  [`773b5dc`](https://github.com/jamescrowley321/identity-model/commit/773b5dcebf7b73af7b210d117334a3b6acd18c0a))
+
+
 ## v4.0.3 (2026-09-28)
 
 ### Bug Fixes
