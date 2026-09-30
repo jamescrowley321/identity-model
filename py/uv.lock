@@ -1394,7 +1394,7 @@ wheels = [
 
 [[package]]
 name = "py-identity-model"
-version = "4.0.3"
+version = "4.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
