@@ -40,9 +40,17 @@ RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
 
 ## Vectors
 
-`spec/vectors/dpop.json` carries executable vectors, run by
-`go/internal/conformance/dpop_test.go` and
-`py/src/tests/unit/test_spec_dpop_conformance.py`. Proof vectors build a proof
+`spec/vectors/dpop.json` carries executable vectors. Pure-logic vectors run in
+`py/src/tests/unit/test_spec_logic_vectors.py` and
+`go/internal/conformance/logic_test.go`, with Go DPoP operations in
+`go/internal/conformance/dpop_logic_test.go`. HTTP vectors run in
+`py/src/tests/spec_vectors/test_spec_http_vectors.py` and
+`go/internal/conformance/httpvector_test.go`, with the Go DPoP adapter in
+`go/internal/conformance/dpop_test.go`. They cover the token-request proof
+(DPOP-002), nonce retry and reuse (DPOP-004), and resource-request authorization
+(DPOP-008).
+
+Proof vectors build a proof
 with a key-pair fixture, verify its signature against that key and compare the
 decoded header and payload (`jti` and `iat` are generated, so only their
 presence and freshness are checked), and two proofs built in a row must carry
