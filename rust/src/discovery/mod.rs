@@ -21,7 +21,9 @@
 
 mod cache;
 mod client;
+mod error;
 mod metadata;
 
 pub use client::{DiscoveryClient, DiscoveryClientBuilder};
+pub use error::DiscoveryError;
 pub use metadata::ProviderMetadata;

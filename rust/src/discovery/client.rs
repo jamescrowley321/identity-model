@@ -7,6 +7,8 @@ use reqwest::header::ACCEPT;
 
 use crate::{IdentityError, Result};
 
+use super::DiscoveryError;
+
 use super::cache::Cache;
 use super::metadata::ProviderMetadata;
 
@@ -93,9 +95,18 @@ impl DiscoveryClient {
     /// - [`IdentityError::Deserialization`] — a body that is not valid JSON
     ///   metadata (DISC-007).
     pub async fn discover(&self, issuer_url: &str) -> Result<ProviderMetadata> {
+        self.discover_detailed(issuer_url).await.map_err(Into::into)
+    }
+
+    /// Fetch metadata using the same production cache and validation as
+    /// [`Self::discover`], with typed status, field, issuer, and scheme failures.
+    pub async fn discover_detailed(
+        &self,
+        issuer_url: &str,
+    ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
         let issuer = issuer_url.trim().trim_end_matches('/').to_string();
         if issuer.is_empty() {
-            return Err(IdentityError::Validation("issuer URL is empty".to_string()));
+            return Err(IdentityError::Validation("issuer URL is empty".to_string()).into());
         }
 
         // DISC-004: a fresh cache entry is served without any HTTP request.
@@ -112,9 +123,7 @@ impl DiscoveryClient {
         let is_https = scheme.starts_with("https://");
         let scheme_ok = is_https || (self.allow_http && scheme.starts_with("http://"));
         if !scheme_ok {
-            return Err(IdentityError::Validation(format!(
-                "issuer {issuer:?} must use https (enable allow_http for development)"
-            )));
+            return Err(DiscoveryError::HttpsRequired { issuer });
         }
 
         let metadata = self.fetch_and_validate(&issuer).await?;
@@ -126,7 +135,10 @@ impl DiscoveryClient {
 
     /// Performs the HTTP request, parses the body, and validates the document.
     /// Contains no caching logic.
-    async fn fetch_and_validate(&self, issuer: &str) -> Result<ProviderMetadata> {
+    async fn fetch_and_validate(
+        &self,
+        issuer: &str,
+    ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
         let endpoint = format!("{issuer}{WELL_KNOWN_PATH}");
 
         let mut response = self
@@ -141,10 +153,10 @@ impl DiscoveryClient {
         // DISC-006: a non-2xx response is a transport error carrying the status.
         let status = response.status();
         if !status.is_success() {
-            return Err(IdentityError::Http(format!(
-                "unexpected HTTP status {} from {endpoint}",
-                status.as_u16()
-            )));
+            return Err(DiscoveryError::HttpStatus {
+                status: status.as_u16(),
+                endpoint,
+            });
         }
 
         // Read the body in chunks so an oversized response is rejected before it
@@ -158,7 +170,8 @@ impl DiscoveryClient {
             if body.len() + chunk.len() > MAX_BODY_BYTES {
                 return Err(IdentityError::Deserialization(format!(
                     "discovery document from {endpoint} exceeds {MAX_BODY_BYTES} bytes"
-                )));
+                ))
+                .into());
             }
             body.extend_from_slice(&chunk);
         }
@@ -171,20 +184,20 @@ impl DiscoveryClient {
         // DISC-002 / DISC-008: every required field must be present.
         let missing = metadata.missing_required_fields();
         if !missing.is_empty() {
-            return Err(IdentityError::Validation(format!(
-                "discovery document from {endpoint} is missing required field(s): {}",
-                missing.join(", ")
-            )));
+            return Err(DiscoveryError::MissingFields {
+                fields: missing.into_iter().map(str::to_owned).collect(),
+                endpoint,
+            });
         }
 
         // DISC-003: the document's issuer must match the requested issuer.
         // Trailing slashes are trimmed on both sides so they normalise
         // symmetrically (a trailing-slash-only difference is not a mismatch).
         if metadata.issuer.trim_end_matches('/') != issuer {
-            return Err(IdentityError::Validation(format!(
-                "issuer mismatch: requested {issuer:?} but document declares {:?}",
-                metadata.issuer
-            )));
+            return Err(DiscoveryError::IssuerMismatch {
+                requested: issuer.to_owned(),
+                actual: metadata.issuer,
+            });
         }
 
         Ok(metadata)
