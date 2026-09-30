@@ -1,3 +1,5 @@
+//go:build integration
+
 package conformance
 
 import (
@@ -9,32 +11,15 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/revocation"
 )
 
-// TestRevocationConformance drives every vector in revocation.json against
-// revocation.Revoke.
-func TestRevocationConformance(t *testing.T) {
-	suite := LoadHTTPCapability(t, "revocation.json")
-
-	for _, tc := range suite.Tests {
-		t.Run(tc.ID, func(t *testing.T) {
-			if len(tc.Vectors) == 0 {
-				t.Fatalf("%s: no vectors", tc.ID)
-			}
-			for i, v := range tc.Vectors {
-				runRevocationVector(t, vectorLabel(tc.ID, i, v), v)
-			}
-		})
-	}
-}
-
-func runRevocationVector(t *testing.T, label string, v HTTPVector) {
+// runRevocationVector is the revocation.json adapter: revocation.Revoke.
+func runRevocationVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
-	srv := newMockServer(t, v)
 	ctx := context.Background()
 
-	endpoint := srv.URL + "/revoke"
+	endpoint := base + "/revoke"
 	if discover, _ := v.Input["discover"].(bool); discover {
 		discovery.ClearCache()
-		cfg, err := discovery.FetchConfiguration(ctx, srv.URL, discovery.WithInsecureAllowHTTP())
+		cfg, err := discovery.FetchConfiguration(ctx, base, discovery.WithInsecureAllowHTTP())
 		if err != nil {
 			t.Fatalf("%s: discovery: %v", label, err)
 		}
@@ -66,5 +51,4 @@ func runRevocationVector(t *testing.T, label string, v HTTPVector) {
 	default:
 		t.Fatalf("%s: unknown expected outcome %q", label, v.Expect.Outcome)
 	}
-	srv.assertRequest(t, label, v.ExpectRequest)
 }

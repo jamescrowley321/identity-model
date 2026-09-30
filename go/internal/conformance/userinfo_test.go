@@ -1,3 +1,5 @@
+//go:build integration
+
 package conformance
 
 import (
@@ -11,33 +13,15 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/userinfo"
 )
 
-// TestUserInfoConformance drives every vector in userinfo.json against
-// userinfo.Fetch.
-func TestUserInfoConformance(t *testing.T) {
-	suite := LoadHTTPCapability(t, "userinfo.json")
-
-	for _, tc := range suite.Tests {
-		t.Run(tc.ID, func(t *testing.T) {
-			if len(tc.Vectors) == 0 {
-				t.Fatalf("%s: no vectors", tc.ID)
-			}
-			for i, v := range tc.Vectors {
-				runUserInfoVector(t, vectorLabel(tc.ID, i, v), v)
-			}
-		})
-	}
-}
-
-func runUserInfoVector(t *testing.T, label string, v HTTPVector) {
+// runUserInfoVector is the userinfo.json adapter: userinfo.Fetch.
+func runUserInfoVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
-	srv := newMockServer(t, v)
 
 	opts := []userinfo.Option{userinfo.WithInsecureAllowHTTP()}
 	if sub, ok := v.Input["expected_sub"].(string); ok {
 		opts = append(opts, userinfo.WithSubjectValidation(sub))
 	}
-	ui, err := userinfo.Fetch(context.Background(), srv.URL+"/userinfo", inputString(v, "token"), opts...)
-	srv.assertRequest(t, label, v.ExpectRequest)
+	ui, err := userinfo.Fetch(context.Background(), base+"/userinfo", inputString(v, "token"), opts...)
 
 	switch v.Expect.Outcome {
 	case OutcomeAccept:

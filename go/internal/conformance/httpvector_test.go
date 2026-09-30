@@ -1,52 +1,35 @@
+//go:build integration
+
 package conformance
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
+	"time"
+
+	"github.com/jamescrowley321/identity-model/go/internal/integrationtest"
 )
 
-// fixtureHost is the placeholder base URL in HTTP fixtures; the mock server
-// replaces it with its own URL so discovery documents point back at it.
-const fixtureHost = "https://server.example.com"
+// vectorOP is the node-oidc fixture that serves the canned HTTP vectors
+// (infra/node-oidc-provider/vectors.js). It is the vector server whatever the
+// integration profile, since make test-integration-go also runs IdentityServer.
+const vectorOP = "http://localhost:9010"
 
-// HTTPCapability is a spec/vectors/<capability>.json file whose vectors drive
-// an HTTP client against canned responses.
-type HTTPCapability struct {
-	Capability string     `json:"capability"`
-	Spec       string     `json:"spec"`
-	SpecURL    string     `json:"spec_url"`
-	Notes      string     `json:"notes,omitempty"`
-	Tests      []HTTPCase `json:"tests"`
-}
-
-// HTTPCase is one conformance test id with its HTTP vectors.
-type HTTPCase struct {
-	ID         string       `json:"id"`
-	Title      string       `json:"title"`
-	Given      string       `json:"given"`
-	When       string       `json:"when"`
-	Then       string       `json:"then"`
-	References []string     `json:"references,omitempty"`
-	Vectors    []HTTPVector `json:"vectors"`
-}
-
-// HTTPVector is one executable HTTP scenario.
+// HTTPVector is one executable HTTP scenario. The fixture serves http and
+// http_sequence and checks expect_request and expect_calls; they are decoded
+// here only so an unknown field fails loading.
 type HTTPVector struct {
-	Name  string                  `json:"name"`
-	Input map[string]any          `json:"input"`
-	HTTP  map[string]HTTPResponse `json:"http"`
-	// HTTPSequence serves the n-th response to the n-th request on a path;
-	// the last one repeats.
+	Name          string                    `json:"name"`
+	Input         map[string]any            `json:"input"`
+	HTTP          map[string]HTTPResponse   `json:"http"`
 	HTTPSequence  map[string][]HTTPResponse `json:"http_sequence,omitempty"`
 	ExpectRequest *ExpectRequest            `json:"expect_request,omitempty"`
 	ExpectCalls   map[string]int            `json:"expect_calls,omitempty"`
@@ -80,131 +63,169 @@ type HTTPExpect struct {
 	Keys []map[string]string `json:"keys,omitempty"`
 }
 
-// LoadHTTPCapability reads an HTTP vector file, rejecting unknown fields.
-func LoadHTTPCapability(t *testing.T, name string) *HTTPCapability {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(specVectorsDir, name))
+// httpAdapter calls the library for one vector against base (the vector's
+// URL on the fixture) and checks the result against v.Expect.
+type httpAdapter func(t *testing.T, label, base string, v HTTPVector)
+
+// httpAdapters is keyed by vector file name (spec/vectors/<name>.json).
+var httpAdapters = map[string]httpAdapter{
+	"jwks":       runJWKSVector,
+	"revocation": runRevocationVector,
+	"userinfo":   runUserInfoVector,
+}
+
+// TestHTTPVectors runs every HTTP vector in spec/vectors against the node-oidc
+// fixture. A file with HTTP vectors but no adapter fails, as does a case in an
+// adapted file that has no vectors.
+func TestHTTPVectors(t *testing.T) {
+	probe := &http.Client{Timeout: 5 * time.Second}
+	resp, err := probe.Get(vectorOP + "/.well-known/openid-configuration")
 	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
+		integrationtest.FailUnreachable(t, "node-oidc fixture not reachable at %s (run `make infra-up`): %v", vectorOP, err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	var c HTTPCapability
-	if err := dec.Decode(&c); err != nil {
-		t.Fatalf("decode %s: %v", name, err)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("node-oidc fixture at %s: discovery answered %d", vectorOP, resp.StatusCode)
 	}
-	if len(c.Tests) == 0 {
-		t.Fatalf("%s defines no tests", name)
+
+	run := randomToken(t)
+	files, err := filepath.Glob(filepath.Join(specVectorsDir, "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no vector files in %s: %v", specVectorsDir, err)
 	}
-	return &c
-}
-
-// recordedRequest is what the mock server received on one path.
-type recordedRequest struct {
-	method string
-	header http.Header
-	form   url.Values
-}
-
-// mockServer serves a vector's canned responses and records each request.
-type mockServer struct {
-	*httptest.Server
-	mu    sync.Mutex
-	seen  map[string]recordedRequest
-	calls map[string]int
-}
-
-// newMockServer starts a server that answers each path in v.HTTP (or
-// v.HTTPSequence) with its canned response and 404s anything else.
-func newMockServer(t *testing.T, v HTTPVector) *mockServer {
-	t.Helper()
-	m := &mockServer{seen: map[string]recordedRequest{}, calls: map[string]int{}}
-	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read request body: %v", err)
-		}
-		form, err := url.ParseQuery(string(body))
-		if err != nil {
-			t.Errorf("parse request form: %v", err)
-		}
-		m.mu.Lock()
-		m.seen[r.URL.Path] = recordedRequest{method: r.Method, header: r.Header.Clone(), form: form}
-		n := m.calls[r.URL.Path]
-		m.calls[r.URL.Path]++
-		m.mu.Unlock()
-
-		resp, ok := v.HTTP[r.URL.Path]
-		if seq := v.HTTPSequence[r.URL.Path]; len(seq) > 0 {
-			resp, ok = seq[min(n, len(seq)-1)], true
-		}
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		for k, val := range resp.Headers {
-			w.Header().Set(k, val)
-		}
-		var payload []byte
-		if resp.BodyFixture != "" {
-			raw, err := os.ReadFile(filepath.Join(fixtureRoot, resp.BodyFixture))
-			if err != nil {
-				t.Errorf("read fixture %s: %v", resp.BodyFixture, err)
+	for _, file := range files {
+		capability := strings.TrimSuffix(filepath.Base(file), ".json")
+		adapter := httpAdapters[capability]
+		for _, tc := range loadHTTPCases(t, file) {
+			if adapter != nil && tc.total == 0 {
+				t.Errorf("%s: case has no vectors", tc.id)
 			}
-			payload = []byte(strings.ReplaceAll(string(raw), fixtureHost, m.URL))
-			if len(payload) > 0 && w.Header().Get("Content-Type") == "" {
-				w.Header().Set("Content-Type", "application/json")
+			if adapter != nil {
+				for _, i := range tc.dropped {
+					t.Errorf("%s[%d]: neither an HTTP nor a pure-logic vector", tc.id, i)
+				}
+			}
+			for _, iv := range tc.vectors {
+				i, v := iv.idx, iv.v
+				label := vectorLabel(tc.id, i, v)
+				if adapter == nil {
+					t.Errorf("%s: %s.json has HTTP vectors but no adapter", label, capability)
+					continue
+				}
+				// The fixture and the other runners index the case's full
+				// vector list, so an unnamed vector keeps its original index.
+				key := v.Name
+				if key == "" {
+					key = fmt.Sprint(i)
+				}
+				base := fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
+				t.Run(tc.id+"/"+key, func(t *testing.T) {
+					defer checkRequests(t, label, base)
+					adapter(t, label, base, v)
+				})
 			}
 		}
-		w.WriteHeader(resp.Status)
-		_, _ = w.Write(payload)
-	}))
-	t.Cleanup(m.Close)
-	return m
+	}
 }
 
-// assertRequest checks the recorded request against the vector's expectation.
-func (m *mockServer) assertRequest(t *testing.T, label string, want *ExpectRequest) {
+// httpCase is one case id with its HTTP vectors. total counts every vector in
+// the case; dropped lists the indexes of vectors that are neither HTTP nor pure
+// logic (input.operation).
+type httpCase struct {
+	id      string
+	total   int
+	vectors []indexedVector
+	dropped []int
+}
+
+// indexedVector is an HTTP vector with its index in the case's vector list.
+type indexedVector struct {
+	idx int
+	v   HTTPVector
+}
+
+// loadHTTPCases returns every case in file with its HTTP vectors (those with
+// http or http_sequence), decoding each strictly. Other vectors are skipped.
+func loadHTTPCases(t *testing.T, file string) []httpCase {
 	t.Helper()
-	if want == nil {
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	var raw struct {
+		Tests []struct {
+			ID      string                       `json:"id"`
+			Vectors []map[string]json.RawMessage `json:"vectors"`
+		} `json:"tests"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("decode %s: %v", file, err)
+	}
+	if len(raw.Tests) == 0 {
+		t.Fatalf("%s defines no tests", filepath.Base(file))
+	}
+	cases := make([]httpCase, 0, len(raw.Tests))
+	for _, tc := range raw.Tests {
+		c := httpCase{id: tc.ID, total: len(tc.Vectors)}
+		for idx, fields := range tc.Vectors {
+			_, h := fields["http"]
+			_, hs := fields["http_sequence"]
+			if !h && !hs {
+				var input map[string]json.RawMessage
+				_ = json.Unmarshal(fields["input"], &input)
+				if _, logic := input["operation"]; !logic {
+					c.dropped = append(c.dropped, idx)
+				}
+				continue
+			}
+			vb, _ := json.Marshal(fields)
+			dec := json.NewDecoder(bytes.NewReader(vb))
+			dec.DisallowUnknownFields()
+			var v HTTPVector
+			if err := dec.Decode(&v); err != nil {
+				t.Fatalf("%s %s: decode vector: %v", filepath.Base(file), tc.ID, err)
+			}
+			c.vectors = append(c.vectors, indexedVector{idx: idx, v: v})
+		}
+		cases = append(cases, c)
+	}
+	return cases
+}
+
+// checkRequests fails t with each difference the fixture found between the
+// requests it received for base and the vector's expect_request/expect_calls.
+func checkRequests(t *testing.T, label, base string) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(base + "/_check")
+	if err != nil {
+		t.Errorf("%s: _check: %v", label, err)
 		return
 	}
-	m.mu.Lock()
-	got, ok := m.seen[want.Path]
-	m.mu.Unlock()
-	if !ok {
-		t.Fatalf("%s: no request to %s", label, want.Path)
+	defer func() { _ = resp.Body.Close() }()
+	var got struct {
+		OK    bool     `json:"ok"`
+		Diffs []string `json:"diffs"`
 	}
-	if got.method != want.Method {
-		t.Errorf("%s: method = %s, want %s", label, got.method, want.Method)
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Errorf("%s: decode _check: %v", label, err)
+		return
 	}
-	for k, v := range want.Headers {
-		// Content-Type may carry parameters (charset); compare the media type.
-		have := got.header.Get(k)
-		if strings.EqualFold(k, "content-type") {
-			have = strings.TrimSpace(strings.Split(have, ";")[0])
-		}
-		if have != v {
-			t.Errorf("%s: header %s = %q, want %q", label, k, have, v)
-		}
+	for _, d := range got.Diffs {
+		t.Errorf("%s: %s", label, d)
 	}
-	for k, v := range want.Form {
-		if have := got.form.Get(k); have != v {
-			t.Errorf("%s: form %s = %q, want %q", label, k, have, v)
-		}
+	if !got.OK && len(got.Diffs) == 0 {
+		t.Errorf("%s: _check not ok", label)
 	}
 }
 
-// assertCalls checks the number of requests received on each path.
-func (m *mockServer) assertCalls(t *testing.T, label string, want map[string]int) {
+func randomToken(t *testing.T) string {
 	t.Helper()
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for p, n := range want {
-		if m.calls[p] != n {
-			t.Errorf("%s: %d requests to %s, want %d", label, m.calls[p], p, n)
-		}
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("random run token: %v", err)
 	}
+	return hex.EncodeToString(b)
 }
 
 // inputString returns a string input field, or "" when absent.
