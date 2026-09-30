@@ -82,12 +82,15 @@ These capabilities carry executable vectors and a runner in **every language**:
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/spec_conformance.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/spec_conformance_id_token.rs` |
-| revocation | 5 | 7 | `go/internal/conformance/revocation_test.go` | `py/src/tests/unit/test_spec_revocation_conformance.py` | `rust/tests/spec_conformance_revocation.rs` |
-| userinfo | 7 | 9 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/unit/test_spec_userinfo_conformance.py` | `rust/tests/spec_conformance_userinfo.rs` |
-| jwks | 8 | 15 | `go/internal/conformance/jwks_test.go` | `py/src/tests/unit/test_spec_jwks_conformance.py` | `rust/tests/spec_conformance_jwks.rs` |
+| revocation | 5 | 7 | `go/internal/conformance/revocation_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_revocation.rs` |
+| userinfo | 7 | 9 | `go/internal/conformance/userinfo_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_userinfo.rs` |
+| jwks | 8 | 15 | `go/internal/conformance/jwks_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_conformance_jwks.rs` |
 
-Each runner runs in its language's ordinary unit suite and fails if any case in
-the file is not executed, or runs fewer vectors than the spec carries for it.
+Token vector runners run in their language's ordinary unit suite. HTTP vector
+runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
+in that language's node-oidc integration target (Python:
+`make test-integration-node-oidc`). Each runner fails if any case in the file is
+not executed, or runs fewer vectors than the spec carries for it.
 A case a language does not meet yet is marked in that language's runner as an
 expected failure (Python: `xfail(strict=True)`) with a linked issue, so the
 suite fails once it starts passing.
@@ -98,9 +101,11 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
 
 - `input`: the call's arguments (capability-specific).
 - `http`: canned responses keyed by request path: `status`, optional `headers`
-  and optional `body_fixture` (relative to `test-fixtures/`). The runner serves them
-  from a local mock server and replaces the literal `https://server.example.com`
-  in a fixture with that server's base URL.
+  and optional `body_fixture` (relative to `test-fixtures/`). The node-oidc
+  fixture serves them under a per-vector base URL
+  (`/v/{run}/{capability}/{case_id}/{vector}`) and replaces the literal
+  `https://server.example.com` in a fixture with that base URL; see
+  [`../infra/README.md`](../infra/README.md#spec-vector-routes).
 - `http_sequence` (optional): a list of responses per path; the n-th request to
   the path gets the n-th response and the last one repeats.
 - `expect_request`: the request the client must send (`path`, `method`, and
@@ -112,6 +117,9 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   error response must carry no challenge) to a reject, and
   `claims` (typed standard claims) and `custom_claims` (claim-map entries) to an
   accept.
+
+The fixture checks `expect_request` and `expect_calls` itself (`{base}/_check`),
+so a runner only calls the client and maps its result to `expect`.
 
 The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
