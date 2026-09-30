@@ -10,7 +10,12 @@ import math
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from ..exceptions import ConfigurationException, DiscoveryException
+from ..exceptions import (
+    ConfigurationException,
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryMissingFieldsError,
+)
 from .discovery_policy import DiscoveryPolicy, is_loopback
 
 
@@ -38,7 +43,7 @@ def validate_issuer(issuer: str, *, require_https: bool = True) -> None:
     parsed = urlparse(issuer)
     if require_https:
         if parsed.scheme != "https":
-            raise ConfigurationException("Issuer must use HTTPS scheme")
+            raise DiscoveryHTTPSRequiredError("Issuer must use HTTPS scheme")
     elif parsed.scheme not in ("http", "https"):
         raise ConfigurationException("Issuer must use HTTP or HTTPS scheme")
 
@@ -68,7 +73,7 @@ def validate_https_url(url: str, parameter_name: str) -> None:
         )
 
     if parsed.scheme != "https":
-        raise ConfigurationException(
+        raise DiscoveryHTTPSRequiredError(
             f"{parameter_name} must use HTTPS scheme",
         )
 
@@ -89,8 +94,9 @@ def validate_required_parameters(response_data: dict) -> None:
     ]
 
     if missing_params:
-        raise DiscoveryException(
+        raise DiscoveryMissingFieldsError(
             f"Missing required parameters: {', '.join(missing_params)}",
+            tuple(missing_params),
         )
 
 
@@ -276,7 +282,7 @@ def validate_https_url_with_policy(
     ):
         return
 
-    raise ConfigurationException(
+    raise DiscoveryHTTPSRequiredError(
         f"{parameter_name} must use HTTPS (policy: require_https=True)",
     )
 

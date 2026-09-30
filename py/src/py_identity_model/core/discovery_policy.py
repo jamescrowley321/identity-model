@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import ipaddress
 from urllib.parse import urlparse
 
-from ..exceptions import ConfigurationException
+from ..exceptions import ConfigurationException, DiscoveryHTTPSRequiredError
 
 
 _WELL_KNOWN_PATH = "/.well-known/openid-configuration"
@@ -220,7 +220,7 @@ def validate_url_scheme(
         if is_loopback(host):
             return
 
-    raise ConfigurationException(
+    raise DiscoveryHTTPSRequiredError(
         f"HTTPS is required by discovery policy. "
         f"Got: {url}. Set require_https=False or use a loopback address."
     )
