@@ -89,7 +89,8 @@ the real OP — see
   every recorded request to `expect_request.path` and preserves the records
   and sequence position, so repeated checks return the same result. An expected
   `""` header or form value requires the field to be absent; present-but-empty
-  fails.
+  fails. Request positions are reserved on arrival, so concurrent response
+  sequences follow arrival order. Checks fail while any request body is pending.
 - **POST** `.../_reset` clears this vector's records, fixture errors and
   sequence position. Use it after a completed run to release capacity, or
   before intentionally restarting the vector. GET returns 405.

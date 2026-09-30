@@ -8,6 +8,8 @@
 // vector.http_sequence[path] for the n-th request (the last one repeats).
 // _check compares what was received against expect_request and expect_calls,
 // without clearing records or rewinding sequences. POST _reset does both.
+// Request positions are reserved on arrival; _check fails while bodies remain
+// pending, even when the received call count already matches.
 //
 // {vector} is the vector's name, or its index when unnamed. {run} must be a
 // unique token of [A-Za-z0-9_.-] per suite invocation, including concurrent
@@ -119,6 +121,10 @@ function checkRequest(want, got, label) {
 // expect_request.
 function check(vector, seen) {
   const diffs = [];
+  for (const [p, records] of seen) {
+    const pending = records.filter((req) => req.pending).length;
+    if (pending) diffs.push(`requests to ${p}: ${pending} body pending`);
+  }
   for (const [p, count] of Object.entries(vector.expect_calls || {})) {
     const have = seen.get(p)?.length ?? 0;
     if (have !== count) diffs.push(`requests to ${p} = ${have}, want ${count}`);
@@ -128,6 +134,7 @@ function check(vector, seen) {
   const got = seen.get(want.path) || [];
   if (got.length === 0) return [...diffs, `no request to ${want.path}`];
   got.forEach((req, i) => {
+    if (req.pending) return;
     diffs.push(
       ...checkRequest(want, req, got.length > 1 ? `request ${i + 1}: ` : ""),
     );
@@ -219,23 +226,28 @@ export function vectorRoutes({
     }
     // Reserve a slot before awaiting the body, including concurrent requests.
     run.count += 1;
+    const seen = run.seen;
+    if (!seen.has(subPath)) seen.set(subPath, []);
+    const record = {
+      method: ctx.method,
+      headers: { ...ctx.headers },
+      form: new URLSearchParams(),
+      pending: true,
+    };
+    seen.get(subPath).push(record);
+    const count = seen.get(subPath).length;
     let body;
     try {
       body = await readBody(ctx.req, maxBodyBytes);
     } catch (err) {
+      record.pending = false;
       run.error ||= err.message;
       ctx.status = err.status ?? 400;
       ctx.body = { error: err.message };
       return;
     }
-    const seen = run.seen;
-    if (!seen.has(subPath)) seen.set(subPath, []);
-    seen.get(subPath).push({
-      method: ctx.method,
-      headers: { ...ctx.headers },
-      form: new URLSearchParams(body),
-    });
-    const count = seen.get(subPath).length;
+    record.form = new URLSearchParams(body);
+    record.pending = false;
 
     const sequence = vector.http_sequence?.[subPath];
     const resp = sequence

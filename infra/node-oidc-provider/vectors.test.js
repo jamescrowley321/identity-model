@@ -52,8 +52,93 @@ async function start(t, { vector = basic, spec, ...limits } = {}) {
       ...options,
     });
   const check = async () => (await request("/_check")).json();
-  return { base, issuer, request, check, specDir };
+  return { base, issuer, request, check, specDir, server };
 }
+
+async function beginRequest(t, server, url) {
+  const arrived = once(server, "request");
+  const req = http.request(url, { method: "POST" });
+  const response = once(req, "response");
+  response.catch(() => {}); // Cleanup can abort a request after a failed assertion.
+  t.after(() => req.destroy());
+  req.write("token=slow");
+  await arrived;
+  return { req, response };
+}
+
+async function finishRequest(pending) {
+  pending.req.end();
+  const [response] = await pending.response;
+  const chunks = [];
+  for await (const chunk of response) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+test("concurrent responses follow request arrival rather than body completion", async (t) => {
+  const { base, server, request, check } = await start(t, {
+    vector: {
+      name: "one",
+      http_sequence: { "/token": [response(), response("second.json")] },
+      expect_calls: { "/token": 2 },
+    },
+  });
+  const slow = await beginRequest(t, server, base + "/token");
+  const fast = await request("/token", { method: "POST", body: "token=fast" });
+  assert.deepEqual(await fast.json(), { step: 2 });
+  assert.deepEqual(await finishRequest(slow), { step: 1 });
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+});
+
+test("pending bodies fail checks with zero-call expectations", async (t) => {
+  const { base, server, check } = await start(t, {
+    vector: { ...basic, expect_calls: { "/token": 0 } },
+  });
+  const slow = await beginRequest(t, server, base + "/token");
+  assert.equal((await check()).ok, false);
+  await finishRequest(slow);
+});
+
+test("matching call counts cannot pass until request bodies finish", async (t) => {
+  const { base, server, check } = await start(t, {
+    vector: { ...basic, expect_calls: { "/token": 1 } },
+  });
+  const slow = await beginRequest(t, server, base + "/token");
+  assert.equal((await check()).ok, false);
+  await finishRequest(slow);
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+});
+
+test("a pending extra request cannot pass an otherwise matching check", async (t) => {
+  const { base, server, request, check } = await start(t, {
+    vector: { ...basic, expect_calls: { "/token": 1 } },
+  });
+  await request("/token");
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+  const slow = await beginRequest(t, server, base + "/token");
+  assert.equal((await check()).ok, false);
+  await finishRequest(slow);
+});
+
+test("body-limit errors remain checkable with form expectations", async (t) => {
+  const { request } = await start(t, {
+    maxBodyBytes: 4,
+    vector: {
+      ...basic,
+      expect_request: {
+        path: "/token",
+        method: "POST",
+        form: { token: "yes" },
+      },
+    },
+  });
+  assert.equal(
+    (await request("/token", { method: "POST", body: "token=too-big" })).status,
+    413,
+  );
+  const checked = await request("/_check");
+  assert.equal(checked.status, 200);
+  assert.equal((await checked.json()).ok, false);
+});
 
 test("checks are repeatable and do not rewind a response sequence", async (t) => {
   const { request, check } = await start(t, {
