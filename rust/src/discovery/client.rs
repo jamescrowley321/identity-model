@@ -5,7 +5,9 @@ use std::time::Duration;
 use reqwest::Client as HttpClient;
 use reqwest::header::ACCEPT;
 
-use crate::{IdentityError, Result};
+use crate::IdentityError;
+
+use super::DiscoveryError;
 
 use super::cache::Cache;
 use super::metadata::ProviderMetadata;
@@ -85,17 +87,22 @@ impl DiscoveryClient {
     ///
     /// # Errors
     ///
-    /// - [`IdentityError::Validation`] — non-HTTPS issuer (DISC-010), a missing
-    ///   required field (DISC-008), or an issuer that does not match the
-    ///   document (DISC-003).
-    /// - [`IdentityError::Http`] — a transport failure or a non-2xx response
-    ///   (DISC-006).
-    /// - [`IdentityError::Deserialization`] — a body that is not valid JSON
+    /// - [`DiscoveryError::HttpsRequired`] — a non-HTTPS issuer (DISC-010).
+    /// - [`DiscoveryError::UnexpectedStatus`] — a non-2xx response (DISC-006).
+    /// - [`DiscoveryError::InvalidJson`] — a body that is not valid JSON
     ///   metadata (DISC-007).
-    pub async fn discover(&self, issuer_url: &str) -> Result<ProviderMetadata> {
+    /// - [`DiscoveryError::MissingFields`] — a missing required field (DISC-008).
+    /// - [`DiscoveryError::IssuerMismatch`] — the document's issuer does not
+    ///   match the requested one (DISC-003).
+    /// - [`DiscoveryError::Other`] — an empty issuer URL, a transport failure,
+    ///   or an oversized body.
+    pub async fn discover(
+        &self,
+        issuer_url: &str,
+    ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
         let issuer = issuer_url.trim().trim_end_matches('/').to_string();
         if issuer.is_empty() {
-            return Err(IdentityError::Validation("issuer URL is empty".to_string()));
+            return Err(IdentityError::Validation("issuer URL is empty".to_string()).into());
         }
 
         // DISC-004: a fresh cache entry is served without any HTTP request.
@@ -112,9 +119,7 @@ impl DiscoveryClient {
         let is_https = scheme.starts_with("https://");
         let scheme_ok = is_https || (self.allow_http && scheme.starts_with("http://"));
         if !scheme_ok {
-            return Err(IdentityError::Validation(format!(
-                "issuer {issuer:?} must use https (enable allow_http for development)"
-            )));
+            return Err(DiscoveryError::HttpsRequired { issuer });
         }
 
         let metadata = self.fetch_and_validate(&issuer).await?;
@@ -126,7 +131,10 @@ impl DiscoveryClient {
 
     /// Performs the HTTP request, parses the body, and validates the document.
     /// Contains no caching logic.
-    async fn fetch_and_validate(&self, issuer: &str) -> Result<ProviderMetadata> {
+    async fn fetch_and_validate(
+        &self,
+        issuer: &str,
+    ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
         let endpoint = format!("{issuer}{WELL_KNOWN_PATH}");
 
         let mut response = self
@@ -141,10 +149,10 @@ impl DiscoveryClient {
         // DISC-006: a non-2xx response is a transport error carrying the status.
         let status = response.status();
         if !status.is_success() {
-            return Err(IdentityError::Http(format!(
-                "unexpected HTTP status {} from {endpoint}",
-                status.as_u16()
-            )));
+            return Err(DiscoveryError::UnexpectedStatus {
+                status: status.as_u16(),
+                endpoint,
+            });
         }
 
         // Read the body in chunks so an oversized response is rejected before it
@@ -158,33 +166,36 @@ impl DiscoveryClient {
             if body.len() + chunk.len() > MAX_BODY_BYTES {
                 return Err(IdentityError::Deserialization(format!(
                     "discovery document from {endpoint} exceeds {MAX_BODY_BYTES} bytes"
-                )));
+                ))
+                .into());
             }
             body.extend_from_slice(&chunk);
         }
 
-        // DISC-007: a non-JSON body is a deserialization error.
-        let metadata: ProviderMetadata = serde_json::from_slice(&body).map_err(|e| {
-            IdentityError::Deserialization(format!("parse discovery document from {endpoint}: {e}"))
-        })?;
+        // DISC-007: a non-JSON body is rejected.
+        let metadata: ProviderMetadata =
+            serde_json::from_slice(&body).map_err(|e| DiscoveryError::InvalidJson {
+                endpoint: endpoint.clone(),
+                reason: e.to_string(),
+            })?;
 
         // DISC-002 / DISC-008: every required field must be present.
         let missing = metadata.missing_required_fields();
         if !missing.is_empty() {
-            return Err(IdentityError::Validation(format!(
-                "discovery document from {endpoint} is missing required field(s): {}",
-                missing.join(", ")
-            )));
+            return Err(DiscoveryError::MissingFields {
+                fields: missing.into_iter().map(str::to_owned).collect(),
+                endpoint,
+            });
         }
 
         // DISC-003: the document's issuer must match the requested issuer.
         // Trailing slashes are trimmed on both sides so they normalise
         // symmetrically (a trailing-slash-only difference is not a mismatch).
         if metadata.issuer.trim_end_matches('/') != issuer {
-            return Err(IdentityError::Validation(format!(
-                "issuer mismatch: requested {issuer:?} but document declares {:?}",
-                metadata.issuer
-            )));
+            return Err(DiscoveryError::IssuerMismatch {
+                requested: issuer.to_owned(),
+                actual: metadata.issuer,
+            });
         }
 
         Ok(metadata)
@@ -367,8 +378,11 @@ mod tests {
             .expect_err("issuer mismatch must error");
 
         match err {
-            IdentityError::Validation(msg) => assert!(msg.contains("issuer mismatch"), "{msg}"),
-            other => panic!("expected Validation, got {other:?}"),
+            DiscoveryError::IssuerMismatch { requested, actual } => {
+                assert_eq!(requested, server.uri());
+                assert_eq!(actual, "https://attacker.example.com");
+            }
+            other => panic!("expected IssuerMismatch, got {other:?}"),
         }
     }
 
@@ -417,7 +431,7 @@ mod tests {
         assert_eq!(received.len(), 2, "expired entry must be refetched");
     }
 
-    // DISC-006: a non-2xx response is an HTTP error carrying the status.
+    // DISC-006: a non-2xx response is rejected with its status.
     #[tokio::test]
     async fn maps_http_status_errors() {
         for status in [404u16, 500] {
@@ -431,15 +445,13 @@ mod tests {
                 .expect_err("non-2xx must error");
 
             match err {
-                IdentityError::Http(msg) => {
-                    assert!(msg.contains(&status.to_string()), "{msg}")
-                }
-                other => panic!("expected Http for {status}, got {other:?}"),
+                DiscoveryError::UnexpectedStatus { status: got, .. } => assert_eq!(got, status),
+                other => panic!("expected UnexpectedStatus for {status}, got {other:?}"),
             }
         }
     }
 
-    // DISC-007: a non-JSON body is a deserialization error.
+    // DISC-007: a non-JSON body is rejected.
     #[tokio::test]
     async fn maps_invalid_json() {
         let server = MockServer::start().await;
@@ -456,13 +468,12 @@ mod tests {
             .expect_err("invalid JSON must error");
 
         assert!(
-            matches!(err, IdentityError::Deserialization(_)),
-            "expected Deserialization, got {err:?}"
+            matches!(err, DiscoveryError::InvalidJson { .. }),
+            "expected InvalidJson, got {err:?}"
         );
     }
 
-    // DISC-008: a document missing a required field is a validation error that
-    // names the field.
+    // DISC-008: a document missing a required field is rejected with that field.
     #[tokio::test]
     async fn reports_missing_required_field() {
         let server = MockServer::start().await;
@@ -487,8 +498,8 @@ mod tests {
             .expect_err("missing field must error");
 
         match err {
-            IdentityError::Validation(msg) => assert!(msg.contains("jwks_uri"), "{msg}"),
-            other => panic!("expected Validation, got {other:?}"),
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(fields, ["jwks_uri"]),
+            other => panic!("expected MissingFields, got {other:?}"),
         }
     }
 
@@ -526,10 +537,10 @@ mod tests {
             .await
             .expect_err("http issuer must be rejected");
 
-        match err {
-            IdentityError::Validation(msg) => assert!(msg.contains("https"), "{msg}"),
-            other => panic!("expected Validation, got {other:?}"),
-        }
+        assert!(
+            matches!(err, DiscoveryError::HttpsRequired { .. }),
+            "expected HttpsRequired, got {err:?}"
+        );
     }
 
     // DISC-003: a trailing-slash-only difference between the requested issuer
