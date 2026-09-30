@@ -14,8 +14,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rs_identity_model::{
-    DiscoveryClient, IdentityError, JsonWebKey, JwksClient, ProviderMetadata, RevocationClient,
-    UserInfoClient, UserInfoResponse,
+    DiscoveryClient, DiscoveryError, IdentityError, JsonWebKey, JwksClient, ProviderMetadata,
+    RevocationClient, UserInfoClient, UserInfoResponse,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -223,7 +223,7 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
 // --- discovery ----------------------------------------------------------------
 
 /// One `DiscoveryClient`, called at each `input.calls_at_seconds` offset.
-async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, IdentityError> {
+async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, DiscoveryError> {
     let require_https = v.input.get("require_https").and_then(Value::as_bool) == Some(true);
     let mut builder = DiscoveryClient::builder().allow_http(!require_https);
     if let Some(ttl) = v.input.get("cache_ttl_seconds").and_then(Value::as_u64) {
@@ -235,11 +235,13 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
         None => vec![0],
     };
     let start = tokio::time::Instant::now();
-    let mut result = Err(IdentityError::Validation("no call made".into()));
+    let mut result = Err(DiscoveryError::Other(IdentityError::Validation(
+        "no call made".into(),
+    )));
     for at in offsets {
         let offset = SPEC_SECOND * u32::try_from(at).expect("offset fits u32");
         tokio::time::sleep_until(start + offset).await;
-        result = client.discover(base).await;
+        result = client.discover_detailed(base).await;
         if result.is_err() {
             break;
         }
@@ -251,7 +253,7 @@ fn discovery_expect(
     label: &str,
     base: &str,
     expect: &Expect,
-    result: Result<ProviderMetadata, IdentityError>,
+    result: Result<ProviderMetadata, DiscoveryError>,
 ) {
     match expect.outcome.as_str() {
         "accept" => {
@@ -267,21 +269,15 @@ fn discovery_expect(
             }
         }
         "reject" => match (expect.error.as_str(), result) {
-            ("issuer_mismatch", Err(IdentityError::Validation(msg))) => {
-                assert!(msg.contains("issuer mismatch"), "{label}: {msg}");
+            ("issuer_mismatch", Err(DiscoveryError::IssuerMismatch { .. })) => {}
+            ("http_status", Err(DiscoveryError::HttpStatus { status, .. })) => {
+                assert_eq!(status, expect.status, "{label}: HTTP status");
             }
-            ("http_status", Err(IdentityError::Http(msg))) => {
-                let status = format!("unexpected HTTP status {} ", expect.status);
-                assert!(msg.contains(&status), "{label}: {msg}");
+            ("parse", Err(DiscoveryError::Other(IdentityError::Deserialization(_)))) => {}
+            ("missing_fields", Err(DiscoveryError::MissingFields { fields, .. })) => {
+                assert_eq!(fields, expect.fields, "{label}: missing fields");
             }
-            ("parse", Err(IdentityError::Deserialization(_))) => {}
-            ("missing_fields", Err(IdentityError::Validation(msg))) => {
-                let fields = format!("missing required field(s): {}", expect.fields.join(", "));
-                assert!(msg.ends_with(&fields), "{label}: {msg}");
-            }
-            ("https_required", Err(IdentityError::Validation(msg))) => {
-                assert!(msg.contains("must use https"), "{label}: {msg}");
-            }
+            ("https_required", Err(DiscoveryError::HttpsRequired { .. })) => {}
             (code, other) => panic!("{label}: expected {code}, got {other:?}"),
         },
         other => panic!("{label}: unknown expected outcome {other:?}"),
@@ -456,4 +452,132 @@ async fn spec_http_vectors() {
         }
     }
     assert!(executed > 0, "no HTTP vectors executed");
+}
+
+#[test]
+fn discovery_diagnostics_cannot_substitute_for_failure_details() {
+    let cases = [
+        (
+            serde_json::json!({"outcome": "reject", "error": "http_status", "status": 500}),
+            IdentityError::Http(
+                "unexpected HTTP status 404 from endpoint with unexpected HTTP status 500 injected"
+                    .into(),
+            ),
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "issuer_mismatch"}),
+            IdentityError::Validation("unrelated failure: issuer mismatch".into()),
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "https_required"}),
+            IdentityError::Validation("unrelated failure: must use https".into()),
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "missing_fields", "fields": ["jwks_uri"]}),
+            IdentityError::Validation(
+                "unrelated failure: missing required field(s): jwks_uri".into(),
+            ),
+        ),
+    ];
+    for (expected, error) in cases {
+        let expected: Expect = serde_json::from_value(expected).unwrap();
+        assert!(
+            std::panic::catch_unwind(|| discovery_expect(
+                "regression",
+                "http://localhost",
+                &expected,
+                Err(DiscoveryError::Other(error))
+            ))
+            .is_err(),
+            "diagnostic text passed as {}",
+            expected.error
+        );
+    }
+}
+
+#[test]
+fn discovery_structured_details_accept_arbitrary_diagnostics() {
+    let cases = [
+        (
+            serde_json::json!({"outcome": "reject", "error": "http_status", "status": 404}),
+            DiscoveryError::HttpStatus {
+                status: 404,
+                endpoint: "changed diagnostic context with status 500".into(),
+            },
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "issuer_mismatch"}),
+            DiscoveryError::IssuerMismatch {
+                requested: "https://a.example".into(),
+                actual: "https://b.example".into(),
+            },
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "https_required"}),
+            DiscoveryError::HttpsRequired {
+                issuer: "http://localhost".into(),
+            },
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "missing_fields", "fields": ["jwks_uri"]}),
+            DiscoveryError::MissingFields {
+                fields: vec!["jwks_uri".into()],
+                endpoint: "changed diagnostic context".into(),
+            },
+        ),
+        (
+            serde_json::json!({"outcome": "reject", "error": "parse"}),
+            DiscoveryError::Other(IdentityError::Deserialization(
+                "entirely different prose".into(),
+            )),
+        ),
+    ];
+    for (expected, error) in cases {
+        let expected = serde_json::from_value(expected).unwrap();
+        discovery_expect("regression", "http://localhost", &expected, Err(error));
+    }
+}
+
+#[test]
+fn discovery_checks_exact_status_and_fields() {
+    let status: Expect = serde_json::from_value(
+        serde_json::json!({"outcome": "reject", "error": "http_status", "status": 500}),
+    )
+    .unwrap();
+    let error = DiscoveryError::HttpStatus {
+        status: 404,
+        endpoint: "unexpected HTTP status 500 ".into(),
+    };
+    assert!(
+        std::panic::catch_unwind(|| discovery_expect(
+            "regression",
+            "http://localhost",
+            &status,
+            Err(error)
+        ))
+        .is_err()
+    );
+    let fields: Expect = serde_json::from_value(
+        serde_json::json!({"outcome": "reject", "error": "missing_fields", "fields": ["jwks_uri"]}),
+    )
+    .unwrap();
+    for observed in [
+        vec![],
+        vec!["issuer".into()],
+        vec!["jwks_uri".into(), "token_endpoint".into()],
+    ] {
+        let error = DiscoveryError::MissingFields {
+            fields: observed,
+            endpoint: "missing required field(s): jwks_uri".into(),
+        };
+        assert!(
+            std::panic::catch_unwind(|| discovery_expect(
+                "regression",
+                "http://localhost",
+                &fields,
+                Err(error)
+            ))
+            .is_err()
+        );
+    }
 }

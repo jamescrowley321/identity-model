@@ -15,7 +15,7 @@ import base64
 from collections.abc import Callable
 import json
 from pathlib import Path
-import time
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 import uuid
 
@@ -153,21 +153,12 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
 
 # --- discovery ----------------------------------------------------------------
 #
-# Single calls go through ``get_discovery_document``. Cache vectors go through
-# the TTL cache token validation uses, with the cache clock replaced by one the
-# vector drives. Errors are messages, so a reject is asserted by the text that
-# names its canonical error.
-
-#: The text each canonical reject error puts in py-identity-model's message.
-_DISCO_ERROR_TEXT = {
-    "issuer_mismatch": "issuer mismatch",
-    "http_status": "status code: {status}",
-    "parse": "Invalid JSON response",
-    "https_required": "HTTPS is required",
-}
-
-#: Required fields py-identity-model does not check yet (#771).
-_UNCHECKED_FIELDS = {"token_endpoint", "authorization_endpoint"}
+# The public fetch API is uncached. TTL vectors therefore use the private
+# _get_disco_response path used by token validation; misses still call the public
+# API and send real HTTP requests. Only the cache modules' local time references
+# are replaced, using one clock for both insertion and expiry. The stdlib clock
+# and HTTP timing remain real. Rejections compare library-produced structured
+# error codes, exact HTTP statuses, and exact missing-field sets.
 
 
 def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
@@ -187,8 +178,10 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("DISCO_CACHE_TTL", str(inp["cache_ttl_seconds"]))
             jwks_cache._reset_env_for_testing()
-            now = [time.monotonic()]
-            mp.setattr(time, "monotonic", lambda: now[0])
+            now = [0.0]
+            cache_clock = SimpleNamespace(monotonic=lambda: now[0])
+            mp.setattr(token_validation, "time", cache_clock)
+            mp.setattr(jwks_cache, "time", cache_clock)
             token_validation.clear_discovery_cache()
             start = now[0]
             for at in inp["calls_at_seconds"]:
@@ -213,18 +206,31 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
         for name, value in want.items():
             assert getattr(response, name) == value, f"{case_id}: {name}"
         return
-    if response.is_successful and expect["error"] == "issuer_mismatch":
+    if (
+        case_id == "DISC-003"
+        and expect["error"] == "issuer_mismatch"
+        and response.is_successful
+        and response.issuer == "https://attacker.example.com"
+    ):
         raise KnownGap(f"{case_id}: issuer mismatch accepted (#574)")
     assert not response.is_successful, f"{case_id}: expected reject, got accept"
-    error = response.error or ""
+    assert response.error_code == expect["error"], (
+        f"{case_id}: expected {expect['error']}, got {response.error_code}: {response.error}"
+    )
+    if expect["error"] == "http_status":
+        assert response.status_code == expect["status"], f"{case_id}: HTTP status"
     if expect["error"] == "missing_fields":
-        unreported = {f for f in expect["fields"] if f not in error}
-        if unreported and unreported <= _UNCHECKED_FIELDS:
-            raise KnownGap(f"{case_id}: {sorted(unreported)} not required (#771)")
-        assert not unreported, f"{case_id}: {sorted(unreported)} not in {error!r}"
-        return
-    text = _DISCO_ERROR_TEXT[expect["error"]].format(status=expect.get("status"))
-    assert text in error, f"{case_id}: {text!r} not in {error!r}"
+        observed = set(response.missing_fields)
+        expected = set(expect["fields"])
+        if (
+            case_id == "DISC-008"
+            and expected == {"token_endpoint", "subject_types_supported"}
+            and observed == {"subject_types_supported"}
+        ):
+            raise KnownGap(f"{case_id}: token_endpoint not required (#771)")
+        assert observed == expected, (
+            f"{case_id}: missing fields {sorted(observed)}, expected {sorted(expected)}"
+        )
 
 
 # --- jwks ---------------------------------------------------------------------
