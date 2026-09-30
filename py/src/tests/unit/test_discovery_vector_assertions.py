@@ -4,7 +4,6 @@ from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
-from pathlib import Path
 import threading
 import time
 
@@ -17,6 +16,7 @@ from tests.spec_vectors.test_spec_http_vectors import (
     KnownGap,
     _discovery_call,
     _discovery_expect,
+    _find_repo_root,
 )
 
 
@@ -24,9 +24,7 @@ from tests.spec_vectors.test_spec_http_vectors import (
 def discovery_server():
     """A real HTTP endpoint; only its response and request count are controlled."""
     document = json.loads(
-        (
-            Path(__file__).parents[4] / "spec/test-fixtures/discovery/valid.json"
-        ).read_text()
+        (_find_repo_root() / "spec/test-fixtures/discovery/valid.json").read_text()
     )
     state = {"status": 200, "body": None, "calls": Counter(), "clocks": []}
 
