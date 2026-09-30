@@ -90,6 +90,10 @@ INFRA_COMPOSE := docker compose -f infra/docker-compose.yml
 # leave out the tests that need one. Ory and Descope run everything.
 LOCAL_FIXTURE_TESTS := -m "integration and not expired_token"
 
+.PHONY: test-infra-vectors
+test-infra-vectors: ## Test the shared canned HTTP vector routes (Node 22+)
+	cd infra/node-oidc-provider && npm ci && npm test
+
 .PHONY: infra-up
 infra-up: ## Start the Go/Rust default provider pair (node-oidc :9010 + IdentityServer :9001)
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider identityserver

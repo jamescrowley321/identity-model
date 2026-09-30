@@ -177,6 +177,9 @@ jobs:
       - name: Set up Python + uv
         uses: ./.github/actions/setup-python-uv
 
+      - name: Test spec vector routes
+        run: make test-infra-vectors
+
       - name: Integration Tests (node-oidc-provider)
         run: make test-integration-node-oidc
 

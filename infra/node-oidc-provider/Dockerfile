@@ -7,7 +7,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # Copy application code
-COPY provider.js .
+COPY provider.js vectors.js ./
+
+# Spec vectors + fixtures for the /v/ routes (compose additional_contexts).
+COPY --from=spec vectors /spec/vectors
+COPY --from=spec test-fixtures /spec/test-fixtures
 
 # Run as non-root user (built-in node user in alpine image)
 USER node
