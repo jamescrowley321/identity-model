@@ -21,6 +21,7 @@ from typing import Any, NamedTuple
 import uuid
 
 import httpx
+import jwt
 import pytest
 
 from py_identity_model import (
@@ -57,6 +58,8 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
 )
 from py_identity_model.sync.userinfo import UserInfoRequest, get_userinfo
+
+from ..dpop_proof_helpers import assert_dpop_proof, dpop_fixture_key, proof_jti
 
 
 VECTOR_OP = "http://localhost:9010"
@@ -381,6 +384,78 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
         )
 
 
+# --- dpop ---------------------------------------------------------------------
+#
+# The HTTP flows: the token-request proof, the use_dpop_nonce retry and the
+# resource-request proof. Each send's proof is read back from the fixture's
+# _requests and verified against the key-pair fixture. The pure-logic DPoP
+# vectors run in src/tests/unit/test_spec_logic_vectors.py.
+
+
+def _recorded(base: str, path: str) -> list[dict]:
+    response = httpx.get(base + "/_requests", timeout=5)
+    assert response.is_success, response.text
+    return response.json()["requests"].get(path, [])
+
+
+def _dpop_call(base: str, inp: dict) -> tuple:
+    key = dpop_fixture_key(inp["key"])
+    if inp["operation"] == "resource_request":
+        path = "/userinfo"
+        request = UserInfoRequest(
+            address=base + path, token=inp["access_token"], dpop_key=key[0]
+        )
+
+        def send() -> bool:
+            return get_userinfo(request).is_successful
+
+    else:
+        path = "/token"
+        token_request = AuthorizationCodeTokenRequest(
+            address=base + path,
+            client_id="cid",
+            code=inp["code"],
+            redirect_uri=inp["redirect_uri"],
+            client_secret="secret",
+            dpop_key=key[0],
+        )
+
+        def send() -> bool:
+            return request_authorization_code_token(token_request).is_successful
+
+    proofs = []
+    for _ in range(inp.get("requests", 1)):
+        assert send(), f"{inp['operation']} failed"
+        proofs.append(_recorded(base, path)[-1]["headers"]["dpop"])
+    jtis = [proof_jti(r["headers"]["dpop"]) for r in _recorded(base, path)]
+    return base, key, proofs, jtis
+
+
+def _dpop_expect(case_id: str, expect: dict, result: tuple) -> None:
+    base, key, proofs, jtis = result
+    assert expect["outcome"] == "accept", case_id
+    want = json.loads(json.dumps(expect["result"]).replace(_FIXTURE_HOST, base))
+    # Check every send, including nonce retries, before reporting a known gap.
+    assert jtis, f"{case_id}: no requests recorded"
+    assert len(set(jtis)) == len(jtis), f"{case_id}: jti reused across {jtis}"
+    missing_nonce = False
+    for n, proof in enumerate(proofs):
+        proof_want = want
+        if (
+            n > 0
+            and "nonce" in want["payload"]
+            and "nonce" not in jwt.decode(proof, options={"verify_signature": False})
+        ):
+            missing_nonce = True
+            proof_want = {
+                "header": want["header"],
+                "payload": {k: v for k, v in want["payload"].items() if k != "nonce"},
+            }
+        assert_dpop_proof(case_id, proof, key, proof_want)
+    if missing_nonce:
+        raise KnownGap(f"{case_id}: the DPoP-Nonce is not cached (#784)")
+
+
 # --- introspection ------------------------------------------------------------
 
 
@@ -517,6 +592,7 @@ ADAPTERS: dict[str, Adapter] = {
     "authorization-code": Adapter(_authorization_code_call, _authorization_code_expect),
     "client-credentials": Adapter(_client_credentials_call, _client_credentials_expect),
     "discovery": Adapter(_discovery_call, _discovery_expect),
+    "dpop": Adapter(_dpop_call, _dpop_expect),
     "introspection": Adapter(_introspection_call, _introspection_expect),
     "revocation": Adapter(_revocation_call, _revocation_expect),
     "token-exchange": Adapter(_token_exchange_call, _token_exchange_expect),
@@ -526,6 +602,7 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "DPOP-004-nonce-cached": "the DPoP-Nonce is not cached for later requests (#784)",
     "ACG-001-public-client": "no typed token members (#783)",
     "ACG-001-confidential-client-basic": "no typed token members (#783)",
     "ACG-004-code-verifier": "no typed token members (#783)",

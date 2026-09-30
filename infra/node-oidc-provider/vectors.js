@@ -3,11 +3,14 @@
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/{path}  -> canned response
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_check  -> request check
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_reset  -> POST to reset
+//   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_requests -> recorded requests
 //
 // The canned response is vector.http[path], or the n-th entry of
 // vector.http_sequence[path] for the n-th request (the last one repeats).
 // _check compares what was received against expect_request and expect_calls,
 // without clearing records or rewinding sequences. POST _reset does both.
+// _requests reads recorded methods, headers and forms without changing counts
+// or sequence positions, for runners inspecting generated values such as DPoP.
 // Request positions are reserved on arrival; _check fails while bodies remain
 // pending, even when the received call count already matches.
 //
@@ -236,6 +239,21 @@ export function vectorRoutes({
       ctx.body = {
         error: `vector run limit ${maxRuns} reached; reset completed runs`,
       };
+      return;
+    }
+    if (subPath === "/_requests") {
+      const out = {};
+      if (run) {
+        run.updatedAt = now;
+        for (const [p, list] of run.seen) {
+          out[p] = list.map((r) => ({
+            method: r.method,
+            headers: r.headers,
+            form: Object.fromEntries(r.form),
+          }));
+        }
+      }
+      ctx.body = { requests: out };
       return;
     }
     if (subPath === "/_check") {

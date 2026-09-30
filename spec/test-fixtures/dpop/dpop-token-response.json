@@ -1,0 +1,5 @@
+{
+  "access_token": "example-dpop-bound-access-token-value",
+  "token_type": "DPoP",
+  "expires_in": 3600
+}

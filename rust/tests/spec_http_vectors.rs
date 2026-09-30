@@ -44,6 +44,19 @@ const ADAPTERS: &[&str] = &[
     "token-exchange",
     "userinfo",
 ];
+/// Capabilities rs-identity-model does not implement; their vectors are
+/// skipped rather than failing as "no adapter".
+const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
+
+#[test]
+fn implemented_http_capabilities_cannot_be_skipped() {
+    for capability in NOT_IMPLEMENTED {
+        assert!(
+            !ADAPTERS.contains(capability),
+            "{capability}: has an HTTP adapter; remove it from NOT_IMPLEMENTED"
+        );
+    }
+}
 
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
 /// and checks `expect_request`/`expect_calls`, so the runner only reads the
@@ -688,6 +701,7 @@ async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
 #[tokio::test]
 #[ignore = "needs the node-oidc fixture: make test-integration-rust"]
 async fn spec_http_vectors() {
+    implemented_http_capabilities_cannot_be_skipped();
     fixture_client()
         .get(format!("{VECTOR_OP}/.well-known/openid-configuration"))
         .send()
@@ -712,6 +726,9 @@ async fn spec_http_vectors() {
             .file_stem()
             .and_then(|s| s.to_str())
             .expect("file name");
+        if NOT_IMPLEMENTED.contains(&capability) {
+            continue;
+        }
         let spec: Value =
             serde_json::from_str(&std::fs::read_to_string(&file).expect("read vector file"))
                 .unwrap_or_else(|e| panic!("parse {}: {e}", file.display()));
