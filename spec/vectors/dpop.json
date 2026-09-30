@@ -2,7 +2,13 @@
   "capability": "dpop",
   "spec": "RFC 9449 (OAuth 2.0 Demonstrating Proof of Possession) + RFC 7638 (JWK Thumbprint)",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc9449",
-  "required_fields": ["typ", "htm", "htu", "jti", "iat"],
+  "required_fields": [
+    "typ",
+    "htm",
+    "htu",
+    "jti",
+    "iat"
+  ],
   "tests": [
     {
       "id": "DPOP-001",
@@ -10,8 +16,95 @@
       "given": "A DPoP key pair (ES256 or RS256), the HTTP method POST, and the request URI https://server.example.com/token",
       "when": "A DPoP proof JWT is generated for the request",
       "then": "The compact JWS has a protected header with typ=dpop+jwt, alg equal to the key pair's asymmetric algorithm (never a symmetric algorithm such as HS256), and a jwk member containing ONLY the public key (no private key material such as d, p, q); and a payload with a non-empty unique jti, htm=POST, htu=https://server.example.com/token, and a recent iat timestamp",
-      "fixture": "dpop/dpop-proof-token-request.json",
-      "references": ["RFC 9449 §4.2", "RFC 7515 §4.1"]
+      "references": [
+        "RFC 9449 §4.2",
+        "RFC 7515 §4.1"
+      ],
+      "vectors": [
+        {
+          "name": "es256",
+          "input": {
+            "operation": "create_proof",
+            "key": "dpop/dpop-keypair-es256.json",
+            "htm": "POST",
+            "htu": "https://server.example.com/token"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token"
+              }
+            }
+          }
+        },
+        {
+          "name": "rs256",
+          "input": {
+            "operation": "create_proof",
+            "key": "dpop/dpop-keypair-rs256.json",
+            "htm": "POST",
+            "htu": "https://server.example.com/token"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "RS256",
+                "jwk": {
+                  "kty": "RSA",
+                  "n": "qlDNavxW9K2dDzQ7v4dLrQ3DO1-A3KKA7OHUliGxi0pN86k0CDDzKkAIpu_sXuouMOhHrywBr3P2S4NJlznKdXHg1DZSNl5b6rXhikNgsTXQX0tYp1SVgZDIJ5_3lCg-pRuJuW8LRd1mlJITRfa8yyACRjFBohYPJ6h_WRvprugQaMXZmFlID9bYayorqnDpUtGPcDORLTzS7rSTfK0khmQ9R-FaVtcaMjM4bRAWknf-RPbv5rqTLkZRf8HnWtQ4JmK7LFMzHNG_0TP0nSgHEjrdtZo-nkirCfThlGGrlfbikJ1DR6e3FEz60eUCwYrsj-E5CgUYOMzL3WLvcIBdWw",
+                  "e": "AQAB"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token"
+              }
+            }
+          }
+        },
+        {
+          "name": "htu-drops-query-and-fragment",
+          "input": {
+            "operation": "create_proof",
+            "key": "dpop/dpop-keypair-es256.json",
+            "htm": "POST",
+            "htu": "https://server.example.com/token?a=b#frag"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-002",
@@ -19,8 +112,58 @@
       "given": "A DPoP proof JWT generated for a token request",
       "when": "The token request is constructed",
       "then": "The proof is carried in the DPoP HTTP request header (not in Authorization), and its payload contains no ath claim because token-request proofs do not bind to an access token",
-      "fixture": "dpop/dpop-proof-token-request.json",
-      "references": ["RFC 9449 §5", "RFC 9449 §4.2"]
+      "references": [
+        "RFC 9449 §5",
+        "RFC 9449 §4.2"
+      ],
+      "vectors": [
+        {
+          "name": "token-request",
+          "input": {
+            "operation": "token_request",
+            "key": "dpop/dpop-keypair-es256.json",
+            "code": "SplxlOBeZQQYbYS6WxSbIA",
+            "redirect_uri": "https://client.example.org/cb"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "dpop/dpop-token-response.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "authorization_code",
+              "code": "SplxlOBeZQQYbYS6WxSbIA"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-003",
@@ -28,8 +171,52 @@
       "given": "A DPoP key pair and a DPoP-bound access token",
       "when": "A DPoP proof JWT is generated for a protected-resource request",
       "then": "The proof payload contains an ath claim whose value equals BASE64URL(SHA-256(access_token)) with no base64 padding, matching the deterministic access_token/ath pairs in dpop-ath-pairs.json",
-      "fixture": "dpop/dpop-ath-pairs.json",
-      "references": ["RFC 9449 §7", "RFC 9449 §4.2"]
+      "references": [
+        "RFC 9449 §7",
+        "RFC 9449 §4.2"
+      ],
+      "vectors": [
+        {
+          "name": "ath-pairs",
+          "input": {
+            "operation": "ath",
+            "pairs": "dpop/dpop-ath-pairs.json"
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "resource-proof",
+          "input": {
+            "operation": "create_proof",
+            "key": "dpop/dpop-keypair-es256.json",
+            "htm": "GET",
+            "htu": "https://resource.example.com/protectedresource",
+            "access_token": "example-dpop-bound-access-token-value"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "GET",
+                "htu": "https://resource.example.com/protectedresource",
+                "ath": "yRhCjMZbSgJuej6MpSmViNnUiiuiK_CT3FHQXkjq7vk"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-004",
@@ -37,25 +224,390 @@
       "given": "A token or resource request that receives HTTP 401 with error=use_dpop_nonce and a DPoP-Nonce response header",
       "when": "The client automatically retries the request",
       "then": "The retried DPoP proof includes the server-provided nonce in its nonce claim, and the nonce is cached and pre-included in subsequent proofs sent to the same server",
-      "fixture": "dpop/dpop-nonce-error-response.json",
-      "references": ["RFC 9449 §8"]
+      "references": [
+        "RFC 9449 §8"
+      ],
+      "vectors": [
+        {
+          "name": "retry-with-nonce",
+          "input": {
+            "operation": "token_request",
+            "key": "dpop/dpop-keypair-es256.json",
+            "code": "SplxlOBeZQQYbYS6WxSbIA",
+            "redirect_uri": "https://client.example.org/cb",
+            "requests": 1
+          },
+          "http_sequence": {
+            "/token": [
+              {
+                "status": 401,
+                "headers": {
+                  "WWW-Authenticate": "DPoP error=\"use_dpop_nonce\", error_description=\"Authorization server requires nonce in DPoP proof\"",
+                  "DPoP-Nonce": "eyJ7S_zG.eyJH0-Z.HX4w-7v"
+                },
+                "body_fixture": "dpop/dpop-nonce-error-response.json"
+              },
+              {
+                "status": 200,
+                "body_fixture": "dpop/dpop-token-response.json"
+              }
+            ]
+          },
+          "expect_calls": {
+            "/token": 2
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token",
+                "nonce": "eyJ7S_zG.eyJH0-Z.HX4w-7v"
+              }
+            }
+          }
+        },
+        {
+          "name": "nonce-cached",
+          "input": {
+            "operation": "token_request",
+            "key": "dpop/dpop-keypair-es256.json",
+            "code": "SplxlOBeZQQYbYS6WxSbIA",
+            "redirect_uri": "https://client.example.org/cb",
+            "requests": 2
+          },
+          "http_sequence": {
+            "/token": [
+              {
+                "status": 401,
+                "headers": {
+                  "WWW-Authenticate": "DPoP error=\"use_dpop_nonce\", error_description=\"Authorization server requires nonce in DPoP proof\"",
+                  "DPoP-Nonce": "eyJ7S_zG.eyJH0-Z.HX4w-7v"
+                },
+                "body_fixture": "dpop/dpop-nonce-error-response.json"
+              },
+              {
+                "status": 200,
+                "body_fixture": "dpop/dpop-token-response.json"
+              }
+            ]
+          },
+          "expect_calls": {
+            "/token": 3
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "POST",
+                "htu": "https://server.example.com/token",
+                "nonce": "eyJ7S_zG.eyJH0-Z.HX4w-7v"
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-005",
       "title": "Verify cnf.jkt in a bound token matches the DPoP key thumbprint",
       "given": "A DPoP-bound access token whose cnf claim carries a jkt field, and the DPoP key pair the token was bound to",
       "when": "The RFC 7638 SHA-256 JWK thumbprint of the DPoP public key is computed",
-      "then": "The computed thumbprint equals the token's cnf.jkt value; each JWK in dpop-thumbprint-pairs.json (including the RFC 7638 §3.1 canonical RSA vector) reproduces its expected thumbprint",
-      "fixture": "dpop/dpop-bound-token.json",
-      "references": ["RFC 9449 §6", "RFC 7638 §3"]
+      "then": "The RFC 7638 thumbprint of each key-pair fixture equals its expected value, and the ES256 key's thumbprint equals the bound token's cnf.jkt value",
+      "references": [
+        "RFC 9449 §6",
+        "RFC 7638 §3"
+      ],
+      "vectors": [
+        {
+          "name": "es256-bound-token",
+          "input": {
+            "operation": "thumbprint",
+            "key": "dpop/dpop-keypair-es256.json",
+            "bound_token": "dpop/dpop-bound-token.json"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "thumbprint": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac"
+            }
+          }
+        },
+        {
+          "name": "rs256",
+          "input": {
+            "operation": "thumbprint",
+            "key": "dpop/dpop-keypair-rs256.json"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "thumbprint": "q-4W0RMOUTB77nG0mw9uiYg4LGsPBeQKdAuZVc9SGeM"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-006",
-      "title": "Reject a DPoP proof with a wrong htm or htu",
-      "given": "A DPoP proof whose htm does not match the actual HTTP method, or whose htu does not match the actual request URI",
-      "when": "A resource server validates the proof against the expected method and URI",
-      "then": "The proof is rejected with a validation error that identifies the mismatched field (htm or htu); proofs signed with a symmetric algorithm or the none algorithm, or missing the embedded jwk, are likewise rejected",
-      "references": ["RFC 9449 §4.3", "RFC 9449 §7"]
+      "title": "Reject an invalid DPoP proof",
+      "given": "A DPoP proof whose htm or htu does not match the request, whose signature, typ, alg or embedded jwk is invalid, whose iat is outside the acceptable window, or whose ath or nonce does not match the expected value",
+      "when": "A resource server validates the proof against the expected method and URI, and against the expected access token and nonce where the vector supplies them",
+      "then": "The proof is rejected with a validation error that identifies the offending field; a well-formed proof is accepted",
+      "references": [
+        "RFC 9449 §4.2",
+        "RFC 9449 §4.3",
+        "RFC 9449 §7",
+        "RFC 9449 §8"
+      ],
+      "vectors": [
+        {
+          "name": "valid",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.oIN8vT8o0nc6sCpmBMpSuj5i2t_UmqIBTKKwWNkZ0ZZMgEfNM-angRXVdl2UOBBkKKDKf4Ttcv_whAtQZlAQBg",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "jti": "e1j3V_bKic8-LAEB",
+              "htm": "POST",
+              "htu": "https://server.example.com/token",
+              "iat": 1732200000,
+              "thumbprint": "x4bBYZ9vUTI9MboLfj1FuSMrI-sh5I8nTTPhZCHmDac"
+            }
+          }
+        },
+        {
+          "name": "wrong-htm",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.oIN8vT8o0nc6sCpmBMpSuj5i2t_UmqIBTKKwWNkZ0ZZMgEfNM-angRXVdl2UOBBkKKDKf4Ttcv_whAtQZlAQBg",
+            "htm": "GET",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "htm"
+            ]
+          }
+        },
+        {
+          "name": "wrong-htu",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.oIN8vT8o0nc6sCpmBMpSuj5i2t_UmqIBTKKwWNkZ0ZZMgEfNM-angRXVdl2UOBBkKKDKf4Ttcv_whAtQZlAQBg",
+            "htm": "POST",
+            "htu": "https://server.example.com/other",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "htu"
+            ]
+          }
+        },
+        {
+          "name": "hs256",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJIUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.4kUx782Cq4Hk4O8zWnN4OrZGHV1RIgYntwWqA0ewq2w",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "alg"
+            ]
+          }
+        },
+        {
+          "name": "alg-none",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJ0eXAiOiJkcG9wK2p3dCIsImFsZyI6Im5vbmUiLCJqd2siOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiJSMV9jQVI0MHQ4X29PbW9xNjRESkt5Q25fd3BfTS0zMVZ4eDFLYXZHVHRnIiwieSI6ImRrTWg4UjY1bEZRZHRSdmtnSjJFYnFwN0ljQWpTMnhoQ0FVTkFIeVJhREkifX0.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "alg"
+            ]
+          }
+        },
+        {
+          "name": "missing-jwk",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImRwb3Arand0In0.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.MEAWRuHPRG_aQIxj6l7xdEZPEj9XJShPOS05gDlxVWFzdtPhZEmiDHhEJzZtajnFwzHWJv1D6QXc6tV0ViOwdw",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "jwk"
+            ]
+          }
+        },
+        {
+          "name": "bad-signature",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJ0YW1wZXJlZC1hZnRlci1zaWduaW5nIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.tirqDh-0U5SP67R_ReKxHdbqf0XE1PFDb5viEL84c1KqRE09Puq7eeWDPx9xOgFZcFzY5sfr5v9wi_tgxw_kjA",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "signature"
+            ]
+          }
+        },
+        {
+          "name": "iat-too-old",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMTk2NDAwfQ.eO03vk_BiaYsnCp6fT_LhagbB3QJsgoJVlr-YHo2gAOiVwxbnFpsEtMNWAfKBcr5NCgeUHKjqGDFlJBEt-llPg",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "iat"
+            ]
+          }
+        },
+        {
+          "name": "iat-in-future",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAzNjAwfQ.JzjKtZ3JzZ4X8cOLdoCHycNgh00UyrxXhs_MHqN8nzS1n9EPi6Ml90YMabP89kmOYZ8Zmqa8ux7wcUizbppiJA",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "iat"
+            ]
+          }
+        },
+        {
+          "name": "typ-jwt",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJKV1QifQ.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.3QvfIgK2Ksn2Ll11aUIFPjWHS8xH7uNgJJRsf1-WCnRhCz_Drv0XiTkSDmDzaoIgL4qQI3pfEKnBkVPOHHjO4Q",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "typ"
+            ]
+          }
+        },
+        {
+          "name": "jwk-with-private-key",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImQiOiJnT3lOU1BNQ1NnS1lmU0pPVnlRRTNzSnJyNEFaMmVhWTdHcjZJdllWTllNIiwia3R5IjoiRUMiLCJ4IjoiUjFfY0FSNDB0OF9vT21vcTY0REpLeUNuX3dwX00tMzFWeHgxS2F2R1R0ZyIsInkiOiJka01oOFI2NWxGUWR0UnZrZ0oyRWJxcDdJY0FqUzJ4aENBVU5BSHlSYURJIn0sInR5cCI6ImRwb3Arand0In0.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwfQ.i86CscDBdzfHprWJokT53w7q8CIGW98UYGPTa49VwcFwduJOI1DXZNn1ojYZDPPiAEu-WJC6PzzjzfD6nH8Pgg",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "jwk"
+            ]
+          }
+        },
+        {
+          "name": "ath-mismatch",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwLCJhdGgiOiJGU2NiSlV1ZU5GNFhTWVRMaTloUjFuS3d6bHFRTGtXWTZJYXZfV3AwTHRFIn0.PdV9n9hUIU1psa0BSPhCUqx8psnaBRnS5_RWQYm6ZgPvW-HZcCxDsDGSbLct0oD9gIZL111IjHCah9E9c9IGYg",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000,
+            "access_token": "example-dpop-bound-access-token-value"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "ath"
+            ]
+          }
+        },
+        {
+          "name": "nonce-mismatch",
+          "input": {
+            "operation": "verify_proof",
+            "proof": "eyJhbGciOiJFUzI1NiIsImp3ayI6eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6IlIxX2NBUjQwdDhfb09tb3E2NERKS3lDbl93cF9NLTMxVnh4MUthdkdUdGciLCJ5IjoiZGtNaDhSNjVsRlFkdFJ2a2dKMkVicXA3SWNBalMyeGhDQVVOQUh5UmFESSJ9LCJ0eXAiOiJkcG9wK2p3dCJ9.eyJqdGkiOiJlMWozVl9iS2ljOC1MQUVCIiwiaHRtIjoiUE9TVCIsImh0dSI6Imh0dHBzOi8vc2VydmVyLmV4YW1wbGUuY29tL3Rva2VuIiwiaWF0IjoxNzMyMjAwMDAwLCJub25jZSI6ImV5SjdTX3pHLmV5SkgwLVouSFg0dy03diJ9.CW5Wc3n0X-l4miFsKZUtsD8nE-RCpYdN_rpnERaue1-zZzCqTxf7V76dUUcTSS2evk4dJCQqRkVLHkuPAhoFOA",
+            "htm": "POST",
+            "htu": "https://server.example.com/token",
+            "now": 1732200000,
+            "nonce": "eyJ7S_zG.eyJbYu3.xQmBj-1"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_dpop_proof",
+            "fields": [
+              "nonce"
+            ]
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-007",
@@ -63,8 +615,51 @@
       "given": "A request to generate a DPoP key pair",
       "when": "The algorithm is ES256, and separately when it is RS256",
       "then": "ES256 yields a valid EC P-256 key pair and RS256 yields a valid RSA key pair with a modulus of at least 2048 bits; an unsupported algorithm is rejected with an error",
-      "fixture": "dpop/dpop-keypair-es256.json",
-      "references": ["RFC 9449 §4.1", "RFC 7518 §3.1"]
+      "references": [
+        "RFC 9449 §4.1",
+        "RFC 7518 §3.1"
+      ],
+      "vectors": [
+        {
+          "name": "es256",
+          "input": {
+            "operation": "generate_key",
+            "alg": "ES256"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "kty": "EC",
+              "crv": "P-256"
+            }
+          }
+        },
+        {
+          "name": "rs256",
+          "input": {
+            "operation": "generate_key",
+            "alg": "RS256"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "kty": "RSA",
+              "min_modulus_bits": 2048
+            }
+          }
+        },
+        {
+          "name": "unsupported",
+          "input": {
+            "operation": "generate_key",
+            "alg": "HS256"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "unsupported_algorithm"
+          }
+        }
+      ]
     },
     {
       "id": "DPOP-008",
@@ -72,8 +667,52 @@
       "given": "A DPoP-bound access token (token_type DPoP)",
       "when": "A protected-resource request is constructed",
       "then": "The Authorization header uses the DPoP scheme (Authorization: DPoP <access_token>) rather than the Bearer scheme, and the accompanying DPoP proof header carries the ath claim",
-      "fixture": "dpop/dpop-bound-token.json",
-      "references": ["RFC 9449 §7"]
+      "references": [
+        "RFC 9449 §7"
+      ],
+      "vectors": [
+        {
+          "name": "resource-request",
+          "input": {
+            "operation": "resource_request",
+            "key": "dpop/dpop-keypair-es256.json",
+            "access_token": "example-dpop-bound-access-token-value"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "body_fixture": "userinfo/standard-claims.json"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "DPoP example-dpop-bound-access-token-value"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "header": {
+                "typ": "dpop+jwt",
+                "alg": "ES256",
+                "jwk": {
+                  "kty": "EC",
+                  "crv": "P-256",
+                  "x": "R1_cAR40t8_oOmoq64DJKyCn_wp_M-31Vxx1KavGTtg",
+                  "y": "dkMh8R65lFQdtRvkgJ2Ebqp7IcAjS2xhCAUNAHyRaDI"
+                }
+              },
+              "payload": {
+                "htm": "GET",
+                "htu": "https://server.example.com/userinfo",
+                "ath": "yRhCjMZbSgJuej6MpSmViNnUiiuiK_CT3FHQXkjq7vk"
+              }
+            }
+          }
+        }
+      ]
     }
   ]
 }
