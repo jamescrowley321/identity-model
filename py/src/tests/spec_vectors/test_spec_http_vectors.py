@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 import uuid
 
 import httpx
+import jwt
 import pytest
 
 from py_identity_model import (
@@ -429,13 +430,25 @@ def _dpop_expect(case_id: str, expect: dict, result: tuple) -> None:
     base, key, proofs, jtis = result
     assert expect["outcome"] == "accept", case_id
     want = json.loads(json.dumps(expect["result"]).replace(_FIXTURE_HOST, base))
-    for n, proof in enumerate(proofs):
-        if n > 0 and "nonce" in want["payload"]:
-            raise KnownGap(f"{case_id}: the DPoP-Nonce is not cached (#784)")
-        assert_dpop_proof(case_id, proof, key, want)
-    # Every proof sent, including a nonce retry's, must carry a fresh jti.
+    # Check every send, including nonce retries, before reporting a known gap.
     assert jtis, f"{case_id}: no requests recorded"
     assert len(set(jtis)) == len(jtis), f"{case_id}: jti reused across {jtis}"
+    missing_nonce = False
+    for n, proof in enumerate(proofs):
+        proof_want = want
+        if (
+            n > 0
+            and "nonce" in want["payload"]
+            and "nonce" not in jwt.decode(proof, options={"verify_signature": False})
+        ):
+            missing_nonce = True
+            proof_want = {
+                "header": want["header"],
+                "payload": {k: v for k, v in want["payload"].items() if k != "nonce"},
+            }
+        assert_dpop_proof(case_id, proof, key, proof_want)
+    if missing_nonce:
+        raise KnownGap(f"{case_id}: the DPoP-Nonce is not cached (#784)")
 
 
 # --- introspection ------------------------------------------------------------

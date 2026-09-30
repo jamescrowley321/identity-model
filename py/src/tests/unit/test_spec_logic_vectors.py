@@ -166,4 +166,7 @@ def test_logic_vector(case_id: str, vector: dict) -> None:
     assert check, f"{case_id}: no runner for operation {operation!r}"
     outcome = vector["expect"]["outcome"]
     assert outcome in ("accept", "reject"), f"{case_id}: unknown outcome {outcome!r}"
+    assert outcome == "accept" or operation in {"generate_key", "verify_proof"}, (
+        f"{case_id}: outcome = {outcome!r}, want accept"
+    )
     check(case_id, vector["input"], vector["expect"])
