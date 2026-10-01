@@ -249,7 +249,9 @@ export function vectorRoutes({
           out[p] = list.map((r) => ({
             method: r.method,
             headers: r.headers,
-            form: Object.fromEntries(r.form),
+            form: Object.fromEntries(
+              Array.from(new Set(r.form.keys()), (key) => [key, r.form.get(key)]),
+            ),
           }));
         }
       }
