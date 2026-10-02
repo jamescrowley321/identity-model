@@ -254,6 +254,18 @@ def _is_http(vector: dict) -> bool:
     return "op" in vector or "http" in vector or "http_sequence" in vector
 
 
+def _validate_http_vector(vector: dict, label: str) -> None:
+    if "op" in vector:
+        assert vector["op"] == "live", f"{label}: op"
+        canned = [f for f in _CANNED_FIELDS if f in vector]
+        assert not canned, f"{label}: live vector with {canned}"
+    for key in ("client_id", "client_secret", "endpoint_path"):
+        if key in vector["input"]:
+            assert isinstance(vector["input"][key], str), (
+                f"{label}: input.{key} must be a string"
+            )
+
+
 def _params() -> list:
     params = []
     for path in sorted(_VECTORS_DIR.glob("*.json")):
@@ -271,11 +283,8 @@ def _params() -> list:
                         "input", {}
                     ), f"{case['id']}-{key}: neither an HTTP nor a pure-logic vector"
                     continue
-                if "op" in vector:
-                    assert vector["op"] == "live", f"{case['id']}-{key}: op"
-                    canned = [f for f in _CANNED_FIELDS if f in vector]
-                    assert not canned, f"{case['id']}-{key}: live vector with {canned}"
                 param_id = f"{case['id']}-{key}"
+                _validate_http_vector(vector, param_id)
                 reason = _KNOWN_GAPS.get(param_id) or _KNOWN_GAPS.get(case["id"])
                 marks = []
                 if reason:
@@ -290,7 +299,7 @@ def _params() -> list:
     return params
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="module")
 def _vector_op() -> None:
     try:
         httpx.get(VECTOR_OP + _DISCO_PATH, timeout=5).raise_for_status()
@@ -302,6 +311,7 @@ def _vector_op() -> None:
 
 
 @pytest.mark.parametrize(("capability", "case_id", "key", "vector"), _params())
+@pytest.mark.usefixtures("_vector_op")
 def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> None:
     adapter = ADAPTERS.get(capability)
     assert adapter, f"{capability}.json has HTTP vectors but no adapter"
@@ -319,3 +329,48 @@ def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> N
     check = response.json()
     assert check["ok"], f"{case_id}: {check['diffs']}"
     adapter.expect(case_id, vector["expect"], result)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("field", _CANNED_FIELDS)
+@pytest.mark.parametrize("value", [None, {}])
+def test_live_vector_rejects_canned_fields(field: str, value: Any) -> None:
+    with pytest.raises(AssertionError, match="live vector"):
+        _validate_http_vector({"op": "live", "input": {}, field: value}, "CASE")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("op", ["unexpected", "", None, 42])
+def test_http_vector_rejects_unknown_op(op: Any) -> None:
+    with pytest.raises(AssertionError, match="op"):
+        _validate_http_vector({"op": op, "input": {}}, "CASE")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("live", [False, True])
+@pytest.mark.parametrize("field", ["client_id", "client_secret", "endpoint_path"])
+@pytest.mark.parametrize("value", [None, 42, True, [], {}])
+def test_http_vector_rejects_malformed_overrides(
+    live: bool, field: str, value: Any
+) -> None:
+    vector: dict[str, Any] = {"input": {field: value}}
+    if live:
+        vector["op"] = "live"
+    with pytest.raises(AssertionError, match=f"input.{field} must be a string"):
+        _validate_http_vector(vector, "CASE")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("live", [False, True])
+def test_http_vector_preserves_string_overrides(live: bool) -> None:
+    for value in (None, "", "explicit"):
+        inp = (
+            {}
+            if value is None
+            else dict.fromkeys(("client_id", "client_secret", "endpoint_path"), value)
+        )
+        vector: dict[str, Any] = {"input": inp}
+        if live:
+            vector["op"] = "live"
+        _validate_http_vector(vector, "CASE")
+        assert vector["input"] == inp

@@ -186,28 +186,102 @@ func loadHTTPCases(t *testing.T, file string) []httpCase {
 				}
 				continue
 			}
-			vb, _ := json.Marshal(fields)
-			dec := json.NewDecoder(bytes.NewReader(vb))
-			dec.DisallowUnknownFields()
-			var v HTTPVector
-			if err := dec.Decode(&v); err != nil {
+			v, err := decodeHTTPVector(fields)
+			if err != nil {
 				t.Fatalf("%s %s: decode vector: %v", filepath.Base(file), tc.ID, err)
-			}
-			if op && v.Op != "live" {
-				t.Fatalf("%s %s: unknown op %q", filepath.Base(file), tc.ID, v.Op)
-			}
-			if op {
-				for _, k := range []string{"http", "http_sequence", "expect_request", "expect_calls"} {
-					if _, ok := fields[k]; ok {
-						t.Fatalf("%s %s: a live vector carries %s", filepath.Base(file), tc.ID, k)
-					}
-				}
 			}
 			c.vectors = append(c.vectors, indexedVector{idx: idx, v: v})
 		}
 		cases = append(cases, c)
 	}
 	return cases
+}
+
+// decodeHTTPVector validates runner-owned mode and string overrides before a
+// call can fall back to defaults or be reported as a known library gap.
+func decodeHTTPVector(fields map[string]json.RawMessage) (HTTPVector, error) {
+	var v HTTPVector
+	vb, err := json.Marshal(fields)
+	if err != nil {
+		return v, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(vb))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return v, err
+	}
+	if _, op := fields["op"]; op {
+		if v.Op != "live" {
+			return v, fmt.Errorf("unknown op %q", v.Op)
+		}
+		for _, k := range []string{"http", "http_sequence", "expect_request", "expect_calls"} {
+			if _, ok := fields[k]; ok {
+				return v, fmt.Errorf("a live vector carries %s", k)
+			}
+		}
+	}
+	for _, k := range []string{"client_id", "client_secret", "endpoint_path"} {
+		if raw, ok := v.Input[k]; ok {
+			if _, ok := raw.(string); !ok {
+				return v, fmt.Errorf("input.%s must be a string", k)
+			}
+		}
+	}
+	return v, nil
+}
+
+func TestHTTPVectorContract(t *testing.T) {
+	decode := func(t *testing.T, vector map[string]any, wantError bool) {
+		t.Helper()
+		b, err := json.Marshal(vector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(b, &fields); err != nil {
+			t.Fatal(err)
+		}
+		_, err = decodeHTTPVector(fields)
+		if (err != nil) != wantError {
+			t.Fatalf("decode error = %v, want error %v", err, wantError)
+		}
+	}
+	for _, live := range []bool{false, true} {
+		mode := "canned"
+		if live {
+			mode = "live"
+		}
+		vector := func(input map[string]any) map[string]any {
+			v := map[string]any{"input": input, "expect": map[string]any{"outcome": "accept"}}
+			if live {
+				v["op"] = "live"
+			} else {
+				v["http"] = map[string]any{"/revoke": map[string]any{"status": 200}}
+			}
+			return v
+		}
+		t.Run(mode+"/defaults", func(t *testing.T) { decode(t, vector(map[string]any{}), false) })
+		for _, key := range []string{"client_id", "client_secret", "endpoint_path"} {
+			for _, value := range []any{"", "explicit", nil, 42, true, []any{}, map[string]any{}} {
+				t.Run(fmt.Sprintf("%s/%s/%v", mode, key, value), func(t *testing.T) {
+					_, valid := value.(string)
+					decode(t, vector(map[string]any{key: value}), !valid)
+				})
+			}
+		}
+	}
+	for _, key := range []string{"http", "http_sequence", "expect_request", "expect_calls"} {
+		for _, value := range []any{nil, map[string]any{}} {
+			t.Run(fmt.Sprintf("live/%s/%v", key, value), func(t *testing.T) {
+				decode(t, map[string]any{"op": "live", "input": map[string]any{}, key: value}, true)
+			})
+		}
+	}
+	for _, op := range []any{"unexpected", "", nil, 42} {
+		t.Run(fmt.Sprintf("op/%v", op), func(t *testing.T) {
+			decode(t, map[string]any{"op": op, "input": map[string]any{}}, true)
+		})
+	}
 }
 
 // checkRequests fails t with each difference the fixture found between the

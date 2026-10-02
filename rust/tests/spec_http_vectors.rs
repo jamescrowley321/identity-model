@@ -77,6 +77,71 @@ impl HttpVector {
     }
 }
 
+fn decode_http_vector(raw: Value, label: &str) -> HttpVector {
+    if raw.get("op").is_some() {
+        assert_eq!(raw["op"], "live", "{label}: op");
+        for k in CANNED_FIELDS {
+            assert!(raw.get(k).is_none(), "{label}: a live vector carries {k}");
+        }
+    }
+    let v: HttpVector =
+        serde_json::from_value(raw).unwrap_or_else(|e| panic!("{label}: decode vector: {e}"));
+    for k in ["client_id", "client_secret", "endpoint_path"] {
+        if let Some(value) = v.input.get(k) {
+            assert!(value.is_string(), "{label}: input.{k} must be a string");
+        }
+    }
+    v
+}
+
+#[test]
+fn http_vector_contract() {
+    use serde_json::json;
+
+    for live in [false, true] {
+        let vector = |input: Value| {
+            let mut raw = json!({"input": input, "expect": {"outcome": "accept"}});
+            if live {
+                raw["op"] = json!("live");
+            } else {
+                raw["http"] = json!({"/revoke": {"status": 200}});
+            }
+            raw
+        };
+        decode_http_vector(vector(json!({})), "defaults");
+        for key in ["client_id", "client_secret", "endpoint_path"] {
+            for value in [json!(""), json!("explicit")] {
+                let v = decode_http_vector(vector(json!({key: value})), key);
+                assert_eq!(v.input[key], value);
+            }
+            for value in [Value::Null, json!(42), json!(true), json!([]), json!({})] {
+                let raw = vector(json!({key: value}));
+                assert!(
+                    std::panic::catch_unwind(|| decode_http_vector(raw, key)).is_err(),
+                    "live={live}: {key}={value} was accepted"
+                );
+            }
+        }
+    }
+    for key in CANNED_FIELDS {
+        for value in [Value::Null, json!({})] {
+            let mut raw = json!({"op": "live", "input": {}, "expect": {"outcome": "accept"}});
+            raw[key] = value;
+            assert!(
+                std::panic::catch_unwind(|| decode_http_vector(raw, key)).is_err(),
+                "live vector carrying {key} was accepted"
+            );
+        }
+    }
+    for op in [json!("unexpected"), json!(""), Value::Null, json!(42)] {
+        let raw = json!({"op": op, "input": {}, "expect": {"outcome": "accept"}});
+        assert!(
+            std::panic::catch_unwind(|| decode_http_vector(raw, "op")).is_err(),
+            "unknown op {op} was accepted"
+        );
+    }
+}
+
 fn fixture_client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(FIXTURE_TIMEOUT)
@@ -377,17 +442,7 @@ async fn spec_http_vectors() {
                     );
                     continue;
                 }
-                if raw.get("op").is_some() {
-                    assert_eq!(raw["op"], "live", "{id}[{idx}]: op");
-                    for k in CANNED_FIELDS {
-                        assert!(
-                            raw.get(k).is_none(),
-                            "{id}[{idx}]: a live vector carries {k}"
-                        );
-                    }
-                }
-                let v: HttpVector = serde_json::from_value(raw)
-                    .unwrap_or_else(|e| panic!("{id}[{idx}]: decode vector: {e}"));
+                let v = decode_http_vector(raw, &format!("{id}[{idx}]"));
                 let key = if v.name.is_empty() {
                     idx.to_string()
                 } else {
