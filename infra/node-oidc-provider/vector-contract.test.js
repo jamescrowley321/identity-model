@@ -209,6 +209,34 @@ test("valid horizontal-tab and Latin-1 response headers remain supported", async
   assert.deepEqual((await request("/_check")).body, { ok: true, diffs: [] });
 });
 
+test("response headers with underscores remain supported", async (t) => {
+  http.validateHeaderName("x_test");
+  const request = fixture(t, {
+    vector: { ...basic, http: { "/token": { headers: { x_test: "yes" } } } },
+  });
+  const result = await request("/token", { method: "POST", body: "token=yes" });
+  assert.equal(result.status, 200);
+  assert.equal(result.response.get("x_test"), "yes");
+  assert.deepEqual((await request("/_check")).body, { ok: true, diffs: [] });
+});
+
+test("request assertions validate headers with underscores", async (t) => {
+  http.validateHeaderName("x_test");
+  const request = fixture(t, {
+    vector: { ...basic, expect_request: { ...basic.expect_request, headers: { x_test: "yes" } } },
+  });
+  assert.equal((await request("/token", {
+    method: "POST", body: "token=yes", headers: { x_test: "yes" },
+  })).status, 200);
+  assert.deepEqual((await request("/_check")).body, { ok: true, diffs: [] });
+  await request("/token", {
+    method: "POST", body: "token=yes", headers: { x_test: "no" },
+  });
+  const result = (await request("/_check")).body;
+  assert.equal(result.ok, false);
+  assert.match(result.diffs.join("\n"), /header x_test = "no", want "yes"/);
+});
+
 test("all checked-in canned vectors remain valid at the fixture boundary", async () => {
   const specDir = fileURLToPath(new URL("../../spec", import.meta.url));
   const app = new Koa();

@@ -43,7 +43,7 @@
       "type": "object",
       "propertyNames": {
         "type": "string",
-        "pattern": "^[!#$%&'*+.^`|~0-9A-Za-z-]+$"
+        "pattern": "^[!#$%&'*+.^`|~_0-9A-Za-z-]+$"
       },
       "additionalProperties": { "type": "string", "pattern": "^[\\t\\u0020-\\u007e\\u0080-\\u00ff]*$" }
     },
