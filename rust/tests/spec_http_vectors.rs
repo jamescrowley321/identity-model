@@ -30,6 +30,27 @@ const CANNED_FIELDS: [&str; 4] = ["http", "http_sequence", "expect_request", "ex
 /// Capabilities with an adapter, keyed by vector file name.
 const ADAPTERS: &[&str] = &["jwks", "revocation", "userinfo"];
 
+/// Omitted `op` means canned. Only the live variant is accepted on the wire;
+/// execution receives this enum after deserialization has validated the mode.
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "String")]
+enum VectorMode {
+    #[default]
+    Canned,
+    Live,
+}
+
+impl TryFrom<String> for VectorMode {
+    type Error = String;
+
+    fn try_from(op: String) -> Result<Self, Self::Error> {
+        match op.as_str() {
+            "live" => Ok(Self::Live),
+            _ => Err(format!("unknown op {op:?}")),
+        }
+    }
+}
+
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
 /// and checks `expect_request`/`expect_calls`, so the runner does not read
 /// them; they are declared so an unknown field still fails loading.
@@ -40,7 +61,7 @@ struct HttpVector {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    op: String,
+    op: VectorMode,
     input: BTreeMap<String, Value>,
     #[serde(default, rename = "http")]
     _http: Value,
@@ -78,14 +99,19 @@ impl HttpVector {
 }
 
 fn decode_http_vector(raw: Value, label: &str) -> HttpVector {
-    if raw.get("op").is_some() {
-        assert_eq!(raw["op"], "live", "{label}: op");
-        for k in CANNED_FIELDS {
-            assert!(raw.get(k).is_none(), "{label}: a live vector carries {k}");
-        }
-    }
+    let canned_fields: Vec<_> = CANNED_FIELDS
+        .into_iter()
+        .filter(|key| raw.get(*key).is_some())
+        .collect();
     let v: HttpVector =
         serde_json::from_value(raw).unwrap_or_else(|e| panic!("{label}: decode vector: {e}"));
+    if v.op == VectorMode::Live {
+        assert!(
+            canned_fields.is_empty(),
+            "{label}: a live vector carries {}",
+            canned_fields.join(", ")
+        );
+    }
     for k in ["client_id", "client_secret", "endpoint_path"] {
         if let Some(value) = v.input.get(k) {
             assert!(value.is_string(), "{label}: input.{k} must be a string");
@@ -108,7 +134,15 @@ fn http_vector_contract() {
             }
             raw
         };
-        decode_http_vector(vector(json!({})), "defaults");
+        let v = decode_http_vector(vector(json!({})), "defaults");
+        assert_eq!(
+            v.op,
+            if live {
+                VectorMode::Live
+            } else {
+                VectorMode::Canned
+            }
+        );
         for key in ["client_id", "client_secret", "endpoint_path"] {
             for value in [json!(""), json!("explicit")] {
                 let v = decode_http_vector(vector(json!({key: value})), key);
@@ -133,7 +167,17 @@ fn http_vector_contract() {
             );
         }
     }
-    for op in [json!("unexpected"), json!(""), Value::Null, json!(42)] {
+    for op in [
+        json!("unexpected"),
+        json!("canned"),
+        json!(""),
+        Value::Null,
+        json!(42),
+        json!(false),
+        json!([]),
+        json!({}),
+        json!({"live": null}),
+    ] {
         let raw = json!({"op": op, "input": {}, "expect": {"outcome": "accept"}});
         assert!(
             std::panic::catch_unwind(|| decode_http_vector(raw, "op")).is_err(),
@@ -363,7 +407,7 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
 /// Calls the capability's adapter, checks the requests (canned vectors
 /// only), then the outcome.
 async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
-    let live = v.op == "live";
+    let live = v.op == VectorMode::Live;
     match capability {
         "jwks" => {
             let result = jwks_call(base, v).await;
@@ -449,10 +493,11 @@ async fn spec_http_vectors() {
                     v.name.clone()
                 };
                 let label = format!("{id} ({key})");
-                let base = if v.op == "live" {
-                    VECTOR_OP.to_string()
-                } else {
-                    format!("{VECTOR_OP}/v/{run}/{capability}/{id}/{key}")
+                let base = match v.op {
+                    VectorMode::Live => VECTOR_OP.to_string(),
+                    VectorMode::Canned => {
+                        format!("{VECTOR_OP}/v/{run}/{capability}/{id}/{key}")
+                    }
                 };
                 run_vector(capability, &label, &base, &v).await;
                 executed += 1;

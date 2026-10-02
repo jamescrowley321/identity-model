@@ -23,13 +23,36 @@ import (
 // integration profile, since make test-integration-go also runs IdentityServer.
 const vectorOP = "http://localhost:9010"
 
+// vectorMode is decoded at the JSON boundary; execution never interprets a
+// wire-format operation string. Omission means canned, not an explicit op.
+type vectorMode uint8
+
+const (
+	cannedVector vectorMode = iota
+	liveVector
+)
+
+func (mode *vectorMode) UnmarshalJSON(data []byte) error {
+	var op string
+	if err := json.Unmarshal(data, &op); err != nil {
+		return fmt.Errorf("decode vector op: %w", err)
+	}
+	switch op {
+	case "live":
+		*mode = liveVector
+		return nil
+	default:
+		return fmt.Errorf("unknown op %q", op)
+	}
+}
+
 // HTTPVector is one executable HTTP scenario. The fixture serves http and
 // http_sequence and checks expect_request and expect_calls; they are decoded
 // here only so an unknown field fails loading. Op "live" sends the call to the
 // real node-oidc OP instead, and such a vector carries none of those four.
 type HTTPVector struct {
 	Name          string                    `json:"name"`
-	Op            string                    `json:"op,omitempty"`
+	Op            vectorMode                `json:"op,omitempty"`
 	Input         map[string]any            `json:"input"`
 	HTTP          map[string]HTTPResponse   `json:"http"`
 	HTTPSequence  map[string][]HTTPResponse `json:"http_sequence,omitempty"`
@@ -121,12 +144,15 @@ func TestHTTPVectors(t *testing.T) {
 					key = fmt.Sprint(i)
 				}
 				t.Run(tc.id+"/"+key, func(t *testing.T) {
-					if v.Op == "live" {
-						adapter(t, label, vectorOP, v)
-						return
+					base := vectorOP
+					switch v.Op {
+					case cannedVector:
+						base = fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
+						defer checkRequests(t, label, base)
+					case liveVector:
+					default:
+						t.Fatalf("%s: invalid decoded mode %d", label, v.Op)
 					}
-					base := fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
-					defer checkRequests(t, label, base)
 					adapter(t, label, base, v)
 				})
 			}
@@ -210,10 +236,7 @@ func decodeHTTPVector(fields map[string]json.RawMessage) (HTTPVector, error) {
 	if err := dec.Decode(&v); err != nil {
 		return v, err
 	}
-	if _, op := fields["op"]; op {
-		if v.Op != "live" {
-			return v, fmt.Errorf("unknown op %q", v.Op)
-		}
+	if v.Op == liveVector {
 		for _, k := range []string{"http", "http_sequence", "expect_request", "expect_calls"} {
 			if _, ok := fields[k]; ok {
 				return v, fmt.Errorf("a live vector carries %s", k)
@@ -241,9 +264,18 @@ func TestHTTPVectorContract(t *testing.T) {
 		if err := json.Unmarshal(b, &fields); err != nil {
 			t.Fatal(err)
 		}
-		_, err = decodeHTTPVector(fields)
+		v, err := decodeHTTPVector(fields)
 		if (err != nil) != wantError {
 			t.Fatalf("decode error = %v, want error %v", err, wantError)
+		}
+		if err == nil {
+			wantMode := cannedVector
+			if _, present := vector["op"]; present {
+				wantMode = liveVector
+			}
+			if v.Op != wantMode {
+				t.Fatalf("decoded mode = %d, want %d", v.Op, wantMode)
+			}
 		}
 	}
 	for _, live := range []bool{false, true} {
@@ -277,7 +309,7 @@ func TestHTTPVectorContract(t *testing.T) {
 			})
 		}
 	}
-	for _, op := range []any{"unexpected", "", nil, 42} {
+	for _, op := range []any{"unexpected", "canned", "", nil, 42, false, []any{}, map[string]any{}, map[string]any{"live": nil}} {
 		t.Run(fmt.Sprintf("op/%v", op), func(t *testing.T) {
 			decode(t, map[string]any{"op": op, "input": map[string]any{}}, true)
 		})

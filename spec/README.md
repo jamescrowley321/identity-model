@@ -150,5 +150,10 @@ differs from the canned one, `endpoint_path`. Live vectors cover what a
 conformant OP answers from static input; flows that need a minted token or a
 login stay in each language's integration tests.
 
+Runners decode `op` into a typed execution mode when loading JSON. An omitted
+`op` selects canned mode; the only accepted explicit operation is `"live"`.
+Unknown values and non-string values (including null) fail loading. Execution
+uses the decoded mode rather than comparing raw JSON strings.
+
 The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

@@ -15,6 +15,7 @@ failure) fails the suite until the entry is removed.
 
 import base64
 from collections.abc import Callable
+from enum import Enum
 import json
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -65,6 +66,21 @@ class Adapter(NamedTuple):
 
     call: Callable[[str, dict], Any]
     expect: Callable[[str, dict, Any], None]
+
+
+class VectorMode(Enum):
+    """Decoded execution mode; canned is represented by an omitted wire op."""
+
+    CANNED = None
+    LIVE = "live"
+
+
+class HTTPVector(NamedTuple):
+    """Runner data after mode and input validation at the load boundary."""
+
+    mode: VectorMode
+    input: dict
+    expect: dict
 
 
 # --- revocation ---------------------------------------------------------------
@@ -254,9 +270,14 @@ def _is_http(vector: dict) -> bool:
     return "op" in vector or "http" in vector or "http_sequence" in vector
 
 
-def _validate_http_vector(vector: dict, label: str) -> None:
+def _decode_http_vector(vector: dict, label: str) -> HTTPVector:
+    mode = VectorMode.CANNED
     if "op" in vector:
-        assert vector["op"] == "live", f"{label}: op"
+        try:
+            mode = VectorMode(vector["op"])
+        except (ValueError, TypeError) as exc:
+            raise AssertionError(f"{label}: op") from exc
+        assert mode is VectorMode.LIVE, f"{label}: op"
         canned = [f for f in _CANNED_FIELDS if f in vector]
         assert not canned, f"{label}: live vector with {canned}"
     for key in ("client_id", "client_secret", "endpoint_path"):
@@ -264,6 +285,7 @@ def _validate_http_vector(vector: dict, label: str) -> None:
             assert isinstance(vector["input"][key], str), (
                 f"{label}: input.{key} must be a string"
             )
+    return HTTPVector(mode, vector["input"], vector["expect"])
 
 
 def _params() -> list:
@@ -284,7 +306,7 @@ def _params() -> list:
                     ), f"{case['id']}-{key}: neither an HTTP nor a pure-logic vector"
                     continue
                 param_id = f"{case['id']}-{key}"
-                _validate_http_vector(vector, param_id)
+                decoded = _decode_http_vector(vector, param_id)
                 reason = _KNOWN_GAPS.get(param_id) or _KNOWN_GAPS.get(case["id"])
                 marks = []
                 if reason:
@@ -293,7 +315,7 @@ def _params() -> list:
                     )
                 params.append(
                     pytest.param(
-                        capability, case["id"], key, vector, id=param_id, marks=marks
+                        capability, case["id"], key, decoded, id=param_id, marks=marks
                     )
                 )
     return params
@@ -312,23 +334,25 @@ def _vector_op() -> None:
 
 @pytest.mark.parametrize(("capability", "case_id", "key", "vector"), _params())
 @pytest.mark.usefixtures("_vector_op")
-def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> None:
+def test_http_vector(
+    capability: str, case_id: str, key: str, vector: HTTPVector
+) -> None:
     adapter = ADAPTERS.get(capability)
     assert adapter, f"{capability}.json has HTTP vectors but no adapter"
-    outcome = vector["expect"]["outcome"]
+    outcome = vector.expect["outcome"]
     assert outcome in ("accept", "reject"), f"{case_id}: unknown outcome {outcome!r}"
-    if vector.get("op") == "live":
-        result = adapter.call(VECTOR_OP, vector["input"])
-        adapter.expect(case_id, vector["expect"], result)
+    if vector.mode is VectorMode.LIVE:
+        result = adapter.call(VECTOR_OP, vector.input)
+        adapter.expect(case_id, vector.expect, result)
         return
 
     base = f"{VECTOR_OP}/v/{_RUN}/{capability}/{case_id}/{key}"
-    result = adapter.call(base, vector["input"])
+    result = adapter.call(base, vector.input)
     response = httpx.get(base + "/_check", timeout=5)
     assert response.is_success, f"{case_id}: _check: {response.text}"
     check = response.json()
     assert check["ok"], f"{case_id}: {check['diffs']}"
-    adapter.expect(case_id, vector["expect"], result)
+    adapter.expect(case_id, vector.expect, result)
 
 
 @pytest.mark.unit
@@ -336,14 +360,16 @@ def test_http_vector(capability: str, case_id: str, key: str, vector: dict) -> N
 @pytest.mark.parametrize("value", [None, {}])
 def test_live_vector_rejects_canned_fields(field: str, value: Any) -> None:
     with pytest.raises(AssertionError, match="live vector"):
-        _validate_http_vector({"op": "live", "input": {}, field: value}, "CASE")
+        _decode_http_vector({"op": "live", "input": {}, field: value}, "CASE")
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("op", ["unexpected", "", None, 42])
+@pytest.mark.parametrize(
+    "op", ["unexpected", "canned", "", None, 42, False, [], {}, {"live": None}]
+)
 def test_http_vector_rejects_unknown_op(op: Any) -> None:
     with pytest.raises(AssertionError, match="op"):
-        _validate_http_vector({"op": op, "input": {}}, "CASE")
+        _decode_http_vector({"op": op, "input": {}}, "CASE")
 
 
 @pytest.mark.unit
@@ -357,7 +383,7 @@ def test_http_vector_rejects_malformed_overrides(
     if live:
         vector["op"] = "live"
     with pytest.raises(AssertionError, match=f"input.{field} must be a string"):
-        _validate_http_vector(vector, "CASE")
+        _decode_http_vector(vector, "CASE")
 
 
 @pytest.mark.unit
@@ -369,8 +395,9 @@ def test_http_vector_preserves_string_overrides(live: bool) -> None:
             if value is None
             else dict.fromkeys(("client_id", "client_secret", "endpoint_path"), value)
         )
-        vector: dict[str, Any] = {"input": inp}
+        vector: dict[str, Any] = {"input": inp, "expect": {"outcome": "accept"}}
         if live:
             vector["op"] = "live"
-        _validate_http_vector(vector, "CASE")
-        assert vector["input"] == inp
+        decoded = _decode_http_vector(vector, "CASE")
+        assert decoded.mode is (VectorMode.LIVE if live else VectorMode.CANNED)
+        assert decoded.input == inp
