@@ -18,6 +18,10 @@ async function start(t, { vector = basic, spec, ...limits } = {}) {
   const specDir = fs.mkdtempSync(path.join(os.tmpdir(), "http-vectors-"));
   fs.mkdirSync(path.join(specDir, "vectors"));
   fs.mkdirSync(path.join(specDir, "test-fixtures"));
+  fs.copyFileSync(
+    new URL("../../spec/http-vector.schema.json", import.meta.url),
+    path.join(specDir, "http-vector.schema.json"),
+  );
   fs.writeFileSync(
     path.join(specDir, "vectors/sample.json"),
     JSON.stringify(spec ?? { tests: [{ id: "CASE-1", vectors: [vector] }] }),
@@ -264,9 +268,11 @@ for (const [fixture, status] of [
   });
 }
 
-test("capability without tests and unknown vectors return 404", async (t) => {
+test("invalid capability files fail explicitly and unknown files return 404", async (t) => {
   const { issuer, request } = await start(t, { spec: {} });
-  assert.equal((await request("/token")).status, 404);
+  const result = await request("/token");
+  assert.equal(result.status, 500);
+  assert.match((await result.json()).error, /invalid sample.json/);
   assert.equal(
     (await fetch(issuer + "/v/run/unknown/CASE-1/one/token")).status,
     404,

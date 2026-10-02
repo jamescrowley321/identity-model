@@ -7,9 +7,10 @@
   "main": "provider.js",
   "scripts": {
     "start": "node provider.js",
-    "test": "node --test vectors.test.js"
+    "test": "node --test"
   },
   "dependencies": {
+    "ajv": "8.20.0",
     "jose": "^6.0.11",
     "oidc-provider": "^9.7.1"
   },

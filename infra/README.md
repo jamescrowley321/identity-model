@@ -89,8 +89,10 @@ the real OP — see
   every recorded request to `expect_request.path` and preserves the records
   and sequence position, so repeated checks return the same result. An expected
   `""` header or form value requires the field to be absent; present-but-empty
-  fails. Request positions are reserved on arrival, so concurrent response
-  sequences follow arrival order. Checks fail while any request body is pending.
+  fails. Nonempty form expectations require exactly one matching value, so
+  duplicate parameters fail. Request positions are reserved on arrival, so
+  concurrent response sequences follow arrival order. Checks fail while any
+  request body is pending.
 - **POST** `.../_reset` clears this vector's records, fixture errors and
   sequence position. Use it after a completed run to release capacity, or
   before intentionally restarting the vector. GET returns 405.
@@ -104,6 +106,12 @@ Fixture read errors and per-run limit failures also make `_check` fail until
 reset, so a negative vector cannot pass because its fixture is broken.
 Missing fixtures return 404, other fixture read failures return 500; the error
 names the capability, case, vector and fixture path.
+
+The fixture-owned fields are validated against
+[`../spec/http-vector.schema.json`](../spec/http-vector.schema.json) before
+requests or checks run. Malformed fields return HTTP 500 with their schema
+location; they cannot pass a zero-call check. Capability inputs and results
+are validated by their language runners.
 
 Run the fixture's Node tests with `make test-infra-vectors` (requires Node 22
 or later). CI runs the same target before the node-oidc integration suite.
