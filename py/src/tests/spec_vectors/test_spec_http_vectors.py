@@ -15,6 +15,7 @@ import base64
 from collections.abc import Callable
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 import uuid
 
@@ -22,9 +23,11 @@ import httpx
 import pytest
 
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
+from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.sync import token_validation
 from py_identity_model.sync.revocation import TokenRevocationRequest, revoke_token
 from py_identity_model.sync.token_validation import (
     _discover_and_resolve_key,
@@ -37,6 +40,9 @@ from py_identity_model.sync.userinfo import UserInfoRequest, get_userinfo
 
 
 VECTOR_OP = "http://localhost:9010"
+#: Placeholder host in fixtures and expected results; the fixture serves it
+#: rewritten to the vector's base URL.
+_FIXTURE_HOST = "https://server.example.com"
 _RUN = uuid.uuid4().hex
 _DISCO_PATH = "/.well-known/openid-configuration"
 
@@ -145,6 +151,88 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
     assert response.www_authenticate == expect.get("www_authenticate")
 
 
+# --- discovery ----------------------------------------------------------------
+#
+# The public fetch API is uncached. TTL vectors therefore use the private
+# _get_disco_response path used by token validation; misses still call the public
+# API and send real HTTP requests. Only the cache modules' local time references
+# are replaced, using one clock for both insertion and expiry. The stdlib clock
+# and HTTP timing remain real. Rejections compare library-produced structured
+# error codes, exact HTTP statuses, and exact missing-field sets.
+
+
+def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
+    address = base + _DISCO_PATH
+    # The fixture is plain HTTP on loopback; require_https also withdraws the
+    # loopback exemption so the HTTPS requirement applies.
+    policy = (
+        DiscoveryPolicy(allow_http_on_loopback=False)
+        if inp.get("require_https")
+        else DiscoveryPolicy()
+    )
+    if "calls_at_seconds" not in inp:
+        request = DiscoveryDocumentRequest(address=address, policy=policy)
+        return base, [get_discovery_document(request)]
+    responses = []
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("DISCO_CACHE_TTL", str(inp["cache_ttl_seconds"]))
+            jwks_cache._reset_env_for_testing()
+            now = [0.0]
+            cache_clock = SimpleNamespace(monotonic=lambda: now[0])
+            mp.setattr(token_validation, "time", cache_clock)
+            mp.setattr(jwks_cache, "time", cache_clock)
+            token_validation.clear_discovery_cache()
+            start = now[0]
+            for at in inp["calls_at_seconds"]:
+                now[0] = start + at
+                responses.append(token_validation._get_disco_response(address, policy))
+    finally:
+        # After the env var is restored, so the cache re-reads the default TTL.
+        token_validation.clear_discovery_cache()
+        jwks_cache._reset_env_for_testing()
+    return base, responses
+
+
+def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
+    base, responses = result
+    response = responses[-1]
+    if expect["outcome"] == "accept":
+        for r in responses:
+            assert r.is_successful, f"{case_id}: {r.error}"
+        want = json.loads(
+            json.dumps(expect.get("result", {})).replace(_FIXTURE_HOST, base)
+        )
+        for name, value in want.items():
+            assert getattr(response, name) == value, f"{case_id}: {name}"
+        return
+    if (
+        case_id == "DISC-003"
+        and expect["error"] == "issuer_mismatch"
+        and response.is_successful
+        and response.issuer == "https://attacker.example.com"
+    ):
+        raise KnownGap(f"{case_id}: issuer mismatch accepted (#574)")
+    assert not response.is_successful, f"{case_id}: expected reject, got accept"
+    assert response.error_code == expect["error"], (
+        f"{case_id}: expected {expect['error']}, got {response.error_code}: {response.error}"
+    )
+    if expect["error"] == "http_status":
+        assert response.status_code == expect["status"], f"{case_id}: HTTP status"
+    if expect["error"] == "missing_fields":
+        observed = set(response.missing_fields)
+        expected = set(expect["fields"])
+        if (
+            case_id == "DISC-008"
+            and expected == {"token_endpoint", "subject_types_supported"}
+            and observed == {"subject_types_supported"}
+        ):
+            raise KnownGap(f"{case_id}: token_endpoint not required (#771)")
+        assert observed == expected, (
+            f"{case_id}: missing fields {sorted(observed)}, expected {sorted(expected)}"
+        )
+
+
 # --- jwks ---------------------------------------------------------------------
 #
 # py-identity-model keeps its JWKS cache inside token validation, so the steps
@@ -223,6 +311,7 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
 
 
 ADAPTERS: dict[str, Adapter] = {
+    "discovery": Adapter(_discovery_call, _discovery_expect),
     "revocation": Adapter(_revocation_call, _revocation_expect),
     "userinfo": Adapter(_userinfo_call, _userinfo_expect),
     "jwks": Adapter(_jwks_call, _jwks_expect),
@@ -230,6 +319,8 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
+    "DISC-003-issuer-mismatch": "no issuer-match check (#574)",
+    "DISC-008-missing-multiple-fields": "token_endpoint not required (#771)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",
