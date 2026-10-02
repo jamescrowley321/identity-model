@@ -504,6 +504,12 @@ class DiscoveryDocumentResponse(BaseResponse):
         }
     )
 
+    # Structured diagnostics are keyword-only to preserve positional callers.
+    # The legacy error string remains available for display.
+    error_code: str | None = field(default=None, kw_only=True)
+    status_code: int | None = field(default=None, kw_only=True)
+    missing_fields: tuple[str, ...] = field(default=(), kw_only=True)
+
     # Core OpenID Connect endpoints
     issuer: str | None = None
     jwks_uri: str | None = None

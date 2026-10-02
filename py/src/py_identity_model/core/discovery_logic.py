@@ -49,6 +49,8 @@ def handle_unsuccessful_response(
     return DiscoveryDocumentResponse(
         is_successful=False,
         error=error_msg,
+        error_code="http_status",
+        status_code=response.status_code,
     )
 
 

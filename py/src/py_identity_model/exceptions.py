@@ -182,6 +182,18 @@ class DiscoveryException(NetworkException):
     """Raised when discovery document cannot be fetched or parsed."""
 
 
+class DiscoveryParseError(DiscoveryException):
+    """The discovery response could not be decoded as JSON."""
+
+
+class DiscoveryMissingFieldsError(DiscoveryException):
+    """Discovery validation rejected these missing fields."""
+
+    def __init__(self, message: str, fields: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.fields = fields
+
+
 class JwksException(NetworkException):
     """Raised when JWKS cannot be fetched or parsed."""
 
@@ -196,6 +208,10 @@ class UserInfoException(NetworkException):
 
 class ConfigurationException(PyIdentityModelException):
     """Raised when configuration is invalid or incomplete."""
+
+
+class DiscoveryHTTPSRequiredError(ConfigurationException):
+    """A discovery URL violates the HTTPS requirement."""
 
 
 class FailedResponseAccessError(PyIdentityModelException):
@@ -228,6 +244,9 @@ __all__ = [
     "CertificateBindingError",
     "ConfigurationException",
     "DiscoveryException",
+    "DiscoveryHTTPSRequiredError",
+    "DiscoveryMissingFieldsError",
+    "DiscoveryParseError",
     "FailedResponseAccessError",
     "IdTokenValidationException",
     "InvalidAudienceException",

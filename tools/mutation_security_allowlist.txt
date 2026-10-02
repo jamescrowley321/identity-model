@@ -134,3 +134,12 @@ py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_18 a499bdf832942
 # fetch under that same strict config already rejects it. Unobservable.
 py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9 0d528563379ce7c3
 py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9 6a5fbf6c84edcc13
+
+# Discovery failure diagnostics (#832): this exact mutant only decorates
+# "Issuer must use HTTPS scheme" with an XX prefix/suffix. The raised
+# DiscoveryHTTPSRequiredError, HTTPS rejection, and structured error_code remain
+# unchanged. The legacy wrapper still recognizes "issuer" in the diagnostic.
+# Prose is deliberately not an error discriminator; the adapter regressions
+# require correct structured failures to remain accepted when prose changes.
+# This content-pinned waiver excludes no category/status/field/control-flow change.
+py_identity_model.core.validators.x_validate_issuer__mutmut_13 8de770b058409334

@@ -7,7 +7,13 @@ sync and async implementations.
 
 import httpx
 
-from ..exceptions import ConfigurationException, DiscoveryException
+from ..exceptions import (
+    ConfigurationException,
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+)
 from ..logging_config import logger
 from .models import (
     AuthorizationCodeTokenResponse,
@@ -46,6 +52,11 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_code=(
+                "https_required"
+                if isinstance(e, DiscoveryHTTPSRequiredError)
+                else "configuration"
+            ),
         )
 
     if isinstance(e, DiscoveryException):
@@ -60,6 +71,16 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_code=(
+                "parse"
+                if isinstance(e, DiscoveryParseError)
+                else "missing_fields"
+                if isinstance(e, DiscoveryMissingFieldsError)
+                else "validation"
+            ),
+            missing_fields=e.fields
+            if isinstance(e, DiscoveryMissingFieldsError)
+            else (),
         )
 
     if isinstance(e, httpx.RequestError):
@@ -68,6 +89,7 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_code="network",
         )
 
     error_msg = f"Unexpected error during discovery document request: {e!s}"
@@ -75,6 +97,7 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
     return DiscoveryDocumentResponse(
         is_successful=False,
         error=error_msg,
+        error_code="unexpected",
     )
 
 
