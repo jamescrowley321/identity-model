@@ -124,5 +124,18 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
 The fixture checks `expect_request` and `expect_calls` itself (`{base}/_check`),
 so a runner only calls the client and maps its result to `expect`.
 
+The fixture validates these response and request-assertion fields against
+[`http-vector.schema.json`](http-vector.schema.json) before serving a vector,
+including checks and resets. Invalid fields return an attributed HTTP 500;
+unknown files, cases and vector names return 404. Response sequences must be
+nonempty, counts must be nonnegative integers, and one path cannot appear in
+both `http` and `http_sequence`. Response and request-assertion objects reject
+unknown fields. Capability-specific `input` and `expect` remain the language
+runner's responsibility.
+
+Expected nonempty form values require exactly one matching parameter: duplicate
+parameters fail even when their first value matches. An expected empty string
+continues to mean the field must be absent.
+
 The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.

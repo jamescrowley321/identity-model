@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:identity-model:http-vector",
+  "description": "Fixture-owned fields of a canned HTTP vector. Capability inputs and results are validated by language runners.",
+  "type": "object",
+  "properties": {
+    "name": { "$ref": "#/definitions/routeKey" },
+    "http": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/requestPath" },
+      "additionalProperties": { "$ref": "#/definitions/response" }
+    },
+    "http_sequence": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/requestPath" },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "$ref": "#/definitions/response" }
+      }
+    },
+    "expect_request": { "$ref": "#/definitions/request" },
+    "expect_calls": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/requestPath" },
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    }
+  },
+  "anyOf": [
+    { "properties": { "http": {} }, "required": ["http"] },
+    { "properties": { "http_sequence": {} }, "required": ["http_sequence"] }
+  ],
+  "definitions": {
+    "routeKey": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+    "requestPath": {
+      "type": "string",
+      "pattern": "^/(?!_(?:check|reset|requests)$)[^?#\\s]*$"
+    },
+    "headers": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[!#$%&'*+.^`|~0-9A-Za-z-]+$"
+      },
+      "additionalProperties": { "type": "string", "pattern": "^[\\t\\u0020-\\u007e\\u0080-\\u00ff]*$" }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "integer", "minimum": 200, "maximum": 599 },
+        "headers": { "$ref": "#/definitions/headers" },
+        "body_fixture": { "type": "string", "minLength": 1 }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "method"],
+      "properties": {
+        "path": { "$ref": "#/definitions/requestPath" },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"]
+        },
+        "headers": { "$ref": "#/definitions/headers" },
+        "form": {
+          "type": "object",
+          "propertyNames": { "type": "string", "minLength": 1 },
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "vectorFile": {
+      "type": "object",
+      "required": ["tests"],
+      "properties": {
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "$ref": "#/definitions/routeKey" },
+              "vectors": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "properties": { "name": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

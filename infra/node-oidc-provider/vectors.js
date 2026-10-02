@@ -21,24 +21,59 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import Ajv from "ajv";
 
 const FIXTURE_HOSTS =
   /https:\/\/(?:server|provider)\.example\.com(?=[/"\s?#]|$)/g;
 const ROUTE = /^\/v\/([\w.-]+)\/([a-z0-9-]+)\/([\w.-]+)\/([\w.-]+)(\/.*)$/;
 
-function loadVector(specDir, capability, caseId, vectorKey) {
+function requireValid(validate, value, label) {
+  if (!validate(value)) {
+    const errors = validate.errors.map(
+      ({ instancePath, message }) => `${instancePath || "/"} ${message}`,
+    );
+    throw new Error(`invalid ${label}: ${errors.join("; ")}`);
+  }
+  return value;
+}
+
+function uniqueIndex(items, keyFor, label) {
+  const indexed = new Map();
+  items.forEach((item, index) => {
+    const key = keyFor(item, index);
+    if (indexed.has(key)) throw new Error(`${label}: duplicate key ${key}`);
+    indexed.set(key, item);
+  });
+  return indexed;
+}
+
+function loadVector(specDir, validators, capability, caseId, vectorKey) {
   const file = path.join(specDir, "vectors", `${capability}.json`);
-  const spec = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (!Array.isArray(spec.tests)) return undefined;
-  const tc = spec.tests.find((t) => t.id === caseId);
-  if (!tc) return undefined;
-  const vectors = tc.vectors || [];
-  return (
-    vectors.find((v) => v.name === vectorKey) ||
-    (/^\d+$/.test(vectorKey) && !vectors[+vectorKey]?.name
-      ? vectors[+vectorKey]
-      : undefined)
+  const spec = requireValid(
+    validators.file,
+    JSON.parse(fs.readFileSync(file, "utf8")),
+    `${capability}.json`,
   );
+  const cases = uniqueIndex(spec.tests, (test) => test.id, `${capability}.json`);
+  const tc = cases.get(caseId);
+  if (!tc) return undefined;
+  const vectors = uniqueIndex(
+    tc.vectors ?? [],
+    (vector, index) => vector.name ?? String(index),
+    `${capability}/${caseId}`,
+  );
+  const vector = vectors.get(vectorKey);
+  if (!vector) return undefined;
+  requireValid(validators.http, vector, `${capability}/${caseId}/${vectorKey}`);
+  const overlapping = Object.keys(vector.http || {}).filter(
+    (requestPath) => Object.hasOwn(vector.http_sequence || {}, requestPath),
+  );
+  if (overlapping.length) {
+    throw new Error(
+      `${capability}/${caseId}/${vectorKey}: paths in both http and http_sequence: ${overlapping.join(", ")}`,
+    );
+  }
+  return vector;
 }
 
 function readFixture(specDir, relPath) {
@@ -107,10 +142,10 @@ function checkRequest(want, got, label) {
         );
       continue;
     }
-    const have = got.form.get(name);
-    if (have !== value)
+    const have = got.form.getAll(name);
+    if (have.length !== 1 || have[0] !== value)
       diffs.push(
-        `${label}form ${name} = ${JSON.stringify(have)}, want ${JSON.stringify(value)}`,
+        `${label}form ${name} = ${JSON.stringify(have)}, want exactly one ${JSON.stringify(value)}`,
       );
   }
   return diffs;
@@ -150,6 +185,14 @@ export function vectorRoutes({
   maxRequests = 64,
   ttlMs = 10 * 60 * 1000,
 }) {
+  const schema = JSON.parse(
+    fs.readFileSync(path.join(specDir, "http-vector.schema.json"), "utf8"),
+  );
+  const ajv = new Ajv({ strict: true, allErrors: true, ownProperties: true });
+  const validators = {
+    http: ajv.compile(schema),
+    file: ajv.compile({ $ref: `${schema.$id}#/definitions/vectorFile` }),
+  };
   const requests = new Map(); // base path -> { seen, count, updatedAt, error }
 
   return async (ctx, next) => {
@@ -160,7 +203,7 @@ export function vectorRoutes({
 
     let vector;
     try {
-      vector = loadVector(specDir, capability, caseId, vectorKey);
+      vector = loadVector(specDir, validators, capability, caseId, vectorKey);
     } catch (err) {
       ctx.status = err.code === "ENOENT" ? 404 : 500;
       ctx.body = { error: `load ${capability}.json: ${err.message}` };

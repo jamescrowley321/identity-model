@@ -12,6 +12,7 @@ COPY provider.js vectors.js ./
 # Spec vectors + fixtures for the /v/ routes (compose additional_contexts).
 COPY --from=spec vectors /spec/vectors
 COPY --from=spec test-fixtures /spec/test-fixtures
+COPY --from=spec http-vector.schema.json /spec/http-vector.schema.json
 
 # Run as non-root user (built-in node user in alpine image)
 USER node
