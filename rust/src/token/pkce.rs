@@ -133,7 +133,7 @@ mod tests {
     use std::collections::HashSet;
 
     // ACG-003: S256Challenge must match the RFC 7636 Appendix B worked example
-    // exactly. See spec/test-fixtures/token/pkce-appendix-b.json.
+    // exactly. See ACG-003 in spec/vectors/authorization-code.json.
     #[test]
     fn s256_challenge_matches_appendix_b() {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";

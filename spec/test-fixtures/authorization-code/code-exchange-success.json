@@ -1,0 +1,7 @@
+{
+  "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.authorization-code.tok",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "8xLOxBtZp8.refresh.tok",
+  "scope": "openid profile"
+}
