@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-10-03)
+
+### Features
+
+- **rust**: Return typed DiscoveryError from DiscoveryClient::discover
+  ([#832](https://github.com/jamescrowley321/identity-model/pull/832),
+  [`c09ebc0`](https://github.com/jamescrowley321/identity-model/commit/c09ebc09ef0b32ddc0e93dceb1c17ce06ddf0b24))
+
+### Breaking Changes
+
+- **rust**: DiscoveryClient::discover returns DiscoveryError instead of IdentityError. Match
+  UnexpectedStatus, InvalidJson, MissingFields, IssuerMismatch or HttpsRequired; transport failures,
+  oversized bodies and an empty issuer URL stay in DiscoveryError::Other. `?` still converts to
+  IdentityError.
+
+
 ## v0.6.2 (2026-09-28)
 
 ### Bug Fixes
