@@ -225,7 +225,7 @@
           },
           "expect": {
             "outcome": "reject",
-            "error": "http_status",
+            "error": "unexpected_status",
             "status": 404
           }
         },
@@ -239,7 +239,7 @@
           },
           "expect": {
             "outcome": "reject",
-            "error": "http_status",
+            "error": "unexpected_status",
             "status": 500
           }
         }
@@ -266,7 +266,7 @@
           },
           "expect": {
             "outcome": "reject",
-            "error": "parse"
+            "error": "invalid_json"
           }
         }
       ]
@@ -380,5 +380,5 @@
       ]
     }
   ],
-  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, http_status (with `status`), parse, missing_fields (with `fields`, in required_fields order), https_required."
+  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, unexpected_status (with `status`), invalid_json, missing_fields (with `fields`, in required_fields order), https_required."
 }

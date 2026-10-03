@@ -241,7 +241,7 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
     for at in offsets {
         let offset = SPEC_SECOND * u32::try_from(at).expect("offset fits u32");
         tokio::time::sleep_until(start + offset).await;
-        result = client.discover_detailed(base).await;
+        result = client.discover(base).await;
         if result.is_err() {
             break;
         }
@@ -270,10 +270,10 @@ fn discovery_expect(
         }
         "reject" => match (expect.error.as_str(), result) {
             ("issuer_mismatch", Err(DiscoveryError::IssuerMismatch { .. })) => {}
-            ("http_status", Err(DiscoveryError::HttpStatus { status, .. })) => {
+            ("unexpected_status", Err(DiscoveryError::UnexpectedStatus { status, .. })) => {
                 assert_eq!(status, expect.status, "{label}: HTTP status");
             }
-            ("parse", Err(DiscoveryError::Other(IdentityError::Deserialization(_)))) => {}
+            ("invalid_json", Err(DiscoveryError::InvalidJson { .. })) => {}
             ("missing_fields", Err(DiscoveryError::MissingFields { fields, .. })) => {
                 assert_eq!(fields, expect.fields, "{label}: missing fields");
             }
@@ -458,7 +458,7 @@ async fn spec_http_vectors() {
 fn discovery_diagnostics_cannot_substitute_for_failure_details() {
     let cases = [
         (
-            serde_json::json!({"outcome": "reject", "error": "http_status", "status": 500}),
+            serde_json::json!({"outcome": "reject", "error": "unexpected_status", "status": 500}),
             IdentityError::Http(
                 "unexpected HTTP status 404 from endpoint with unexpected HTTP status 500 injected"
                     .into(),
@@ -499,8 +499,8 @@ fn discovery_diagnostics_cannot_substitute_for_failure_details() {
 fn discovery_structured_details_accept_arbitrary_diagnostics() {
     let cases = [
         (
-            serde_json::json!({"outcome": "reject", "error": "http_status", "status": 404}),
-            DiscoveryError::HttpStatus {
+            serde_json::json!({"outcome": "reject", "error": "unexpected_status", "status": 404}),
+            DiscoveryError::UnexpectedStatus {
                 status: 404,
                 endpoint: "changed diagnostic context with status 500".into(),
             },
@@ -526,10 +526,11 @@ fn discovery_structured_details_accept_arbitrary_diagnostics() {
             },
         ),
         (
-            serde_json::json!({"outcome": "reject", "error": "parse"}),
-            DiscoveryError::Other(IdentityError::Deserialization(
-                "entirely different prose".into(),
-            )),
+            serde_json::json!({"outcome": "reject", "error": "invalid_json"}),
+            DiscoveryError::InvalidJson {
+                endpoint: "changed diagnostic context".into(),
+                reason: "entirely different prose".into(),
+            },
         ),
     ];
     for (expected, error) in cases {
@@ -541,10 +542,10 @@ fn discovery_structured_details_accept_arbitrary_diagnostics() {
 #[test]
 fn discovery_checks_exact_status_and_fields() {
     let status: Expect = serde_json::from_value(
-        serde_json::json!({"outcome": "reject", "error": "http_status", "status": 500}),
+        serde_json::json!({"outcome": "reject", "error": "unexpected_status", "status": 500}),
     )
     .unwrap();
-    let error = DiscoveryError::HttpStatus {
+    let error = DiscoveryError::UnexpectedStatus {
         status: 404,
         endpoint: "unexpected HTTP status 500 ".into(),
     };

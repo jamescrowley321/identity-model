@@ -22,7 +22,11 @@ import uuid
 import httpx
 import pytest
 
-from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    DiscoveryErrorKind,
+    get_discovery_document,
+)
 from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.token_validation_logic import validate_jwks_response
@@ -214,10 +218,10 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
     ):
         raise KnownGap(f"{case_id}: issuer mismatch accepted (#574)")
     assert not response.is_successful, f"{case_id}: expected reject, got accept"
-    assert response.error_code == expect["error"], (
-        f"{case_id}: expected {expect['error']}, got {response.error_code}: {response.error}"
+    assert response.error_kind is DiscoveryErrorKind(expect["error"]), (
+        f"{case_id}: expected {expect['error']}, got {response.error_kind}: {response.error}"
     )
-    if expect["error"] == "http_status":
+    if expect["error"] == "unexpected_status":
         assert response.status_code == expect["status"], f"{case_id}: HTTP status"
     if expect["error"] == "missing_fields":
         observed = set(response.missing_fields)

@@ -10,7 +10,7 @@ import time
 import pytest
 
 from py_identity_model.core import jwks_cache
-from py_identity_model.core.models import DiscoveryDocumentResponse
+from py_identity_model.core.models import DiscoveryDocumentResponse, DiscoveryErrorKind
 from py_identity_model.sync import token_validation
 from tests.spec_vectors.test_spec_http_vectors import (
     KnownGap,
@@ -58,9 +58,9 @@ def discovery_server():
 @pytest.mark.parametrize(
     "expect",
     [
-        {"outcome": "reject", "error": "parse"},
+        {"outcome": "reject", "error": "invalid_json"},
         {"outcome": "reject", "error": "https_required"},
-        {"outcome": "reject", "error": "http_status", "status": 500},
+        {"outcome": "reject", "error": "unexpected_status", "status": 500},
         {"outcome": "reject", "error": "missing_fields", "fields": ["jwks_uri"]},
     ],
 )
@@ -76,7 +76,7 @@ def test_upstream_prose_cannot_satisfy_wrong_failure(discovery_server, expect):
         _discovery_expect("REGRESSION", expect, result)
     _discovery_expect(
         "REGRESSION",
-        {"outcome": "reject", "error": "http_status", "status": 404},
+        {"outcome": "reject", "error": "unexpected_status", "status": 404},
         result,
     )
 
@@ -84,9 +84,9 @@ def test_upstream_prose_cannot_satisfy_wrong_failure(discovery_server, expect):
 @pytest.mark.parametrize(
     ("code", "details"),
     [
-        ("parse", {}),
+        ("invalid_json", {}),
         ("https_required", {}),
-        ("http_status", {"status_code": 404}),
+        ("unexpected_status", {"status_code": 404}),
         ("missing_fields", {"missing_fields": ("jwks_uri",)}),
     ],
 )
@@ -94,11 +94,11 @@ def test_structured_failure_accepts_changed_prose(code, details):
     response = DiscoveryDocumentResponse(
         is_successful=False,
         error="Entirely different diagnostic prose",
-        error_code=code,
+        error_kind=DiscoveryErrorKind(code),
         **details,
     )
     expected = {"outcome": "reject", "error": code}
-    if code == "http_status":
+    if code == "unexpected_status":
         expected["status"] = 404
     if code == "missing_fields":
         expected["fields"] = ["jwks_uri"]
@@ -118,7 +118,7 @@ def test_wrong_field_sets_never_become_known_gap(fields):
     response = DiscoveryDocumentResponse(
         is_successful=False,
         error="subject_types_supported",
-        error_code="missing_fields",
+        error_kind=DiscoveryErrorKind.MISSING_FIELDS,
         missing_fields=fields,
     )
     with pytest.raises(AssertionError):
@@ -137,7 +137,7 @@ def test_only_specific_missing_endpoint_behavior_is_known_gap():
     response = DiscoveryDocumentResponse(
         is_successful=False,
         error="Changed prose",
-        error_code="missing_fields",
+        error_kind=DiscoveryErrorKind.MISSING_FIELDS,
         missing_fields=("subject_types_supported",),
     )
     with pytest.raises(KnownGap, match="#771"):

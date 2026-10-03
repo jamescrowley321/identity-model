@@ -78,14 +78,14 @@ func assertDiscoveryError(t *testing.T, label string, err error, want HTTPExpect
 		if !errors.Is(err, discovery.ErrIssuerMismatch) {
 			t.Fatalf("%s: err = %v, want ErrIssuerMismatch", label, err)
 		}
-	case "http_status":
+	case "unexpected_status":
 		if !errors.As(err, &httpErr) {
 			t.Fatalf("%s: err = %v, want *HTTPError", label, err)
 		}
 		if httpErr.StatusCode != want.Status {
 			t.Errorf("%s: status = %d, want %d", label, httpErr.StatusCode, want.Status)
 		}
-	case "parse":
+	case "invalid_json":
 		if !errors.Is(err, discovery.ErrParse) {
 			t.Fatalf("%s: err = %v, want ErrParse", label, err)
 		}
