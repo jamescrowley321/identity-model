@@ -76,6 +76,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007) — **executable vectors** | `test-fixtures/userinfo/` |
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
+| Token Exchange | `vectors/token-exchange.json` (EXCH-001..006) — **executable vectors** | `test-fixtures/token-exchange/` |
 
 These capabilities carry executable vectors and a runner in **every language**:
 
@@ -88,6 +89,7 @@ These capabilities carry executable vectors and a runner in **every language**:
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
+| token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
 runners need the node-oidc fixture (see [HTTP vectors](#http-vectors)) and run
@@ -119,7 +121,8 @@ Capabilities that call an endpoint use HTTP vectors. Each vector carries:
   it must be absent.
 - `expect_calls` (optional): the exact number of requests per path.
 - `expect`: `outcome` `accept` or `reject`; a reject carries the canonical
-  `error` code, and optionally the HTTP `status` and the `fields` it names; an
+  `error` code, and optionally the HTTP `status`, the `fields` it names, and the
+  OAuth `error_description` and `error_uri`; an
   accept may carry `result` fields compared by exact equality (with
   `https://server.example.com` read as the vector's base URL). A JWKS accept
   carries the resulting `keys`. UserInfo adds `www_authenticate` (the expected
@@ -143,5 +146,5 @@ Expected nonempty form values require exactly one matching parameter: duplicate
 parameters fail even when their first value matches. An expected empty string
 continues to mean the field must be absent.
 
-The remaining capability files (`token-exchange.json`, `client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
+The remaining capability files (`client-credentials.json`, `authorization-code.json`, `config.json`, `dpop.json`) are prose contracts
 today and gain vectors + per-language runners as each is adopted.
