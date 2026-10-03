@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from .error_handlers import handle_discovery_error
-from .models import DiscoveryDocumentRequest, DiscoveryDocumentResponse
+from .models import (
+    DiscoveryDocumentRequest,
+    DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
+)
 from .response_processors import (
     build_discovery_response,
     validate_and_parse_discovery_response,
@@ -49,6 +53,8 @@ def handle_unsuccessful_response(
     return DiscoveryDocumentResponse(
         is_successful=False,
         error=error_msg,
+        error_kind=DiscoveryErrorKind.UNEXPECTED_STATUS,
+        status_code=response.status_code,
     )
 
 

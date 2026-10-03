@@ -12,7 +12,11 @@ from ..core.discovery_logic import (
 )
 from ..core.discovery_policy import DiscoveryPolicy, validate_url_scheme
 from ..core.error_handlers import handle_discovery_error
-from ..core.models import DiscoveryDocumentRequest, DiscoveryDocumentResponse
+from ..core.models import (
+    DiscoveryDocumentRequest,
+    DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
+)
 from .http_client import get_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 
@@ -66,5 +70,6 @@ async def get_discovery_document(
 __all__ = [
     "DiscoveryDocumentRequest",
     "DiscoveryDocumentResponse",
+    "DiscoveryErrorKind",
     "get_discovery_document",
 ]

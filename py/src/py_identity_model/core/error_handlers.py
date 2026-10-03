@@ -7,7 +7,13 @@ sync and async implementations.
 
 import httpx
 
-from ..exceptions import ConfigurationException, DiscoveryException
+from ..exceptions import (
+    ConfigurationException,
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+)
 from ..logging_config import logger
 from .models import (
     AuthorizationCodeTokenResponse,
@@ -15,6 +21,7 @@ from .models import (
     ClientDeleteResponse,
     ClientRegistrationResponse,
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
     JwksResponse,
     PushedAuthorizationResponse,
     RefreshTokenResponse,
@@ -46,6 +53,11 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_kind=(
+                DiscoveryErrorKind.HTTPS_REQUIRED
+                if isinstance(e, DiscoveryHTTPSRequiredError)
+                else DiscoveryErrorKind.INVALID_CONFIGURATION
+            ),
         )
 
     if isinstance(e, DiscoveryException):
@@ -57,9 +69,21 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         else:
             error_msg = str(e)
         logger.error(error_msg)
+        if isinstance(e, DiscoveryMissingFieldsError):
+            return DiscoveryDocumentResponse(
+                is_successful=False,
+                error=error_msg,
+                error_kind=DiscoveryErrorKind.MISSING_FIELDS,
+                missing_fields=e.fields,
+            )
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_kind=(
+                DiscoveryErrorKind.INVALID_JSON
+                if isinstance(e, DiscoveryParseError)
+                else DiscoveryErrorKind.INVALID_DOCUMENT
+            ),
         )
 
     if isinstance(e, httpx.RequestError):
@@ -68,6 +92,7 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
         return DiscoveryDocumentResponse(
             is_successful=False,
             error=error_msg,
+            error_kind=DiscoveryErrorKind.NETWORK_ERROR,
         )
 
     error_msg = f"Unexpected error during discovery document request: {e!s}"
@@ -75,6 +100,7 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
     return DiscoveryDocumentResponse(
         is_successful=False,
         error=error_msg,
+        error_kind=DiscoveryErrorKind.UNEXPECTED_ERROR,
     )
 
 
