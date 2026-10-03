@@ -14,11 +14,12 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rs_identity_model::{
-    DiscoveryClient, DiscoveryError, IdentityError, JsonWebKey, JwksClient, ProviderMetadata,
-    RevocationClient, UserInfoClient, UserInfoResponse,
+    ClientAuthMethod, DiscoveryClient, DiscoveryError, IdentityError, Introspection,
+    IntrospectionClient, JsonWebKey, JwksClient, ProviderMetadata, RevocationClient,
+    UserInfoClient, UserInfoResponse,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const VECTORS_DIR: &str = "../spec/vectors";
 /// The node-oidc fixture that serves the canned HTTP vectors.
@@ -32,7 +33,13 @@ const FIXTURE_HOST: &str = "https://server.example.com";
 /// injectable clock, so TTL vectors run scaled down in real time.
 const SPEC_SECOND: Duration = Duration::from_millis(50);
 /// Capabilities with an adapter, keyed by vector file name.
-const ADAPTERS: &[&str] = &["discovery", "jwks", "revocation", "userinfo"];
+const ADAPTERS: &[&str] = &[
+    "discovery",
+    "introspection",
+    "jwks",
+    "revocation",
+    "userinfo",
+];
 
 /// One executable HTTP scenario. The fixture serves `http`/`http_sequence`
 /// and checks `expect_request`/`expect_calls`, so the runner only reads the
@@ -284,6 +291,97 @@ fn discovery_expect(
     }
 }
 
+// --- introspection ------------------------------------------------------------
+
+async fn introspection_call(
+    label: &str,
+    base: &str,
+    v: &HttpVector,
+) -> Result<Introspection, IdentityError> {
+    let endpoint = if v.input.get("discover").and_then(Value::as_bool) == Some(true) {
+        let metadata = DiscoveryClient::builder()
+            .allow_http(true)
+            .build()
+            .discover(base)
+            .await
+            .unwrap_or_else(|e| panic!("{label}: discovery: {e}"));
+        metadata
+            .introspection_endpoint
+            .unwrap_or_else(|| panic!("{label}: no introspection_endpoint"))
+    } else {
+        format!("{base}/introspect")
+    };
+    let auth_method = match v.input_str("client_auth") {
+        Some("client_secret_post") => ClientAuthMethod::ClientSecretPost,
+        _ => ClientAuthMethod::ClientSecretBasic,
+    };
+    let client = IntrospectionClient::builder()
+        .introspection_endpoint(endpoint)
+        .client_id("cid")
+        .client_secret(v.input_str("client_secret").unwrap_or("secret"))
+        .auth_method(auth_method)
+        .allow_http(true)
+        .build()
+        .expect("build introspection client");
+    client
+        .introspect(
+            v.input_str("token").unwrap_or_default(),
+            v.input_str("token_type_hint"),
+        )
+        .await
+}
+
+/// The typed RFC 7662 §2.2 members, as JSON values.
+fn typed_members(ir: &Introspection) -> BTreeMap<&'static str, Value> {
+    BTreeMap::from([
+        ("active", json!(ir.active)),
+        ("scope", json!(ir.scope)),
+        ("client_id", json!(ir.client_id)),
+        ("username", json!(ir.username)),
+        ("token_type", json!(ir.token_type)),
+        ("exp", json!(ir.exp)),
+        ("iat", json!(ir.iat)),
+        ("nbf", json!(ir.nbf)),
+        ("sub", json!(ir.sub)),
+        ("aud", json!(ir.aud.values())),
+        ("iss", json!(ir.iss)),
+        ("jti", json!(ir.jti)),
+    ])
+}
+
+fn introspection_expect(
+    label: &str,
+    expect: &Expect,
+    result: Result<Introspection, IdentityError>,
+) {
+    match expect.outcome.as_str() {
+        "accept" => {
+            let ir = result.unwrap_or_else(|e| panic!("{label}: expected accept, got: {e}"));
+            let typed = typed_members(&ir);
+            for (name, want) in &expect.claims {
+                assert_eq!(
+                    typed.get(name.as_str()),
+                    Some(want),
+                    "{label}: typed member {name}"
+                );
+            }
+            for (name, want) in &expect.custom_claims {
+                assert_eq!(ir.extra.get(name), Some(want), "{label}: overflow {name}");
+            }
+        }
+        "reject" => match result {
+            // A 2xx body that is not a valid §2.2 response fails to decode.
+            Err(IdentityError::Deserialization(_)) if expect.error == "malformed" => {}
+            Err(IdentityError::TokenEndpoint { error, status, .. }) => {
+                assert_eq!(error, expect.error, "{label}: error code");
+                assert_eq!(status, expect.status, "{label}: status");
+            }
+            other => panic!("{label}: expected TokenEndpoint error, got {other:?}"),
+        },
+        other => panic!("{label}: unknown expected outcome {other:?}"),
+    }
+}
+
 // --- jwks ---------------------------------------------------------------------
 
 /// The key's non-empty modelled JWK members.
@@ -368,6 +466,11 @@ async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
             let result = discovery_call(base, v).await;
             check_requests(label, base).await;
             discovery_expect(label, base, &v.expect, result);
+        }
+        "introspection" => {
+            let result = introspection_call(label, base, v).await;
+            check_requests(label, base).await;
+            introspection_expect(label, &v.expect, result);
         }
         "jwks" => {
             let result = jwks_call(base, v).await;
