@@ -2,6 +2,60 @@
 
 <!-- version list -->
 
+## v4.1.0 (2026-10-03)
+
+### Chores
+
+- Sync uv.lock with 4.0.4
+  ([`b7bf8d3`](https://github.com/jamescrowley321/identity-model/commit/b7bf8d390338047446de4017e90a908172996ce9))
+
+- **deps)(deps**: Bump pyjwt from 2.14.0 to 2.15.0 in /py
+  ([#834](https://github.com/jamescrowley321/identity-model/pull/834),
+  [`134dbbf`](https://github.com/jamescrowley321/identity-model/commit/134dbbf21c539f5adfedf0bbd1e3f9dea815390f))
+
+- **deps)(deps**: Bump urllib3 from 2.7.0 to 2.8.0 in /py
+  ([#835](https://github.com/jamescrowley321/identity-model/pull/835),
+  [`8e36676`](https://github.com/jamescrowley321/identity-model/commit/8e366765714b2d0ca12f8e9672dcf841e524dce8))
+
+- **deps)(deps**: Bump virtualenv from 21.3.3 to 21.7.12 in /py
+  ([#836](https://github.com/jamescrowley321/identity-model/pull/836),
+  [`cf9a677`](https://github.com/jamescrowley321/identity-model/commit/cf9a677e1336785ae5912c84822bd916ede0833b))
+
+- **deps)(deps**: Bump virtualenv from 21.7.12 to 21.7.13 in /py
+  ([#837](https://github.com/jamescrowley321/identity-model/pull/837),
+  [`492769c`](https://github.com/jamescrowley321/identity-model/commit/492769cd4c45c8729c2dea070940d87c7de5cde8))
+
+### Continuous Integration
+
+- **deps**: Target the Python workspace in Dependabot
+  ([#831](https://github.com/jamescrowley321/identity-model/pull/831),
+  [`7de566b`](https://github.com/jamescrowley321/identity-model/commit/7de566b2849eaa4cad0f9ba38f3abea0fde52c8f))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#839](https://github.com/jamescrowley321/identity-model/pull/839),
+  [`601f77a`](https://github.com/jamescrowley321/identity-model/commit/601f77a92dd486fb2e41c00bf7ac48747f9a715b))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#833](https://github.com/jamescrowley321/identity-model/pull/833),
+  [`6e60dc1`](https://github.com/jamescrowley321/identity-model/commit/6e60dc1cc23dbe25402f5492c97bd57238e74dcf))
+
+### Features
+
+- **discovery**: Expose structured failure diagnostics
+  ([#832](https://github.com/jamescrowley321/identity-model/pull/832),
+  [`c09ebc0`](https://github.com/jamescrowley321/identity-model/commit/c09ebc09ef0b32ddc0e93dceb1c17ce06ddf0b24))
+
+- **discovery**: Expose structured Python and Rust failure diagnostics
+  ([#832](https://github.com/jamescrowley321/identity-model/pull/832),
+  [`c09ebc0`](https://github.com/jamescrowley321/identity-model/commit/c09ebc09ef0b32ddc0e93dceb1c17ce06ddf0b24))
+
+### Testing
+
+- **discovery**: Support mutation workspace fixture paths
+  ([#832](https://github.com/jamescrowley321/identity-model/pull/832),
+  [`c09ebc0`](https://github.com/jamescrowley321/identity-model/commit/c09ebc09ef0b32ddc0e93dceb1c17ce06ddf0b24))
+
+
 ## v4.0.4 (2026-09-30)
 
 ### Bug Fixes
