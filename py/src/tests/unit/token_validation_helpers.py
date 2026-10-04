@@ -6,14 +6,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt as pyjwt
 
+from ..constants import ISSUER
+
 
 # Expected call counts for JWKS fetch assertions
 JWKS_FETCH_AFTER_EXPIRY = 2
 JWKS_FETCH_WITH_RETRY = 2
 
 # Shared discovery fixture; the issuer must match the discovery URL
-ISSUER = "https://example.com"
-DISCO_URL = f"{ISSUER}/.well-known/openid-configuration"
 
 # Shared discovery responses
 DISCO_RESPONSE_NO_JWKS = {

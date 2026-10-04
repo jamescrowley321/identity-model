@@ -46,7 +46,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..unit.token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 from ._security_helpers import generate_rsa_keypair, unsigned_none_alg_jwt
 
 

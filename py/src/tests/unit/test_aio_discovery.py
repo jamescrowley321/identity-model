@@ -10,7 +10,7 @@ from py_identity_model.aio.discovery import (
     get_discovery_document,
 )
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 @pytest.mark.asyncio

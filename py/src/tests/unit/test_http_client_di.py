@@ -39,7 +39,7 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.userinfo import get_userinfo as sync_get_userinfo
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 # Minimum expected HTTP call count for discovery + JWKS

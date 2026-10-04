@@ -40,7 +40,7 @@ from py_identity_model.sync.http_client import (
     retry_with_backoff,
 )
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 # ============================================================================

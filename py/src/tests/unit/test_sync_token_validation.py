@@ -27,10 +27,10 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
+from ..constants import DISCO_URL
 from .token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
-    DISCO_URL,
     JWKS_FETCH_AFTER_EXPIRY,
     JWKS_FETCH_WITH_RETRY,
     generate_rsa_keypair,

@@ -13,7 +13,7 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 _BASE_DISCO = {

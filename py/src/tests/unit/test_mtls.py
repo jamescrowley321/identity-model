@@ -74,7 +74,7 @@ from py_identity_model.core.token_exchange_logic import (
 import py_identity_model.sync.http_client as sync_http
 from py_identity_model.sync.managed_client import HTTPClient
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 ADDR = "https://as.example.com/endpoint"

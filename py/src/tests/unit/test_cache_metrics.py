@@ -23,9 +23,9 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.core.cache_metrics import CACHE_COUNTERS
 
+from ..constants import DISCO_URL
 from .token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
-    DISCO_URL,
     generate_rsa_keypair,
 )
 

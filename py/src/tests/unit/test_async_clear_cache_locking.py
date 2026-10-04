@@ -39,7 +39,7 @@ from py_identity_model.core.models import (
     JwksResponse,
 )
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 JWKS_URL = "https://example.com/jwks"

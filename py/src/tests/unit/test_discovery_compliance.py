@@ -23,7 +23,7 @@ from py_identity_model.exceptions import (
     DiscoveryException,
 )
 
-from .token_validation_helpers import DISCO_URL
+from ..constants import DISCO_URL
 
 
 class TestDiscoveryValidationFunctions:
