@@ -50,12 +50,12 @@ from py_identity_model.sync.token_validation import (
 
 from .token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
+    DISCO_URL,
     generate_rsa_keypair,
     sign_jwt,
 )
 
 
-DISCO_URL = "https://example.com/.well-known/openid-configuration"
 JWKS_URL = "https://example.com/jwks"
 # Second element of the disco cache key for the default (strict) policy.
 _STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()

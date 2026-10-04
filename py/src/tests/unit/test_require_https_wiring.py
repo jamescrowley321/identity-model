@@ -39,6 +39,7 @@ from py_identity_model.sync.token_validation import (
 
 from .token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
+    DISCO_URL,
     generate_rsa_keypair,
     sign_jwt,
 )
@@ -199,7 +200,7 @@ class TestSyncRequireHttpsWiring:
             headers={"kid": "test-key-1"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         respx.get("https://example.com/jwks").mock(
@@ -216,7 +217,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert decoded["sub"] == "user1"
 
@@ -404,7 +405,7 @@ class TestAsyncRequireHttpsWiring:
             headers={"kid": "test-key-1"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         respx.get("https://example.com/jwks").mock(
@@ -421,7 +422,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert decoded["sub"] == "user1"
 

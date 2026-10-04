@@ -40,6 +40,8 @@ from py_identity_model.sync.http_client import (
     retry_with_backoff,
 )
 
+from .token_validation_helpers import DISCO_URL
+
 
 # ============================================================================
 # #350 — Redirect following disabled
@@ -76,7 +78,7 @@ class TestRedirectBlocking:
     def test_check_no_redirect_includes_location_in_error(self):
         response = MagicMock()
         response.status_code = 302
-        response.url = "https://example.com/.well-known/openid-configuration"
+        response.url = DISCO_URL
         response.headers = {"location": "https://evil.com/phish"}
         with pytest.raises(NetworkException, match=r"https://evil\.com/phish"):
             check_no_redirect(response)

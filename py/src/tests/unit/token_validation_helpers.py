@@ -11,9 +11,13 @@ import jwt as pyjwt
 JWKS_FETCH_AFTER_EXPIRY = 2
 JWKS_FETCH_WITH_RETRY = 2
 
+# Shared discovery fixture; the issuer must match the discovery URL
+ISSUER = "https://example.com"
+DISCO_URL = f"{ISSUER}/.well-known/openid-configuration"
+
 # Shared discovery responses
 DISCO_RESPONSE_NO_JWKS = {
-    "issuer": "https://example.com",
+    "issuer": ISSUER,
     "authorization_endpoint": "https://example.com/authorize",
     "token_endpoint": "https://example.com/token",
     "response_types_supported": ["code"],

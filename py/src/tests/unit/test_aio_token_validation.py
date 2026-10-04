@@ -34,6 +34,7 @@ from py_identity_model.exceptions import (
 from .token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
+    DISCO_URL,
     JWKS_FETCH_AFTER_EXPIRY,
     JWKS_FETCH_WITH_RETRY,
     generate_rsa_keypair,
@@ -84,7 +85,7 @@ class TestAsyncTokenValidation:
     @respx.mock
     async def test_missing_jwks_uri_cached_path_raises(self):
         """Test that missing jwks_uri in discovery doc raises TokenValidationException."""
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_NO_JWKS)
         )
 
@@ -100,14 +101,14 @@ class TestAsyncTokenValidation:
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address="https://example.com/.well-known/openid-configuration",
+                disco_doc_address=DISCO_URL,
             )
 
     @pytest.mark.asyncio
     @respx.mock
     async def test_missing_jwks_uri_di_path_raises(self):
         """Test that missing jwks_uri raises TokenValidationException (DI path)."""
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_NO_JWKS)
         )
 
@@ -124,7 +125,7 @@ class TestAsyncTokenValidation:
                 await validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=validation_config,
-                    disco_doc_address="https://example.com/.well-known/openid-configuration",
+                    disco_doc_address=DISCO_URL,
                     http_client=client,
                 )
 
@@ -133,7 +134,7 @@ class TestAsyncTokenValidation:
     async def test_empty_string_jwks_uri_cached_path_raises(self):
         """Test that empty-string jwks_uri raises TokenValidationException."""
         disco_with_empty_jwks = {**DISCO_RESPONSE_NO_JWKS, "jwks_uri": ""}
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=disco_with_empty_jwks)
         )
 
@@ -149,7 +150,7 @@ class TestAsyncTokenValidation:
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address="https://example.com/.well-known/openid-configuration",
+                disco_doc_address=DISCO_URL,
             )
 
 
@@ -167,7 +168,7 @@ class TestAsyncJwksCacheTTL:
             headers={"kid": "test-key-1"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -184,7 +185,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert jwks_route.call_count == 1
 
@@ -192,7 +193,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert jwks_route.call_count == 1
 
@@ -207,7 +208,7 @@ class TestAsyncJwksCacheTTL:
             headers={"kid": "test-key-1"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -224,7 +225,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert jwks_route.call_count == 1
 
@@ -235,7 +236,7 @@ class TestAsyncJwksCacheTTL:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="https://example.com/.well-known/openid-configuration",
+                disco_doc_address=DISCO_URL,
             )
 
         assert jwks_route.call_count == JWKS_FETCH_AFTER_EXPIRY
@@ -260,7 +261,7 @@ class TestAsyncSignatureRetry:
             headers={"kid": "rotated-key"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -279,7 +280,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
 
         assert decoded["sub"] == "user1"
@@ -307,7 +308,7 @@ class TestAsyncSignatureRetry:
             headers={"kid": "new-kid"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -330,7 +331,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
 
         assert decoded["sub"] == "user1"
@@ -351,7 +352,7 @@ class TestAsyncSignatureRetry:
         key_dict, pem = generate_rsa_keypair()
         key_dict["kid"] = "present-kid"
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -371,7 +372,7 @@ class TestAsyncSignatureRetry:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://example.com/.well-known/openid-configuration",
+            disco_doc_address=DISCO_URL,
         )
         assert jwks_route.call_count == 1
 
@@ -379,7 +380,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="https://example.com/.well-known/openid-configuration",
+                disco_doc_address=DISCO_URL,
             )
 
         assert jwks_route.call_count == 1, (
@@ -403,7 +404,7 @@ class TestAsyncSignatureRetry:
             headers={"kid": "wrong-key"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         respx.get("https://example.com/jwks").mock(
@@ -423,7 +424,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="https://example.com/.well-known/openid-configuration",
+                disco_doc_address=DISCO_URL,
             )
 
     @pytest.mark.asyncio
@@ -440,7 +441,7 @@ class TestAsyncSignatureRetry:
             headers={"kid": "wrong-key"},
         )
 
-        respx.get("https://example.com/.well-known/openid-configuration").mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
         jwks_route = respx.get("https://example.com/jwks").mock(
@@ -458,7 +459,7 @@ class TestAsyncSignatureRetry:
                 await validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address="https://example.com/.well-known/openid-configuration",
+                    disco_doc_address=DISCO_URL,
                     http_client=client,
                 )
 
