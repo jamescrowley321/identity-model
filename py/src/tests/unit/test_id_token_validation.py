@@ -38,7 +38,7 @@ from py_identity_model.sync.token_validation import (
 )
 
 from ..constants import DISCO_URL
-from .token_validation_helpers import (
+from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
     sign_jwt,

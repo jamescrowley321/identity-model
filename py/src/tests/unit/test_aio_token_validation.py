@@ -32,7 +32,7 @@ from py_identity_model.exceptions import (
 )
 
 from ..constants import DISCO_URL
-from .token_validation_helpers import (
+from ..token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
     JWKS_FETCH_AFTER_EXPIRY,

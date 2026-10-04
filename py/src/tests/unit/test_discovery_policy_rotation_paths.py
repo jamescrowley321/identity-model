@@ -75,7 +75,7 @@ from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
 
-from .token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
 
 # ── Non-loopback HTTP endpoint: the default policy rejects it, an injected

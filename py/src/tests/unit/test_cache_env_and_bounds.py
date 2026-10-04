@@ -62,7 +62,7 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
 )
 
-from .token_validation_helpers import generate_rsa_keypair
+from ..token_validation_helpers import generate_rsa_keypair
 
 
 @pytest.fixture(autouse=True)

@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt as pyjwt
 
-from ..constants import ISSUER
+from .constants import ISSUER
 
 
 # Expected call counts for JWKS fetch assertions

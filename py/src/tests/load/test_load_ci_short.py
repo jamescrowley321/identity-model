@@ -31,8 +31,8 @@ if importlib.util.find_spec("locust") is None:
 pytest.importorskip("fastapi_identity_model")
 pytest.importorskip("uvicorn")
 
-from ..load.runner import evaluate_gates, run_profile, write_smoke_report
-from ..load.scenarios import Profile, profile_scenarios
+from .runner import evaluate_gates, run_profile, write_smoke_report
+from .scenarios import Profile, profile_scenarios
 
 
 pytestmark = pytest.mark.integration
