@@ -409,7 +409,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
         follow-up commit)."""
         rotated_disco = {
             **DISCO_RESPONSE_WITH_JWKS,
-            "issuer": "https://rotated.example",
+            "token_endpoint": "https://example.com/rotated-token",
         }
         call_log: list[int] = []
 

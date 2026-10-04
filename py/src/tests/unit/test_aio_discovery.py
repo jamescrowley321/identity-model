@@ -16,7 +16,7 @@ class TestAsyncDiscoveryDocument:
     @respx.mock
     async def test_async_get_discovery_document_success(self):
         """Test successful async discovery document fetch"""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -45,7 +45,7 @@ class TestAsyncDiscoveryDocument:
     @respx.mock
     async def test_async_get_discovery_document_http_error(self):
         """Test async discovery document fetch with HTTP error"""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(return_value=httpx.Response(404, content=b"Not Found"))
 
         request = DiscoveryDocumentRequest(address=url)
@@ -58,7 +58,7 @@ class TestAsyncDiscoveryDocument:
     @respx.mock
     async def test_async_get_discovery_document_network_error(self):
         """Test async discovery document with network error"""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(side_effect=httpx.ConnectError("Network error"))
 
         request = DiscoveryDocumentRequest(address=url)
@@ -71,7 +71,7 @@ class TestAsyncDiscoveryDocument:
     @respx.mock
     async def test_async_get_discovery_document_invalid_json(self):
         """Test async discovery document with invalid JSON"""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,

@@ -15,11 +15,12 @@ from urllib.parse import urlparse
 from ..exceptions import (
     ConfigurationException,
     DiscoveryException,
+    DiscoveryIssuerMismatchError,
     DiscoveryMissingFieldsError,
     DiscoveryParseError,
 )
 from ..logging_config import logger
-from .discovery_policy import DiscoveryPolicy
+from .discovery_policy import _WELL_KNOWN_PATH, DiscoveryPolicy
 from .http_utils import get_max_jwks_keys, get_max_jwks_size
 from .models import (
     AuthorizationCodeTokenResponse,
@@ -178,9 +179,23 @@ def _validate_endpoint_authority(
         )
 
 
+def _validate_issuer_match(requested_address: str, issuer: str) -> None:
+    """Reject a document whose issuer is not the one the request was built from.
+
+    Compares against the address as the caller supplied it, not the URL httpx
+    sent: httpx normalises host case and default ports, and a redirect-following
+    client would report the redirect target.
+    """
+    requested = requested_address.rstrip("/").removesuffix(_WELL_KNOWN_PATH).rstrip("/")
+    if not requested or issuer.rstrip("/") != requested:
+        raise DiscoveryIssuerMismatchError(requested, issuer)
+
+
 def validate_and_parse_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
+    *,
+    requested_address: str,
 ) -> dict:
     """
     Validate and parse discovery document HTTP response.
@@ -189,6 +204,8 @@ def validate_and_parse_discovery_response(
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
             When ``None``, strict defaults apply.
+        requested_address: The discovery URL as the caller supplied it; the
+            document's issuer must match it.
 
     Returns:
         dict: Parsed discovery document JSON
@@ -216,6 +233,10 @@ def validate_and_parse_discovery_response(
 
     # Validate issuer format (policy-aware)
     validate_issuer_with_policy(response_json.get("issuer", ""), policy)
+
+    # OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the issuer MUST be the one the
+    # discovery URL was built from. Not policy-controlled.
+    _validate_issuer_match(requested_address, response_json.get("issuer", ""))
 
     # Validate parameter values
     validate_parameter_values(response_json)

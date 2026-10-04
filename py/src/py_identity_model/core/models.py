@@ -453,6 +453,8 @@ class DiscoveryErrorKind(Enum):
     """A required-field check failed; see ``missing_fields``."""
     HTTPS_REQUIRED = "https_required"
     """A URL violated the policy's HTTPS requirement."""
+    ISSUER_MISMATCH = "issuer_mismatch"
+    """The document's issuer differs from the requested issuer."""
     INVALID_CONFIGURATION = "invalid_configuration"
     """Another URL or configuration check failed."""
     INVALID_DOCUMENT = "invalid_document"
