@@ -74,6 +74,8 @@ from py_identity_model.core.token_exchange_logic import (
 import py_identity_model.sync.http_client as sync_http
 from py_identity_model.sync.managed_client import HTTPClient
 
+from .token_validation_helpers import DISCO_URL
+
 
 ADDR = "https://as.example.com/endpoint"
 TOKEN_URL = "https://as.example.com/token"
@@ -513,14 +515,13 @@ _BASE_DISCO = {
     "subject_types_supported": ["public"],
     "id_token_signing_alg_values_supported": ["PS256"],
 }
-_DISCO_URL = "https://example.com/.well-known/openid_configuration"
 
 
 @pytest.mark.unit
 class TestDiscoveryParsesMtlsFields:
     @respx.mock
     def test_parses_aliases_and_bound_flag(self):
-        respx.get(_DISCO_URL).mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -532,7 +533,7 @@ class TestDiscoveryParsesMtlsFields:
                 },
             )
         )
-        result = get_discovery_document(DiscoveryDocumentRequest(address=_DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert result.is_successful is True
         assert result.tls_client_certificate_bound_access_tokens is True
@@ -542,8 +543,8 @@ class TestDiscoveryParsesMtlsFields:
 
     @respx.mock
     def test_absent_fields_default_none(self):
-        respx.get(_DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
-        result = get_discovery_document(DiscoveryDocumentRequest(address=_DISCO_URL))
+        respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
+        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert result.is_successful is True
         assert result.mtls_endpoint_aliases is None

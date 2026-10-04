@@ -8,12 +8,14 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
+from .token_validation_helpers import DISCO_URL
+
 
 class TestGetDiscoveryDocument:
     @respx.mock
     def test_get_discovery_document_success(self):
         # Mock successful response
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -45,7 +47,7 @@ class TestGetDiscoveryDocument:
     @respx.mock
     def test_get_discovery_document_http_error(self):
         # Mock HTTP error response
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(404, content=b"Not Found"))
 
         request = DiscoveryDocumentRequest(address=url)
@@ -59,7 +61,7 @@ class TestGetDiscoveryDocument:
     @respx.mock
     def test_get_discovery_document_wrong_content_type(self):
         # Mock response with wrong content type
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -78,7 +80,7 @@ class TestGetDiscoveryDocument:
     @respx.mock
     def test_get_discovery_document_partial_json_response(self):
         # Mock response with partial JSON data
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,

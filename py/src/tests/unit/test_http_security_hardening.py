@@ -118,7 +118,7 @@ class TestRedirectBlocking:
     @respx.mock
     def test_discovery_blocks_redirect(self):
         """End-to-end: discovery fetch rejects redirect responses."""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 302,

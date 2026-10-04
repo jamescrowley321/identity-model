@@ -13,6 +13,8 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
+from .token_validation_helpers import DISCO_URL
+
 
 _BASE_DISCO = {
     "issuer": "https://example.com",
@@ -28,7 +30,7 @@ _BASE_DISCO = {
 class TestIssParameterDiscoveryField:
     @respx.mock
     def test_iss_parameter_supported_true(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -46,7 +48,7 @@ class TestIssParameterDiscoveryField:
 
     @respx.mock
     def test_iss_parameter_supported_absent_defaults_none(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
         result = get_discovery_document(DiscoveryDocumentRequest(address=url))
@@ -56,7 +58,7 @@ class TestIssParameterDiscoveryField:
 
     @respx.mock
     def test_iss_parameter_supported_false(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,

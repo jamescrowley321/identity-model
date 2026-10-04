@@ -13,6 +13,8 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
+from .token_validation_helpers import DISCO_URL
+
 
 _BASE_DISCO = {
     "issuer": "https://example.com",
@@ -28,7 +30,7 @@ _BASE_DISCO = {
 class TestBackchannelLogoutDiscoveryFields:
     @respx.mock
     def test_backchannel_logout_flags_populated(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -48,7 +50,7 @@ class TestBackchannelLogoutDiscoveryFields:
 
     @respx.mock
     def test_backchannel_logout_flags_absent_default_none(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
         result = get_discovery_document(DiscoveryDocumentRequest(address=url))
@@ -59,7 +61,7 @@ class TestBackchannelLogoutDiscoveryFields:
 
     @respx.mock
     def test_backchannel_logout_session_supported_false_preserved(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -82,7 +84,7 @@ class TestEndSessionEndpointDiscoveryField:
 
     @respx.mock
     def test_end_session_endpoint_populated(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -100,7 +102,7 @@ class TestEndSessionEndpointDiscoveryField:
 
     @respx.mock
     def test_end_session_endpoint_absent_default_none(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
         result = get_discovery_document(DiscoveryDocumentRequest(address=url))
