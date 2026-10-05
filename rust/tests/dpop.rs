@@ -12,10 +12,8 @@
 //! [#573](https://github.com/jamescrowley321/identity-model/issues/573).
 //!
 //! These cases are prose-and-fixture contracts, not executable vectors: no case
-//! in `spec/vectors/dpop.json` carries a `vectors` array, so
-//! `tools/spec_coverage_gate.py` does not inventory the capability and this file
-//! needs no `SPEC_COVERAGE_OUT` wiring. The case ids are cited in comments, the
-//! way the Go suite cites them.
+//! in `spec/vectors/dpop.json` carries a `vectors` array. The case ids are cited
+//! in comments, the way the Go suite cites them.
 
 use std::time::Duration;
 
