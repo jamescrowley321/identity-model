@@ -61,6 +61,10 @@ type HTTPExpect struct {
 	CustomClaims    map[string]any `json:"custom_claims,omitempty"`
 	// Keys is the expected key set, each key as its non-empty JWK members.
 	Keys []map[string]string `json:"keys,omitempty"`
+	// Result is expected fields of an accepted result, as JSON values.
+	Result map[string]any `json:"result,omitempty"`
+	// Fields lists the fields a missing_fields reject must name.
+	Fields []string `json:"fields,omitempty"`
 }
 
 // httpAdapter calls the library for one vector against base (the vector's
@@ -69,6 +73,7 @@ type httpAdapter func(t *testing.T, label, base string, v HTTPVector)
 
 // httpAdapters is keyed by vector file name (spec/vectors/<name>.json).
 var httpAdapters = map[string]httpAdapter{
+	"discovery":  runDiscoveryVector,
 	"jwks":       runJWKSVector,
 	"revocation": runRevocationVector,
 	"userinfo":   runUserInfoVector,
