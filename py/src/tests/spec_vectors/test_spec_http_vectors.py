@@ -172,7 +172,12 @@ def _token_exchange_expect(case_id: str, expect: dict, response: Any) -> None:
         raise KnownGap(f"{case_id}: error_uri missing from {message!r}")
     # The error members appear in the raw body, so substring checks prove
     # nothing until the error is typed (#791).
-    raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
+    if not hasattr(response, "error_code"):
+        raise KnownGap(f"{case_id}: no typed OAuth error {expect['error']!r} (#791)")
+    assert response.error_code == expect["error"], f"{case_id}: error"
+    for name in ("error_description", "error_uri"):
+        if name in expect:
+            assert getattr(response, name) == expect[name], f"{case_id}: {name}"
 
 
 # --- userinfo -----------------------------------------------------------------
