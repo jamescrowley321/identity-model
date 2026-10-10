@@ -59,6 +59,13 @@ exact otherwise: host case, an explicit port and the path all count. The
 comparison uses the address as passed, not the URL after redirects. A mismatch fails with
 `ISSUER_MISMATCH`. No `DiscoveryPolicy` setting disables it.
 
+The trailing slash is ignored because OIDC Discovery 1.0 §4.1 removes a path
+issuer's terminating `/` before appending `/.well-known/openid-configuration`, so
+the document at `https://server.example.com/tenant/.well-known/openid-configuration`
+may declare `https://server.example.com/tenant/`. `issuer` keeps the value the
+document declared, and token validation compares the `iss` claim against it
+exactly (OIDC Core 1.0 §3.1.3.7).
+
 Providers that serve more than one issuer, such as Descope
 (`https://api.descope.com/{project_id}` and
 `https://api.descope.com/v1/apps/{project_id}`), serve each issuer's document

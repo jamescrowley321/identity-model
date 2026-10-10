@@ -53,6 +53,9 @@ async def _discover(asynchronous: bool, address: str):
         ("https://server.example.com", "https://server.example.com/"),
         ("https://server.example.com/", "https://server.example.com"),
         ("https://server.example.com/tenant", "https://server.example.com/tenant"),
+        # Discovery §4.1 removes a path issuer's terminating "/" before
+        # appending the well-known suffix.
+        ("https://server.example.com/tenant", "https://server.example.com/tenant/"),
         # Compared as the caller wrote it, before httpx normalises the URL.
         ("https://server.example.com:443", "https://server.example.com:443"),
         ("https://SERVER.example.com", "https://SERVER.example.com"),
