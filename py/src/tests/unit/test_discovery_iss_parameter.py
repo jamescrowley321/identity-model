@@ -28,7 +28,7 @@ _BASE_DISCO = {
 class TestIssParameterDiscoveryField:
     @respx.mock
     def test_iss_parameter_supported_true(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -46,7 +46,7 @@ class TestIssParameterDiscoveryField:
 
     @respx.mock
     def test_iss_parameter_supported_absent_defaults_none(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
         result = get_discovery_document(DiscoveryDocumentRequest(address=url))
@@ -56,7 +56,7 @@ class TestIssParameterDiscoveryField:
 
     @respx.mock
     def test_iss_parameter_supported_false(self):
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,

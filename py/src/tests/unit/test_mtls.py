@@ -513,7 +513,7 @@ _BASE_DISCO = {
     "subject_types_supported": ["public"],
     "id_token_signing_alg_values_supported": ["PS256"],
 }
-_DISCO_URL = "https://example.com/.well-known/openid_configuration"
+_DISCO_URL = "https://example.com/.well-known/openid-configuration"
 
 
 @pytest.mark.unit

@@ -25,7 +25,7 @@ _BASE_DISCO = {
     "id_token_signing_alg_values_supported": ["RS256"],
 }
 
-_DISCO_URL = "https://example.com/.well-known/openid_configuration"
+_DISCO_URL = "https://example.com/.well-known/openid-configuration"
 
 
 class TestParEndpointDiscoveryField:

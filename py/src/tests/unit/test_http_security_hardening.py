@@ -116,7 +116,7 @@ class TestRedirectBlocking:
     @respx.mock
     def test_discovery_blocks_redirect(self):
         """End-to-end: discovery fetch rejects redirect responses."""
-        url = "https://example.com/.well-known/openid_configuration"
+        url = "https://example.com/.well-known/openid-configuration"
         respx.get(url).mock(
             return_value=httpx.Response(
                 302,
@@ -134,6 +134,9 @@ class TestRedirectBlocking:
 # ============================================================================
 # #354 — Endpoint authority validation from issuer
 # ============================================================================
+
+
+ADDRESS = "https://example.com/.well-known/openid-configuration"
 
 
 class TestEndpointAuthorityFromIssuer:
@@ -166,12 +169,16 @@ class TestEndpointAuthorityFromIssuer:
             {"jwks_uri": "https://evil.com/jwks"},
         )
         with pytest.raises(DiscoveryException, match=r"authority.*does not match"):
-            validate_and_parse_discovery_response(response, policy=None)
+            validate_and_parse_discovery_response(
+                response, policy=None, requested_address=ADDRESS
+            )
 
     def test_allows_matching_authority_from_issuer(self):
         """Endpoints matching the issuer authority should pass."""
         response = self._make_response("https://example.com")
-        result = validate_and_parse_discovery_response(response, policy=None)
+        result = validate_and_parse_discovery_response(
+            response, policy=None, requested_address=ADDRESS
+        )
         assert result["issuer"] == "https://example.com"
 
     def test_allows_additional_endpoint_base_addresses(self):
@@ -183,7 +190,9 @@ class TestEndpointAuthorityFromIssuer:
             "https://example.com",
             {"jwks_uri": "https://cdn.example.com/jwks"},
         )
-        result = validate_and_parse_discovery_response(response, policy)
+        result = validate_and_parse_discovery_response(
+            response, policy, requested_address=ADDRESS
+        )
         assert result["issuer"] == "https://example.com"
 
     def test_explicit_policy_authority_overrides_issuer(self):
@@ -197,7 +206,9 @@ class TestEndpointAuthorityFromIssuer:
                 "token_endpoint": "https://auth.example.com/token",
             },
         )
-        result = validate_and_parse_discovery_response(response, policy)
+        result = validate_and_parse_discovery_response(
+            response, policy, requested_address=ADDRESS
+        )
         assert result["issuer"] == "https://example.com"
 
     def test_rejects_endpoint_not_matching_issuer_no_policy(self):
@@ -207,7 +218,7 @@ class TestEndpointAuthorityFromIssuer:
             {"token_endpoint": "https://attacker.com/token"},
         )
         with pytest.raises(DiscoveryException, match=r"authority.*does not match"):
-            validate_and_parse_discovery_response(response)
+            validate_and_parse_discovery_response(response, requested_address=ADDRESS)
 
     def test_skips_authority_when_validation_disabled(self):
         """When validate_endpoints is False, authority check is skipped."""
@@ -216,7 +227,9 @@ class TestEndpointAuthorityFromIssuer:
             "https://example.com",
             {"jwks_uri": "https://different.com/jwks"},
         )
-        result = validate_and_parse_discovery_response(response, policy)
+        result = validate_and_parse_discovery_response(
+            response, policy, requested_address=ADDRESS
+        )
         assert result["issuer"] == "https://example.com"
 
 

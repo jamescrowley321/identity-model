@@ -50,7 +50,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and ‡.
 > - **UserInfo** — Python: `UI-001` and `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)), `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)) and `UI-003 missing-sub` (it accepts a response with no `sub` unless an expected subject is supplied, [#773](https://github.com/jamescrowley321/identity-model/issues/773)), so Python is `in-progress`.
 > - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
-> - **OIDC Discovery** (including the cache TTL cases) — Python: `DISC-003` (no check that the document's issuer matches the requested issuer, [#574](https://github.com/jamescrowley321/identity-model/issues/574)) and `DISC-008 missing-multiple-fields` (neither `token_endpoint` nor `authorization_endpoint` is required, [#771](https://github.com/jamescrowley321/identity-model/issues/771)), so Python is `in-progress`.
+> - **OIDC Discovery** (including the cache TTL cases) — Python: `DISC-008 missing-multiple-fields` (neither `token_endpoint` nor `authorization_endpoint` is required, [#771](https://github.com/jamescrowley321/identity-model/issues/771)), so Python is `in-progress`.
 > - **Token Introspection** — Python: `INTR-001` and `INTR-002` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)), `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `INTR-003 client-secret-post` (‡).
 > - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)), `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)) and `EXCH-001 client-secret-post` (‡).
 > - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)), `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)) and `CC-003 client-secret-post` (‡).
@@ -69,15 +69,15 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 >
 > † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so no language runs a vector runner for it. Each language flips to `implemented` when its Configuration epic lands the implementation together with its runner. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
 >
-> **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
-> Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
-> neither. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
-> A third divergence is deliberate and is not being reconciled: Rust enforces `azp` on base token
+> **Known cross-language divergences.** One remains where the ports beat the Python reference:
+> Go and Rust support `client_secret_post`; Python does not. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
+> A second divergence is deliberate and is not being reconciled: Rust enforces `azp` on base token
 > validation whenever an expected audience is set, while Python and Go enforce it in the narrower
 > id-token profile. Rust stays strict.
 >
 > Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
-> Go gained with the id-token profile (#629–#632).
+> Go gained with the id-token profile (#629–#632), and the RFC 8414 issuer-identifier match, which Python
+> now enforces unconditionally (#574).
 >
 > **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 

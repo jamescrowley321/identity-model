@@ -194,6 +194,18 @@ class DiscoveryMissingFieldsError(DiscoveryException):
         self.fields = fields
 
 
+class DiscoveryIssuerMismatchError(DiscoveryException):
+    """The document's issuer differs from the requested issuer."""
+
+    def __init__(self, requested: str, returned: str) -> None:
+        super().__init__(
+            f"Discovery document issuer {returned!r} does not match "
+            f"the requested issuer {requested!r}"
+        )
+        self.requested = requested
+        self.returned = returned
+
+
 class JwksException(NetworkException):
     """Raised when JWKS cannot be fetched or parsed."""
 
@@ -245,6 +257,7 @@ __all__ = [
     "ConfigurationException",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",
+    "DiscoveryIssuerMismatchError",
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
     "FailedResponseAccessError",
