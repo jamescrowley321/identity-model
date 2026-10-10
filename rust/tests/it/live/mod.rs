@@ -28,5 +28,6 @@ mod introspection;
 mod jwks;
 mod jwt_validation;
 mod revocation;
+mod spec_http_vectors;
 mod token_client;
 mod userinfo;

@@ -88,14 +88,14 @@ that implements them**:
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/it/conformance/validation.rs` |
 | id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
-| revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/spec_http_vectors.rs` |
-| authorization-code | 5 | 6 | `go/internal/conformance/httpvector_test.go` (adapter: `authorization_code_test.go`), `logic_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | `rust/tests/spec_http_vectors.rs`, `rust/tests/spec_logic_vectors.rs` |
+| revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| authorization-code | 5 | 6 | `go/internal/conformance/httpvector_test.go` (adapter: `authorization_code_test.go`), `logic_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs`, `rust/tests/spec_logic_vectors.rs` |
 | dpop | 8 | 27 | `go/internal/conformance/httpvector_test.go` (adapter: `dpop_test.go`), `logic_test.go` (operations: `dpop_logic_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | — (no Rust DPoP, [#675](https://github.com/jamescrowley321/identity-model/pull/675)) |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
