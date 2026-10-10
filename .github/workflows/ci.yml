@@ -626,10 +626,10 @@ jobs:
 
   integration-tests-rust:
     # Rust unit suite + #[ignore]-gated live suite vs the shared infra/
-    # node-oidc fixture (CONS-1.4). TEST_REQUIRE_LIVE=1 turns silent skip-returns
-    # in the live leg into panics so an unsourced profile or dead provider
-    # cannot green-skip. Runs only when rust/ or the shared spec/infra changed
-    # (CONS-2.4).
+    # node-oidc fixture (CONS-1.4). The live leg is `make test-integration-rust`,
+    # where a missing prerequisite (unsourced profile, dead provider) panics
+    # rather than green-skipping. Runs only when rust/ or the shared spec/infra
+    # changed (CONS-2.4).
     needs: changes
     if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.shared == 'true' || inputs.run-native-tests }}
     runs-on: ubuntu-latest
@@ -657,19 +657,8 @@ jobs:
         working-directory: rust
         run: cargo test
 
-      - name: Start node-oidc-provider fixture
-        run: docker compose -f infra/docker-compose.yml up -d --build --wait node-oidc-provider
-
       - name: Rust live integration tests
-        env:
-          TEST_REQUIRE_LIVE: "1"
-        run: |
-          set -a && . ./.env.node-oidc && set +a
-          cd rust && cargo test -- --ignored
-
-      - name: Tear down fixture
-        if: always()
-        run: docker compose -f infra/docker-compose.yml down
+        run: make test-integration-rust
 
   rust-checks:
     # Formatting + clippy (warnings-as-errors) + cargo-deny (advisories, licenses,

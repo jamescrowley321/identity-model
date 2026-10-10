@@ -4,7 +4,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`), runs the unit suite, then runs these with
-//! `cargo test -- --ignored` under `TEST_REQUIRE_LIVE=1` (infra skips fail).
+//! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
 //!
@@ -16,9 +16,9 @@
 //!
 //! Provider selection follows the shared `TEST_*` convention (the
 //! `.env.node-oidc` profile the Makefile sources). If `TEST_DISCO_ADDRESS` is
-//! unset the test skips (returns) rather than failing.
+//! unset the test fails.
 //!
-//! What it proves (`integration_validate_id_token_live`, OIDC Core §3.1.3.7):
+//! What it proves (`validate_id_token_end_to_end`, OIDC Core §3.1.3.7):
 //! a genuine ID Token is minted through a real authorization-code + PKCE flow
 //! (headless devInteractions, no browser), requesting a `nonce` and a
 //! `max_age`, then [`validate_id_token`] enforces the full profile end-to-end:
@@ -48,7 +48,8 @@ use rs_identity_model::{
 };
 use serde_json::Value;
 
-const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
+use crate::common::authcode::follow_to_callback;
+use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
 
 /// A fixed nonce/max_age sent on the authorization request so the OP echoes a
 /// `nonce` and an `auth_time` into the minted ID Token, exercising the
@@ -56,40 +57,6 @@ const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
 /// token.
 const LIVE_NONCE: &str = "live-rs-id-token-nonce-4d1f7a";
 const LIVE_MAX_AGE: i64 = 3600;
-
-/// Returns the issuer derived from `TEST_DISCO_ADDRESS`, or `None` when unset.
-fn issuer_from_env() -> Option<String> {
-    let disco = std::env::var("TEST_DISCO_ADDRESS").ok()?;
-    let disco = disco.trim();
-    if disco.is_empty() {
-        return None;
-    }
-    Some(
-        disco
-            .strip_suffix(WELL_KNOWN_SUFFIX)
-            .unwrap_or(disco)
-            .trim_end_matches('/')
-            .to_string(),
-    )
-}
-
-/// Reads a non-empty `TEST_*` environment variable.
-fn env_nonempty(name: &str) -> Option<String> {
-    let v = std::env::var(name).ok()?;
-    let v = v.trim().to_string();
-    if v.is_empty() { None } else { Some(v) }
-}
-
-/// Prints a SKIP marker — unless `TEST_REQUIRE_LIVE=1`, in which case it panics.
-/// CI sets the variable in the leg that just booted the fixture, so an
-/// unreachable provider or unsourced profile turns the leg red instead of
-/// green-skipping every test (mechanical-gate rule).
-fn skip_or_fail(msg: &str) {
-    if std::env::var("TEST_REQUIRE_LIVE").as_deref() == Ok("1") {
-        panic!("TEST_REQUIRE_LIVE=1 but {msg}");
-    }
-    eprintln!("SKIP: {msg}");
-}
 
 /// Decodes an ID Token's payload claims WITHOUT verifying — only to branch on
 /// the presence of `nonce`/`auth_time`/`at_hash`.
@@ -106,80 +73,12 @@ fn decode_payload(id_token: &str) -> Value {
 
 // ── Headless devInteractions auth-code + PKCE flow ──────────────────────────
 //
-// Mirrors `token_client.rs::integration_authorization_code_pkce_end_to_end`:
-// drives node-oidc-provider's login + consent with a plain HTTP client (no
-// browser). Duplicated per test file, matching the crate's integration-test
-// convention.
-
-/// Absorbs `Set-Cookie` name=value pairs; deletions (empty value) are removed.
-fn absorb_cookies(store: &mut HashMap<String, String>, resp: &reqwest::Response) {
-    for sc in resp.headers().get_all(reqwest::header::SET_COOKIE) {
-        let Ok(s) = sc.to_str() else { continue };
-        let Some(pair) = s.split(';').next() else {
-            continue;
-        };
-        let Some((name, value)) = pair.split_once('=') else {
-            continue;
-        };
-        if value.is_empty() {
-            store.remove(name.trim());
-        } else {
-            store.insert(name.trim().to_string(), value.to_string());
-        }
-    }
-}
-
-fn cookie_header(store: &HashMap<String, String>) -> String {
-    store
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-/// Follows a redirect chain manually, stopping when a `Location` targets the
-/// (unserved) `redirect_uri`. Returns `(final_url, status, Some(callback_url))`
-/// at the callback, `(final_url, status, None)` on a non-redirect page.
-async fn follow_to_callback(
-    client: &reqwest::Client,
-    cookies: &mut HashMap<String, String>,
-    mut request: reqwest::RequestBuilder,
-    redirect_uri: &str,
-) -> Result<(url::Url, reqwest::StatusCode, Option<String>), String> {
-    for _hop in 0..10 {
-        let req = request
-            .header(reqwest::header::COOKIE, cookie_header(cookies))
-            .build()
-            .map_err(|e| format!("build request: {e}"))?;
-        let current = req.url().clone();
-        let resp = client
-            .execute(req)
-            .await
-            .map_err(|e| format!("request {current} failed: {e}"))?;
-        absorb_cookies(cookies, &resp);
-        let status = resp.status();
-        if !status.is_redirection() {
-            return Ok((current, status, None));
-        }
-        let loc = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| format!("redirect without Location at {current}"))?;
-        let next = current
-            .join(loc)
-            .map_err(|e| format!("resolve redirect {loc:?}: {e}"))?;
-        if next.as_str().starts_with(redirect_uri) {
-            return Ok((current, status, Some(next.into())));
-        }
-        request = client.get(next);
-    }
-    Err("too many redirects (>10)".into())
-}
+// The cookie jar and redirect follower live in `common::authcode`; this file
+// adds the login/consent legs with the `nonce` + `max_age` this test needs.
 
 /// Runs the full headless auth-code + PKCE flow and returns the callback URL
-/// carrying the authorization `code`, or `None` when the provider has no
-/// headless devInteractions (caller skips).
+/// carrying the authorization `code`. A provider without headless
+/// devInteractions fails the test (the `None` arm is unreachable).
 async fn drive_auth_code_flow(
     http: &reqwest::Client,
     authorization_endpoint: &str,
@@ -221,12 +120,12 @@ async fn drive_auth_code_flow(
             "authorization endpoint rejected the request: {status} at {landed}"
         );
         // Providers without node-oidc's devInteractions redirect to a real
-        // browser login UI; skip rather than fail.
+        // browser login UI; the node-oidc make target always has them, so fail.
         if status.is_client_error()
             || status.is_server_error()
             || !landed.path().contains("/interaction/")
         {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider has no devInteractions (landed on {landed} with {status}); headless flow unavailable"
             ));
             return None;
@@ -268,17 +167,19 @@ async fn drive_auth_code_flow(
 // public `validate_id_token` entry point against the live provider.
 #[tokio::test]
 #[ignore = "requires a running OIDC provider (make infra-up); run via cargo test -- --ignored"]
-async fn integration_validate_id_token_live() {
+async fn validate_id_token_end_to_end() {
     let Some(issuer) = issuer_from_env() else {
-        skip_or_fail("TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc");
+        fail_live_prerequisite(
+            "TEST_DISCO_ADDRESS unset; run `make infra-up` and source .env.node-oidc",
+        );
         return;
     };
     let Some(client_id) = env_nonempty("TEST_PKCE_PUBLIC_CLIENT_ID") else {
-        skip_or_fail("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
+        fail_live_prerequisite("TEST_PKCE_PUBLIC_CLIENT_ID unset for this provider profile");
         return;
     };
     let Some(redirect_uri) = env_nonempty("TEST_REDIRECT_URI") else {
-        skip_or_fail("TEST_REDIRECT_URI unset for this provider profile");
+        fail_live_prerequisite("TEST_REDIRECT_URI unset for this provider profile");
         return;
     };
 
@@ -290,7 +191,7 @@ async fn integration_validate_id_token_live() {
     let meta = match discovery.discover(&issuer).await {
         Ok(meta) => meta,
         Err(e) => {
-            skip_or_fail(&format!(
+            fail_live_prerequisite(&format!(
                 "provider not reachable at {issuer} (run `make infra-up`): {e}"
             ));
             return;
@@ -330,7 +231,7 @@ async fn integration_validate_id_token_live() {
     )
     .await
     else {
-        return; // skipped: no headless devInteractions on this provider
+        return; // unreachable: fail_live_prerequisite panicked
     };
 
     let callback = url::Url::parse(&callback).expect("parse callback URL");

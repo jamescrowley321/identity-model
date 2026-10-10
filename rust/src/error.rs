@@ -112,6 +112,10 @@ mod tests {
             IdentityError::KeyNotFound("abc".into()).to_string(),
             "key not found: abc"
         );
+        assert_eq!(
+            IdentityError::Configuration("missing token_endpoint".into()).to_string(),
+            "configuration error: missing token_endpoint"
+        );
     }
 
     #[test]
