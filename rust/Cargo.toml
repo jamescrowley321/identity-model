@@ -39,6 +39,8 @@ p256 = { version = "0.14.0", features = ["pkcs8", "ecdsa"] }
 # `rsa::KeyPair::from_components` reachable. The `rsa` crate, which would be the
 # obvious alternative, is exactly what the advisory note above rules out.
 aws-lc-rs = "1"
+# Scrubs DPoP private key bytes on drop. Already in the graph via p256.
+zeroize = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

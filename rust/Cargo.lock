@@ -1324,6 +1324,7 @@ dependencies = [
  "tokio",
  "url",
  "wiremock",
+ "zeroize",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ use jsonwebtoken::EncodingKey;
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk, ThumbprintHash};
 use p256::pkcs8::EncodePrivateKey;
 use serde::Deserialize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::jwks::JsonWebKey;
 use crate::{IdentityError, Result};
@@ -98,7 +99,11 @@ struct PrivateJwk {
     alg: String,
     #[serde(default)]
     crv: String,
-    // EC private key (RFC 7518 §6.2.2).
+    // EC public coordinates (RFC 7518 §6.2.1) and private key (§6.2.2).
+    #[serde(default)]
+    x: String,
+    #[serde(default)]
+    y: String,
     #[serde(default)]
     d: String,
     // RSA public half (RFC 7518 §6.3.1).
@@ -119,6 +124,23 @@ struct PrivateJwk {
     qi: String,
 }
 
+/// The private members arrive as base64url text; scrub it once the key is
+/// built.
+impl Drop for PrivateJwk {
+    fn drop(&mut self) {
+        for member in [
+            &mut self.d,
+            &mut self.p,
+            &mut self.q,
+            &mut self.dp,
+            &mut self.dq,
+            &mut self.qi,
+        ] {
+            member.zeroize();
+        }
+    }
+}
+
 /// A DPoP key pair: the private key that signs proof JWTs, plus its algorithm.
 ///
 /// The public half is embedded in every proof's `jwk` header (RFC 9449 §4.2) and
@@ -130,6 +152,10 @@ struct PrivateJwk {
 /// [`DpopKey::from_private_jwk`]. Persist one with [`DpopKey::to_pkcs8_pem`] so
 /// it survives a restart: a key that outlives the process can be rotated without
 /// invalidating already-issued bound tokens.
+///
+/// The PKCS#8 copy this type keeps, and every intermediate buffer it decodes
+/// private material into, is zeroed on drop. The signing key held inside
+/// `jsonwebtoken`'s `EncodingKey` is outside this crate's control and is not.
 #[derive(Clone)]
 pub struct DpopKey {
     algorithm: DpopAlgorithm,
@@ -138,7 +164,7 @@ pub struct DpopKey {
     /// The public half, derived once at construction.
     public: Jwk,
     /// The PKCS#8 DER form, retained so the key can be re-serialized.
-    pkcs8: Vec<u8>,
+    pkcs8: Zeroizing<Vec<u8>>,
 }
 
 /// Prints only the algorithm and the public thumbprint. Private key material is
@@ -219,7 +245,7 @@ impl DpopKey {
             algorithm,
             encoding,
             public,
-            pkcs8: der.to_vec(),
+            pkcs8: Zeroizing::new(der.to_vec()),
         })
     }
 
@@ -274,7 +300,29 @@ impl DpopKey {
             DpopAlgorithm::Es256 => ec_jwk_to_pkcs8(&parsed)?,
             DpopAlgorithm::Rs256 => rsa_jwk_to_pkcs8(&parsed)?,
         };
-        Self::from_pkcs8_der(&pkcs8, algorithm)
+        let key = Self::from_pkcs8_der(&pkcs8, algorithm)?;
+        if algorithm == DpopAlgorithm::Es256 {
+            // The key is built from `d` alone. `x` and `y` are REQUIRED
+            // (RFC 7518 §6.2.1) and must describe the same key, or a JWK whose
+            // public half disagrees with `d` would load as a different key.
+            let public = key.public_jwk();
+            for (member, given, derived) in
+                [("x", &parsed.x, &public.x), ("y", &parsed.y, &public.y)]
+            {
+                if given.is_empty() {
+                    return Err(IdentityError::Validation(format!(
+                        "DPoP private JWK is missing required member {member:?}"
+                    )));
+                }
+                if given != derived {
+                    return Err(IdentityError::Validation(format!(
+                        "DPoP private JWK member {member:?} does not match the public key \
+                         derived from \"d\""
+                    )));
+                }
+            }
+        }
+        Ok(key)
     }
 
     /// Returns the key's DPoP signing algorithm.
@@ -339,8 +387,9 @@ impl DpopKey {
     }
 
     /// Returns the private key as a PKCS#8 `PRIVATE KEY` PEM block, for
-    /// persistence. Pair it with [`DpopKey::from_pkcs8_pem`] to reload.
-    pub fn to_pkcs8_pem(&self) -> String {
+    /// persistence. Pair it with [`DpopKey::from_pkcs8_pem`] to reload. The
+    /// returned string is zeroed on drop.
+    pub fn to_pkcs8_pem(&self) -> Zeroizing<String> {
         pem_encode(PKCS8_PEM_LABEL, &self.pkcs8)
     }
 
@@ -424,7 +473,7 @@ pub(crate) fn curve_name(curve: &EllipticCurve) -> String {
 }
 
 /// Generates an EC P-256 private key in PKCS#8 DER form.
-fn generate_p256_pkcs8() -> Result<Vec<u8>> {
+fn generate_p256_pkcs8() -> Result<Zeroizing<Vec<u8>>> {
     // p256 exposes no CSPRNG-free constructor, and pulling `rand` in for one
     // scalar is not worth it: draw 32 uniform bytes from the OS CSPRNG the way
     // `PkceChallenge::generate` does and let `from_slice` enforce the valid
@@ -438,7 +487,7 @@ fn generate_p256_pkcs8() -> Result<Vec<u8>> {
         if let Ok(secret) = secret {
             return secret
                 .to_pkcs8_der()
-                .map(|der| der.as_bytes().to_vec())
+                .map(|der| Zeroizing::new(der.as_bytes().to_vec()))
                 .map_err(|e| {
                     IdentityError::Configuration(format!(
                         "generate DPoP ES256 key: encode PKCS#8: {e}"
@@ -456,18 +505,18 @@ fn generate_p256_pkcs8() -> Result<Vec<u8>> {
 /// RFC 7518 §3.3 minimum for RS256 and the minimum DPOP-007 asserts; it is also
 /// the smallest size `aws_lc_rs::rsa::KeySize` offers, so there is no way to
 /// generate a key this crate would then refuse to load.
-fn generate_rsa_pkcs8() -> Result<Vec<u8>> {
+fn generate_rsa_pkcs8() -> Result<Zeroizing<Vec<u8>>> {
     let pair = aws_lc_rs::rsa::KeyPair::generate(aws_lc_rs::rsa::KeySize::Rsa2048)
         .map_err(|e| IdentityError::Configuration(format!("generate DPoP RS256 key: {e}")))?;
     let der: Pkcs8V1Der<'static> = pair.as_der().map_err(|e| {
         IdentityError::Configuration(format!("generate DPoP RS256 key: encode PKCS#8: {e}"))
     })?;
-    Ok(der.as_ref().to_vec())
+    Ok(Zeroizing::new(der.as_ref().to_vec()))
 }
 
 /// Converts an EC private JWK to PKCS#8 DER via its `d` scalar.
-fn ec_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Vec<u8>> {
-    if !jwk.crv.is_empty() && jwk.crv != "P-256" {
+fn ec_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Zeroizing<Vec<u8>>> {
+    if jwk.crv != "P-256" {
         return Err(IdentityError::Validation(format!(
             "DPoP ES256 requires curve P-256, got {:?}",
             jwk.crv
@@ -481,12 +530,12 @@ fn ec_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Vec<u8>> {
     })?;
     secret
         .to_pkcs8_der()
-        .map(|der| der.as_bytes().to_vec())
+        .map(|der| Zeroizing::new(der.as_bytes().to_vec()))
         .map_err(|e| IdentityError::Validation(format!("encode DPoP ES256 key as PKCS#8: {e}")))
 }
 
 /// Converts an RSA private JWK to PKCS#8 DER via its CRT components.
-fn rsa_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Vec<u8>> {
+fn rsa_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Zeroizing<Vec<u8>>> {
     let components = aws_lc_rs::rsa::KeyPairComponents {
         public_key: aws_lc_rs::rsa::PublicKeyComponents {
             n: decode_b64url(&jwk.n, "n")?,
@@ -509,27 +558,31 @@ fn rsa_jwk_to_pkcs8(jwk: &PrivateJwk) -> Result<Vec<u8>> {
     let der: Pkcs8V1Der<'static> = pair
         .as_der()
         .map_err(|e| IdentityError::Validation(format!("encode DPoP RS256 key as PKCS#8: {e}")))?;
-    Ok(der.as_ref().to_vec())
+    Ok(Zeroizing::new(der.as_ref().to_vec()))
 }
 
-/// Decodes a base64url JWK member, naming it in the error.
-fn decode_b64url(value: &str, member: &str) -> Result<Vec<u8>> {
+/// Decodes a base64url JWK member, naming it in the error. The result may be
+/// private key material, so it is zeroed on drop.
+fn decode_b64url(value: &str, member: &str) -> Result<Zeroizing<Vec<u8>>> {
     if value.is_empty() {
         return Err(IdentityError::Validation(format!(
             "DPoP private JWK is missing required member {member:?}"
         )));
     }
-    URL_SAFE_NO_PAD.decode(value).map_err(|e| {
-        IdentityError::Validation(format!(
-            "DPoP private JWK member {member:?} is not valid base64url: {e}"
-        ))
-    })
+    URL_SAFE_NO_PAD
+        .decode(value)
+        .map(Zeroizing::new)
+        .map_err(|e| {
+            IdentityError::Validation(format!(
+                "DPoP private JWK member {member:?} is not valid base64url: {e}"
+            ))
+        })
 }
 
 /// Wraps DER in a PEM block with `label` (RFC 7468 §2): 64-character base64
 /// lines between the BEGIN/END markers.
-fn pem_encode(label: &str, der: &[u8]) -> String {
-    let body = BASE64_PAD.encode(der);
+fn pem_encode(label: &str, der: &[u8]) -> Zeroizing<String> {
+    let body = Zeroizing::new(BASE64_PAD.encode(der));
     let mut out = String::with_capacity(body.len() + body.len() / 64 + 2 * label.len() + 64);
     out.push_str("-----BEGIN ");
     out.push_str(label);
@@ -542,11 +595,11 @@ fn pem_encode(label: &str, der: &[u8]) -> String {
     out.push_str("-----END ");
     out.push_str(label);
     out.push_str("-----\n");
-    out
+    Zeroizing::new(out)
 }
 
 /// Extracts the DER from a PEM block, requiring it to carry `label`.
-fn pem_decode(pem: &str, label: &str) -> Result<Vec<u8>> {
+fn pem_decode(pem: &str, label: &str) -> Result<Zeroizing<Vec<u8>>> {
     let begin = format!("-----BEGIN {label}-----");
     let end = format!("-----END {label}-----");
     let start = pem
@@ -557,12 +610,15 @@ fn pem_decode(pem: &str, label: &str) -> Result<Vec<u8>> {
         .find(&end)
         .map(|i| body_start + i)
         .ok_or_else(|| IdentityError::Validation(format!("PEM block is missing {end:?}")))?;
-    let body: String = pem[body_start..body_end]
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let body: Zeroizing<String> = Zeroizing::new(
+        pem[body_start..body_end]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect(),
+    );
     BASE64_PAD
-        .decode(body)
+        .decode(body.as_bytes())
+        .map(Zeroizing::new)
         .map_err(|e| IdentityError::Validation(format!("PEM body is not valid base64: {e}")))
 }
 
@@ -576,7 +632,7 @@ mod tests {
     fn pem_round_trips_and_checks_the_label() {
         let der: Vec<u8> = (0u8..=255).collect();
         let pem = pem_encode(PKCS8_PEM_LABEL, &der);
-        assert_eq!(pem_decode(&pem, PKCS8_PEM_LABEL).expect("decode"), der);
+        assert_eq!(*pem_decode(&pem, PKCS8_PEM_LABEL).expect("decode"), der);
 
         for line in pem.lines().filter(|l| !l.starts_with("-----")) {
             assert!(line.len() <= 64, "PEM body line too long: {line}");
@@ -604,7 +660,7 @@ mod tests {
     fn pem_decode_accepts_an_empty_body() {
         let pem = "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n";
         assert_eq!(
-            pem_decode(pem, PKCS8_PEM_LABEL).expect("decode"),
+            *pem_decode(pem, PKCS8_PEM_LABEL).expect("decode"),
             Vec::<u8>::new()
         );
         assert!(DpopKey::from_pkcs8_pem(pem, DpopAlgorithm::Es256).is_err());
@@ -635,7 +691,7 @@ mod tests {
             seed.fill(0);
             if let Ok(secret) = secret {
                 let der = secret.to_pkcs8_der().expect("encode P-384 PKCS#8");
-                return pem_encode(PKCS8_PEM_LABEL, der.as_bytes());
+                return pem_encode(PKCS8_PEM_LABEL, der.as_bytes()).to_string();
             }
         }
         panic!("{EC_SCALAR_DRAWS} draws all fell outside the P-384 scalar range");
@@ -704,7 +760,7 @@ mod tests {
     /// reported by name so a caller can fix the right member.
     #[test]
     fn jwk_members_are_decoded_and_named_in_errors() {
-        assert_eq!(decode_b64url("AQAB", "e").expect("decode"), vec![1, 0, 1]);
+        assert_eq!(*decode_b64url("AQAB", "e").expect("decode"), vec![1, 0, 1]);
 
         let missing = decode_b64url("", "d").expect_err("missing member");
         assert!(
@@ -806,6 +862,37 @@ mod tests {
 
     /// A private JWK with no `alg` member infers the algorithm from `kty`, matching
     /// `go/pkg/dpop`'s `algForJWK`.
+    #[test]
+    fn ec_private_jwk_requires_matching_public_members() {
+        let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate");
+        let other = DpopKey::generate(DpopAlgorithm::Es256).expect("generate");
+        use p256::pkcs8::DecodePrivateKey;
+        let secret =
+            p256::SecretKey::from_pkcs8_der(key.to_pkcs8_der()).expect("parse generated PKCS#8");
+        let d = URL_SAFE_NO_PAD.encode(secret.to_bytes());
+        let (public, wrong) = (key.public_jwk(), other.public_jwk());
+        let jwk = |crv: &str, x: &str, y: &str| {
+            serde_json::json!({"kty": "EC", "crv": crv, "x": x, "y": y, "d": d}).to_string()
+        };
+
+        DpopKey::from_private_jwk(&jwk("P-256", &public.x, &public.y)).expect("consistent JWK");
+        for (label, document) in [
+            ("missing crv", jwk("", &public.x, &public.y)),
+            ("missing x", jwk("P-256", "", &public.y)),
+            ("missing y", jwk("P-256", &public.x, "")),
+            ("x from another key", jwk("P-256", &wrong.x, &public.y)),
+            ("y from another key", jwk("P-256", &public.x, &wrong.y)),
+        ] {
+            assert!(
+                matches!(
+                    DpopKey::from_private_jwk(&document),
+                    Err(IdentityError::Validation(_))
+                ),
+                "{label} must be rejected"
+            );
+        }
+    }
+
     #[test]
     fn private_jwk_infers_the_algorithm_from_kty() {
         let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate");
