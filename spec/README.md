@@ -95,7 +95,7 @@ that implements them**:
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
-| authorization-code | 5 | 6 | `go/internal/conformance/httpvector_test.go` (adapter: `authorization_code_test.go`), `logic_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs`, `rust/tests/spec_logic_vectors.rs` |
+| authorization-code | 5 | 6 | `go/internal/conformance/httpvector_test.go` (adapter: `authorization_code_test.go`), `logic_test.go` | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs`, `rust/tests/it/conformance/spec_logic_vectors.rs` |
 | dpop | 8 | 27 | `go/internal/conformance/httpvector_test.go` (adapter: `dpop_test.go`), `logic_test.go` (operations: `dpop_logic_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py`, `py/src/tests/unit/test_spec_logic_vectors.py` | — (no Rust DPoP, [#675](https://github.com/jamescrowley321/identity-model/pull/675)) |
 
 Token vector runners run in their language's ordinary unit suite. HTTP vector
@@ -161,7 +161,7 @@ the function and `expect` carries its outcome. A vector that has `http` or
 `http_sequence` is an HTTP vector even when it names an operation.
 Each language runs them in-process in its unit suite — Python
 `py/src/tests/unit/test_spec_logic_vectors.py`, Go
-`go/internal/conformance/logic_test.go`, Rust `rust/tests/spec_logic_vectors.rs`
+`go/internal/conformance/logic_test.go`, Rust `rust/tests/it/conformance/spec_logic_vectors.rs`
 — and fails on an operation it has no runner for. A language skips a
 capability it does not implement by name (Rust: `dpop`, #675) rather than
 failing.

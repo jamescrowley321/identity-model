@@ -2,7 +2,7 @@
 //!
 //! A pure-logic vector names an `input.operation` and has no `http` or
 //! `http_sequence`: it runs in-process and its `expect.result` is checked.
-//! HTTP vectors in the same files run in `tests/spec_http_vectors.rs` against
+//! HTTP vectors in the same files run in `live::spec_http_vectors` against
 //! the node-oidc fixture.
 //! The Python and Go runners execute the same vectors.
 

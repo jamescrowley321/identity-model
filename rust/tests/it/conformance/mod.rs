@@ -14,4 +14,5 @@
 mod claims_validation;
 mod dpop;
 mod id_token;
+mod spec_logic_vectors;
 mod validation;
