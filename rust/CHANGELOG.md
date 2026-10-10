@@ -2,6 +2,65 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-10-10)
+
+### Bug Fixes
+
+- **rust**: Check cnf.jkt and normalize both htu values when verifying a DPoP proof
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Keep the redirect-downgrade defence when attaching a DPoP proof
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Refuse cross-origin redirects in secure_client_builder and show jti replay checks
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Reject an extreme DPoP proof iat instead of overflowing on it
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Store the undersized RSA test key as DER and keep testdata out of the crate
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Zero DPoP private key material and check EC JWK public members
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+### Documentation
+
+- **rust**: Add a runnable DPoP example
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Make every failure mode in the DPoP example loud
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+### Features
+
+- **rust**: DPoP key pairs, proof generation, and proof verification (RFC 9449)
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+### Testing
+
+- **rust**: Assert DPoP and redirect error messages, derive ZeroizeOnDrop
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Drop the reference to the removed spec coverage gate
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+- **rust**: Live DPoP coverage against node-oidc-provider, and mint the wrong-curve key
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+
 ## v0.7.0 (2026-10-03)
 
 ### Features
