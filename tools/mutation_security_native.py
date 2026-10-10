@@ -150,6 +150,8 @@ GO_SURFACE: list[str] = [
 RUST_SURFACE: list[str] = [
     "src/client_auth.rs",  # client authentication (↔ core/client_auth.py)
     "src/discovery/",  # issuer match + metadata validation
+    "src/dpop/",  # DPoP proof signing + verification (RFC 9449)
+    "src/http.rs",  # redirect policy: TLS-downgrade and cross-origin refusal
     "src/jwks/",  # JWKS fetch/cache/key selection
     "src/jwt/",  # JWT + claims + ID Token validation
     "src/token/",  # token endpoint + PKCE
