@@ -2,7 +2,12 @@
   "capability": "token-exchange",
   "spec": "RFC 8693 (OAuth 2.0 Token Exchange)",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc8693",
-  "required_fields": ["access_token", "issued_token_type", "token_type"],
+  "notes": "HTTP vectors. Each vector gives the call `input` (`subject_token` and `subject_token_type`, the optional `actor_token`, `actor_token_type`, `resource`, `audience`, `scope` and `requested_token_type` request parameters, and `client_auth: client_secret_post` to switch from the default client_secret_basic), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). The endpoint is /token. Client credentials default to client_id=cid, client_secret=secret. An empty expected header or form value means it MUST be absent. An accept may carry `result` (typed token response fields, compared by exact equality). A reject carries the canonical OAuth `error` code, the HTTP `status`, and the `error_description` and optional `error_uri` of the typed token error.",
+  "required_fields": [
+    "access_token",
+    "issued_token_type",
+    "token_type"
+  ],
   "tests": [
     {
       "id": "EXCH-001",
@@ -10,8 +15,92 @@
       "given": "A valid subject_token and subject_token_type=urn:ietf:params:oauth:token-type:access_token with client credentials for the token endpoint",
       "when": "TokenExchange is called with only the subject token (impersonation) and the request is POSTed as application/x-www-form-urlencoded",
       "then": "The request body carries grant_type=urn:ietf:params:oauth:grant-type:token-exchange plus subject_token and subject_token_type, and the HTTP 200 response is parsed into access_token, issued_token_type, token_type, and expires_in",
-      "fixture": "token-exchange/exchange-impersonation-success.json",
-      "references": ["RFC 8693 §1.1", "RFC 8693 §2.1", "RFC 8693 §2.2"]
+      "references": [
+        "RFC 8693 §1.1",
+        "RFC 8693 §2.1",
+        "RFC 8693 §2.2"
+      ],
+      "vectors": [
+        {
+          "name": "impersonation",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "actor_token": "",
+              "actor_token_type": "",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.impersonation.tok",
+              "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "token_type": "Bearer",
+              "expires_in": 3600,
+              "scope": "https://api.example.com/read"
+            }
+          }
+        },
+        {
+          "name": "client-secret-post",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "client_auth": "client_secret_post"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "client_id": "cid",
+              "client_secret": "secret"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.impersonation.tok",
+              "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "token_type": "Bearer",
+              "expires_in": 3600,
+              "scope": "https://api.example.com/read"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "EXCH-002",
@@ -19,8 +108,55 @@
       "given": "A valid subject_token with subject_token_type and a valid actor_token with actor_token_type",
       "when": "TokenExchange is called for a delegation flow (subject plus actor)",
       "then": "The request body includes subject_token, subject_token_type, actor_token, and actor_token_type; the issued token represents the delegation relationship and MAY contain an act claim (RFC 8693 §4.1)",
-      "fixture": "token-exchange/exchange-delegation-success.json",
-      "references": ["RFC 8693 §1.1", "RFC 8693 §2.1", "RFC 8693 §4.1"]
+      "references": [
+        "RFC 8693 §1.1",
+        "RFC 8693 §2.1",
+        "RFC 8693 §4.1"
+      ],
+      "vectors": [
+        {
+          "name": "delegation",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "actor_token": "eyJhbGciOiJFUzI1NiJ9.actor.tok",
+            "actor_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "https://backend.example.com/api"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-delegation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "actor_token": "eyJhbGciOiJFUzI1NiJ9.actor.tok",
+              "actor_token_type": "urn:ietf:params:oauth:token-type:jwt",
+              "resource": "https://backend.example.com/api"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.delegation.tok",
+              "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "token_type": "Bearer",
+              "expires_in": 3600,
+              "scope": "https://api.example.com/read https://api.example.com/write"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "EXCH-003",
@@ -28,8 +164,185 @@
       "given": "Each of the six RFC 8693 §3 token type URIs (access_token, refresh_token, id_token, saml1, saml2, jwt)",
       "when": "Each URI is used as subject_token_type in a token exchange request",
       "then": "The library serializes the full URI string in the request body without modification or abbreviation",
-      "fixture": "token-exchange/token-type-uris.json",
-      "references": ["RFC 8693 §3"]
+      "references": [
+        "RFC 8693 §3"
+      ],
+      "vectors": [
+        {
+          "name": "access_token",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "refresh_token",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:refresh_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:refresh_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "id_token",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:id_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "saml1",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:saml1"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:saml1"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "saml2",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:saml2"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:saml2"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "jwt",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-impersonation-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:jwt"
+            }
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
     },
     {
       "id": "EXCH-004",
@@ -37,8 +350,50 @@
       "given": "requested_token_type=urn:ietf:params:oauth:token-type:access_token and audience=https://api.example.com alongside the subject token",
       "when": "TokenExchange is called with the requested token type and audience configured",
       "then": "Both parameters are sent in the request body; the issued_token_type in the response MAY differ from the requested_token_type",
-      "fixture": "token-exchange/exchange-request-impersonation.json",
-      "references": ["RFC 8693 §2.1", "RFC 8693 §2.2"]
+      "references": [
+        "RFC 8693 §2.1",
+        "RFC 8693 §2.2"
+      ],
+      "vectors": [
+        {
+          "name": "requested-type-and-audience",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "audience": "https://api.example.com",
+            "scope": "https://api.example.com/read"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-n_a-token-type.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "audience": "https://api.example.com",
+              "scope": "https://api.example.com/read"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issued_token_type": "urn:ietf:params:oauth:token-type:saml2"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "EXCH-005",
@@ -46,8 +401,84 @@
       "given": "A successful token exchange HTTP 200 response, including responses whose token_type is N_A for non-bearer issued tokens",
       "when": "The response body is parsed",
       "then": "access_token (string), issued_token_type (URI string), token_type (string, e.g. Bearer or N_A), and the optional expires_in (integer), scope (string), and refresh_token (string) are extracted; token_type=N_A is accepted without error",
-      "fixture": "token-exchange/exchange-n_a-token-type.json",
-      "references": ["RFC 8693 §2.2", "RFC 8693 §2.2.1"]
+      "references": [
+        "RFC 8693 §2.2",
+        "RFC 8693 §2.2.1"
+      ],
+      "vectors": [
+        {
+          "name": "n_a-token-type",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-n_a-token-type.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "access_token": "PHNhbWxwOlJlc3BvbnNlIHhtbG5zOnNhbWxw...omitted",
+              "issued_token_type": "urn:ietf:params:oauth:token-type:saml2",
+              "token_type": "N_A",
+              "expires_in": 60
+            }
+          }
+        },
+        {
+          "name": "optional-fields",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 200,
+              "body_fixture": "token-exchange/exchange-optional-fields-success.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "access_token": "eyJhbGciOiJFUzI1NiIsImtpZCI6IjllciJ9.optional.tok",
+              "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+              "token_type": "Bearer",
+              "expires_in": 1800,
+              "scope": "https://api.example.com/read",
+              "refresh_token": "8xLOxBtZp8.refresh.tok"
+            }
+          }
+        }
+      ]
     },
     {
       "id": "EXCH-006",
@@ -55,8 +486,77 @@
       "given": "An exchange request the server rejects (invalid subject_token, unauthorized client, or unsupported grant type)",
       "when": "The endpoint replies HTTP 400 with a standard OAuth error body (error=invalid_grant or error=invalid_request)",
       "then": "A typed token error carrying the error code plus optional error_description and error_uri (and the HTTP status) is surfaced",
-      "fixture": "token-exchange/exchange-error-invalid-grant.json",
-      "references": ["RFC 8693 §2.2.2", "RFC 6749 §5.2"]
+      "references": [
+        "RFC 8693 §2.2.2",
+        "RFC 6749 §5.2"
+      ],
+      "vectors": [
+        {
+          "name": "invalid-grant",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 400,
+              "body_fixture": "token-exchange/exchange-error-invalid-grant.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_grant",
+            "status": 400,
+            "error_description": "subject_token is expired or otherwise invalid"
+          }
+        },
+        {
+          "name": "invalid-request",
+          "input": {
+            "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+          },
+          "http": {
+            "/token": {
+              "status": 400,
+              "body_fixture": "token-exchange/exchange-error-invalid-request.json"
+            }
+          },
+          "expect_request": {
+            "path": "/token",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded"
+            },
+            "form": {
+              "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+              "subject_token": "eyJhbGciOiJFUzI1NiJ9.subject.tok",
+              "subject_token_type": "urn:ietf:params:oauth:token-type:access_token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_request",
+            "status": 400,
+            "error_description": "the subject_token_type is not supported for this client",
+            "error_uri": "https://docs.example.org/oauth/errors#invalid_request"
+          }
+        }
+      ]
     }
   ]
 }
