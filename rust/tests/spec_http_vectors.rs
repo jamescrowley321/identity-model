@@ -10,9 +10,10 @@
 //! `#[ignore]`-gated like the other live tests: `make test-integration-rust`
 //! boots the fixture and runs `cargo test -- --ignored`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rs_identity_model::{
     ClientAuthMethod, DiscoveryClient, DiscoveryError, IdentityError, Introspection,
     IntrospectionClient, JsonWebKey, JwksClient, ProviderMetadata, RevocationClient, TokenClient,
@@ -34,6 +35,7 @@ const FIXTURE_HOST: &str = "https://server.example.com";
 const SPEC_SECOND: Duration = Duration::from_millis(50);
 /// Capabilities with an adapter, keyed by vector file name.
 const ADAPTERS: &[&str] = &[
+    "client-credentials",
     "discovery",
     "introspection",
     "jwks",
@@ -317,6 +319,66 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
     }
 }
 
+// --- client-credentials -------------------------------------------------------
+
+async fn client_credentials_call(
+    base: &str,
+    v: &HttpVector,
+) -> Result<TokenResponse, IdentityError> {
+    let auth_method = match v.input_str("client_auth") {
+        Some("client_secret_post") => ClientAuthMethod::ClientSecretPost,
+        _ => ClientAuthMethod::ClientSecretBasic,
+    };
+    let strings = |key: &str| -> BTreeMap<String, String> {
+        v.input
+            .get(key)
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(k, val)| (k.clone(), val.as_str().expect("string value").to_string()))
+            .collect()
+    };
+    let mut builder = TokenClient::builder()
+        .token_endpoint(format!("{base}/token"))
+        .client_id("cid")
+        .client_secret(v.input_str("client_secret").unwrap_or("secret"))
+        .auth_method(auth_method)
+        .extra_params(
+            strings("extra_params")
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        )
+        .allow_http(true);
+    let default_headers = strings("http_client_headers");
+    if !default_headers.is_empty() {
+        let mut headers = HeaderMap::new();
+        for (k, val) in &default_headers {
+            headers.insert(
+                HeaderName::from_bytes(k.as_bytes()).expect("header name"),
+                HeaderValue::from_str(val).expect("header value"),
+            );
+        }
+        let http = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("build http client");
+        builder = builder.http_client(http);
+    }
+    let client = builder.build().expect("build token client");
+    let scope = v
+        .input
+        .get("scopes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(" ");
+    client
+        .client_credentials((!scope.is_empty()).then_some(scope.as_str()))
+        .await
+}
+
 // --- discovery ----------------------------------------------------------------
 
 /// One `DiscoveryClient`, called at each `input.calls_at_seconds` offset.
@@ -552,6 +614,11 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
 /// Calls the capability's adapter, checks the requests, then the outcome.
 async fn run_vector(capability: &str, label: &str, base: &str, v: &HttpVector) {
     match capability {
+        "client-credentials" => {
+            let result = client_credentials_call(base, v).await;
+            check_requests(label, base).await;
+            token_expect(label, &v.expect, result);
+        }
         "discovery" => {
             let result = discovery_call(base, v).await;
             check_requests(label, base).await;
