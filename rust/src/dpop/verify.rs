@@ -6,7 +6,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::jwk::{AlgorithmParameters, Jwk, ThumbprintHash};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
-use serde::Deserialize;
 use serde_json::Value;
 use subtle::ConstantTimeEq;
 
@@ -53,11 +52,12 @@ const PRIVATE_JWK_MEMBERS: &[&str] = &["d", "p", "q", "dp", "dq", "qi", "k"];
 
 /// A DPoP proof whose signature and claims have been verified (RFC 9449 §4.2).
 ///
-/// Compare [`DpopProof::thumbprint`] against the presented access token's
-/// `cnf.jkt` claim to confirm the token is bound to the key that signed this
-/// proof (RFC 9449 §6, DPOP-005). That comparison is the actual
-/// sender-constraint check and [`verify_proof`] does not perform it: it has no
-/// access token to inspect.
+/// A verified proof only shows that *some* key signed it — the embedded `jwk` is
+/// supplied by whoever made the proof. The sender-constraint check is that
+/// [`DpopProof::thumbprint`] equals the presented token's `cnf.jkt`
+/// (RFC 9449 §6, DPOP-005). [`verify_bound_proof`] performs it, together with the
+/// `ath` binding; [`verify_proof`] performs it only when
+/// [`DpopVerifyOptions::jkt`] is set.
 #[derive(Clone, Debug)]
 pub struct DpopProof {
     /// The `typ` header, always [`DPOP_PROOF_TYP`].
@@ -87,13 +87,15 @@ pub struct DpopProof {
 ///
 /// The defaults check everything RFC 9449 §4.3 makes mandatory — signature,
 /// algorithm, `typ`, the embedded public `jwk`, `jti` presence, `htm`/`htu`
-/// match, and an `iat` within 60 seconds. The `ath` and `nonce` checks are opt-in
-/// because only the caller knows which token was presented and which nonce was
-/// issued.
+/// match, and an `iat` within 60 seconds. The `ath`, `jkt`, and `nonce` checks
+/// need values only the caller has — the presented token, its `cnf.jkt`, the
+/// issued nonce — so they are set here. [`verify_bound_proof`] requires the first
+/// two.
 #[derive(Clone, Debug)]
 pub struct DpopVerifyOptions {
     max_iat_age: Duration,
     expected_ath: Option<String>,
+    expected_jkt: Option<String>,
     expected_nonce: Option<String>,
     /// Overrides the verification clock. Internal test seam.
     pub(crate) now: Option<i64>,
@@ -104,6 +106,7 @@ impl Default for DpopVerifyOptions {
         Self {
             max_iat_age: DEFAULT_MAX_IAT_AGE,
             expected_ath: None,
+            expected_jkt: None,
             expected_nonce: None,
             now: None,
         }
@@ -135,6 +138,16 @@ impl DpopVerifyOptions {
         self
     }
 
+    /// Requires the proof to be signed by the key whose RFC 7638 thumbprint is
+    /// `jkt` — the presented token's `cnf.jkt` (RFC 9449 §6). This is the
+    /// sender-constraint check: without it, a proof signed with any key the
+    /// caller generated verifies.
+    #[must_use]
+    pub fn jkt(mut self, jkt: impl Into<String>) -> Self {
+        self.expected_jkt = Some(jkt.into());
+        self
+    }
+
     /// Requires the proof's `nonce` to equal `nonce` (RFC 9449 §8).
     #[must_use]
     pub fn nonce(mut self, nonce: impl Into<String>) -> Self {
@@ -143,22 +156,56 @@ impl DpopVerifyOptions {
     }
 }
 
-/// The proof payload, with every member optional so a missing one is reported by
-/// name rather than as a blanket deserialization failure.
-#[derive(Deserialize)]
-struct RawProofClaims {
-    #[serde(default)]
-    jti: Option<String>,
-    #[serde(default)]
-    htm: Option<String>,
-    #[serde(default)]
-    htu: Option<String>,
-    #[serde(default)]
-    iat: Option<i64>,
-    #[serde(default)]
-    ath: Option<String>,
-    #[serde(default)]
-    nonce: Option<String>,
+/// Reads an optional string claim. A member that is present with another JSON
+/// type is rejected by name rather than ignored.
+fn string_claim(claims: &Value, name: &str) -> Result<Option<String>> {
+    match claims.get(name) {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(other) => Err(reject(
+            name,
+            format!("{name} claim must be a string, got {}", json_type(other)),
+        )),
+    }
+}
+
+/// Names a JSON value's type for an error message.
+const fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// Verifies a DPoP proof presented with a DPoP-bound access token on a
+/// protected-resource request (RFC 9449 §7).
+///
+/// This is the complete resource-server check: [`verify_proof`] with the proof's
+/// `ath` required to be the hash of `access_token`, and its key required to be
+/// the one `jkt` — the token's `cnf.jkt` — names. Use it rather than
+/// [`verify_proof`] wherever a bound token is presented, so neither binding can
+/// be left out.
+///
+/// Replay detection still needs a `jti` store; see [`verify_proof`].
+///
+/// # Errors
+///
+/// [`IdentityError::DpopVerification`] for every rejection [`verify_proof`]
+/// lists, and for an `ath` or `jkt` that does not match.
+pub fn verify_bound_proof(
+    proof: &str,
+    expected_htm: &str,
+    expected_htu: &str,
+    access_token: &str,
+    jkt: &str,
+    options: &DpopVerifyOptions,
+) -> Result<DpopProof> {
+    let options = options.clone().access_token(access_token).jkt(jkt);
+    verify_proof(proof, expected_htm, expected_htu, &options)
 }
 
 /// Verifies a DPoP proof JWT for a request with method `expected_htm` and URI
@@ -168,9 +215,14 @@ struct RawProofClaims {
 /// anything outside the asymmetric allowlist; omits the embedded `jwk`, or embeds
 /// private key material, or embeds a non-asymmetric key; is not
 /// `typ=dpop+jwt`; fails signature verification against its own embedded key;
-/// omits a required claim; or whose `htm`, `htu`, `iat`, `ath`, or `nonce` does
-/// not match. Every rejection is an [`IdentityError::DpopVerification`] naming
-/// the offending member.
+/// omits a required claim or carries one with the wrong JSON type; or whose
+/// `htm`, `htu`, `iat`, `ath`, `nonce`, or key thumbprint (`jkt`) does not
+/// match. Every rejection is an [`IdentityError::DpopVerification`] naming the
+/// offending member. `htu` is compared after both sides are normalized
+/// ([`crate::dpop_normalize_htu`]).
+///
+/// On a protected-resource request, prefer [`verify_bound_proof`]: without
+/// [`DpopVerifyOptions::jkt`] this function accepts a proof signed by any key.
 ///
 /// # Replay detection is the caller's job
 ///
@@ -200,14 +252,15 @@ struct RawProofClaims {
 ///     &DpopProofOptions::new().access_token(token),
 /// )?;
 ///
+/// // The `cnf.jkt` claim of the presented token.
+/// let jkt = key.thumbprint()?;
 /// let verified = verify_proof(
 ///     &proof,
 ///     "GET",
 ///     "https://resource.example.com/userinfo",
-///     &DpopVerifyOptions::new().access_token(token),
+///     &DpopVerifyOptions::new().access_token(token).jkt(&jkt),
 /// )?;
-/// // The sender-constraint check: does the bound token name this key?
-/// assert_eq!(verified.thumbprint, key.thumbprint()?);
+/// assert_eq!(verified.thumbprint, jkt);
 /// # Ok(())
 /// # }
 /// ```
@@ -289,17 +342,17 @@ pub fn verify_proof(
     validation.validate_nbf = false;
     validation.validate_aud = false;
 
-    let claims = decode::<RawProofClaims>(proof, &key, &validation)
+    // Decode into a generic value: a typed struct would turn a mistyped claim
+    // into a decode error indistinguishable from a bad signature.
+    let claims = decode::<Value>(proof, &key, &validation)
         .map_err(|e| reject("signature", e.to_string()))?
         .claims;
 
-    let jti = claims
-        .jti
+    let jti = string_claim(&claims, "jti")?
         .filter(|j| !j.is_empty())
         .ok_or_else(|| reject("jti", "missing required jti claim".to_string()))?;
 
-    let htm = claims
-        .htm
+    let htm = string_claim(&claims, "htm")?
         .ok_or_else(|| reject("htm", "missing required htm claim".to_string()))?;
     if htm != expected_htm {
         return Err(reject(
@@ -308,9 +361,12 @@ pub fn verify_proof(
         ));
     }
 
-    let htu = claims
-        .htu
+    let htu = string_claim(&claims, "htu")?
         .ok_or_else(|| reject("htu", "missing required htu claim".to_string()))?;
+    // Normalize both sides, so a proof from a client that writes the same URI
+    // differently (an explicit default port, an uppercase host) still matches.
+    let htu = normalize_htu(&htu)
+        .map_err(|e| reject("htu", format!("proof htu is not a valid URI: {e}")))?;
     let want_htu = normalize_htu(expected_htu)
         .map_err(|e| reject("htu", format!("invalid expected request URI: {e}")))?;
     if htu != want_htu {
@@ -320,9 +376,17 @@ pub fn verify_proof(
         ));
     }
 
-    let iat = claims
-        .iat
-        .ok_or_else(|| reject("iat", "missing required iat claim".to_string()))?;
+    let iat = match claims.get("iat") {
+        None => return Err(reject("iat", "missing required iat claim".to_string())),
+        Some(value) => value.as_i64().ok_or_else(|| {
+            reject(
+                "iat",
+                format!("iat claim must be an integer NumericDate, got {value}"),
+            )
+        })?,
+    };
+    let ath = string_claim(&claims, "ath")?;
+    let nonce = string_claim(&claims, "nonce")?;
     let now = match options.now {
         Some(now) => now,
         None => now_unix()?,
@@ -341,7 +405,7 @@ pub fn verify_proof(
     }
 
     if let Some(expected) = &options.expected_ath {
-        match &claims.ath {
+        match &ath {
             Some(actual) if ct_eq(actual, expected) => {}
             _ => {
                 return Err(reject(
@@ -353,7 +417,7 @@ pub fn verify_proof(
     }
 
     if let Some(expected) = &options.expected_nonce {
-        match &claims.nonce {
+        match &nonce {
             Some(actual) if ct_eq(actual, expected) => {}
             _ => {
                 return Err(reject(
@@ -368,6 +432,16 @@ pub fn verify_proof(
         .thumbprint(ThumbprintHash::SHA256)
         .map_err(|e| reject("jwk", format!("cannot compute thumbprint: {e}")))?;
 
+    if let Some(expected) = &options.expected_jkt
+        && !ct_eq(&thumbprint, expected)
+    {
+        return Err(reject(
+            "jkt",
+            "proof is signed by a key other than the one the token is bound to (cnf.jkt)"
+                .to_string(),
+        ));
+    }
+
     Ok(DpopProof {
         typ: DPOP_PROOF_TYP.to_string(),
         algorithm: format!("{:?}", header.alg),
@@ -377,8 +451,8 @@ pub fn verify_proof(
         htm,
         htu,
         iat,
-        ath: claims.ath,
-        nonce: claims.nonce,
+        ath,
+        nonce,
     })
 }
 
@@ -617,6 +691,169 @@ mod tests {
             jsonwebtoken::encode(&header, &payload, key.encoding_key()).expect("sign proof");
         let err = verify_at(&proof, now, DEFAULT_MAX_IAT_AGE).expect_err("empty jti");
         assert_eq!(field_of(&err), Some("jti"));
+    }
+
+    /// Signs `payload` as a well-formed proof header for `key`, so the payload is
+    /// the only thing under test.
+    fn sign(key: &DpopKey, payload: &Value) -> String {
+        let mut header = jsonwebtoken::Header::new(Algorithm::ES256);
+        header.typ = Some(DPOP_PROOF_TYP.to_string());
+        header.jwk = Some(key.embedded_jwk().clone());
+        jsonwebtoken::encode(&header, payload, key.encoding_key()).expect("sign proof")
+    }
+
+    /// A claim with the wrong JSON type is rejected by name, not reported as a
+    /// signature failure — a float `iat` from `time.time()` is a malformed proof,
+    /// not a forgery.
+    #[test]
+    fn mistyped_claims_are_reported_by_name() {
+        let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let now = 1_700_000_000;
+        for (claim, value) in [
+            ("iat", serde_json::json!(1_700_000_000.5)),
+            ("iat", serde_json::json!("1700000000")),
+            ("jti", serde_json::json!(5)),
+            ("htm", serde_json::json!(1)),
+            ("htu", serde_json::json!(true)),
+            ("ath", serde_json::json!(1)),
+            ("nonce", serde_json::json!([])),
+        ] {
+            let mut payload = serde_json::json!({
+                "jti": "j-1",
+                "htm": "POST",
+                "htu": "https://server.example.com/token",
+                "iat": now,
+            });
+            payload[claim] = value.clone();
+            let err = verify_at(&sign(&key, &payload), now, DEFAULT_MAX_IAT_AGE)
+                .expect_err(&format!("{claim} = {value} must be rejected"));
+            assert_eq!(field_of(&err), Some(claim), "{claim} = {value}");
+        }
+    }
+
+    /// The proof's own `htu` is normalized too, so a client that writes the
+    /// default port or an uppercase host still matches; one that is not a URI
+    /// at all is rejected against `htu`.
+    #[test]
+    fn proof_htu_is_normalized_before_comparison() {
+        let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let now = 1_700_000_000;
+        let proof_with = |htu: &str| {
+            sign(
+                &key,
+                &serde_json::json!({"jti": "j-1", "htm": "GET", "htu": htu, "iat": now}),
+            )
+        };
+        let mut verify = DpopVerifyOptions::new();
+        verify.now = Some(now);
+
+        for written in [
+            "https://rs.example.com:443/resource",
+            "https://RS.Example.COM/resource",
+        ] {
+            let verified = verify_proof(
+                &proof_with(written),
+                "GET",
+                "https://rs.example.com/resource",
+                &verify,
+            )
+            .unwrap_or_else(|e| panic!("{written} should normalize to a match: {e}"));
+            assert_eq!(verified.htu, "https://rs.example.com/resource");
+        }
+
+        let err = verify_proof(
+            &proof_with("not a uri"),
+            "GET",
+            "https://rs.example.com/resource",
+            &verify,
+        )
+        .expect_err("non-URI htu");
+        assert_eq!(field_of(&err), Some("htu"));
+    }
+
+    /// The `jkt` option is the sender-constraint check: a proof signed by any
+    /// other key is rejected, however valid it is otherwise.
+    #[test]
+    fn jkt_rejects_a_proof_signed_by_another_key() {
+        let holder = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let attacker = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let jkt = holder.thumbprint().expect("thumbprint");
+        let now = 1_700_000_000;
+        let mut verify = DpopVerifyOptions::new().jkt(&jkt);
+        verify.now = Some(now);
+
+        verify_proof(
+            &proof_at(&holder, now),
+            "POST",
+            "https://server.example.com/token",
+            &verify,
+        )
+        .expect("the bound key's proof verifies");
+        let err = verify_proof(
+            &proof_at(&attacker, now),
+            "POST",
+            "https://server.example.com/token",
+            &verify,
+        )
+        .expect_err("another key's proof");
+        assert_eq!(field_of(&err), Some("jkt"));
+    }
+
+    /// `verify_bound_proof` enforces both bindings: a proof without the token's
+    /// `ath` (a token-request proof replayed at a resource) and a proof from a
+    /// key `cnf.jkt` does not name are each rejected.
+    #[test]
+    fn verify_bound_proof_requires_ath_and_jkt() {
+        let holder = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let attacker = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
+        let jkt = holder.thumbprint().expect("thumbprint");
+        let (token, uri, now) = (
+            "bound-token",
+            "https://rs.example.com/resource",
+            1_700_000_000,
+        );
+        let resource_proof = |key: &DpopKey, token: Option<&str>| {
+            let mut options = DpopProofOptions::new();
+            options.issued_at = Some(now);
+            if let Some(token) = token {
+                options = options.access_token(token);
+            }
+            key.proof("GET", uri, &options).expect("build proof")
+        };
+        let mut verify = DpopVerifyOptions::new();
+        verify.now = Some(now);
+
+        verify_bound_proof(
+            &resource_proof(&holder, Some(token)),
+            "GET",
+            uri,
+            token,
+            &jkt,
+            &verify,
+        )
+        .expect("the holder's resource proof verifies");
+
+        let err = verify_bound_proof(
+            &resource_proof(&holder, None),
+            "GET",
+            uri,
+            token,
+            &jkt,
+            &verify,
+        )
+        .expect_err("a proof without ath");
+        assert_eq!(field_of(&err), Some("ath"));
+
+        let err = verify_bound_proof(
+            &resource_proof(&attacker, Some(token)),
+            "GET",
+            uri,
+            token,
+            &jkt,
+            &verify,
+        )
+        .expect_err("a proof from another key");
+        assert_eq!(field_of(&err), Some("jkt"));
     }
 
     /// The expected-URI argument is normalized before comparison, so a caller may

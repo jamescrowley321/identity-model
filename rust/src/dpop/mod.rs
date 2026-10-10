@@ -7,8 +7,9 @@
 //! ([`DpopKey::proof`]), and the authorization server binds the issued token to
 //! that key by putting the key's RFC 7638 thumbprint
 //! ([`DpopKey::thumbprint`]) in the token's `cnf.jkt` claim. A resource server
-//! verifies the accompanying proof ([`verify_proof`]) and checks that the
-//! verified [`DpopProof::thumbprint`] equals the token's `cnf.jkt`.
+//! verifies the accompanying proof with [`verify_bound_proof`], which also
+//! checks that the proof's key is the one `cnf.jkt` names and that its `ath` is
+//! the presented token's hash.
 //!
 //! The pieces:
 //!
@@ -23,8 +24,10 @@
 //! - [`dpop_ath`] — the `BASE64URL(SHA-256(access_token))` binding value.
 //! - [`jwk_thumbprint`] — the RFC 7638 thumbprint of a public JWK, for checking
 //!   a `cnf.jkt` against a key held as a JWK rather than as a [`DpopKey`].
-//! - [`verify_proof`] — validates a proof on the resource-server side
-//!   (RFC 9449 §4.3).
+//! - [`verify_bound_proof`] — validates a proof presented with a bound token
+//!   on the resource-server side (RFC 9449 §4.3, §7), including the `cnf.jkt`
+//!   and `ath` bindings. [`verify_proof`] is the general form, for a token
+//!   request or any check that sets [`DpopVerifyOptions`] by hand.
 //!
 //! Behaviour is proven against the cross-language conformance IDs
 //! `DPOP-001`..`DPOP-008` in `spec/vectors/dpop.json`, against the shared
@@ -63,4 +66,4 @@ mod verify;
 
 pub use key::{DpopAlgorithm, DpopKey, jwk_thumbprint};
 pub use proof::{DPOP_PROOF_TYP, DpopProofOptions, ath, normalize_htu};
-pub use verify::{DpopProof, DpopVerifyOptions, verify_proof};
+pub use verify::{DpopProof, DpopVerifyOptions, verify_bound_proof, verify_proof};

@@ -49,7 +49,8 @@ mod env;
 pub use discovery::{DiscoveryClient, DiscoveryClientBuilder, DiscoveryError, ProviderMetadata};
 pub use dpop::{
     DPOP_PROOF_TYP, DpopAlgorithm, DpopKey, DpopProof, DpopProofOptions, DpopVerifyOptions,
-    ath as dpop_ath, jwk_thumbprint, normalize_htu as dpop_normalize_htu, verify_proof,
+    ath as dpop_ath, jwk_thumbprint, normalize_htu as dpop_normalize_htu, verify_bound_proof,
+    verify_proof,
 };
 pub use error::IdentityError;
 pub use http::secure_client_builder;
