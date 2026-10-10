@@ -38,10 +38,13 @@
 //! cd rust && ALLOW_HTTP=1 cargo run --example dpop
 //! ```
 
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use reqwest::header::{HeaderMap, HeaderValue};
 use rs_identity_model::{
     DiscoveryClient, DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, TokenClient,
-    dpop_ath, verify_proof,
+    dpop_ath, verify_bound_proof,
 };
 
 /// OpenID Connect Discovery 1.0 §4: the metadata document lives at the issuer
@@ -216,8 +219,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     headers.insert("DPoP", HeaderValue::from_str(&proof)?);
     // Start from the crate's hardened builder, not a bare `reqwest::Client`.
     // `http_client` REPLACES the default client, so building one from scratch
-    // would drop the https -> http redirect refusal on the one request that
-    // carries the client secret.
+    // would drop the redirect refusals on the one request that carries the
+    // client secret: https -> http, and any hop to another origin, which would
+    // receive this default `DPoP` header and, on a 307, the form body.
     let http = rs_identity_model::secure_client_builder()
         .default_headers(headers)
         .build()?;
@@ -268,28 +272,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Authorization: DPoP {}", redacted(&token.access_token));
     println!("  DPoP: {}", redacted(&resource_proof));
 
-    // The other side of the wire, shown here so the check a resource server
-    // owes is explicit. Verifying the proof is necessary but NOT sufficient:
-    // the server must also confirm the proof's key is the key the token was
-    // bound to, by comparing this thumbprint against the token's `cnf.jkt`.
-    let verified = verify_proof(
+    // The other side of the wire, shown here so the checks a resource server
+    // owes are explicit. `verify_bound_proof` checks the proof, its `ath`
+    // against the presented token, and its key against the token's `cnf.jkt`. A
+    // real resource server reads `cnf.jkt` from the token (or introspection);
+    // this example stands in our own thumbprint, which DPoP binding put there.
+    let verified = verify_bound_proof(
         &resource_proof,
         "GET",
         &resource_uri,
-        &DpopVerifyOptions::new().access_token(&token.access_token),
+        &token.access_token,
+        &thumbprint,
+        &DpopVerifyOptions::new(),
     )?;
     println!("\nresource server verified the proof:");
-    println!("  jti        = {}", verified.jti);
-    println!("  thumbprint = {}", verified.thumbprint);
-    if verified.thumbprint != thumbprint {
-        return Err(format!(
-            "verified proof thumbprint {} is not the key the token was bound to ({thumbprint}) — \
-             a resource server must reject this request",
-            verified.thumbprint
-        )
-        .into());
+    println!(
+        "  thumbprint = {} (the key the token was bound to)",
+        verified.thumbprint
+    );
+
+    // RFC 9449 §4.3 replay detection: the server remembers each `jti` for the
+    // `iat` window (60s by default) and refuses one it has seen. A proof older
+    // than the window fails on `iat`, so the store never needs more than that.
+    let mut seen_jtis: HashMap<String, Instant> = HashMap::new();
+    seen_jtis.retain(|_, first_seen| first_seen.elapsed() <= Duration::from_secs(61));
+    if seen_jtis
+        .insert(verified.jti.clone(), Instant::now())
+        .is_some()
+    {
+        return Err(format!("proof jti {} was already used: a replay", verified.jti).into());
     }
-    println!("  binding    = matches the key the token was bound to");
+    println!("  jti        = {} (first use)", verified.jti);
 
     Ok(())
 }

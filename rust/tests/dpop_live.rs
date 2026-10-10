@@ -52,7 +52,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderValue};
 use rs_identity_model::{
     DiscoveryClient, DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, IdentityError,
-    JwksClient, ProviderMetadata, TokenClient, ValidationOptions, verify_proof,
+    JwksClient, ProviderMetadata, TokenClient, ValidationOptions, verify_bound_proof, verify_proof,
 };
 
 const WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
@@ -201,7 +201,8 @@ async fn token_request_with_proof(
     );
     // Start from the crate's hardened builder, not a bare `reqwest::Client`.
     // `http_client` REPLACES the default client, so building one from scratch
-    // would drop the https -> http redirect refusal on the one request that
+    // would drop the redirect refusals (https -> http, and any hop to another
+    // origin, which would receive this `DPoP` header) on the one request that
     // carries the client secret.
     let http = rs_identity_model::secure_client_builder()
         .default_headers(headers)
@@ -290,11 +291,23 @@ async fn integration_dpop_bound_client_credentials_live() {
         // embedded in the proof header.
         let claims = validated_claims(&live, &resp.access_token).await;
         let expected = key.thumbprint().expect("thumbprint the generated key");
+        let bound_to = cnf_jkt(&claims);
         assert_eq!(
-            cnf_jkt(&claims),
-            expected,
+            bound_to, expected,
             "cnf.jkt does not match our RFC 7638 thumbprint for the {algorithm} key"
         );
+
+        // This crate's verifier agrees with the provider: the proof it accepted
+        // verifies here, against the cnf.jkt it issued.
+        verify_proof(
+            &proof,
+            "POST",
+            &live.meta.token_endpoint,
+            &DpopVerifyOptions::new().jkt(&bound_to),
+        )
+        .unwrap_or_else(|e| {
+            panic!("the provider accepted the {algorithm} proof but verify_proof rejects it: {e}")
+        });
     }
 }
 
@@ -390,19 +403,16 @@ async fn integration_dpop_ath_binds_a_live_token_live() {
         )
         .expect("generate a resource-request proof");
 
-    let verified = verify_proof(
-        &resource_proof,
-        "GET",
-        &resource_uri,
-        &DpopVerifyOptions::new().access_token(&resp.access_token),
-    )
-    .expect("this crate must verify the proof it just generated");
-
     // The RS-side check RFC 9449 §7 requires: the proof's key is the key the
     // token was bound to. Both values crossed the wire independently — ours in
     // the proof's jwk header, the provider's in cnf.jkt.
-    assert_eq!(
-        verified.thumbprint, bound_to,
-        "verified proof thumbprint does not match the live token's cnf.jkt"
-    );
+    verify_bound_proof(
+        &resource_proof,
+        "GET",
+        &resource_uri,
+        &resp.access_token,
+        &bound_to,
+        &DpopVerifyOptions::new(),
+    )
+    .expect("the resource proof must verify against the live token and its cnf.jkt");
 }

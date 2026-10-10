@@ -10,18 +10,34 @@
 //! The server is a few lines of `std::net` rather than a mock: the proof and the
 //! bound token travel as real HTTP headers, so a bug in how the proof is
 //! serialized or how the `Authorization` scheme is chosen shows up here and not
-//! only in a hand-built string. It also documents the division of responsibility
-//! the `verify_proof` docs describe — the library verifies the proof, the caller
-//! compares the thumbprint to `cnf.jkt` — by implementing the caller's half.
+//! only in a hand-built string. It also shows what a resource server still owes
+//! after `verify_bound_proof`: the `jti` replay store RFC 9449 §4.3 expects.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rs_identity_model::{
-    DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, verify_proof,
+    DpopAlgorithm, DpopKey, DpopProofOptions, DpopVerifyOptions, verify_bound_proof,
 };
+
+/// How long a seen `jti` is remembered. A proof older than the verifier's `iat`
+/// window is rejected on `iat`, so entries need to outlive that window and no
+/// more. 60 seconds is `DpopVerifyOptions`' default; the extra second covers
+/// a proof dated up to the window's edge in the future.
+const JTI_RETENTION_SECS: i64 = 61;
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_secs()
+        .try_into()
+        .expect("seconds fit in i64")
+}
 
 /// How the resource server answered a request.
 #[derive(Debug, PartialEq, Eq)]
@@ -41,6 +57,8 @@ fn serve(
     bound_token: String,
     requests: usize,
 ) {
+    // jti -> when it was first seen, in seconds since the Unix epoch.
+    let mut seen: HashMap<String, i64> = HashMap::new();
     for stream in listener.incoming().take(requests) {
         let mut stream = stream.expect("accept");
         let mut reader = BufReader::new(stream.try_clone().expect("clone"));
@@ -75,25 +93,29 @@ fn serve(
             None => "rejected: a DPoP-bound token requires the DPoP scheme".to_string(),
             Some(presented) => {
                 let uri = format!("http://127.0.0.1:{port}{path}");
-                match verify_proof(
+                // A real server reads cnf.jkt from the presented token; this one
+                // issued a single token and knows its binding.
+                match verify_bound_proof(
                     &proof,
                     &method,
                     &uri,
-                    &DpopVerifyOptions::new().access_token(presented),
+                    presented,
+                    &expected_jkt,
+                    &DpopVerifyOptions::new(),
                 ) {
-                    // The proof is valid; now the caller's half of the contract —
-                    // is the presented token bound to *this* key?
-                    Ok(verified) if verified.thumbprint == expected_jkt => {
-                        if presented == bound_token {
-                            "accepted".to_string()
+                    Ok(_) if presented != bound_token => {
+                        "rejected: unknown access token".to_string()
+                    }
+                    Ok(verified) => {
+                        // RFC 9449 §4.3: a jti seen inside the window is a replay.
+                        let now = unix_now();
+                        seen.retain(|_, first_seen| now - *first_seen <= JTI_RETENTION_SECS);
+                        if seen.insert(verified.jti, now).is_some() {
+                            "rejected: replayed proof (jti already seen)".to_string()
                         } else {
-                            "rejected: unknown access token".to_string()
+                            "accepted".to_string()
                         }
                     }
-                    Ok(verified) => format!(
-                        "rejected: cnf.jkt names another key (proof key {})",
-                        verified.thumbprint
-                    ),
                     Err(e) => format!("rejected: {e}"),
                 }
             }
@@ -149,7 +171,7 @@ fn assert_rejected_because(outcome: Outcome, expected: &str) {
 /// DPOP-005/DPOP-006/DPOP-008 composed: a DPoP-bound token is usable by the
 /// client that holds the key and by nobody else.
 ///
-/// The attacker in cases 2 and 3 holds the access token in full — this is the
+/// The attacker in cases 2, 3, and 7 holds the access token in full — this is the
 /// post-theft world DPoP is designed for — and still cannot use it.
 #[test]
 fn a_bound_token_is_useless_without_its_key() {
@@ -162,7 +184,7 @@ fn a_bound_token_is_useless_without_its_key() {
     let port = listener.local_addr().expect("addr").port();
     let server = std::thread::spawn({
         let (jkt, token) = (jkt.clone(), token.to_string());
-        move || serve(listener, port, jkt, token, 8)
+        move || serve(listener, port, jkt, token, 9)
     });
 
     let uri = format!("http://127.0.0.1:{port}/protectedresource");
@@ -190,7 +212,7 @@ fn a_bound_token_is_useless_without_its_key() {
             &proof_for(&attacker, "GET", &uri),
             &bearer_of(token),
         ),
-        "cnf.jkt names another key",
+        "\"jkt\"",
     );
 
     // 2b. The subtler version of the same attack, and the one signature
@@ -278,6 +300,13 @@ fn a_bound_token_is_useless_without_its_key() {
     assert_rejected_because(
         call(port, "GET", "/protectedresource", "", &bearer_of(token)),
         "rejected",
+    );
+
+    // 7. A proof captured in transit (a proxy log, a trace) and replayed verbatim
+    // with its token is refused: its jti was already used in case 1.
+    assert_rejected_because(
+        call(port, "GET", "/protectedresource", &good, &bearer_of(token)),
+        "replayed proof",
     );
 
     server.join().expect("server thread");
