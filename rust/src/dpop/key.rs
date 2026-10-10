@@ -675,7 +675,7 @@ mod tests {
     /// that could generate one is ruled out by RUSTSEC-2023-0071 (see the
     /// dependency note in `Cargo.toml`). Its wrong-curve counterpart *is*
     /// generated, by [`p384_pem`].
-    const RSA_1024_PEM: &str = include_str!("testdata/rsa-1024-too-small.pem");
+    const RSA_1024_DER: &[u8] = include_bytes!("testdata/rsa-1024-too-small.pkcs8.der");
 
     /// Mints an EC P-384 key in PKCS#8 PEM form — a curve ES256 must refuse.
     ///
@@ -708,7 +708,7 @@ mod tests {
     /// what this crate accepts with nothing failing.
     #[test]
     fn key_strength_is_enforced_by_the_backend() {
-        let too_small = DpopKey::from_pkcs8_pem(RSA_1024_PEM, DpopAlgorithm::Rs256)
+        let too_small = DpopKey::from_pkcs8_der(RSA_1024_DER, DpopAlgorithm::Rs256)
             .expect_err("a 1024-bit RSA key is below the RFC 7518 §3.3 minimum");
         assert!(
             matches!(too_small, IdentityError::Validation(_)),

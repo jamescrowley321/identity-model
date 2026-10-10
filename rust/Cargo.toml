@@ -8,6 +8,8 @@ license = "Apache-2.0"
 repository = "https://github.com/jamescrowley321/identity-model"
 keywords = ["oidc", "oauth2", "jwt", "openid", "authentication"]
 categories = ["authentication", "web-programming"]
+# Test-only key material stays out of the published crate.
+exclude = ["src/dpop/testdata/"]
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
