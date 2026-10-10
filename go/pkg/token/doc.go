@@ -17,7 +17,7 @@
 // with the functional With* options.
 //
 // Behavioural contract: spec/vectors/client-credentials.json (CC-001..006),
-// spec/vectors/authorization-code.json (ACG-001..006), and
+// spec/vectors/authorization-code.json (ACG-001..005), and
 // spec/vectors/token-exchange.json (EXCH-001..006); see also
 // spec/capabilities.md.
 package token

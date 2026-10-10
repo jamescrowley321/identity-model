@@ -93,6 +93,11 @@ the real OP — see
   duplicate parameters fail. Request positions are reserved on arrival, so
   concurrent response sequences follow arrival order. Checks fail while any
   request body is pending.
+- `.../_requests` returns `{"requests": {path: [{method, headers, form}]}}`
+  for runners inspecting generated values such as DPoP proofs. It preserves
+  records, counts and sequence positions, and follows the same run capacity
+  and inactivity limits as `_check`. Unused, reset or expired runs have no
+  recorded requests.
 - **POST** `.../_reset` clears this vector's records, fixture errors and
   sequence position. Use it after a completed run to release capacity, or
   before intentionally restarting the vector. GET returns 405.
