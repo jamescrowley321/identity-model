@@ -395,3 +395,82 @@ test("expired records release capacity and cannot silently pass a check", async 
     200,
   );
 });
+
+test("request inspection preserves proofs, checks and response sequence positions", async (t) => {
+  const { request, check } = await start(t, {
+    vector: {
+      name: "one",
+      http_sequence: { "/token": [response(), response("second.json")] },
+      expect_calls: { "/token": 2 },
+    },
+  });
+  assert.deepEqual(
+    await (await request("/token", {
+      method: "POST",
+      headers: { dpop: "first-proof", "content-type": "application/x-www-form-urlencoded" },
+      body: "grant_type=authorization_code&code=first&code=last",
+    })).json(),
+    { step: 1 },
+  );
+  const recorded = await (await request("/_requests")).json();
+  assert.deepEqual(Object.keys(recorded.requests), ["/token"]);
+  assert.equal(recorded.requests["/token"].length, 1);
+  assert.equal(recorded.requests["/token"][0].method, "POST");
+  assert.equal(recorded.requests["/token"][0].headers.dpop, "first-proof");
+  assert.deepEqual(recorded.requests["/token"][0].form, {
+    grant_type: "authorization_code", code: "first",
+  });
+  assert.deepEqual(await (await request("/_requests")).json(), recorded);
+  assert.deepEqual(await (await request("/token")).json(), { step: 2 });
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+  assert.equal((await (await request("/_requests")).json()).requests["/token"].length, 2);
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+  await request("/_reset", { method: "POST" });
+  assert.deepEqual(await (await request("/_requests")).json(), { requests: {} });
+  assert.deepEqual(await (await request("/token")).json(), { step: 1 });
+});
+
+test("request inspection retains arrival order and cannot make pending bodies pass", async (t) => {
+  const { base, server, request, check } = await start(t, {
+    vector: { ...basic, expect_calls: { "/token": 2 } },
+  });
+  const slow = await beginRequest(t, server, base + "/token");
+  await request("/token", { method: "POST", body: "token=fast" });
+  const pending = (await (await request("/_requests")).json()).requests["/token"];
+  assert.equal(pending.length, 2);
+  assert.deepEqual(pending[1].form, { token: "fast" });
+  assert.equal((await check()).ok, false);
+  await finishRequest(slow);
+  const complete = (await (await request("/_requests")).json()).requests["/token"];
+  assert.deepEqual(complete.map((r) => r.form.token), ["slow", "fast"]);
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+});
+
+test("request inspection respects record and run capacity without creating runs", async (t) => {
+  const { base, request, check } = await start(t, { maxRuns: 1, maxRequests: 1 });
+  assert.deepEqual(await (await request("/_requests")).json(), { requests: {} });
+  const other = base.replace("/run/", "/other/");
+  assert.equal((await fetch(other + "/token")).status, 200);
+  assert.equal((await request("/_requests")).status, 503);
+  await fetch(other + "/_reset", { method: "POST" });
+  await request("/token");
+  for (let n = 0; n < 3; n++) {
+    assert.equal((await (await request("/_requests")).json()).requests["/token"].length, 1);
+  }
+  assert.equal((await request("/token")).status, 429);
+  await request("/_requests");
+  assert.equal((await check()).ok, false);
+});
+
+test("request inspection expires stale records and refreshes activity", async (t) => {
+  const { request, check } = await start(t, { ttlMs: 10 });
+  t.mock.timers.enable({ apis: ["Date"] });
+  await request("/token");
+  t.mock.timers.tick(9);
+  assert.equal((await (await request("/_requests")).json()).requests["/token"].length, 1);
+  t.mock.timers.tick(9);
+  assert.equal((await (await request("/_requests")).json()).requests["/token"].length, 1);
+  t.mock.timers.tick(10);
+  assert.deepEqual(await (await request("/_requests")).json(), { requests: {} });
+  assert.equal((await check()).ok, false);
+});

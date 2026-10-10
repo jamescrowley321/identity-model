@@ -244,7 +244,7 @@ mod tests {
             "nbf": 1419350238,
             "sub": "Z5O3upPC88QrAjx00dis",
             "aud": "https://protected.example.net/resource",
-            "iss": "https://server.example.com/",
+            "iss": "https://issuer.example.com/",
             "jti": "d3f5c9a1-2b7e-4c1a-9e8f-0a1b2c3d4e5f",
             "extension_field": "twenty-seven"
         }"#;
@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(ir.nbf, Some(1419350238));
         assert_eq!(ir.sub.as_deref(), Some("Z5O3upPC88QrAjx00dis"));
         assert!(ir.aud.contains("https://protected.example.net/resource"));
-        assert_eq!(ir.iss.as_deref(), Some("https://server.example.com/"));
+        assert_eq!(ir.iss.as_deref(), Some("https://issuer.example.com/"));
         assert_eq!(
             ir.jti.as_deref(),
             Some("d3f5c9a1-2b7e-4c1a-9e8f-0a1b2c3d4e5f")

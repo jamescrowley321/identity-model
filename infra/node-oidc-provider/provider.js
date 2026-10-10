@@ -443,6 +443,12 @@ async function startProvider() {
     console.log(`JWKS: ${ISSUER}/jwks`);
   });
 
+  // Keep idle connections open longer than any gap a spec vector leaves
+  // between calls (DISC-005 waits 6s). Node's 5s default closes the socket
+  // while a client is reusing it, which fails that call intermittently.
+  server.keepAliveTimeout = 30_000;
+  server.headersTimeout = 31_000;
+
   server.on("error", (err) => {
     console.error(`Listen failed: ${err.message}`);
     process.exit(1);

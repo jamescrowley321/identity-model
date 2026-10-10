@@ -39,6 +39,8 @@ from py_identity_model.core.models import (
     JwksResponse,
 )
 
+from ..constants import DISCO_URL
+
 
 JWKS_URL = "https://example.com/jwks"
 
@@ -105,7 +107,7 @@ class TestAsyncClearActuallyClears:
     @pytest.mark.asyncio
     async def test_clear_discovery_cache_empties_cache(self):
         cache_key = (
-            "https://example.com/.well-known/openid-configuration",
+            DISCO_URL,
             DiscoveryPolicy().cache_key(),
         )
         aio_tv._disco_cache[cache_key] = DiscoCacheEntry(

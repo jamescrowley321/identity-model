@@ -23,7 +23,8 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.core.cache_metrics import CACHE_COUNTERS
 
-from .token_validation_helpers import (
+from ..constants import DISCO_URL
+from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
 )
@@ -152,7 +153,6 @@ class TestCacheCountersSingleton:
 # Integration with the async cache paths
 # ============================================================================
 
-DISCO_URL = "https://example.com/.well-known/openid-configuration"
 JWKS_URL = "https://example.com/jwks"
 
 

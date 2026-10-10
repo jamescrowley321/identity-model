@@ -14,6 +14,8 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
+from ..constants import DISCO_URL
+
 
 _BASE_DISCO = {
     "issuer": "https://example.com",
@@ -25,13 +27,11 @@ _BASE_DISCO = {
     "id_token_signing_alg_values_supported": ["RS256"],
 }
 
-_DISCO_URL = "https://example.com/.well-known/openid_configuration"
-
 
 class TestParEndpointDiscoveryField:
     @respx.mock
     def test_par_endpoint_parsed(self):
-        respx.get(_DISCO_URL).mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -44,7 +44,7 @@ class TestParEndpointDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=_DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint == "https://example.com/par"
@@ -52,9 +52,9 @@ class TestParEndpointDiscoveryField:
 
     @respx.mock
     def test_par_endpoint_absent_defaults_none(self):
-        respx.get(_DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
+        respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=_DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint is None
@@ -62,7 +62,7 @@ class TestParEndpointDiscoveryField:
 
     @respx.mock
     def test_require_par_false(self):
-        respx.get(_DISCO_URL).mock(
+        respx.get(DISCO_URL).mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -75,7 +75,7 @@ class TestParEndpointDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=_DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint == "https://example.com/par"

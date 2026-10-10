@@ -34,6 +34,23 @@ fn fixture(name: &str) -> Value {
     serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse fixture {path}: {e}"))
 }
 
+/// Reads one named vector of a case from the shared `spec/vectors/dpop.json`.
+fn vector(case: &str, name: &str) -> Value {
+    let path = "../spec/vectors/dpop.json";
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let file: Value =
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+    file["tests"]
+        .as_array()
+        .expect("tests array")
+        .iter()
+        .filter(|test| test["id"] == case)
+        .flat_map(|test| test["vectors"].as_array().expect("vectors array"))
+        .find(|vector| vector["name"] == name)
+        .unwrap_or_else(|| panic!("{path}: no vector {case} {name}"))
+        .clone()
+}
+
 /// The ES256 key pair the bound-token fixture is bound to, loaded from its
 /// private JWK.
 fn fixture_es256_key() -> DpopKey {
@@ -223,26 +240,31 @@ fn ath_matches_every_fixture_pair() {
 }
 
 /// DPOP-003: a resource-request proof carries the `ath` of the presented token,
-/// and the shared resource-request fixture's `ath` is reproduced exactly.
+/// and the shared `resource-proof` vector's `ath` is reproduced exactly.
 #[test]
 fn resource_request_proof_carries_ath() {
-    let expected = fixture("dpop-proof-resource-request.json");
-    let token = fixture("dpop-ath-pairs.json")["pairs"][1]["access_token"]
+    let resource_proof = vector("DPOP-003", "resource-proof");
+    let expected = &resource_proof["expect"]["result"];
+    let token = resource_proof["input"]["access_token"]
         .as_str()
-        .expect("bound token value")
-        .to_string();
-    // The fixture pair and the resource-request fixture must describe the same
+        .expect("bound token value");
+    // The fixture pair and the resource-proof vector must describe the same
     // token; if they drift this assertion says so before the proof is built.
     assert_eq!(
-        dpop_ath(&token),
-        expected["payload"]["ath"].as_str().expect("fixture ath"),
-        "the ath fixture pair and the resource-request fixture disagree"
+        fixture("dpop-ath-pairs.json")["pairs"][1]["access_token"],
+        token,
+        "the ath fixture pair and the resource-proof vector disagree"
+    );
+    assert_eq!(
+        dpop_ath(token),
+        expected["payload"]["ath"].as_str().expect("vector ath"),
+        "the resource-proof vector's ath is not the token's hash"
     );
 
     let key = fixture_es256_key();
-    let htu = expected["payload"]["htu"].as_str().expect("htu");
+    let htu = resource_proof["input"]["htu"].as_str().expect("htu");
     let proof = key
-        .proof("GET", htu, &DpopProofOptions::new().access_token(&token))
+        .proof("GET", htu, &DpopProofOptions::new().access_token(token))
         .expect("build proof");
     let (_, payload) = decode_parts(&proof);
     assert_eq!(payload["ath"], expected["payload"]["ath"]);
@@ -641,13 +663,16 @@ fn verify_rejects_ath_and_nonce_mismatch() {
 }
 
 /// DPOP-004's payload half: a challenged proof carries the server nonce from the
-/// shared error-response fixture in its `nonce` claim. The HTTP retry that
+/// shared `retry-with-nonce` challenge in its `nonce` claim. The HTTP retry that
 /// produces it is DPOP-004 proper and arrives with the transport.
 #[test]
 fn nonce_claim_carries_the_fixture_server_nonce() {
-    let challenge = fixture("dpop-nonce-error-response.json");
-    assert_eq!(challenge["body"]["error"], "use_dpop_nonce");
-    let nonce = challenge["headers"]["DPoP-Nonce"]
+    assert_eq!(
+        fixture("dpop-nonce-error-response.json")["error"],
+        "use_dpop_nonce"
+    );
+    let retry = vector("DPOP-004", "retry-with-nonce");
+    let nonce = retry["http_sequence"]["/token"][0]["headers"]["DPoP-Nonce"]
         .as_str()
         .expect("DPoP-Nonce header");
 

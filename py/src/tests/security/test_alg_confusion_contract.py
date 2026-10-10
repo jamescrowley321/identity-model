@@ -46,12 +46,12 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
+from ..constants import DISCO_URL
 from ._security_helpers import generate_rsa_keypair, unsigned_none_alg_jwt
 
 
 pytestmark = pytest.mark.unit
 
-DISCO_URL = "https://example.com/.well-known/openid-configuration"
 _DISCO_DOC = {
     "issuer": "https://example.com",
     "jwks_uri": "https://example.com/jwks",

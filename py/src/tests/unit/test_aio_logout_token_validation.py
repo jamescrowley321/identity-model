@@ -25,7 +25,8 @@ from py_identity_model.exceptions import (
     TokenExpiredException,
 )
 
-from .token_validation_helpers import (
+from ..constants import DISCO_URL
+from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
     sign_jwt,
@@ -34,7 +35,6 @@ from .token_validation_helpers import (
 
 _ISSUER = "https://example.com"
 _AUDIENCE = "client-123"
-_DISCO_ADDRESS = "https://example.com/.well-known/openid-configuration"
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def _valid_logout_claims(**overrides) -> dict:
 
 
 def _mock_disco_and_jwks(key_dict: dict) -> None:
-    respx.get(_DISCO_ADDRESS).mock(
+    respx.get(DISCO_URL).mock(
         return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
     )
     respx.get("https://example.com/jwks").mock(
@@ -95,7 +95,7 @@ class TestAsyncValidateLogoutToken:
         token = sign_jwt(pem, _valid_logout_claims(), headers={"kid": key_dict["kid"]})
 
         claims = await validate_logout_token(
-            token, _config(), disco_doc_address=_DISCO_ADDRESS
+            token, _config(), disco_doc_address=DISCO_URL
         )
 
         assert claims["sub"] == "user-1"
@@ -114,9 +114,7 @@ class TestAsyncValidateLogoutToken:
         )
 
         with pytest.raises(TokenExpiredException):
-            await validate_logout_token(
-                token, _config(), disco_doc_address=_DISCO_ADDRESS
-            )
+            await validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -131,9 +129,7 @@ class TestAsyncValidateLogoutToken:
         )
 
         with pytest.raises(LogoutTokenValidationException, match=r"nonce"):
-            await validate_logout_token(
-                token, _config(), disco_doc_address=_DISCO_ADDRESS
-            )
+            await validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -146,6 +142,4 @@ class TestAsyncValidateLogoutToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(LogoutTokenValidationException, match=r"events"):
-            await validate_logout_token(
-                token, _config(), disco_doc_address=_DISCO_ADDRESS
-            )
+            await validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)

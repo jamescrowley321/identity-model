@@ -26,7 +26,7 @@ from py_identity_model.aio import validate_token as async_validate_token
 from py_identity_model.core.jwt_helpers import _normalize_verification_key
 from py_identity_model.exceptions import ConfigurationException
 
-from ..unit.token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
 
 pytestmark = pytest.mark.unit
