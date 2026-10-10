@@ -709,14 +709,22 @@ mod tests {
     fn mistyped_claims_are_reported_by_name() {
         let key = DpopKey::generate(DpopAlgorithm::Es256).expect("generate key");
         let now = 1_700_000_000;
-        for (claim, value) in [
-            ("iat", serde_json::json!(1_700_000_000.5)),
-            ("iat", serde_json::json!("1700000000")),
-            ("jti", serde_json::json!(5)),
-            ("htm", serde_json::json!(1)),
-            ("htu", serde_json::json!(true)),
-            ("ath", serde_json::json!(1)),
-            ("nonce", serde_json::json!([])),
+        for (claim, value, named) in [
+            (
+                "iat",
+                serde_json::json!(1_700_000_000.5),
+                "integer NumericDate",
+            ),
+            (
+                "iat",
+                serde_json::json!("1700000000"),
+                "integer NumericDate",
+            ),
+            ("jti", serde_json::json!(5), "got a number"),
+            ("htm", serde_json::json!(null), "got null"),
+            ("htu", serde_json::json!(true), "got a boolean"),
+            ("ath", serde_json::json!({}), "got an object"),
+            ("nonce", serde_json::json!([]), "got an array"),
         ] {
             let mut payload = serde_json::json!({
                 "jti": "j-1",
@@ -728,6 +736,7 @@ mod tests {
             let err = verify_at(&sign(&key, &payload), now, DEFAULT_MAX_IAT_AGE)
                 .expect_err(&format!("{claim} = {value} must be rejected"));
             assert_eq!(field_of(&err), Some(claim), "{claim} = {value}");
+            assert!(err.to_string().contains(named), "{claim} = {value}: {err}");
         }
     }
 

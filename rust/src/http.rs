@@ -267,6 +267,12 @@ mod tests {
                 .is_some_and(|blocked| matches!(blocked, RedirectBlocked::CrossOrigin)),
             "{err:?}"
         );
+        assert!(
+            RedirectBlocked::CrossOrigin
+                .to_string()
+                .contains("redirect to another origin"),
+            "{err:?}"
+        );
 
         // A same-origin hop is still followed.
         Mock::given(method("GET"))

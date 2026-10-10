@@ -77,8 +77,8 @@ implemented, as are the Extended token introspection (RFC 7662), token
 revocation (RFC 7009), and token exchange (RFC 8693) capabilities.
 
 DPoP (RFC 9449) is partially implemented: `dpop` provides key pairs, proof
-generation, and proof verification, along with the RFC 7638 thumbprint a
-`cnf.jkt` binding is checked against. Attaching the proof over HTTP — the
+generation, and proof verification — `verify_bound_proof` checks a resource
+request's proof together with its `ath` and `cnf.jkt` bindings. Attaching the proof over HTTP — the
 `use_dpop_nonce` retry and the `Authorization: DPoP` scheme — is still the
 caller's job; see the `dpop` module docs.
 

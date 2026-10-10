@@ -42,7 +42,7 @@ p256 = { version = "0.14.0", features = ["pkcs8", "ecdsa"] }
 # obvious alternative, is exactly what the advisory note above rules out.
 aws-lc-rs = "1"
 # Scrubs DPoP private key bytes on drop. Already in the graph via p256.
-zeroize = "1"
+zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

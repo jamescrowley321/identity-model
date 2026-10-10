@@ -10,7 +10,7 @@ use jsonwebtoken::EncodingKey;
 use jsonwebtoken::jwk::{AlgorithmParameters, EllipticCurve, Jwk, ThumbprintHash};
 use p256::pkcs8::EncodePrivateKey;
 use serde::Deserialize;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::jwks::JsonWebKey;
 use crate::{IdentityError, Result};
@@ -90,8 +90,9 @@ impl FromStr for DpopAlgorithm {
 
 /// The private-key JWK members [`DpopKey::from_private_jwk`] reads (RFC 7517 §4,
 /// RFC 7518 §6.2.2 / §6.3.2). Kept private: it exists to carry key material in,
-/// not to be part of the public surface.
-#[derive(Deserialize)]
+/// not to be part of the public surface. The members arrive as base64url text,
+/// private ones included, so every member is zeroed on drop.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
 struct PrivateJwk {
     #[serde(default)]
     kty: String,
@@ -122,23 +123,6 @@ struct PrivateJwk {
     dq: String,
     #[serde(default)]
     qi: String,
-}
-
-/// The private members arrive as base64url text; scrub it once the key is
-/// built.
-impl Drop for PrivateJwk {
-    fn drop(&mut self) {
-        for member in [
-            &mut self.d,
-            &mut self.p,
-            &mut self.q,
-            &mut self.dp,
-            &mut self.dq,
-            &mut self.qi,
-        ] {
-            member.zeroize();
-        }
-    }
 }
 
 /// A DPoP key pair: the private key that signs proof JWTs, plus its algorithm.
