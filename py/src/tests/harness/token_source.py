@@ -37,9 +37,9 @@ from py_identity_model import (
     request_client_credentials_token,
 )
 
-from ..integration.provider_matrix import detect_capabilities
 from .corpus import build_corpus
 from .mock_op import MockOP
+from .provider_matrix import detect_capabilities
 
 
 if TYPE_CHECKING:

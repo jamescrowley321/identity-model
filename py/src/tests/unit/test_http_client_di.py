@@ -39,11 +39,12 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.userinfo import get_userinfo as sync_get_userinfo
 
+from ..constants import DISCO_URL
+
 
 # Minimum expected HTTP call count for discovery + JWKS
 MIN_EXPECTED_CALL_COUNT = 2
 
-DISCO_URL = "https://example.com/.well-known/openid-configuration"
 JWKS_URL = "https://example.com/.well-known/jwks"
 TOKEN_URL = "https://example.com/token"
 USERINFO_URL = "https://example.com/userinfo"

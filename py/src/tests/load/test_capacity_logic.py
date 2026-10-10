@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from ..load.runner import (
+from .runner import (
     CapacityResult,
     CapacityStep,
     LoadResult,
@@ -19,7 +19,7 @@ from ..load.runner import (
     render_capacity_report,
     write_capacity_report,
 )
-from ..load.scenarios import (
+from .scenarios import (
     SCENARIOS_BY_ID,
     Profile,
     RampSpec,

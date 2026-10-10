@@ -13,12 +13,12 @@ import os
 
 import pytest
 
-from ..load.resource_sampler import (
+from .resource_sampler import (
     ResourceSample,
     ResourceSampler,
     sample_process_tree,
 )
-from ..load.runner import (
+from .runner import (
     LoadResult,
     _maybe_sampler,
     render_soak_report,

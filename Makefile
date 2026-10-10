@@ -305,7 +305,7 @@ docs-build: ## Build mkdocs documentation
 
 .PHONY: provider-matrix
 provider-matrix: ## Show provider capability matrix from discovery documents
-	$(UVROOT) python py/src/tests/integration/provider_matrix.py
+	$(UVROOT) python py/src/tests/harness/provider_matrix.py
 
 .PHONY: generate-token
 generate-token: ## Generate a sample JWT token

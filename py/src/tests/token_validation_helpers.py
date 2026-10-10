@@ -6,14 +6,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt as pyjwt
 
+from .constants import ISSUER
+
 
 # Expected call counts for JWKS fetch assertions
 JWKS_FETCH_AFTER_EXPIRY = 2
 JWKS_FETCH_WITH_RETRY = 2
 
+# Shared discovery fixture; the issuer must match the discovery URL
+
 # Shared discovery responses
 DISCO_RESPONSE_NO_JWKS = {
-    "issuer": "https://example.com",
+    "issuer": ISSUER,
     "authorization_endpoint": "https://example.com/authorize",
     "token_endpoint": "https://example.com/token",
     "response_types_supported": ["code"],

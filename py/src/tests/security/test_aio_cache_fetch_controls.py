@@ -53,7 +53,7 @@ from py_identity_model.core.models import (
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.exceptions import ConfigurationException
 
-from ..unit.token_validation_helpers import generate_rsa_keypair
+from ..token_validation_helpers import generate_rsa_keypair
 
 
 pytestmark = pytest.mark.unit
