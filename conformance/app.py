@@ -1171,9 +1171,10 @@ def _client_for_session(
 ) -> HTTPClient | None:
     """The HTTP client to pass a client-authenticating request.
 
-    mTLS sessions must let the library build a short-lived cert-configured client
-    (``resolve_http_client`` rejects a managed client alongside ``mtls``), so pass
-    ``None``; every other session reuses the shared verify-disabled client.
+    mTLS sessions pass ``None``: the library builds a short-lived cert client
+    from the given client's ``Config``, not from its wrapped verify-disabled
+    ``httpx.Client``, so passing the shared client would not carry
+    ``verify=False`` over. Every other session reuses the shared client.
     """
     return None if session.mtls else http_client
 
