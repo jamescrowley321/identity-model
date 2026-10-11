@@ -138,8 +138,8 @@ func decodeUnverifiedClaims(t *testing.T, idToken string) map[string]any {
 // TestIntegration_ValidateIDToken_BaseProfile proves the full public entry point
 // ValidateIDToken end-to-end against a live OP: a genuine ID Token is minted via
 // a real auth-code + PKCE flow, its signature is verified against the OP's live
-// JWKS, and the ID-Token profile (sub + azp + the requested nonce/max_age) is
-// enforced on the real claims. node-oidc-provider's code-flow ID Token does not
+// JWKS, and the ID-Token profile (sub + the opt-in azp rules + the requested
+// nonce/max_age) is enforced on the real claims. node-oidc-provider's code-flow ID Token does not
 // carry an at_hash (OPs emit it only for authorization-endpoint responses), so
 // at_hash is asserted only when the OP actually mints one — that leg guards
 // itself and documents the reason. at_hash coverage otherwise lives in the
@@ -153,6 +153,7 @@ func TestIntegration_ValidateIDToken_BaseProfile(t *testing.T) {
 	claims, err := idtoken.ValidateIDToken(ctx, live.idToken, live.keySet,
 		idtoken.WithIssuer(live.issuer),
 		idtoken.WithClientID(live.clientID),
+		idtoken.WithAZPValidation(),
 	)
 	if err != nil {
 		t.Fatalf("ValidateIDToken against live provider: %v", err)

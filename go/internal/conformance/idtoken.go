@@ -53,11 +53,13 @@ type IDTokenInput struct {
 	// (§3.1.3.7 step 3). nil (absent) means none; an empty list is supplied
 	// as-is and still trusts nothing beyond the client_id.
 	TrustedAudiences []string `json:"trusted_audiences,omitempty"`
-	Nonce            *string  `json:"nonce,omitempty"`
-	AccessToken      *string  `json:"access_token,omitempty"`
-	Code             *string  `json:"code,omitempty"`
-	MaxAge           *int     `json:"max_age,omitempty"`
-	Leeway           *float64 `json:"leeway,omitempty"`
+	// ValidateAZP opts in to the azp rules; absent means false.
+	ValidateAZP bool     `json:"validate_azp,omitempty"`
+	Nonce       *string  `json:"nonce,omitempty"`
+	AccessToken *string  `json:"access_token,omitempty"`
+	Code        *string  `json:"code,omitempty"`
+	MaxAge      *int     `json:"max_age,omitempty"`
+	Leeway      *float64 `json:"leeway,omitempty"`
 	// Now is the fixed POSIX-seconds clock for the auth_time/max_age check.
 	Now float64 `json:"now"`
 }

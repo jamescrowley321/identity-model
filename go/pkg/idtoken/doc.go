@@ -10,8 +10,9 @@
 //   - every aud value MUST be the client_id or an audience listed via
 //     [WithTrustedAudiences]; any other audience rejects the token (§3.1.3.7
 //     step 3).
-//   - azp authorized-party rules: a token with multiple audiences MUST carry an
-//     azp; when present, azp MUST identify this client (§3.1.3.7 steps 4-6).
+//   - azp authorized-party rules, only with [WithAZPValidation]: a token with
+//     multiple audiences must carry an azp, and a present azp must identify
+//     this client (§3.1.3.7 steps 4-5). By default azp is ignored (§2).
 //   - nonce binding, when the caller supplies the nonce it sent on the
 //     authorization request (§3.1.3.7 step 11).
 //   - auth_time freshness against a requested max_age (§3.1.3.7 step 12).

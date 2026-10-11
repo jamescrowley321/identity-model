@@ -19,6 +19,7 @@ type config struct {
 	// ID-Token profile.
 	clientID         string
 	trustedAudiences []string
+	validateAZP      bool
 	nonce            string
 	nonceSet         bool
 	accessToken      string
@@ -95,8 +96,8 @@ func WithIssuer(issuer string) Option {
 }
 
 // WithClientID sets the relying party's client_id. It is enforced as the
-// expected audience of the base JWT validation (§3.1.3.7 step 3) and, when a
-// token carries an azp, azp MUST equal it (§3.1.3.7 step 6).
+// expected audience of the base JWT validation (§3.1.3.7 step 3) and, with
+// [WithAZPValidation], is the value a present azp must equal.
 func WithClientID(clientID string) Option {
 	return func(c *config) { c.clientID = clientID }
 }
@@ -108,6 +109,16 @@ func WithClientID(clientID string) Option {
 // trusts the client_id alone, and nothing disables the check.
 func WithTrustedAudiences(audiences ...string) Option {
 	return func(c *config) { c.trustedAudiences = audiences }
+}
+
+// WithAZPValidation opts in to the authorized-party (azp) rules: a token with
+// multiple audiences must carry an azp, and a present azp must equal the
+// client_id. OIDC Core 1.0 errata set 2 makes neither a MUST — §3.1.3.7 step 5
+// is a MAY/SHOULD, and the multiple-audience rule is the Core 1.0 (2014) step-4
+// SHOULD that errata set 2 removed. Without this option azp is ignored, as §2
+// advises relying parties that use no extensions.
+func WithAZPValidation() Option {
+	return func(c *config) { c.validateAZP = true }
 }
 
 // WithNonce requires the token's nonce to be present and equal nonce, the value
