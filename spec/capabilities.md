@@ -115,6 +115,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 - Implementations MUST fetch the JWK Set from `jwks_uri` and parse it per [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5).
 - Each key MUST expose `kty`, `kid`, `use`, `alg`; RSA keys expose `n`/`e`, EC keys expose `crv`/`x`/`y` ([RFC 7517 §4](https://www.rfc-editor.org/rfc/rfc7517#section-4)).
 - Resolving a `kid` not in the cached set MUST trigger a forced refresh and retry before returning a key-not-found error (supports key rotation).
+- For a token with no `kid` (an OP MAY omit it when its set holds a single key, [OIDC Core 1.0 §10.1](https://openid.net/specs/openid-connect-core-1_0.html#Signing)), implementations MUST narrow the set to signing keys (`use` absent or `sig`, [RFC 7517 §4.2](https://www.rfc-editor.org/rfc/rfc7517#section-4.2)), then, while more than one remains, to keys whose `alg` is absent or equals the header `alg` ([§4.4](https://www.rfc-editor.org/rfc/rfc7517#section-4.4)) and to keys whose `kty` matches it. Exactly one remaining key is used, with no forced refresh; more than one MUST be a typed ambiguous-key error, distinct from key-not-found (JWKS-009). `alg: "none"` is rejected before key selection.
 - The key set MUST be cached with a configurable TTL; concurrent fetches for the same URI SHOULD be deduplicated.
 
 ### JWT Validation

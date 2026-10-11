@@ -584,7 +584,155 @@
           }
         }
       ]
+    },
+    {
+      "id": "JWKS-009",
+      "title": "Select the key for a token with no kid",
+      "given": "A token whose JOSE header has no kid",
+      "when": "Key resolution is attempted",
+      "then": "The key set is narrowed to signing keys (use absent or sig), then, when more than one remains, to keys whose alg is absent or equals the header alg, then to keys whose kty matches the header alg; exactly one remaining key is used with no forced refresh, and more than one is an ambiguous-key error distinct from key-not-found",
+      "references": [
+        "OIDC Core 1.0 \u00a710.1",
+        "RFC 7517 \u00a74.2",
+        "RFC 7517 \u00a74.4",
+        "RFC 7515 \u00a74.1.4"
+      ],
+      "vectors": [
+        {
+          "name": "single-key-with-kid-used-without-refresh",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/kidless-single.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "alg": "RS256",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signing-key-chosen-over-encryption-key",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/kidless-sig-enc.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rsa-key-chosen-for-rs256-over-ec-key",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/kidless-rsa-ec.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "RSA",
+                "kid": "rsa-sig-key",
+                "use": "sig",
+                "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw",
+                "e": "AQAB"
+              }
+            ]
+          }
+        },
+        {
+          "name": "two-rsa-signing-keys-are-ambiguous",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/kidless-two-rsa.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "ambiguous_key"
+          }
+        }
+      ]
     }
   ],
-  "notes": "HTTP vectors. The key set is served at /jwks. `input.steps` are the calls made in order against one client (`fetch` the key set, `resolve` `input.kid`, or the next of `input.kids` when given, with a forced refresh on a miss, `force_refresh` the set); the result is the last step's keys (a resolved key is a one-key list). A `key_not_found` from a `resolve` before the last step does not end the run; any other error does. Automatic refreshes on a miss are rate-limited per jwks_uri by a refresh cooldown (5s by default in every language). `http_sequence` serves the n-th listed response for the n-th request to a path (the last one repeats); `expect_calls` is the exact number of requests per path. `expect.keys` lists each key's non-empty kty/kid/use/alg/n/e/crv/x/y. A reject carries a canonical `error`: `malformed` (not a JWK Set document), `empty_key_set`, or `key_not_found`."
+  "notes": "HTTP vectors. The key set is served at /jwks. `input.steps` are the calls made in order against one client (`fetch` the key set, `resolve` `input.kid`, or the next of `input.kids` when given, with a forced refresh on a miss; with neither, `resolve` selects the key for a token whose header has no kid and carries `input.alg` as its alg, `force_refresh` the set); the result is the last step's keys (a resolved key is a one-key list). A `key_not_found` from a `resolve` before the last step does not end the run; any other error does. Automatic refreshes on a miss are rate-limited per jwks_uri by a refresh cooldown (5s by default in every language). `http_sequence` serves the n-th listed response for the n-th request to a path (the last one repeats); `expect_calls` is the exact number of requests per path. `expect.keys` lists each key's non-empty kty/kid/use/alg/n/e/crv/x/y. A reject carries a canonical `error`: `malformed` (not a JWK Set document), `empty_key_set`, `key_not_found`, or `ambiguous_key` (a token with no kid matches more than one key)."
 }
