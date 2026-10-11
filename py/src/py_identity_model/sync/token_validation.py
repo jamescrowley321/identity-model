@@ -421,6 +421,7 @@ def validate_token(
     Raises:
         TokenValidationException: If token validation fails
         ConfigurationException: If configuration is invalid
+        RuntimeError: If *http_client* has been closed
     """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)
@@ -431,6 +432,9 @@ def validate_token(
             token_validation_config.require_https,
         )
         client = _resolve_client(http_client)
+        # A cache hit never touches client.client, where the closed guard
+        # lives, so check here: a closed client must not keep validating.
+        client.ensure_open()
         key_dict, alg, disco_doc_response = _discover_and_resolve_key(
             jwt, disco_doc_address, client, policy
         )

@@ -9,6 +9,7 @@ injected client is cached and rate-limited exactly like the default client,
 and there is nothing left to warn about.
 
 Pinned contract (sync and async):
+- A closed injected client is refused even when its caches could answer.
 - Repeated validations through an injected client reuse its cached discovery
   document and JWKS, and leave the default client's caches untouched.
 - An unknown ``kid`` forces at most one JWKS refresh per cooldown window on
@@ -44,7 +45,11 @@ from py_identity_model.exceptions import (
 )
 from py_identity_model.sync.http_client import get_default_http_client
 from py_identity_model.sync.managed_client import HTTPClient
-from py_identity_model.sync.token_validation import validate_token
+from py_identity_model.sync.token_validation import (
+    clear_discovery_cache,
+    clear_jwks_cache,
+    validate_token,
+)
 
 from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
@@ -91,6 +96,18 @@ def _mock_disco_and_jwks(key_dict: dict) -> tuple[respx.Route, respx.Route]:
         return_value=httpx.Response(200, json={"keys": [key_dict]})
     )
     return disco, jwks
+
+
+@pytest.fixture(autouse=True)
+def _empty_default_caches() -> None:
+    """The tests assert the default clients' caches stay untouched, so start
+    them empty whatever ran earlier on this worker."""
+    clear_discovery_cache()
+    clear_jwks_cache()
+    async_caches = get_default_async_http_client().caches
+    async_caches.disco.clear()
+    async_caches.jwks.clear()
+    async_caches.kid_miss_last_attempt.clear()
 
 
 def _warnings(records: list[logging.LogRecord]) -> list[str]:
@@ -183,6 +200,25 @@ class TestSyncInjectedClientCaching:
 
         assert _warnings(caplog.records) == []
 
+    @respx.mock
+    def test_closed_client_refuses_a_cache_hit(self):
+        """A fresh cache hit never reaches ``client.client`` (where the closed
+        guard lives), so ``validate_token`` must check: a closed client fails
+        the same way whether or not its caches could answer."""
+        key_dict, pem = _published_key()
+        disco, jwks = _mock_disco_and_jwks(key_dict)
+        client = HTTPClient()
+        validate_token(
+            _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+        )
+        client.close()
+
+        with pytest.raises(RuntimeError, match="HTTPClient has been closed"):
+            validate_token(
+                _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+            )
+        assert (disco.call_count, jwks.call_count) == (1, 1)
+
 
 # ============================================================================
 # Async mirror
@@ -272,3 +308,20 @@ class TestAsyncInjectedClientCaching:
                     )
 
         assert _warnings(caplog.records) == []
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_closed_client_refuses_a_cache_hit(self):
+        key_dict, pem = _published_key()
+        disco, jwks = _mock_disco_and_jwks(key_dict)
+        client = AsyncHTTPClient()
+        await async_validate_token(
+            _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+        )
+        await client.close()
+
+        with pytest.raises(RuntimeError, match="AsyncHTTPClient has been closed"):
+            await async_validate_token(
+                _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+            )
+        assert (disco.call_count, jwks.call_count) == (1, 1)
