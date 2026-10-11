@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi import FastAPI, Query, Request
+import httpx
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import PyJWTError
@@ -325,7 +326,9 @@ _registered_client: dict[str, str] | None = None
 def _get_http_client() -> HTTPClient:
     global _http_client
     if _http_client is None:
-        _http_client = HTTPClient(verify=False)
+        # The local suite serves a self-signed cert; verification is off for
+        # this harness only, so wrap a client built that way.
+        _http_client = HTTPClient(httpx.Client(verify=False, follow_redirects=False))
     return _http_client
 
 
