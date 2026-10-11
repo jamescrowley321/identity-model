@@ -1,9 +1,10 @@
 """Unit tests for OpenID Connect ID Token profile validation.
 
-Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-(required ``sub``, the ``azp`` authorized-party rules, ``nonce`` binding, and
-``auth_time``/``max_age`` freshness) and §3.3.2.11 (``at_hash``/``c_hash``
-token/code binding). Structural rules are exercised directly against the pure
+Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §2 and
+§3.1.3.7 (required ``sub``, the ``azp`` authorized-party rules, ``nonce``
+binding, and ``auth_time``/``max_age`` freshness) and §3.2.2.9 / §3.3.2.10
+(``at_hash``/``c_hash`` token/code binding). Structural rules are exercised
+directly against the pure
 ``validate_id_token_claims``; the accept/reject cases also run the full
 signature + discovery flow through the sync and async ``validate_id_token``
 wrappers via respx, and a parity block asserts the pure function and both
@@ -58,7 +59,7 @@ def _oidc_left_half(value: str, hasher) -> str:
     """Independently recompute an OIDC left-half hash (at_hash/c_hash).
 
     Deliberately *not* importing the library helper — the test pins the exact
-    §3.3.2.11 construction (ASCII octets, left half of the digest, base64url
+    §3.2.2.9 / §3.3.2.10 construction (ASCII octets, left half of the digest, base64url
     without padding) so a regression in the library helper cannot make the
     test pass against its own wrong answer.
     """
@@ -133,7 +134,7 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_missing_sub_rejected(self):
-        # §2 / §3.1.3.7: ``sub`` is REQUIRED.
+        # §2: ``sub`` is REQUIRED.
         claims = _valid_id_claims()
         del claims["sub"]
         with pytest.raises(IdTokenValidationException, match=r"sub"):
@@ -147,25 +148,27 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_multi_aud_without_azp_rejected(self):
-        # §3.1.3.7 step 4: multiple audiences require an ``azp`` claim.
+        # Library policy (Core 1.0 (2014) step 4 SHOULD; not in errata set 2):
+        # multiple audiences require an ``azp`` claim.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
         with pytest.raises(IdTokenValidationException, match=r"azp"):
             validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
     def test_multi_aud_with_wrong_azp_rejected(self):
-        # §3.1.3.7 step 6: ``azp`` present but not this client is rejected.
+        # §3.1.3.7 step 5 (SHOULD, enforced): ``azp`` present but not this
+        # client is rejected.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp="other-client")
         with pytest.raises(IdTokenValidationException, match=r"azp"):
             validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
     def test_multi_aud_with_correct_azp_accepted(self):
-        # §3.1.3.7 steps 4-6 (positive): multiple audiences with a matching
+        # §3.1.3.7 steps 4-5 (positive): multiple audiences with a matching
         # ``azp`` validate cleanly.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
         validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
     def test_single_aud_with_wrong_azp_rejected(self):
-        # §3.1.3.7 step 6: even with a single audience, a present ``azp`` that
+        # §3.1.3.7 step 5: even with a single audience, a present ``azp`` that
         # is not this client is rejected.
         claims = _valid_id_claims(azp="other-client")
         with pytest.raises(IdTokenValidationException, match=r"azp"):
@@ -204,14 +207,14 @@ class TestPureIdTokenClaimValidation:
         validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
     def test_max_age_within_window_accepted(self):
-        # §3.1.3.7 step 12 (positive): a recent ``auth_time`` is within max_age.
+        # §3.1.3.7 step 13 (positive): a recent ``auth_time`` is within max_age.
         claims = _valid_id_claims(auth_time=int(_NOW) - 100)
         validate_id_token_claims(
             claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
         )
 
     def test_max_age_stale_auth_time_rejected(self):
-        # §3.1.3.7 step 12: an ``auth_time`` older than max_age is rejected.
+        # §3.1.3.7 step 13: an ``auth_time`` older than max_age is rejected.
         claims = _valid_id_claims(auth_time=int(_NOW) - 3600)
         with pytest.raises(IdTokenValidationException, match=r"max_age"):
             validate_id_token_claims(
@@ -219,7 +222,7 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_max_age_missing_auth_time_rejected(self):
-        # §3.1.3.7 step 12: ``max_age`` requested but no ``auth_time`` present.
+        # §2 / §3.1.2.1: ``max_age`` requested but no ``auth_time`` present.
         with pytest.raises(IdTokenValidationException, match=r"auth_time"):
             validate_id_token_claims(
                 _valid_id_claims(), "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
@@ -235,7 +238,7 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_max_age_leeway_absorbs_small_skew(self):
-        # §3.1.3.7 step 12: leeway widens the acceptance window by its amount.
+        # §3.1.3.7 step 13: leeway widens the acceptance window by its amount.
         claims = _valid_id_claims(auth_time=int(_NOW) - 310)
         # Without leeway 310 > 300 would fail; leeway=30 pulls it back in.
         validate_id_token_claims(
@@ -249,7 +252,7 @@ class TestPureIdTokenClaimValidation:
         validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, max_age=300)
 
     def test_at_hash_correct_accepted(self):
-        # §3.3.2.11 (positive): a correct RS256 (SHA-256) ``at_hash`` validates.
+        # §3.2.2.9 (positive): a correct RS256 (SHA-256) ``at_hash`` validates.
         access_token = "SlAV32hkKG-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha256))
         validate_id_token_claims(
@@ -257,7 +260,7 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_at_hash_wrong_rejected(self):
-        # §3.3.2.11: a wrong ``at_hash`` is rejected.
+        # §3.2.2.9 item 3: a wrong ``at_hash`` is rejected.
         claims = _valid_id_claims(
             at_hash=_oidc_left_half("some-other-token", hashlib.sha256)
         )
@@ -271,8 +274,8 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_at_hash_missing_rejected(self):
-        # §3.3.2.11: caller supplied an access token but the token has no
-        # ``at_hash`` to bind it.
+        # Library policy: caller supplied an access token but the token has
+        # no ``at_hash`` to bind it.
         with pytest.raises(IdTokenValidationException, match=r"at_hash"):
             validate_id_token_claims(
                 _valid_id_claims(),
@@ -288,7 +291,7 @@ class TestPureIdTokenClaimValidation:
         validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
     def test_c_hash_correct_accepted(self):
-        # §3.3.2.11 (positive): a correct RS256 (SHA-256) ``c_hash`` validates.
+        # §3.3.2.10 (positive): a correct RS256 (SHA-256) ``c_hash`` validates.
         code = "SplxlOBeZQQYbYS6WxSbIA-code"
         claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256))
         validate_id_token_claims(
@@ -296,7 +299,7 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_c_hash_wrong_rejected(self):
-        # §3.3.2.11: a wrong ``c_hash`` is rejected.
+        # §3.3.2.10 item 3: a wrong ``c_hash`` is rejected.
         claims = _valid_id_claims(c_hash=_oidc_left_half("other-code", hashlib.sha256))
         with pytest.raises(IdTokenValidationException, match=r"c_hash"):
             validate_id_token_claims(
@@ -308,7 +311,7 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_at_hash_es384_uses_sha384(self):
-        # §3.3.2.11: an ``*384`` alg selects SHA-384 for the left-half hash.
+        # §3.2.2.9 item 1: an ``*384`` alg selects SHA-384 for the left-half hash.
         access_token = "es384-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha384))
         validate_id_token_claims(
@@ -316,7 +319,7 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_c_hash_ps512_uses_sha512(self):
-        # §3.3.2.11: a ``*512`` alg selects SHA-512 for the left-half hash.
+        # §3.2.2.9 item 1: a ``*512`` alg selects SHA-512 for the left-half hash.
         code = "ps512-code"
         claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha512))
         validate_id_token_claims(
@@ -324,7 +327,8 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_at_hash_eddsa_uses_sha512(self):
-        # §3.3.2.11: the EdDSA family hashes with SHA-512.
+        # OpenID Connect Token Hash Algorithms 1.0, Table 1: EdDSA (Ed25519)
+        # hashes with SHA-512.
         access_token = "eddsa-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha512))
         validate_id_token_claims(
@@ -332,7 +336,7 @@ class TestPureIdTokenClaimValidation:
         )
 
     def test_unsupported_alg_for_hash_check_rejected(self):
-        # §3.3.2.11 (fail closed): an ``alg`` that maps to no known hash must
+        # §3.2.2.9 item 1 (fail closed): an ``alg`` that maps to no known hash must
         # raise rather than silently skip the binding check.
         claims = _valid_id_claims(at_hash="anything")
         with pytest.raises(IdTokenValidationException, match=r"[Aa]lg"):
@@ -345,7 +349,7 @@ class TestPureIdTokenClaimValidation:
             )
 
     def test_missing_header_alg_for_hash_check_rejected(self):
-        # §3.3.2.11 (fail closed): a hash check with no header ``alg`` raises.
+        # §3.2.2.9 item 1 (fail closed): a hash check with no header ``alg`` raises.
         claims = _valid_id_claims(at_hash="anything")
         with pytest.raises(IdTokenValidationException, match=r"alg"):
             validate_id_token_claims(
@@ -508,7 +512,7 @@ class TestSyncValidateIdToken:
 
     @respx.mock
     def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
-        # §3.3.2.11: a real RS256-signed ID token whose ``c_hash`` matches the
+        # §3.3.2.10: a real RS256-signed ID token whose ``c_hash`` matches the
         # supplied authorization code is accepted through the wrapper.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
@@ -526,7 +530,7 @@ class TestSyncValidateIdToken:
 
     @respx.mock
     def test_signed_id_token_c_hash_wrong_rejected(self, rsa_keypair):
-        # §3.3.2.11: a ``c_hash`` that does not bind the supplied code is
+        # §3.3.2.10 item 3: a ``c_hash`` that does not bind the supplied code is
         # rejected through the wrapper.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
@@ -618,7 +622,7 @@ class TestAsyncValidateIdToken:
     @pytest.mark.asyncio
     @respx.mock
     async def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
-        # §3.3.2.11 (async parity): a matching ``c_hash`` is accepted.
+        # §3.3.2.10 (async parity): a matching ``c_hash`` is accepted.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
         code = "real-auth-code-abc"
@@ -636,7 +640,7 @@ class TestAsyncValidateIdToken:
     @pytest.mark.asyncio
     @respx.mock
     async def test_signed_id_token_c_hash_wrong_rejected(self, rsa_keypair):
-        # §3.3.2.11 (async parity): a wrong ``c_hash`` is rejected.
+        # §3.3.2.10 item 3 (async parity): a wrong ``c_hash`` is rejected.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
         token = sign_jwt(

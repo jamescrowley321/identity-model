@@ -3,7 +3,7 @@
 Async counterpart of :mod:`py_identity_model.sync.logout`. Awaits the standard
 async ``validate_token`` then applies the same pure Logout-Token claim rules
 from ``core.logout_logic`` — sync/async parity is guaranteed by sharing that
-single pure validation function (OpenID Connect Back-Channel Logout 1.0 §2.4).
+single pure validation function (OpenID Connect Back-Channel Logout 1.0 §2.6).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ async def validate_logout_token(
     disco_doc_address: str | None = None,
     http_client: AsyncHTTPClient | None = None,
 ) -> dict:
-    """Validate a Back-Channel Logout Token (async) (Back-Channel Logout 1.0 §2.4).
+    """Validate a Back-Channel Logout Token (async) (Back-Channel Logout 1.0 §2.6).
 
     Runs the standard async JWT validation via ``validate_token`` (signature,
     ``iss``, ``aud``, ``iat`` and ``exp`` when present), then enforces the

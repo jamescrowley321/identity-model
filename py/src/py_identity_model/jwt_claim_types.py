@@ -31,7 +31,7 @@ class JwtClaimTypes(enum.Enum):
     NickName = "nickname"
 
     # Shorthand name by which the End-User wishes to be referred to at the RP, such as janedoe or j.doe. This value MAY be any valid JSON string including special characters such as @, /, or whitespace. The relying party MUST NOT rely upon this value being unique
-    # The RP MUST NOT rely upon this value being unique, as discussed in http://openid.net/specs/openid-connect-basic-1_0-32.html#ClaimStability
+    # The RP MUST NOT rely upon this value being unique, as discussed in https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability
     PreferredUserName = "preferred_username"
 
     # URL of the End-User's profile page. The contents of this Web page SHOULD be about the End-User.
@@ -70,7 +70,7 @@ class JwtClaimTypes(enum.Enum):
     # The means by which a phone number is verified is context-specific, and dependent upon the trust framework or contractual agreements within which the parties are operating. When true, the phone_number Claim MUST be in E.164 format and any extensions MUST be represented in RFC 3966 format.
     PhoneNumberVerified = "phone_number_verified"
 
-    # End-User's preferred postal address. The value of the address member is a JSON structure containing some or all of the members defined in http://openid.net/specs/openid-connect-basic-1_0-32.html#AddressClaim
+    # End-User's preferred postal address. The value of the address member is a JSON structure containing some or all of the members defined in https://openid.net/specs/openid-connect-core-1_0.html#AddressClaim
     Address = "address"
 
     # Audience(s) that this ID Token is intended for. It MUST contain the OAuth 2.0 client_id of the Relying Party as an audience value. It MAY also contain identifiers for other audiences. In the general case, the aud value is an array of case sensitive strings. In the common special case when there is one audience, the aud value MAY be a single case sensitive string.
@@ -110,7 +110,7 @@ class JwtClaimTypes(enum.Enum):
     # Time when the End-User authentication occurred. Its value is a JSON number representing the number of seconds from 1970-01-01T0:0:0Z as measured in UTC until the date/time. When a max_age request is made or when auth_time is requested as an Essential Claim, then this Claim is REQUIRED; otherwise, its inclusion is OPTIONAL.
     AuthenticationTime = "auth_time"
 
-    # The party to which the ID Token was issued. If present, it MUST contain the OAuth 2.0 Client ID of this party. This Claim is only needed when the ID Token has a single audience value and that audience is different than the authorized party. It MAY be included even when the authorized party is the same as the sole audience. The azp value is a case sensitive string containing a StringOrURI value.
+    # The party to which the ID Token was issued. If present, it MUST contain the OAuth 2.0 Client ID of this party. The azp value is a case-sensitive string containing a StringOrURI value. In practice, the azp Claim only occurs when extensions beyond the scope of OpenID Connect Core are used; implementations not using such extensions are encouraged to not use azp and to ignore it when it does occur (OIDC Core 1.0 §2).
     AuthorizedParty = "azp"
 
     # Access Token hash value. Its value is the base64url encoding of the left-most half of the hash of the octets of the ASCII representation of the access_token value, where the hash algorithm used is the hash algorithm used in the alg Header Parameter of the ID Token's JOSE Header. For instance, if the alg is RS256, hash the access_token value with SHA-256, then take the left-most 128 bits and base64url encode them. The at_hash value is a case sensitive string.

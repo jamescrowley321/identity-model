@@ -365,7 +365,7 @@ class TestValidateFAPIDiscovery:
         assert any("client_secret_basic" in v for v in result.violations)
 
     def test_none_signing_algs_non_compliant(self):
-        """OIDC Discovery §3 default is RS256 — FAPI-prohibited."""
+        """Absent signing algs is a violation (REQUIRED by Discovery §3, no default)."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
@@ -378,7 +378,7 @@ class TestValidateFAPIDiscovery:
         assert any("RS256" in v for v in result.violations)
 
     def test_none_fields_non_compliant(self):
-        """Discovery with all None metadata is non-compliant due to RFC defaults."""
+        """Discovery with all None metadata is non-compliant."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
@@ -402,7 +402,7 @@ class TestValidateFAPIDiscovery:
         assert any("response type" in v for v in result.violations)
 
     def test_response_types_none_is_compliant(self):
-        """OIDC Discovery default for response_types_supported is ['code'] — compliant."""
+        """An absent response_types_supported is not reported (Discovery §3: REQUIRED, no default)."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",

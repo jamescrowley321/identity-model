@@ -400,7 +400,7 @@ def build_discovery_response(
         ),
         # RP-Initiated Logout support (OpenID Connect RP-Initiated Logout 1.0 §2)
         end_session_endpoint=response_json.get("end_session_endpoint"),
-        # Back-Channel Logout support (OpenID Connect Back-Channel Logout 1.0 §3)
+        # Back-Channel Logout support (OpenID Connect Back-Channel Logout 1.0 §2.1)
         backchannel_logout_supported=response_json.get(
             "backchannel_logout_supported",
         ),

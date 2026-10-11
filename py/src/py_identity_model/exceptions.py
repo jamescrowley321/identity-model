@@ -82,7 +82,7 @@ class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
     Covers the Logout-Token-specific rules from OpenID Connect Back-Channel
-    Logout 1.0 §2.4 (required ``events`` member, ``sub``/``sid`` presence, and
+    Logout 1.0 §2.6 (required ``events`` member, ``sub``/``sid`` presence, and
     the ``nonce`` prohibition) that sit on top of standard JWT validation.
     """
 
@@ -90,11 +90,11 @@ class LogoutTokenValidationException(TokenValidationException):
 class IdTokenValidationException(TokenValidationException):
     """Raised when OpenID Connect ID Token profile validation fails.
 
-    Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-    and §3.3.2.11 (required ``sub``, the ``azp`` authorized-party rules,
-    ``nonce`` binding, ``auth_time``/``max_age`` freshness, and the
-    ``at_hash``/``c_hash`` token/code binding) that sit on top of standard JWT
-    validation.
+    Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §2,
+    §3.1.3.7, §3.2.2.9 and §3.3.2.10 (required ``sub``, the ``azp``
+    authorized-party rules, ``nonce`` binding, ``auth_time``/``max_age``
+    freshness, and the ``at_hash``/``c_hash`` token/code binding) that sit on
+    top of standard JWT validation.
 
     Subclasses ``TokenValidationException`` (mirroring
     ``LogoutTokenValidationException``) rather than ``ValidationException``

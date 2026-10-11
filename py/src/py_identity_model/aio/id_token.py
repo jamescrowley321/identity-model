@@ -54,11 +54,14 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         nonce: The ``nonce`` the RP sent on the authorization request. When
             provided, the token's ``nonce`` MUST match it (§3.1.3.7 step 11).
         access_token: The access token from the same response. When provided,
-            the token's ``at_hash`` MUST match it (§3.3.2.11).
+            the token's ``at_hash`` must be present and match it (match:
+            §3.2.2.9 item 3; presence is library policy).
         code: The authorization code from the same response. When provided, the
-            token's ``c_hash`` MUST match it (§3.3.2.11).
+            token's ``c_hash`` must be present and match it (match: §3.3.2.10
+            item 3; presence is library policy).
         max_age: The ``max_age`` the RP requested. When provided, ``auth_time``
-            MUST be present and recent enough (§3.1.3.7 step 12).
+            must be present (§2, §3.1.2.1) and recent enough (§3.1.3.7 step
+            13, SHOULD).
 
     Returns:
         dict: The decoded and validated ID Token claims.

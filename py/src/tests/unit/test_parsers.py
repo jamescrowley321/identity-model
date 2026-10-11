@@ -67,7 +67,7 @@ class TestFindKeyByKid:
         assert "nonexistent" in error_msg
 
     def test_find_key_by_kid_none_kid_single_key_fallback(self):
-        """Per OIDC Core Section 10.1: use the single JWKS key when JWT has no kid."""
+        """Use the single JWKS key when JWT has no kid (Core §10.1: kid needed only for multiple keys)."""
         keys = [
             JsonWebKey(kty="RSA", kid="server-key-1", alg="RS256", n="abc", e="def"),
         ]
@@ -340,7 +340,7 @@ class TestGetPublicKeyFromJwk:
         assert "No matching kid found" in str(exc_info.value)
 
     def test_get_public_key_no_kid_single_key_fallback(self):
-        """Per OIDC Core Section 10.1: use the single JWKS key when JWT has no kid."""
+        """Use the single JWKS key when JWT has no kid (Core §10.1: kid needed only for multiple keys)."""
         jwt = _create_jwt_without_kid()
         keys = [
             JsonWebKey(kty="RSA", kid="server-key", alg="RS256", n="abc", e="def"),

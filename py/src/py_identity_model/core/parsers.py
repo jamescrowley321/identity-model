@@ -227,9 +227,11 @@ def find_key_by_kid(
 
     This is the core key lookup logic shared by sync and async implementations.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
-    contains exactly one key, the RP MUST use that key.  When JWKS has multiple
-    keys and no ``kid``, filter by ``use`` and ``kty`` to find a unique match.
+    OIDC Core Section 10.1 requires the OP to send a ``kid`` only when the JWKS
+    holds multiple keys, so when the JWT has no ``kid`` header and the JWKS
+    contains exactly one key, that key is used.  When JWKS has multiple keys
+    and no ``kid``, filter by ``use`` and ``kty`` to find a unique match; an
+    ambiguous set is rejected.
 
     Args:
         kid: The key ID from the JWT header
@@ -291,7 +293,8 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     """
     Find the public key from JWKS that matches the JWT's kid.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
+    OIDC Core Section 10.1 requires the OP to send a ``kid`` only when the JWKS
+    holds multiple keys, so when the JWT has no ``kid`` header and the JWKS
     contains exactly one key, that key is used.
 
     Args:

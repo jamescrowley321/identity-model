@@ -2,7 +2,7 @@
 
 Drives every vector in ``spec/vectors/id-token.json`` — the language-neutral
 source of truth for the OpenID Connect ID-Token *profile* rules (OIDC Core 1.0
-§2 / §3.1.3.7 / §3.3.2.11) — through py-identity-model's pure claim validator
+§2 / §3.1.3.7 / §3.2.2.9 / §3.3.2.10) — through py-identity-model's pure claim validator
 ``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners
 execute the SAME vector set, so the "build the conformance vectors once"
 constraint holds across languages.

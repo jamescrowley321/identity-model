@@ -12,9 +12,9 @@ credential-free ``node-oidc-provider`` fixture (``make
 test-integration-node-oidc``) supports the automated devInteractions flow, so
 the base-profile and nonce/auth_time cases execute there rather than skip. The
 ``at_hash`` binding is asserted only when the OP actually mints an ``at_hash``
-in its code-flow ID Token (node-oidc-provider, like most OPs, emits ``at_hash``
-only for authorization-endpoint responses, i.e. the implicit/hybrid flows), so
-that leg guards itself and documents the reason when the claim is absent.
+in its code-flow ID Token (``at_hash`` is OPTIONAL in the Code Flow, Core
+§3.1.3.6, and node-oidc-provider's code-flow ID Token omits it), so that leg
+guards itself and documents the reason when the claim is absent.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ pytestmark = pytest.mark.integration
 
 # A fixed nonce/max_age sent on the authorization request so the OP echoes a
 # ``nonce`` and an ``auth_time`` into the minted ID Token, letting the live
-# suite exercise the §3.1.3.7 nonce (step 11) and max_age/auth_time (step 12)
-# bindings on a real token.
+# suite exercise the §3.1.3.7 nonce (step 11) and max_age/auth_time (§2 /
+# §3.1.2.1 presence, step 13 freshness) bindings on a real token.
 _LIVE_NONCE = "live-id-token-nonce-9f83c1"
 _LIVE_MAX_AGE = 3600
 
@@ -209,8 +209,8 @@ class TestValidateIdTokenLive:
         id_token = id_token_flow["id_token"]
         if "at_hash" not in _decode_unverified(id_token):
             pytest.skip(
-                "OP's code-flow ID Token carries no at_hash (emitted only for "
-                "authorization-endpoint responses) — at_hash binding not exercised here"
+                "OP's code-flow ID Token carries no at_hash (OPTIONAL in the "
+                "Code Flow, Core §3.1.3.6) — at_hash binding not exercised here"
             )
         access_token = id_token_flow["access_token"]
         assert access_token, (

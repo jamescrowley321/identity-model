@@ -4,8 +4,10 @@
 nowhere in the validation path, and ``TokenValidationConfig`` has no
 authorized-party field. PyJWT's non-strict audience check accepts any
 intersection, so a multi-audience token ``aud=[A, B]`` with ``azp=A`` is
-accepted by relying party B even though OIDC Core 3.1.3.7 says a multi-audience
-token's ``azp`` MUST identify the party the token was issued for.
+accepted by relying party B even though OIDC Core 1.0 §3.1.3.7 step 5 says
+the client SHOULD verify that a present ``azp`` is its own client_id (and
+§2 says a present ``azp`` MUST contain the client ID of the party the token
+was issued to).
 
 Relying party B (validating with ``audience=B``) must reject a token whose
 ``azp`` names a different client A. This XFAILs until an ``azp`` check is

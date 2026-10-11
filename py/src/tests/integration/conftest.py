@@ -1020,7 +1020,7 @@ class AuthCodeFlowConfig:
     private_key_jwt: PrivateKeyJwt | None = None
     # When set, sent on the authorization request so the OP echoes them into
     # the ID Token — letting live tests exercise the OIDC §3.1.3.7 nonce
-    # binding (step 11) and auth_time/max_age freshness (step 12) on a real
+    # binding (step 11) and auth_time/max_age freshness (step 13) on a real
     # minted token rather than only synthetic claim sets.
     nonce: str | None = None
     max_age: int | None = None

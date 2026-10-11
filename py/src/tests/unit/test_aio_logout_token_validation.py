@@ -1,7 +1,7 @@
 """Unit tests for asynchronous Back-Channel Logout token validation.
 
 Async parity for ``py_identity_model.aio.validate_logout_token`` against the
-same OpenID Connect Back-Channel Logout 1.0 §2.4 rules verified by the sync
+same OpenID Connect Back-Channel Logout 1.0 §2.6 rules verified by the sync
 suite (spec IDs LOGOUT-004, LOGOUT-005, LOGOUT-007, LOGOUT-010). The pure
 claim rules (LOGOUT-006/009) are covered by the sync suite since the same
 ``core.logout_logic.validate_logout_token_claims`` function backs both wrappers.

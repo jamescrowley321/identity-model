@@ -1,6 +1,6 @@
 """Unit tests for synchronous Back-Channel Logout token validation.
 
-Covers OpenID Connect Back-Channel Logout 1.0 §2.4 Logout Token validation
+Covers OpenID Connect Back-Channel Logout 1.0 §2.6 Logout Token validation
 (spec IDs LOGOUT-004, LOGOUT-005, LOGOUT-006, LOGOUT-007, LOGOUT-009,
 LOGOUT-010). Structural rules are tested directly against the pure claim
 function; accept/expire cases run the full signature+discovery flow via respx.
@@ -135,7 +135,7 @@ class TestPureLogoutClaimValidation:
             validate_logout_token_claims(claims)
 
     def test_missing_jti_rejected(self):
-        # §2.4 step 2: ``jti`` is required.
+        # §2.4: ``jti`` is REQUIRED.
         claims = _valid_logout_claims()
         del claims["jti"]
         with pytest.raises(LogoutTokenValidationException, match=r"jti"):
@@ -173,7 +173,8 @@ class TestSyncValidateLogoutToken:
 
     @respx.mock
     def test_logout_token_without_exp_accepted(self, rsa_keypair):
-        # §2.4: ``exp`` is not required; a valid token without it is accepted.
+        # Current library behavior: a token without ``exp`` is accepted, although
+        # §2.4 (errata set 1) lists ``exp`` as REQUIRED.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
         claims = _valid_logout_claims()

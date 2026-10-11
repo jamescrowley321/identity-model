@@ -600,7 +600,7 @@ class DiscoveryDocumentResponse(BaseResponse):
     # RP-Initiated Logout support (OpenID Connect RP-Initiated Logout 1.0 §2)
     end_session_endpoint: str | None = None
 
-    # Back-Channel Logout support (OpenID Connect Back-Channel Logout 1.0 §3)
+    # Back-Channel Logout support (OpenID Connect Back-Channel Logout 1.0 §2.1)
     backchannel_logout_supported: bool | None = None
     backchannel_logout_session_supported: bool | None = None
 
@@ -1149,7 +1149,7 @@ class UserInfoRequest(BaseRequest):
         address: The UserInfo endpoint URL.
         token: A valid access token with ``openid`` scope.
         expected_sub: Expected ``sub`` claim from the ID token for
-            verification per OIDC Core 1.0 Section 5.3.4.  When provided,
+            verification per OIDC Core 1.0 Section 5.3.2.  When provided,
             the ``sub`` in the UserInfo response is compared against this
             value and a mismatch produces an error response.
         dpop_key: When set, the UserInfo request is DPoP-bound (RFC 9449): the

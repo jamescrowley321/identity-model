@@ -85,7 +85,7 @@ def validate_userinfo_sub(
 ) -> UserInfoResponse:
     """Validate that the UserInfo ``sub`` matches the ID token ``sub``.
 
-    Per OIDC Core 1.0 Section 5.3.4, the ``sub`` claim in the UserInfo
+    Per OIDC Core 1.0 Section 5.3.2, the ``sub`` claim in the UserInfo
     response MUST exactly match the ``sub`` in the ID token.
 
     Args:

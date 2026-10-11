@@ -8,14 +8,19 @@ and ``exp`` — is performed by the existing ``validate_token`` path;
 ``validate_id_token_claims`` enforces only the additional rules that make an
 ID Token an ID Token:
 
-* ``sub`` is REQUIRED (§2 / §3.1.3.7).
-* ``azp`` authorized-party rules when the token carries multiple audiences
-  (§3.1.3.7 steps 4-6).
+* ``sub`` is REQUIRED (§2).
+* ``azp`` authorized-party rules (§3.1.3.7 steps 4-5, SHOULD). Requiring
+  ``azp`` on a multi-audience token is library policy: errata set 2 has no
+  such rule (Core 1.0 (2014) step 4 had it as a SHOULD).
 * ``nonce`` binding, when the caller supplies the ``nonce`` it sent on the
   authorization request (§3.1.3.7 step 11).
-* ``auth_time`` freshness against ``max_age`` (§3.1.3.7 step 12).
-* ``at_hash`` / ``c_hash`` token/code binding for the hybrid and
-  authorization-code flows (§3.3.2.11).
+* ``auth_time`` presence when ``max_age`` was requested (§2, §3.1.2.1) and
+  freshness against ``max_age`` (§3.1.3.7 step 13, SHOULD), enforced only
+  when the caller passes ``max_age``.
+* ``at_hash`` / ``c_hash`` binding: ``at_hash`` per §3.2.2.9 item 3 (Hybrid
+  via §3.3.2.9; in the Code Flow at_hash is OPTIONAL, §3.1.3.6, and checking
+  it is a MAY, §3.1.3.8), ``c_hash`` per §3.3.2.10 item 3. The claims are
+  defined in §3.3.2.11.
 
 This module positively validates the ID-Token profile. It deliberately does
 **not** reject "access-token-looking" claim sets — the relying-party-side
@@ -42,10 +47,12 @@ _EDDSA_ALGS = frozenset({"EdDSA", "Ed25519"})
 def _hash_for_alg(alg: str | None):
     """Resolve the SHA-2 hash constructor implied by an ID Token ``alg``.
 
-    Per OpenID Connect Core 1.0 §3.3.2.11 the ``at_hash``/``c_hash`` digest
-    uses the hash algorithm of the ``alg`` Header Parameter of the ID Token —
-    e.g. ``RS256``/``ES256``/``PS256``/``HS256`` → SHA-256, ``*384`` →
-    SHA-384, ``*512`` → SHA-512. ``EdDSA``/``Ed25519`` use SHA-512.
+    Per OpenID Connect Core 1.0 §3.2.2.9 / §3.3.2.10 item 1 the
+    ``at_hash``/``c_hash`` digest uses the hash algorithm of the ``alg``
+    Header Parameter of the ID Token — e.g. ``RS256``/``ES256``/``PS256``/
+    ``HS256`` → SHA-256, ``*384`` → SHA-384, ``*512`` → SHA-512.
+    ``EdDSA``/``Ed25519`` use SHA-512 (OpenID Connect Token Hash Algorithms
+    1.0, Table 1; Core defines no EdDSA mapping).
 
     Raises:
         IdTokenValidationException: If ``alg`` is missing or is not one this
@@ -59,9 +66,10 @@ def _hash_for_alg(alg: str | None):
         )
     normalized = alg.strip()
     if normalized in _EDDSA_ALGS:
-        # Assumes Ed25519 (SHA-512). Ed448 also carries ``alg:"EdDSA"`` but
-        # hashes with SHAKE256; it is intentionally unsupported here and fails
-        # closed on the resulting at_hash/c_hash mismatch.
+        # Assumes Ed25519 (SHA-512, OpenID Connect Token Hash Algorithms 1.0,
+        # Table 1). Ed448 also carries ``alg:"EdDSA"`` but hashes with
+        # SHAKE256; it is intentionally unsupported here and fails closed on
+        # the resulting at_hash/c_hash mismatch.
         return hashlib.sha512
     if normalized.endswith("256"):
         return hashlib.sha256
@@ -81,7 +89,8 @@ def _left_half_hash(value: str, alg: str | None, field: str) -> str:
     Hashes the ASCII octets of *value* with the SHA-2 variant implied by
     *alg*, takes the left-most half of the digest (``digest_len // 2`` bytes),
     and base64url-encodes it **without** padding — the exact construction of
-    ``at_hash``/``c_hash`` in OpenID Connect Core 1.0 §3.3.2.11.
+    ``at_hash``/``c_hash`` in OpenID Connect Core 1.0 §3.2.2.9 / §3.3.2.10
+    (claims defined in §3.3.2.11).
 
     *field* names the caller-supplied input (e.g. ``"access_token"``) purely
     for the error message when *value* is not ASCII.
@@ -156,15 +165,23 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             select the hash for ``at_hash``/``c_hash``.
         client_id: The relying party's ``client_id`` (i.e.
             ``TokenValidationConfig.audience``). When set, an ``azp`` present in
-            the token MUST equal it (§3.1.3.7 step 6).
+            the token must equal it (§3.1.3.7 step 5, SHOULD; enforced
+            unconditionally as library policy).
         nonce: When provided, the token's ``nonce`` MUST be present and equal
             this value (§3.1.3.7 step 11).
-        access_token: When provided, the token's ``at_hash`` MUST be present
-            and match the left-half hash of this access token (§3.3.2.11).
-        code: When provided, the token's ``c_hash`` MUST be present and match
-            the left-half hash of this authorization code (§3.3.2.11).
-        max_age: When provided, ``auth_time`` MUST be present and satisfy
-            ``now - auth_time <= max_age + leeway`` (§3.1.3.7 step 12).
+        access_token: When provided, the token's ``at_hash`` must match the
+            left-half hash of this access token (§3.2.2.9 item 3). Requiring
+            ``at_hash`` to be present is library policy; the spec requires
+            it only for an ID Token issued with an access token from the
+            Authorization Endpoint (§3.2.2.10, §3.3.2.11).
+        code: When provided, the token's ``c_hash`` must match the left-half
+            hash of this authorization code (§3.3.2.10 item 3). Requiring
+            ``c_hash`` to be present is library policy; the spec requires it
+            only for a Hybrid Flow ID Token from the Authorization Endpoint
+            (§3.3.2.11).
+        max_age: When provided, ``auth_time`` must be present (§2,
+            §3.1.2.1) and satisfy ``now - auth_time <= max_age + leeway``
+            (§3.1.3.7 step 13, SHOULD).
         leeway: Clock-skew tolerance (seconds) applied to the ``max_age`` check.
         now: Current POSIX time (seconds), injected for deterministic tests.
             Defaults to :func:`time.time` when omitted.
@@ -172,24 +189,26 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     Raises:
         IdTokenValidationException: If any ID-Token profile rule is violated.
     """
-    # §2 / §3.1.3.7 — ``sub`` is REQUIRED and must be non-empty.
+    # §2 — ``sub`` is REQUIRED and must be non-empty.
     if not claims.get("sub"):
         raise IdTokenValidationException(
             "ID token missing required 'sub' claim",
             token_part="payload",
         )
 
-    # §3.1.3.7 steps 4-6 — authorized-party (``azp``) rules.
+    # §3.1.3.7 steps 4-5 (SHOULD) — authorized-party (``azp``) rules.
     aud = claims.get("aud")
     azp = claims.get("azp")
     if isinstance(aud, (list, tuple)) and len(aud) > 1 and not azp:
-        # Step 4: with multiple audiences an ``azp`` claim MUST be present.
+        # Library policy: a multi-audience token must carry ``azp``. Errata
+        # set 2 has no such rule; Core 1.0 (2014) step 4 had it as a SHOULD.
         raise IdTokenValidationException(
             "ID token with multiple audiences must contain an 'azp' claim",
             token_part="payload",
         )
     if azp is not None and client_id is not None and azp != client_id:
-        # Step 6: when present, ``azp`` MUST identify this client.
+        # Step 5 (SHOULD, enforced as library policy): a present ``azp`` must
+        # identify this client.
         raise IdTokenValidationException(
             "ID token 'azp' claim does not match the configured client_id",
             token_part="payload",
@@ -206,7 +225,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
                 token_part="payload",
             )
 
-    # §3.1.3.7 step 12 — ``auth_time`` freshness (only when ``max_age`` passed).
+    # §2 / §3.1.2.1 — ``auth_time`` is REQUIRED when ``max_age`` was requested;
+    # §3.1.3.7 step 13 (SHOULD) — freshness. Only when ``max_age`` passed.
     if max_age is not None:
         auth_time = claims.get("auth_time")
         # ``bool`` is a subclass of ``int`` — exclude it explicitly.
@@ -222,7 +242,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
                 token_part="payload",
             )
 
-    # §3.3.2.11 — ``at_hash`` binding (only when an access token was passed).
+    # §3.2.2.9 item 3 — ``at_hash`` binding (only when an access token was
+    # passed). Rejecting an absent ``at_hash`` here is library policy.
     if access_token is not None:
         expected_at_hash = _left_half_hash(access_token, header_alg, "access_token")
         token_at_hash = claims.get("at_hash")
@@ -234,7 +255,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
                 token_part="payload",
             )
 
-    # §3.3.2.11 — ``c_hash`` binding (only when an authorization code was passed).
+    # §3.3.2.10 item 3 — ``c_hash`` binding (only when an authorization code
+    # was passed). Rejecting an absent ``c_hash`` here is library policy.
     if code is not None:
         expected_c_hash = _left_half_hash(code, header_alg, "code")
         token_c_hash = claims.get("c_hash")

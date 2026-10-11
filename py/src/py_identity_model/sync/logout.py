@@ -4,7 +4,7 @@ Thin wrapper over ``validate_token``: performs the full standard JWT
 validation (signature via JWKS, ``iss``, ``aud``, ``iat`` and ``exp`` when
 present) then applies the Logout-Token-specific claim rules from
 ``core.logout_logic``. All business logic lives in ``core`` so the sync and
-async wrappers stay in lock-step (OpenID Connect Back-Channel Logout 1.0 §2.4).
+async wrappers stay in lock-step (OpenID Connect Back-Channel Logout 1.0 §2.6).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def validate_logout_token(
     disco_doc_address: str | None = None,
     http_client: HTTPClient | None = None,
 ) -> dict:
-    """Validate a Back-Channel Logout Token (Back-Channel Logout 1.0 §2.4).
+    """Validate a Back-Channel Logout Token (Back-Channel Logout 1.0 §2.6).
 
     Runs the standard JWT validation via ``validate_token`` (signature,
     ``iss``, ``aud``, ``iat`` and ``exp`` when present), then enforces the

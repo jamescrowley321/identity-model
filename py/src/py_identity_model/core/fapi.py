@@ -145,8 +145,12 @@ def validate_fapi_discovery(
     """Validate a discovery document for FAPI 2.0 server support.
 
     Checks that the authorization server advertises capabilities
-    required by FAPI 2.0.  When optional metadata fields are absent,
-    RFC 8414 §2 and OIDC Discovery §3 defaults are assumed.
+    required by FAPI 2.0.  When optional metadata fields are absent, their
+    RFC 8414 §2 defaults are assumed.  OIDC Discovery §3 marks
+    ``response_types_supported`` and ``id_token_signing_alg_values_supported``
+    REQUIRED with no default; discovery parsing already rejects a document
+    without them, so the ``None`` branches below are reached only for a
+    hand-built response.
 
     Args:
         discovery: A discovery document response.
@@ -162,13 +166,15 @@ def validate_fapi_discovery(
     violations: list[str] = []
 
     # Check supported grant types include authorization_code.
-    # RFC 8414 §2 default when omitted is ["authorization_code"] — compliant.
+    # RFC 8414 §2 / OIDC Discovery §3 default when omitted is
+    # ["authorization_code", "implicit"] — includes authorization_code.
     grants = discovery.grant_types_supported
     if grants is not None and "authorization_code" not in grants:
         violations.append("Server does not support authorization_code grant type")
 
     # Check response_types_supported includes "code" (authorization code flow).
-    # OIDC Discovery §3 default when omitted is ["code"] — compliant.
+    # OIDC Discovery §3 marks this REQUIRED with no default. An absent value
+    # is not reported here (see the docstring).
     response_types = discovery.response_types_supported
     if response_types is not None and "code" not in response_types:
         violations.append(
@@ -193,12 +199,14 @@ def validate_fapi_discovery(
             )
 
     # Check signing algorithms.
-    # OIDC Discovery §3 default when omitted is ["RS256"] — FAPI-prohibited.
+    # OIDC Discovery §3 marks this REQUIRED with no default. The RS256 default
+    # belongs to the client's id_token_signed_response_alg (Registration §2).
     algs = discovery.id_token_signing_alg_values_supported
     if algs is None:
         violations.append(
-            "id_token_signing_alg_values_supported not advertised; "
-            "OIDC Discovery default is RS256, which FAPI 2.0 prohibits"
+            "id_token_signing_alg_values_supported not advertised "
+            "(REQUIRED by OIDC Discovery §3); the client registration default "
+            "is RS256, which FAPI 2.0 prohibits"
         )
     else:
         fapi_algs = set(algs) & FAPI2_ALLOWED_SIGNING_ALGORITHMS

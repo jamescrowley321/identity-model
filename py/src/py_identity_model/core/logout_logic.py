@@ -3,7 +3,8 @@
 Pure, protocol-agnostic logic shared by the synchronous and asynchronous
 surfaces. Contains no I/O:
 
-* Back-Channel Logout (OpenID Connect Back-Channel Logout 1.0 §2.4) — the
+* Back-Channel Logout (OpenID Connect Back-Channel Logout 1.0 §2.6; claims
+  defined in §2.4) — the
   standard JWT validation (signature, ``iss``, ``aud``, ``iat``, ``exp``) is
   performed by the existing ``validate_token`` path; ``validate_logout_token_claims``
   enforces only the additional rules unique to Logout Tokens.
@@ -28,7 +29,7 @@ from ..oidc_constants import BackChannelLogoutRequest, Events
 
 
 # The event member that MUST be present in a Logout Token's ``events`` claim
-# (Back-Channel Logout 1.0 §2.4, validation step 4).
+# (Back-Channel Logout 1.0 §2.6, validation step 6).
 BACKCHANNEL_LOGOUT_EVENT = Events.BACK_CHANNEL_LOGOUT.value
 
 # The request parameter name providers use to POST the Logout Token to the
@@ -50,7 +51,9 @@ _RESERVED_END_SESSION_PARAMS = frozenset(
 )
 
 
-# Claims that MUST be present in a Logout Token (§2.4 validation step 2).
+# Claims that MUST be present in a Logout Token (Back-Channel Logout 1.0 §2.4).
+# §2.4 also lists ``exp`` as REQUIRED (errata set 1) and §2.6 step 4 validates
+# it; this library currently checks ``exp`` only when it is present.
 # ``iss``/``aud``/``iat`` are also checked by standard JWT validation, but are
 # enumerated here so a rule violation produces a precise, self-contained error
 # and so the pure claim check is complete on its own.
@@ -58,18 +61,20 @@ _REQUIRED_CLAIMS = ("iss", "aud", "iat", "jti", "events")
 
 
 def validate_logout_token_claims(claims: dict) -> None:
-    """Validate the Logout-Token-specific claim rules (Back-Channel Logout 1.0 §2.4).
+    """Validate the Logout-Token-specific claim rules (Back-Channel Logout 1.0 §2.6).
 
     Assumes the JWT signature, ``iss``, ``aud``, ``iat`` and (when present)
     ``exp`` have ALREADY been verified by the standard token-validation path.
-    This function enforces only the rules unique to Logout Tokens:
+    This function enforces only the rules unique to Logout Tokens (step
+    numbers are §2.6's):
 
-    2. ``iss``, ``aud``, ``iat``, ``jti`` and ``events`` MUST be present.
-    4. ``events`` MUST be a JSON object containing the
-       ``http://schemas.openid.net/event/backchannel-logout`` member.
-    3. ``sub`` and/or ``sid`` MUST be present (at least one).
-    5. A ``nonce`` claim MUST NOT be present (a Logout Token must not be
-       usable as an ID Token).
+    * ``iss``, ``aud``, ``iat``, ``jti`` and ``events`` MUST be present
+      (§2.4 claim list).
+    * Step 6: ``events`` MUST be a JSON object containing the
+      ``http://schemas.openid.net/event/backchannel-logout`` member.
+    * Step 5: ``sub`` and/or ``sid`` MUST be present (at least one).
+    * Step 7: a ``nonce`` claim MUST NOT be present (a Logout Token must not
+      be usable as an ID Token).
 
     Args:
         claims: The decoded (and already signature/iss/aud/exp-validated)
@@ -78,7 +83,7 @@ def validate_logout_token_claims(claims: dict) -> None:
     Raises:
         LogoutTokenValidationException: If any Logout-Token rule is violated.
     """
-    # Step 2 — required claims.
+    # §2.4 — required claims.
     for required in _REQUIRED_CLAIMS:
         if required not in claims:
             raise LogoutTokenValidationException(
@@ -86,21 +91,21 @@ def validate_logout_token_claims(claims: dict) -> None:
                 token_part="payload",
             )
 
-    # Step 5 — a Logout Token MUST NOT contain a ``nonce`` claim.
+    # §2.6 step 7 — a Logout Token MUST NOT contain a ``nonce`` claim.
     if "nonce" in claims:
         raise LogoutTokenValidationException(
             "Logout token must not contain a 'nonce' claim",
             token_part="payload",
         )
 
-    # Step 3 — at least one of ``sub`` / ``sid`` must be present.
+    # §2.6 step 5 — at least one of ``sub`` / ``sid`` must be present.
     if claims.get("sub") is None and claims.get("sid") is None:
         raise LogoutTokenValidationException(
             "Logout token must contain at least one of 'sub' or 'sid'",
             token_part="payload",
         )
 
-    # Step 4 — ``events`` must be a JSON object containing the
+    # §2.6 step 6 — ``events`` must be a JSON object containing the
     # backchannel-logout member.
     events = claims.get("events")
     if not isinstance(events, dict):

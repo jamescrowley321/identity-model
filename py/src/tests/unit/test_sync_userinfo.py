@@ -109,7 +109,7 @@ class TestSyncUserInfo:
 
 
 class TestSyncUserInfoSubValidation:
-    """Test sub claim validation per OIDC Core 1.0 Section 5.3.4."""
+    """Test sub claim validation per OIDC Core 1.0 Section 5.3.2."""
 
     @respx.mock
     def test_sub_validation_match(self):
