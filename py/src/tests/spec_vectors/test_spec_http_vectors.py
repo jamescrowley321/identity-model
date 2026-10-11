@@ -224,6 +224,9 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
     if error == "missing_sub":
         assert "missing required 'sub' claim" in (response.error or "")
         return
+    if error == "unverifiable_sub":
+        assert "cannot be verified" in (response.error or "")
+        return
     assert not error, f"{case_id}: unknown expected error {error!r}"
     assert f"status code: {expect['status']}" in (response.error or "")
     if not hasattr(response, "www_authenticate"):

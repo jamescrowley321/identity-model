@@ -202,7 +202,11 @@ class TestSyncUserInfoSubValidation:
 
     @respx.mock
     def test_sub_validation_jwt_response(self):
-        """JWT responses skip sub validation (caller must decode first)."""
+        """A JWT response with expected_sub fails closed (OIDC Core §5.3.4).
+
+        The payload sub equals expected_sub: only an unverified decode could
+        compare it, so the unverifiable response is rejected, not accepted.
+        """
         jwt_string = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyNDgyODk3NjEwMDEifQ.sig"
         respx.get("https://example.com/userinfo").mock(
             return_value=httpx.Response(
@@ -215,9 +219,13 @@ class TestSyncUserInfoSubValidation:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="tok",
-            expected_sub="user-123",
+            expected_sub="248289761001",
         )
         response = get_userinfo(request)
 
-        assert response.is_successful is True
-        assert response.raw == jwt_string
+        assert response.is_successful is False
+        assert response.error == (
+            "UserInfo sub cannot be verified: the response is a signed or encrypted "
+            "JWT (application/jwt). Verify and decode it, then compare its sub, "
+            "or omit expected_sub."
+        )
