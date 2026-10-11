@@ -312,6 +312,12 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
             }
             other => panic!("{label}: expected missing sub, got {other:?}"),
         },
+        "reject" if expect.error == "unverifiable_sub" => match result {
+            Err(IdentityError::Validation(msg)) => {
+                assert!(msg.contains("application/jwt"), "{label}: {msg}");
+            }
+            other => panic!("{label}: expected application/jwt rejection, got {other:?}"),
+        },
         "reject" if !expect.error.is_empty() => {
             panic!("{label}: unknown expected error {:?}", expect.error)
         }
