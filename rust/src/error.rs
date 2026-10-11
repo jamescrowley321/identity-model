@@ -29,6 +29,16 @@ pub enum IdentityError {
     /// `at_hash`/`c_hash` check is this error, never a silently skipped check.
     #[error("id token validation error: {0}")]
     IdTokenValidation(String),
+
+    /// An ID Token's `aud` carries values the client does not trust (OIDC Core
+    /// 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if it contains
+    /// additional audiences not trusted by the Client). Carries the untrusted
+    /// `aud` values, in token order. The trusted set is the configured
+    /// `client_id` plus any
+    /// [`trusted_audiences`](crate::IdTokenValidationOptionsBuilder::trusted_audiences);
+    /// with neither configured every `aud` value is untrusted (fail closed).
+    #[error("id token validation error: ID token 'aud' contains untrusted audiences: {0:?}")]
+    IdTokenUntrustedAudience(Vec<String>),
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without
