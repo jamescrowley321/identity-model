@@ -18,9 +18,10 @@ import (
 // §3.3.2.11). It runs the standard JWT validation via [jwt.Validate]
 // (signature, iss, aud, iat and exp) — supply [WithClientID] so the aud check
 // binds the token to the RP and [WithIssuer] for the OP issuer — then applies
-// the ID-Token profile: required sub, the azp authorized-party rules, and the
-// opt-in nonce / max_age / at_hash / c_hash bindings checked only when the
-// corresponding option is supplied.
+// the ID-Token profile: required sub, rejection of any aud value that is neither
+// the client_id nor listed via [WithTrustedAudiences], the azp authorized-party
+// rules, and the opt-in nonce / max_age / at_hash / c_hash bindings checked only
+// when the corresponding option is supplied.
 //
 // It returns the validated [jwt.Claims] on success. Base-validation failures
 // surface the jwt package's error types; profile failures surface a
@@ -75,6 +76,11 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		return profileErr(ReasonMissingSub, "ID token is missing the required non-empty 'sub' claim")
 	}
 
+	// §3.1.3.7 step 3 — every audience must be one the client trusts.
+	if err := validateAudiences(claims, cfg); err != nil {
+		return err
+	}
+
 	// §3.1.3.7 steps 4-6 — authorized-party (azp) rules.
 	if err := validateAZP(claims, cfg.clientID); err != nil {
 		return err
@@ -117,6 +123,29 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		}
 	}
 
+	return nil
+}
+
+// validateAudiences enforces §3.1.3.7 step 3: the token MUST be rejected if aud
+// contains an audience the client does not trust. The trusted set is the
+// client_id (when set) plus the WithTrustedAudiences list, so with neither
+// configured every aud value is untrusted (fail closed). aud may be a JSON
+// string or array; an absent aud has nothing to check, and a non-string value
+// is never trusted.
+func validateAudiences(claims map[string]any, cfg *config) error {
+	audRaw, present := claims["aud"]
+	if !present {
+		return nil
+	}
+	audiences, ok := audRaw.([]any)
+	if !ok {
+		audiences = []any{audRaw}
+	}
+	for _, a := range audiences {
+		if aud, isString := a.(string); !isString || !cfg.trustsAudience(aud) {
+			return profileErr(ReasonUntrustedAudience, "ID token 'aud' contains an audience not trusted by the client")
+		}
+	}
 	return nil
 }
 

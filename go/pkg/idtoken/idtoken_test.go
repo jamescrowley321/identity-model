@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -125,7 +126,9 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonMissingSub,
 		},
 
-		// azp (§3.1.3.7 steps 4-6).
+		// azp (§3.1.3.7 steps 4-6). The multiple-audience cases trust their
+		// second audience so they reach the azp rules instead of being rejected
+		// first by the step-3 untrusted-audience check.
 		{
 			name:   "single-element aud list, no azp",
 			claims: with(map[string]any{"aud": []any{testClientID}}),
@@ -134,18 +137,18 @@ func TestValidateClaims_Profile(t *testing.T) {
 		{
 			name:       "multiple audiences, azp absent",
 			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
-			opts:       []idtoken.Option{idtoken.WithClientID(testClientID)},
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
 			wantReason: idtoken.ReasonAZPRequiredMultiAud,
 		},
 		{
 			name:   "multiple audiences, azp identifies this client",
 			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
-			opts:   []idtoken.Option{idtoken.WithClientID(testClientID)},
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
 		},
 		{
 			name:       "multiple audiences, azp is a different client",
 			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": "other-client-9x"}),
-			opts:       []idtoken.Option{idtoken.WithClientID(testClientID)},
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
 			wantReason: idtoken.ReasonAZPMismatch,
 		},
 		{
@@ -304,6 +307,131 @@ func TestValidateClaims_Profile(t *testing.T) {
 	}
 }
 
+// profileReason returns the Reason of err as a *ProfileError, failing the test
+// when err is not one (or does not match the ErrIDTokenProfile sentinel).
+func profileReason(t *testing.T, err error) string {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected a *ProfileError, got nil")
+	}
+	if !errors.Is(err, idtoken.ErrIDTokenProfile) {
+		t.Fatalf("error %v does not match ErrIDTokenProfile", err)
+	}
+	var pe *idtoken.ProfileError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *idtoken.ProfileError, got %T (%v)", err, err)
+	}
+	return pe.Reason
+}
+
+// TestValidateClaims_UntrustedAudience covers §3.1.3.7 step 3: every aud value
+// must be the client_id or an audience the caller listed as trusted.
+func TestValidateClaims_UntrustedAudience(t *testing.T) {
+	clock := idtoken.WithNow(fixedNow)
+	client := idtoken.WithClientID(testClientID)
+
+	rejects := []struct {
+		name   string
+		claims map[string]any
+		opts   []idtoken.Option
+	}{
+		{
+			name:   "untrusted second audience",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "empty trusted list still rejects",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
+			opts:   []idtoken.Option{client, idtoken.WithTrustedAudiences()},
+		},
+		{
+			name:   "one of two additional audiences untrusted",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x", "unknown-api-7q"}, "azp": testClientID}),
+			opts:   []idtoken.Option{client, idtoken.WithTrustedAudiences("other-client-9x")},
+		},
+		{
+			name:   "rejected before azp rule (multi-aud, no azp)",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "non-string aud element is untrusted",
+			claims: with(map[string]any{"aud": []any{testClientID, float64(42)}, "azp": testClientID}),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "single aud not the client_id",
+			claims: with(map[string]any{"aud": "other-client-9x"}),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "client_id unset and no trusted list fails closed",
+			claims: baseClaims(),
+			opts:   nil,
+		},
+	}
+	for _, tc := range rejects {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append([]idtoken.Option{clock}, tc.opts...)
+			err := idtoken.ValidateClaims(tc.claims, "RS256", opts...)
+			if got, want := profileReason(t, err), idtoken.ReasonUntrustedAudience; got != want {
+				t.Fatalf("reason = %q, want %q (err: %v)", got, want, err)
+			}
+		})
+	}
+
+	accepts := []struct {
+		name   string
+		claims map[string]any
+		opts   []idtoken.Option
+	}{
+		{
+			name:   "trusted second audience",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
+			opts:   []idtoken.Option{client, idtoken.WithTrustedAudiences("other-client-9x")},
+		},
+		{
+			name:   "single aud equal to client_id, no trusted list",
+			claims: baseClaims(),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "single aud equal to client_id, trusted list supplied",
+			claims: baseClaims(),
+			opts:   []idtoken.Option{client, idtoken.WithTrustedAudiences("other-client-9x")},
+		},
+		{
+			name:   "single-element aud list equal to client_id",
+			claims: with(map[string]any{"aud": []any{testClientID}}),
+			opts:   []idtoken.Option{client},
+		},
+		{
+			name:   "aud absent has nothing to check",
+			claims: with(map[string]any{"aud": nil}),
+			opts:   []idtoken.Option{client},
+		},
+	}
+	for _, tc := range accepts {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append([]idtoken.Option{clock}, tc.opts...)
+			if err := idtoken.ValidateClaims(tc.claims, "RS256", opts...); err != nil {
+				t.Fatalf("expected accept, got %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateClaims_SubCheckedBeforeAudience pins the rule order: a missing
+// sub is reported ahead of an untrusted audience.
+func TestValidateClaims_SubCheckedBeforeAudience(t *testing.T) {
+	claims := with(map[string]any{"sub": nil, "aud": []any{testClientID, "other-client-9x"}})
+	err := idtoken.ValidateClaims(claims, "RS256", idtoken.WithNow(fixedNow), idtoken.WithClientID(testClientID))
+	if got, want := profileReason(t, err), idtoken.ReasonMissingSub; got != want {
+		t.Fatalf("reason = %q, want %q (err: %v)", got, want, err)
+	}
+}
+
 // TestValidateClaims_DoesNotRejectAccessTokenShape confirms the profile
 // positively validates an ID Token and does not reject a claim set merely
 // because it also looks like an access token (no id-vs-access discrimination
@@ -443,6 +571,43 @@ func TestValidateIDToken_WrongAudience(t *testing.T) {
 	)
 	if !errors.Is(err, jwt.ErrClaimValidation) {
 		t.Fatalf("err = %v, want jwt.ErrClaimValidation for wrong audience", err)
+	}
+}
+
+// TestValidateIDToken_UntrustedAudience confirms a genuinely signed token whose
+// aud carries an extra, untrusted audience passes the base aud check (client_id
+// is a member) but is rejected by the profile (§3.1.3.7 step 3), and is
+// accepted once that audience is listed as trusted.
+func TestValidateIDToken_UntrustedAudience(t *testing.T) {
+	key := loadSigningKey(t)
+	set := fixtureKeySet(t)
+
+	tok := signIDToken(t, key, map[string]any{
+		"iss": wrapperIssuer,
+		"sub": "248289761001",
+		"aud": []string{testClientID, "other-client-9x"},
+		"azp": testClientID,
+		"iat": fixedNowUnix - 100,
+		"exp": fixedNowUnix + 3600,
+	})
+	base := []idtoken.Option{
+		idtoken.WithIssuer(wrapperIssuer),
+		idtoken.WithClientID(testClientID),
+		idtoken.WithNow(fixedNow),
+	}
+
+	_, err := idtoken.ValidateIDToken(context.Background(), tok, set, base...)
+	if got, want := profileReason(t, err), idtoken.ReasonUntrustedAudience; got != want {
+		t.Fatalf("reason = %q, want %q (err: %v)", got, want, err)
+	}
+
+	claims, err := idtoken.ValidateIDToken(context.Background(), tok, set,
+		append(base, idtoken.WithTrustedAudiences("other-client-9x"))...)
+	if err != nil {
+		t.Fatalf("expected accept with the second audience trusted, got %v", err)
+	}
+	if got, want := []string(claims.Audience), []string{testClientID, "other-client-9x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("aud = %v, want %v", got, want)
 	}
 }
 

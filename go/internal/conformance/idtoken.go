@@ -47,13 +47,17 @@ type IDTokenVector struct {
 type IDTokenInput struct {
 	Claims map[string]any `json:"claims"`
 	// HeaderAlg is a JSON string or null (null → nil → missing alg).
-	HeaderAlg   *string  `json:"header_alg"`
-	ClientID    string   `json:"client_id,omitempty"`
-	Nonce       *string  `json:"nonce,omitempty"`
-	AccessToken *string  `json:"access_token,omitempty"`
-	Code        *string  `json:"code,omitempty"`
-	MaxAge      *int     `json:"max_age,omitempty"`
-	Leeway      *float64 `json:"leeway,omitempty"`
+	HeaderAlg *string `json:"header_alg"`
+	ClientID  string  `json:"client_id,omitempty"`
+	// TrustedAudiences lists the additional audiences the client trusts
+	// (§3.1.3.7 step 3). nil (absent) means none; an empty list is supplied
+	// as-is and still trusts nothing beyond the client_id.
+	TrustedAudiences []string `json:"trusted_audiences,omitempty"`
+	Nonce            *string  `json:"nonce,omitempty"`
+	AccessToken      *string  `json:"access_token,omitempty"`
+	Code             *string  `json:"code,omitempty"`
+	MaxAge           *int     `json:"max_age,omitempty"`
+	Leeway           *float64 `json:"leeway,omitempty"`
 	// Now is the fixed POSIX-seconds clock for the auth_time/max_age check.
 	Now float64 `json:"now"`
 }

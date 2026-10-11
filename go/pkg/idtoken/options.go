@@ -1,6 +1,7 @@
 package idtoken
 
 import (
+	"slices"
 	"time"
 
 	"github.com/jamescrowley321/identity-model/go/pkg/jwt"
@@ -16,15 +17,16 @@ type config struct {
 	allowedAlgs []string
 
 	// ID-Token profile.
-	clientID       string
-	nonce          string
-	nonceSet       bool
-	accessToken    string
-	accessTokenSet bool
-	code           string
-	codeSet        bool
-	maxAge         time.Duration
-	maxAgeSet      bool
+	clientID         string
+	trustedAudiences []string
+	nonce            string
+	nonceSet         bool
+	accessToken      string
+	accessTokenSet   bool
+	code             string
+	codeSet          bool
+	maxAge           time.Duration
+	maxAgeSet        bool
 	// leeway is the clock-skew tolerance. It is applied to the base exp check
 	// (as jwt.WithClockSkew) and, mirroring the reference implementation, to the
 	// max_age/auth_time freshness check (§3.1.3.7 step 12).
@@ -50,6 +52,15 @@ func (c *config) now() time.Time {
 		return c.nowFunc()
 	}
 	return time.Now()
+}
+
+// trustsAudience reports whether aud is the client_id (when set) or one of the
+// configured trusted audiences (§3.1.3.7 step 3).
+func (c *config) trustsAudience(aud string) bool {
+	if c.clientID != "" && aud == c.clientID {
+		return true
+	}
+	return slices.Contains(c.trustedAudiences, aud)
 }
 
 // jwtOptions maps the base config onto the options for [jwt.Validate]. The nonce
@@ -88,6 +99,15 @@ func WithIssuer(issuer string) Option {
 // token carries an azp, azp MUST equal it (§3.1.3.7 step 6).
 func WithClientID(clientID string) Option {
 	return func(c *config) { c.clientID = clientID }
+}
+
+// WithTrustedAudiences lists the additional audiences, besides the client_id,
+// that the client trusts to appear in an ID Token's aud. Every aud value MUST be
+// the client_id or one of these, otherwise the token is rejected (§3.1.3.7
+// step 3). The list only adds trusted values: omitting it, or passing none,
+// trusts the client_id alone, and nothing disables the check.
+func WithTrustedAudiences(audiences ...string) Option {
+	return func(c *config) { c.trustedAudiences = audiences }
 }
 
 // WithNonce requires the token's nonce to be present and equal nonce, the value
