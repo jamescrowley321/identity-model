@@ -406,6 +406,25 @@ func TestValidate_NoKid_Ambiguous(t *testing.T) {
 	}
 }
 
+// JWKS-010: a correctly signed RS256 token is rejected when the key that
+// verifies it declares RS384, whether the token names it by kid or not.
+func TestValidate_KeyDeclaringOtherAlg(t *testing.T) {
+	signing := loadSigningKey(t)
+	for _, key := range []*jose.JSONWebKey{signing, kidless(signing)} {
+		t.Run("kid="+key.KeyID, func(t *testing.T) {
+			set := keySetFromJSON(t, jwksJSON(t,
+				jose.JSONWebKey{Key: signing.Public().Key, KeyID: testKid, Algorithm: "RS384", Use: "sig"},
+			))
+			token := signWith(t, key, jose.RS256, validClaims())
+
+			_, err := Validate(context.Background(), token, set, withFixedNow())
+			if !errors.Is(err, jwks.ErrKeyAlgorithmMismatch) {
+				t.Fatalf("err = %v, want jwks.ErrKeyAlgorithmMismatch", err)
+			}
+		})
+	}
+}
+
 // JWKS-004: a kid that never appears surfaces the descriptive key-not-found error.
 func TestValidate_KidNeverFound(t *testing.T) {
 	placeholder, err := rsa.GenerateKey(rand.Reader, 2048)

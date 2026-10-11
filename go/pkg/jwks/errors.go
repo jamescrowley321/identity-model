@@ -74,6 +74,21 @@ func (e *AmbiguousKeyError) Error() string {
 	return fmt.Sprintf("jwks: token has no kid and %d keys could verify alg %q %v", e.Count, e.Alg, e.Kids)
 }
 
+// KeyAlgorithmMismatchError reports that the key resolved for a token declares
+// an alg (KeyAlg, RFC 7517 §4.4) other than the token header alg (Alg), so it
+// is not used (JWKS-010). It applies whether the key was found by kid or
+// selected without one, and is distinct from [KeyNotFoundError] and
+// [AmbiguousKeyError].
+type KeyAlgorithmMismatchError struct {
+	Kid    string
+	KeyAlg string
+	Alg    string
+}
+
+func (e *KeyAlgorithmMismatchError) Error() string {
+	return fmt.Sprintf("jwks: key %q declares alg %q, token alg is %q", e.Kid, e.KeyAlg, e.Alg)
+}
+
 // InvalidKeyError reports that a key failed parameter validation (JWKS-002,
 // RFC 7517 §4). A fetch returns it only when no key in the set is usable
 // (JWKS-008). Kid identifies the offending key when present; Reason explains
@@ -106,6 +121,8 @@ var (
 	ErrInvalidKey = errors.New("jwks: invalid key")
 	// ErrAmbiguousKey matches any [AmbiguousKeyError].
 	ErrAmbiguousKey = errors.New("jwks: ambiguous key")
+	// ErrKeyAlgorithmMismatch matches any [KeyAlgorithmMismatchError].
+	ErrKeyAlgorithmMismatch = errors.New("jwks: key algorithm mismatch")
 )
 
 func (e *ParseError) Is(target error) bool         { return target == ErrParse }
@@ -115,3 +132,6 @@ func (e *EmptyKeySetError) Is(target error) bool   { return target == ErrEmptyKe
 func (e *KeyNotFoundError) Is(target error) bool   { return target == ErrKeyNotFound }
 func (e *InvalidKeyError) Is(target error) bool    { return target == ErrInvalidKey }
 func (e *AmbiguousKeyError) Is(target error) bool  { return target == ErrAmbiguousKey }
+func (e *KeyAlgorithmMismatchError) Is(target error) bool {
+	return target == ErrKeyAlgorithmMismatch
+}

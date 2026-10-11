@@ -169,10 +169,33 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 // keys whose kty matches alg, each step applied only when it leaves a key. The
 // one remaining key is returned; more than one is an [AmbiguousKeyError]
 // (JWKS-009). Callers must reject alg "none" before calling it.
+//
+// Either way, a key that declares an alg other than a non-empty alg is not
+// returned: that is a [KeyAlgorithmMismatchError] (JWKS-010, RFC 7517 §4.4).
+//
+// The fallback to every key when none is a signing key matches the Python
+// implementation, where a kid naming a use "enc" key is also used; enforcing
+// use on both paths in every language is tracked in #888.
 func (s *JSONWebKeySet) ResolveSigningKey(ctx context.Context, kid, alg string) (*JSONWebKey, error) {
+	var key *JSONWebKey
+	var err error
 	if kid != "" {
-		return s.ResolveKeyWithRefresh(ctx, kid)
+		key, err = s.ResolveKeyWithRefresh(ctx, kid)
+	} else {
+		key, err = s.resolveKidless(alg)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if alg != "" && key.Alg != "" && key.Alg != alg {
+		return nil, &KeyAlgorithmMismatchError{Kid: key.Kid, KeyAlg: key.Alg, Alg: alg}
+	}
+	return key, nil
+}
+
+// resolveKidless selects the key for a token with no kid from the in-memory
+// set, as described on [JSONWebKeySet.ResolveSigningKey].
+func (s *JSONWebKeySet) resolveKidless(alg string) (*JSONWebKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	candidates := kidlessCandidates(s.Keys, alg)

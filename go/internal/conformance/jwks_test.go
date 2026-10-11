@@ -14,10 +14,11 @@ import (
 
 // jwksErrors maps the canonical reject codes to the Go sentinel errors.
 var jwksErrors = map[string]error{
-	"malformed":     jwks.ErrParse,
-	"empty_key_set": jwks.ErrEmptyKeySet,
-	"key_not_found": jwks.ErrKeyNotFound,
-	"ambiguous_key": jwks.ErrAmbiguousKey,
+	"malformed":        jwks.ErrParse,
+	"empty_key_set":    jwks.ErrEmptyKeySet,
+	"key_not_found":    jwks.ErrKeyNotFound,
+	"ambiguous_key":    jwks.ErrAmbiguousKey,
+	"key_alg_mismatch": jwks.ErrKeyAlgorithmMismatch,
 }
 
 // runJWKSVector is the jwks.json adapter: one jwks.FetchKeySet handle per

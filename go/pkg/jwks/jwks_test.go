@@ -765,6 +765,48 @@ func TestResolveSigningKey_NoKidAmbiguous(t *testing.T) {
 	}
 }
 
+// JWKS-010: a key that declares an alg other than the token's is not used,
+// whether found by kid or selected without one; a key declaring the token's
+// alg is.
+func TestResolveSigningKey_KeyAlgMismatch(t *testing.T) {
+	for _, kid := range []string{"rsa-rs384-key", ""} {
+		t.Run("kid="+kid, func(t *testing.T) {
+			freshCache(t)
+			srv, hits := newServer(t, http.StatusOK, fixture(t, "single-rs384.json"))
+			set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			if err != nil {
+				t.Fatalf("FetchKeySet: %v", err)
+			}
+			_, err = set.ResolveSigningKey(context.Background(), kid, "RS256")
+			var mErr *KeyAlgorithmMismatchError
+			if !errors.As(err, &mErr) {
+				t.Fatalf("err = %v, want *KeyAlgorithmMismatchError", err)
+			}
+			want := KeyAlgorithmMismatchError{Kid: "rsa-rs384-key", KeyAlg: "RS384", Alg: "RS256"}
+			if *mErr != want {
+				t.Errorf("err = %+v, want %+v", *mErr, want)
+			}
+			if !errors.Is(err, ErrKeyAlgorithmMismatch) {
+				t.Errorf("errors.Is(ErrKeyAlgorithmMismatch) = false")
+			}
+			if errors.Is(err, ErrKeyNotFound) || errors.Is(err, ErrAmbiguousKey) {
+				t.Errorf("err = %v, want an error distinct from key-not-found and ambiguous-key", err)
+			}
+
+			key, err := set.ResolveSigningKey(context.Background(), kid, "RS384")
+			if err != nil {
+				t.Fatalf("ResolveSigningKey(RS384): %v", err)
+			}
+			if key.Kid != "rsa-rs384-key" {
+				t.Errorf("kid = %q, want %q", key.Kid, "rsa-rs384-key")
+			}
+			if got := atomic.LoadInt32(hits); got != 1 {
+				t.Errorf("HTTP requests = %d, want 1 (no forced refresh)", got)
+			}
+		})
+	}
+}
+
 // A token with a kid keeps the kid lookup and its forced refresh on a miss.
 func TestResolveSigningKey_WithKid(t *testing.T) {
 	freshCache(t)

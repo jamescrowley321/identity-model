@@ -27,6 +27,8 @@
 //   - A token with no kid is verified by the single key left after narrowing
 //     the set by use, alg and kty, with no refresh; more than one candidate is
 //     a [jwks.AmbiguousKeyError], distinct from key-not-found (JWKS-009).
+//   - A key that declares an alg other than the header alg is not used, with
+//     or without a kid: a [jwks.KeyAlgorithmMismatchError] (JWKS-010).
 //
 // RFC / spec references: RFC 7519 (JWT), RFC 7515 (JWS), RFC 7518 (JWA),
 // OIDC Core 1.0 §3.1.3.7 (ID Token Validation). The behavioural contract is in
