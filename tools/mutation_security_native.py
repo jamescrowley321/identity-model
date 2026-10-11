@@ -211,8 +211,7 @@ RUST_ALLOWLIST = REPO_ROOT / "tools" / "mutation_security_rust_allowlist.txt"
 _HASH_RE = re.compile(r"^[0-9a-f]{16}$")
 # -U0 hunk header: @@ -old,n +new,m @@ ; m absent means a single line.
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
-# An allowlist entry is a name and a hash: the hash is the last whitespace-
-# separated field, the name everything before it (Rust names can hold spaces).
+# Each allowlist entry is exactly two whitespace-separated fields: name + hash.
 _ALLOWLIST_FIELDS = 2
 # Go waiver names are ``<file>:<line>:<col>:<TYPE>`` — four colon-joined fields.
 _GO_NAME_FIELDS = 4
@@ -321,11 +320,7 @@ def parse_go_waiver_name(name: str) -> tuple[str, str] | None:
     them irrelevant to matching (and immune to drift).
     """
     parts = name.split(":")
-    if (
-        any(c.isspace() for c in name)
-        or len(parts) != _GO_NAME_FIELDS
-        or not parts[0].endswith(".go")
-    ):
+    if len(parts) != _GO_NAME_FIELDS or not parts[0].endswith(".go"):
         return None
     return (parts[0], parts[3])
 
@@ -346,18 +341,15 @@ def load_allowlist(
     """Parse an equivalent-mutant allowlist into ``{(identity..., hash)}`` keys.
 
     Each non-comment line is ``<name> <16-hex content hash>`` (trailing ``#``
-    comment optional). The hash is the last whitespace-separated field and the
-    name is everything before it: cargo-mutants names trait-impl methods with
-    spaces (``<impl Drop for X>::drop``). Any malformed entry raises
-    :class:`ValueError`: an un-verifiable waiver must be a hard, loud failure,
-    never a silent pass.
+    comment optional). Any malformed entry raises :class:`ValueError`: an
+    un-verifiable waiver must be a hard, loud failure, never a silent pass.
     """
     waivers: set[tuple[str, str, str]] = set()
     for raw in text.splitlines():
         stripped = raw.split("#", 1)[0].strip()
         if not stripped:
             continue
-        parts = stripped.rsplit(None, 1)
+        parts = stripped.split()
         key = parse_name(parts[0]) if len(parts) == _ALLOWLIST_FIELDS else None
         if key is None or not _HASH_RE.match(parts[1]):
             raise ValueError(
