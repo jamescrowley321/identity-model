@@ -1,8 +1,8 @@
 {
   "capability": "id-token",
-  "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.3.2.11",
+  "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.2.2.9, \u00a73.3.2.10, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped.",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC left-half construction (Core \u00a73.2.2.9 / \u00a73.3.2.10) \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the OIDC Core Appendix A.4/A.6 example value. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped.",
   "tests": [
     {
       "id": "IDT-001",
@@ -41,8 +41,7 @@
       "when": "The ID-Token profile rules are applied",
       "then": "Validation is rejected because sub is a required non-empty claim (\u00a72)",
       "references": [
-        "OIDC Core 1.0 \u00a72",
-        "OIDC Core 1.0 \u00a73.1.3.7"
+        "OIDC Core 1.0 \u00a72"
       ],
       "vectors": [
         {
@@ -91,7 +90,7 @@
       "title": "Authorized-party (azp) rules for single vs multiple audiences",
       "given": "A decoded ID Token whose aud is a single value or a list, with or without azp",
       "when": "The ID-Token profile rules are applied",
-      "then": "A single audience needs no azp; multiple audiences REQUIRE an azp that identifies this client (\u00a73.1.3.7 steps 4-6)",
+      "then": "A single audience needs no azp; multiple audiences require an azp that identifies this client (library policy: Core 1.0 (2014) \u00a73.1.3.7 step 4 SHOULD, not in errata set 2; azp == client_id is step 5, SHOULD)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -210,7 +209,7 @@
       "title": "azp is validated when present even for a single audience",
       "given": "A decoded ID Token carrying an azp claim alongside a single audience",
       "when": "The ID-Token profile rules are applied",
-      "then": "When present, azp MUST equal the configured client_id (\u00a73.1.3.7 step 6)",
+      "then": "When present, azp must equal the configured client_id (\u00a73.1.3.7 step 5, SHOULD; enforced as library policy)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -337,8 +336,10 @@
       "title": "auth_time freshness against max_age",
       "given": "A decoded ID Token and a caller max_age (with a fixed now)",
       "when": "The ID-Token profile rules are applied with max_age set",
-      "then": "auth_time MUST be present and satisfy now - auth_time <= max_age + leeway (\u00a73.1.3.7 step 12)",
+      "then": "auth_time MUST be present when max_age was requested (\u00a72, \u00a73.1.2.1) and satisfy now - auth_time <= max_age + leeway (\u00a73.1.3.7 step 13, SHOULD; enforced when max_age is passed)",
       "references": [
+        "OIDC Core 1.0 \u00a72",
+        "OIDC Core 1.0 \u00a73.1.2.1",
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
       "vectors": [
@@ -433,9 +434,9 @@
       "title": "at_hash binding under RS256 (SHA-256)",
       "given": "A decoded ID Token and the access token from the same response",
       "when": "The ID-Token profile rules are applied with the access token set",
-      "then": "at_hash MUST equal the base64url left-half SHA-256 of the access token (\u00a73.3.2.11)",
+      "then": "at_hash MUST equal the base64url left-half SHA-256 of the access token (\u00a73.2.2.9 item 3); requiring it to be present once an access token is supplied is library policy",
       "references": [
-        "OIDC Core 1.0 \u00a73.3.2.11"
+        "OIDC Core 1.0 \u00a73.2.2.9"
       ],
       "vectors": [
         {
@@ -527,9 +528,9 @@
       "title": "at_hash binding under ES512 (SHA-512) \u2014 algorithm selects the hash",
       "given": "A decoded ID Token whose header alg is ES512 and the access token from the same response",
       "when": "The ID-Token profile rules are applied with the access token set",
-      "then": "at_hash MUST equal the base64url left-half SHA-512 of the access token; an SHA-256-sized at_hash under ES512 fails closed (\u00a73.3.2.11)",
+      "then": "at_hash MUST equal the base64url left-half SHA-512 of the access token; an SHA-256-sized at_hash under ES512 fails closed (\u00a73.2.2.9 item 3)",
       "references": [
-        "OIDC Core 1.0 \u00a73.3.2.11"
+        "OIDC Core 1.0 \u00a73.2.2.9"
       ],
       "vectors": [
         {
@@ -581,9 +582,9 @@
       "title": "c_hash binding under RS256 (SHA-256)",
       "given": "A decoded ID Token and the authorization code from the same response",
       "when": "The ID-Token profile rules are applied with the code set",
-      "then": "c_hash MUST equal the base64url left-half SHA-256 of the code (\u00a73.3.2.11)",
+      "then": "c_hash MUST equal the base64url left-half SHA-256 of the code (\u00a73.3.2.10 item 3); requiring it to be present once a code is supplied is library policy",
       "references": [
-        "OIDC Core 1.0 \u00a73.3.2.11"
+        "OIDC Core 1.0 \u00a73.3.2.10"
       ],
       "vectors": [
         {
@@ -654,9 +655,9 @@
       "title": "c_hash binding under ES512 (SHA-512)",
       "given": "A decoded ID Token whose header alg is ES512 and the authorization code from the same response",
       "when": "The ID-Token profile rules are applied with the code set",
-      "then": "c_hash MUST equal the base64url left-half SHA-512 of the code (\u00a73.3.2.11)",
+      "then": "c_hash MUST equal the base64url left-half SHA-512 of the code (\u00a73.3.2.10 item 3)",
       "references": [
-        "OIDC Core 1.0 \u00a73.3.2.11"
+        "OIDC Core 1.0 \u00a73.3.2.10"
       ],
       "vectors": [
         {
@@ -686,9 +687,10 @@
       "title": "Unknown or missing header alg on a hash check fails closed",
       "given": "A decoded ID Token requiring an at_hash/c_hash check whose header alg cannot be mapped to a hash",
       "when": "The ID-Token profile rules are applied with an access token or code set",
-      "then": "An unknown or absent alg is an error, never a silently skipped hash check (\u00a73.3.2.11)",
+      "then": "An unknown or absent alg is an error, never a silently skipped hash check (\u00a73.2.2.9 / \u00a73.3.2.10 item 1)",
       "references": [
-        "OIDC Core 1.0 \u00a73.3.2.11"
+        "OIDC Core 1.0 \u00a73.2.2.9",
+        "OIDC Core 1.0 \u00a73.3.2.10"
       ],
       "vectors": [
         {

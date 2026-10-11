@@ -105,7 +105,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ### OIDC Discovery
 
 - Implementations MUST fetch `{issuer}/.well-known/openid-configuration` per [OIDC Discovery 1.0 §4.1](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationRequest).
-- The response MUST contain the required metadata fields: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported` ([§3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)).
+- The response MUST contain the required metadata fields: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported` ([§3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)). None of these has a default. §3 makes `token_endpoint` REQUIRED unless only the Implicit Flow is used; these libraries require it unconditionally as code-flow clients.
 - The `issuer` in the response MUST exactly match the requested issuer ([§4.3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationValidation)); a mismatch MUST error.
 - Implementations MUST cache the parsed document with a configurable TTL. A cache hit MUST NOT make a network request; after TTL expiry the next call MUST re-fetch.
 - Implementations MUST surface distinct, typed errors for transport failures, non-JSON bodies, and missing required fields. Unknown extra fields MUST be ignored, not rejected.
@@ -133,8 +133,8 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 ### UserInfo
 
-- Implementations MUST GET the `userinfo_endpoint` with `Authorization: Bearer {token}` and return typed standard claims plus an overflow map ([OIDC Core 1.0 §5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
-- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)).
+- Implementations MUST send the access token as a Bearer token ([OIDC Core 1.0 §5.3.1](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoRequest), per RFC 6750 §2). As a library contract they MUST use GET with the `Authorization: Bearer {token}` header, which §5.3.1 RECOMMENDS. They return typed standard claims plus an overflow map ([§5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
+- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.2](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)). The comparison needs the ID token `sub`, so supplying it is the caller's §5.3.2 obligation.
 - Implementations MUST let the caller supply the HTTP client and bound the request with a timeout. This is an API-shape contract with no vector (formerly `UI-008`); it is covered by Go `TestFetch_FunctionalOptions` (`go/pkg/userinfo/userinfo_test.go`), Rust `timeout_bounds_slow_endpoint` (`rust/src/userinfo/mod.rs`), and Python `TestSyncDI::test_userinfo_with_injected_client` / `TestAsyncDI::test_userinfo_with_injected_client` (`py/src/tests/unit/test_http_client_di.py`), which show only that `get_userinfo` accepts an injected `HTTPClient`, not that the request goes through it or that its timeout applies ([#775](https://github.com/jamescrowley321/identity-model/issues/775)).
 
 ## Capability Definitions (Extended Tier)

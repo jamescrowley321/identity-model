@@ -142,10 +142,8 @@
       "title": "Cache hit on second fetch within TTL",
       "given": "A successful discovery fetch",
       "when": "Discovery is invoked again before the TTL expires",
-      "then": "No HTTP request is made and the cached document is returned",
-      "references": [
-        "\u00a74"
-      ],
+      "then": "No HTTP request is made and the cached document is returned (library caching contract, see spec/capabilities.md; OIDC Discovery 1.0 defines no caching)",
+      "references": [],
       "vectors": [
         {
           "name": "second-call-within-ttl",
@@ -176,10 +174,8 @@
       "title": "Cache miss after TTL expiry",
       "given": "A cached discovery document whose TTL has expired",
       "when": "Discovery is invoked",
-      "then": "A new HTTP request is made and the cache is refreshed",
-      "references": [
-        "\u00a74"
-      ],
+      "then": "A new HTTP request is made and the cache is refreshed (library caching contract, see spec/capabilities.md; OIDC Discovery 1.0 defines no caching)",
+      "references": [],
       "vectors": [
         {
           "name": "call-after-ttl-expiry",
