@@ -108,8 +108,14 @@ func idTokenOptionsFor(in IDTokenInput) []idtoken.Option {
 	if in.AccessToken != nil {
 		opts = append(opts, idtoken.WithAccessToken(*in.AccessToken))
 	}
+	if in.AccessTokenIssuedWithIDToken != nil {
+		opts = append(opts, idtoken.WithAccessTokenIssuedWithIDToken(*in.AccessTokenIssuedWithIDToken))
+	}
 	if in.Code != nil {
 		opts = append(opts, idtoken.WithCode(*in.Code))
+	}
+	if in.CodeIssuedWithIDToken != nil {
+		opts = append(opts, idtoken.WithCodeIssuedWithIDToken(*in.CodeIssuedWithIDToken))
 	}
 	if in.MaxAge != nil {
 		opts = append(opts, idtoken.WithMaxAge(time.Duration(*in.MaxAge)*time.Second))

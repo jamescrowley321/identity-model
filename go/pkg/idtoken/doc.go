@@ -19,7 +19,11 @@
 //   - at_hash / c_hash token- and code-binding for the hybrid and
 //     authorization-code flows (§3.3.2.11). The hash is selected from the ID
 //     Token's verified JOSE-header alg and the check fails closed on an unknown
-//     or missing alg.
+//     or missing alg. A present hash claim must always match. An absent one is
+//     rejected unless the caller says the value did not come in the same
+//     authorization response as the ID Token
+//     ([WithAccessTokenIssuedWithIDToken] / [WithCodeIssuedWithIDToken] with
+//     false, §3.1.3.6 / §3.2.2.10 / §3.3.2.11).
 //
 // [ValidateIDToken] is the full network entry point: it runs the base JWT
 // validation via [jwt.Validate] and then applies the profile. [ValidateClaims]

@@ -34,10 +34,18 @@ const (
 	// ReasonAuthTimeMissing: max_age requested but auth_time absent (§3.1.3.7
 	// step 12).
 	ReasonAuthTimeMissing = "auth_time_missing"
-	// ReasonAtHashMismatch: at_hash absent or not the access token's left-half
-	// hash (§3.3.2.11).
+	// ReasonAtHashMissing: at_hash absent although the access token came in the
+	// same authorization response as the ID Token (the default unless
+	// [WithAccessTokenIssuedWithIDToken] is false, §3.2.2.10, §3.3.2.11).
+	ReasonAtHashMissing = "at_hash_missing"
+	// ReasonAtHashMismatch: at_hash present but not the access token's
+	// left-half hash (§3.3.2.11).
 	ReasonAtHashMismatch = "at_hash_mismatch"
-	// ReasonCHashMismatch: c_hash absent or not the authorization code's
+	// ReasonCHashMissing: c_hash absent although the code came in the same
+	// authorization response as the ID Token (the default unless
+	// [WithCodeIssuedWithIDToken] is false, §3.3.2.11).
+	ReasonCHashMissing = "c_hash_missing"
+	// ReasonCHashMismatch: c_hash present but not the authorization code's
 	// left-half hash (§3.3.2.11).
 	ReasonCHashMismatch = "c_hash_mismatch"
 	// ReasonUnsupportedAlg: the header alg cannot be mapped to a hash for an

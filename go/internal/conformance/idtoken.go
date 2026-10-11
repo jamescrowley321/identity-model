@@ -60,6 +60,11 @@ type IDTokenInput struct {
 	Code        *string  `json:"code,omitempty"`
 	MaxAge      *int     `json:"max_age,omitempty"`
 	Leeway      *float64 `json:"leeway,omitempty"`
+	// AccessTokenIssuedWithIDToken / CodeIssuedWithIDToken state whether the
+	// value came back in the same authorization response as the ID Token,
+	// making at_hash / c_hash presence required; absent means true.
+	AccessTokenIssuedWithIDToken *bool `json:"access_token_issued_with_id_token,omitempty"`
+	CodeIssuedWithIDToken        *bool `json:"code_issued_with_id_token,omitempty"`
 	// Now is the fixed POSIX-seconds clock for the auth_time/max_age check.
 	Now float64 `json:"now"`
 }

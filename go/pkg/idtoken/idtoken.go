@@ -105,26 +105,55 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 
 	// §3.3.2.11 — at_hash binding (only when an access token was supplied).
 	if cfg.accessTokenSet {
-		expected, err := leftHalfHash(cfg.accessToken, headerAlg)
-		if err != nil {
+		if err := validateHashBinding(claims, headerAlg, atHashBinding, cfg.accessToken, cfg.accessTokenWithIDToken); err != nil {
 			return err
-		}
-		if atHash, ok := claims["at_hash"].(string); !ok || !constantTimeEqual(atHash, expected) {
-			return profileErr(ReasonAtHashMismatch, "ID token 'at_hash' claim does not match the access token")
 		}
 	}
 
 	// §3.3.2.11 — c_hash binding (only when an authorization code was supplied).
 	if cfg.codeSet {
-		expected, err := leftHalfHash(cfg.code, headerAlg)
-		if err != nil {
+		if err := validateHashBinding(claims, headerAlg, cHashBinding, cfg.code, cfg.codeWithIDToken); err != nil {
 			return err
-		}
-		if cHash, ok := claims["c_hash"].(string); !ok || !constantTimeEqual(cHash, expected) {
-			return profileErr(ReasonCHashMismatch, "ID token 'c_hash' claim does not match the authorization code")
 		}
 	}
 
+	return nil
+}
+
+// hashBinding describes one §3.3.2.11 hash claim and the value it binds to.
+type hashBinding struct {
+	claim          string
+	subject        string
+	missingReason  string
+	mismatchReason string
+}
+
+var (
+	atHashBinding = hashBinding{"at_hash", "the access token", ReasonAtHashMissing, ReasonAtHashMismatch}
+	cHashBinding  = hashBinding{"c_hash", "the authorization code", ReasonCHashMissing, ReasonCHashMismatch}
+)
+
+// validateHashBinding checks that b.claim binds to value (§3.3.2.11). Presence
+// is required only when value came in the same authorization response as the
+// ID Token (required, §3.2.2.10 / §3.3.2.11); otherwise an absent claim is
+// accepted. A present claim must match whatever its type. Presence is checked
+// before the hash is computed, so an absent, unrequired claim never consults
+// the alg.
+func validateHashBinding(claims map[string]any, headerAlg string, b hashBinding, value string, required bool) error {
+	raw, present := claims[b.claim]
+	if !present {
+		if required {
+			return profileErr(b.missingReason, fmt.Sprintf("ID token missing required '%s' claim for %s issued with it", b.claim, b.subject))
+		}
+		return nil
+	}
+	expected, err := leftHalfHash(value, headerAlg)
+	if err != nil {
+		return err
+	}
+	if actual, ok := raw.(string); !ok || !constantTimeEqual(actual, expected) {
+		return profileErr(b.mismatchReason, fmt.Sprintf("ID token '%s' claim does not match %s", b.claim, b.subject))
+	}
 	return nil
 }
 
