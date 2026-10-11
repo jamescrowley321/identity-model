@@ -84,6 +84,7 @@ def _run_vector(vector: dict) -> None:
         inp["header_alg"],
         client_id=inp.get("client_id"),
         trusted_audiences=inp.get("trusted_audiences"),
+        validate_azp=inp.get("validate_azp", False),
         nonce=inp.get("nonce"),
         access_token=inp.get("access_token"),
         code=inp.get("code"),

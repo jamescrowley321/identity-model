@@ -11,8 +11,8 @@ ID Token an ID Token:
 * ``sub`` is REQUIRED (§2 / §3.1.3.7).
 * Every ``aud`` value is the ``client_id`` or an audience the caller trusts
   (§3.1.3.7 step 3).
-* ``azp`` authorized-party rules when the token carries multiple audiences
-  (§3.1.3.7 steps 4-6).
+* ``azp`` authorized-party rules, only when the caller opts in with
+  ``validate_azp`` (§3.1.3.7 steps 4-5; §2 says to ignore ``azp`` otherwise).
 * ``nonce`` binding, when the caller supplies the ``nonce`` it sent on the
   authorization request (§3.1.3.7 step 11).
 * ``auth_time`` freshness against ``max_age`` (§3.1.3.7 step 12).
@@ -161,12 +161,36 @@ def _reject_untrusted_audiences(
         )
 
 
+def _validate_azp(claims: dict, client_id: str | None) -> None:
+    """Enforce the opt-in authorized-party (``azp``) rules.
+
+    Neither rule is a MUST in OIDC Core 1.0 errata set 2, so the caller turns
+    them on with ``validate_azp``. An empty-string ``azp`` counts as absent for
+    the multiple-audience rule and is still compared against ``client_id``.
+    """
+    aud = claims.get("aud")
+    azp = claims.get("azp")
+    if isinstance(aud, (list, tuple)) and len(aud) > 1 and not azp:
+        # Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an ``azp``.
+        raise IdTokenValidationException(
+            "ID token with multiple audiences must contain an 'azp' claim",
+            token_part="payload",
+        )
+    if azp is not None and client_id is not None and azp != client_id:
+        # Errata 2 step 5: a present ``azp`` identifies this client.
+        raise IdTokenValidationException(
+            "ID token 'azp' claim does not match the configured client_id",
+            token_part="payload",
+        )
+
+
 def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knobs
     claims: dict,
     header_alg: str | None,
     *,
     client_id: str | None = None,
     trusted_audiences: Iterable[str] | None = None,
+    validate_azp: bool = False,
     nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
@@ -188,13 +212,20 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
         header_alg: The ``alg`` value from the ID Token's JOSE header, used to
             select the hash for ``at_hash``/``c_hash``.
         client_id: The relying party's ``client_id`` (i.e.
-            ``TokenValidationConfig.audience``). When set, an ``azp`` present in
-            the token MUST equal it (§3.1.3.7 step 6). It is also the one
-            audience trusted without being listed in ``trusted_audiences``.
+            ``TokenValidationConfig.audience``). It is the one audience trusted
+            without being listed in ``trusted_audiences``, and the value a
+            present ``azp`` must equal when ``validate_azp`` is set.
         trusted_audiences: Additional audiences the client trusts besides
             ``client_id``. Every ``aud`` value MUST be ``client_id`` or one of
             these (§3.1.3.7 step 3). Omitted or empty means ``client_id`` is
             the only trusted audience; the list cannot disable the check.
+        validate_azp: Opt in to the authorized-party rules. When ``True``, a
+            token with multiple audiences must carry an ``azp`` and a present
+            ``azp`` must equal ``client_id``. OIDC Core 1.0 errata set 2
+            §3.1.3.7 step 5 makes the ``client_id`` comparison a MAY/SHOULD,
+            and the multiple-audience rule is the Core 1.0 (2014) step-4
+            SHOULD that errata set 2 removed. Defaults to ``False``: ``azp`` is
+            ignored, as §2 advises relying parties that use no extensions.
         nonce: When provided, the token's ``nonce`` MUST be present and equal
             this value (§3.1.3.7 step 11).
         access_token: When provided, the token's ``at_hash`` MUST be present
@@ -223,21 +254,9 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     # §3.1.3.7 step 3 — reject audiences the client does not trust.
     _reject_untrusted_audiences(claims, client_id, trusted_audiences)
 
-    # §3.1.3.7 steps 4-6 — authorized-party (``azp``) rules.
-    aud = claims.get("aud")
-    azp = claims.get("azp")
-    if isinstance(aud, (list, tuple)) and len(aud) > 1 and not azp:
-        # Step 4: with multiple audiences an ``azp`` claim MUST be present.
-        raise IdTokenValidationException(
-            "ID token with multiple audiences must contain an 'azp' claim",
-            token_part="payload",
-        )
-    if azp is not None and client_id is not None and azp != client_id:
-        # Step 6: when present, ``azp`` MUST identify this client.
-        raise IdTokenValidationException(
-            "ID token 'azp' claim does not match the configured client_id",
-            token_part="payload",
-        )
+    # §3.1.3.7 steps 4-5 — authorized-party (``azp``) rules, opt-in only.
+    if validate_azp:
+        _validate_azp(claims, client_id)
 
     # §3.1.3.7 step 11 — ``nonce`` binding (only when the caller passed one).
     if nonce is not None:

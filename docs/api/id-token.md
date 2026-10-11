@@ -10,8 +10,13 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   `trusted_audiences=`, always (§3.1.3.7 step 3). The list only adds trusted
   audiences; it cannot turn the check off. A single-audience token equal to
   your `client_id` needs no list.
-- **`azp`** — a multi-audience token must carry `azp`, and a present `azp`
-  must equal your `client_id` (taken from `token_validation_config.audience`).
+- **`azp`** — ignored by default. When you pass `validate_azp=True`, a
+  multi-audience token must carry `azp`, and a present `azp` must equal your
+  `client_id` (taken from `token_validation_config.audience`). OIDC Core 1.0
+  errata set 2 makes neither a MUST (§3.1.3.7 steps 4-5) and §2 tells relying
+  parties that use no extensions to ignore `azp`, so the default accepts
+  cross-client tokens such as Google's, where `aud` is your backend and `azp`
+  is the mobile client that obtained the token.
 - **`nonce`** — when you pass `nonce=`, the claim must be present and equal
   (compared in constant time).
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
@@ -32,6 +37,7 @@ claims = validate_id_token(
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
     disco_doc_address=DISCOVERY_URL,
     trusted_audiences=["https://api.example.com"],  # other audiences you trust
+    validate_azp=True,             # opt in to the azp rules
     nonce=expected_nonce,          # from the authorization request
     access_token=access_token,     # enforce at_hash (hybrid/implicit)
     code=authorization_code,       # enforce c_hash (hybrid)
