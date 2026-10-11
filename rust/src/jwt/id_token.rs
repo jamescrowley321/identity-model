@@ -11,8 +11,9 @@
 //!   [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
 //!   (§3.1.3.7 step 3). With neither configured, any `aud` value is untrusted
 //!   (fail closed).
-//! * `azp` authorized-party rules when the token carries multiple audiences
-//!   (§3.1.3.7 steps 4-6).
+//! * `azp` authorized-party rules, only when the caller opts in with
+//!   [`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)
+//!   (§3.1.3.7 steps 4-5; §2 says to ignore `azp` otherwise).
 //! * `nonce` binding, when the caller supplies the `nonce` it sent on the
 //!   authorization request (§3.1.3.7 step 11).
 //! * `auth_time` freshness against `max_age` (§3.1.3.7 step 12).
@@ -90,16 +91,17 @@ const EDDSA_ALGS: &[&str] = &["EdDSA", "Ed25519"];
 ///
 /// Construct one with [`IdTokenValidationOptions::builder`]. Every field is
 /// optional: an empty options set enforces only the always-on rules (a
-/// non-empty `sub`, every `aud` value trusted, and the `azp` authorized-party
-/// rules) — with no `client_id` and no trusted audiences configured, any `aud`
-/// value is untrusted, so set a `client_id` (or use [`validate_id_token`],
-/// which defaults it to the base audience). Each remaining check
-/// runs only when its input is supplied — a `nonce`, an `access_token` (for
-/// `at_hash`), a `code` (for `c_hash`), or a `max_age` (for `auth_time`).
+/// non-empty `sub` and every `aud` value trusted) — with no `client_id` and no
+/// trusted audiences configured, any `aud` value is untrusted, so set a
+/// `client_id` (or use [`validate_id_token`], which defaults it to the base
+/// audience). Each remaining check runs only when its input is supplied — `validate_azp(true)` (for the `azp`
+/// rules), a `nonce`, an `access_token` (for `at_hash`), a `code` (for
+/// `c_hash`), or a `max_age` (for `auth_time`).
 #[derive(Clone, Debug, Default)]
 pub struct IdTokenValidationOptions {
     pub(crate) client_id: Option<String>,
     pub(crate) trusted_audiences: Vec<String>,
+    pub(crate) validate_azp: bool,
     pub(crate) nonce: Option<String>,
     pub(crate) access_token: Option<String>,
     pub(crate) code: Option<String>,
@@ -110,7 +112,7 @@ pub struct IdTokenValidationOptions {
 
 impl IdTokenValidationOptions {
     /// Returns an options set with every opt-in check disabled (only the
-    /// always-on `sub`, trusted-audience and `azp` rules apply).
+    /// always-on `sub` and trusted-audience rules apply).
     pub fn new() -> Self {
         Self::default()
     }
@@ -134,8 +136,9 @@ impl IdTokenValidationOptionsBuilder {
     }
 
     /// Sets the relying party's `client_id`. It is always a trusted `aud`
-    /// value (§3.1.3.7 step 3), and when a present `azp` is validated it MUST
-    /// equal this value (§3.1.3.7 step 6). [`validate_id_token`]
+    /// value (§3.1.3.7 step 3), and with
+    /// [`validate_azp`](Self::validate_azp) a present `azp` must equal it.
+    /// [`validate_id_token`]
     /// defaults it to the base audience when unset.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.inner.client_id = Some(client_id.into());
@@ -156,6 +159,18 @@ impl IdTokenValidationOptionsBuilder {
         S: Into<String>,
     {
         self.inner.trusted_audiences = audiences.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Opts in to the authorized-party (`azp`) rules: a token with multiple
+    /// audiences must carry a non-empty `azp`, and a present `azp` must equal
+    /// the `client_id`. OIDC Core 1.0 errata set 2 makes neither a MUST —
+    /// §3.1.3.7 step 5 is a MAY/SHOULD, and the multiple-audience rule is the
+    /// Core 1.0 (2014) step-4 SHOULD that errata set 2 removed. Defaults to
+    /// `false`: `azp` is ignored, as §2 advises relying parties that use no
+    /// extensions.
+    pub fn validate_azp(mut self, validate_azp: bool) -> Self {
+        self.inner.validate_azp = validate_azp;
         self
     }
 
@@ -273,6 +288,35 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
     value.as_f64().map(|f| f.trunc() as i64)
 }
 
+/// Enforces the opt-in authorized-party (`azp`) rules
+/// ([`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)).
+///
+/// The trusted Python oracle (`core/id_token_logic.py`) gates the
+/// multi-audience rule on `not azp`, whose truthiness treats an EMPTY-STRING
+/// `azp` identically to an absent one — so a multi-aud token carrying
+/// `azp: ""` is rejected, not accepted. The mismatch check keeps the oracle's
+/// `azp is not None` guard, so a present-but-empty `azp` is still compared
+/// against `client_id`.
+fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) -> Result<()> {
+    let azp = claims.authorized_party.as_deref();
+    let azp_present = azp.is_some_and(|value| !value.is_empty());
+    if audiences.len() > 1 && !azp_present {
+        // Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an `azp`.
+        return Err(IdentityError::IdTokenValidation(
+            "ID token with multiple audiences must contain an 'azp' claim".to_string(),
+        ));
+    }
+    if let (Some(azp), Some(client_id)) = (azp, client_id)
+        && azp != client_id
+    {
+        // Errata 2 step 5: a present `azp` identifies this client.
+        return Err(IdentityError::IdTokenValidation(
+            "ID token 'azp' claim does not match the configured client_id".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Validates the ID-Token-specific claim rules on an already-decoded claim set
 /// (OIDC Core §3.1.3.7 / §3.3.2.11).
 ///
@@ -292,7 +336,7 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
 /// - [`IdentityError::IdTokenUntrustedAudience`] when an `aud` value is
 ///   neither the `client_id` nor one of the configured trusted audiences
 ///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
-///   before the `azp` rules.
+///   before the opt-in `azp` rules.
 /// - [`IdentityError::IdTokenValidation`] when any other ID-Token profile rule
 ///   is violated. Fails **closed**: a hash check whose `header_alg` is missing
 ///   or unmappable is an error, not a skipped check.
@@ -325,32 +369,9 @@ pub fn validate_id_token_claims(
         return Err(IdentityError::IdTokenUntrustedAudience(untrusted));
     }
 
-    // §3.1.3.7 steps 4-6 — authorized-party (`azp`) rules.
-    //
-    // The trusted Python oracle (`core/id_token_logic.py`) gates the
-    // multi-audience "azp REQUIRED" rule on `not azp`, whose truthiness treats
-    // an EMPTY-STRING `azp` identically to an absent one — so a multi-aud token
-    // carrying `azp: ""` must be rejected, not accepted. Mirror that here (the
-    // previous `azp.is_none()` accepted `azp: ""`, a narrow fail-open). The
-    // subsequent mismatch check keeps the oracle's `azp is not None` guard, so a
-    // present-but-empty `azp` is still compared against `client_id`.
-    let azp = claims.authorized_party.as_deref();
-    let azp_present = azp.is_some_and(|value| !value.is_empty());
-    if audiences.len() > 1 && !azp_present {
-        // Step 4: with multiple audiences an `azp` claim MUST be present — an
-        // empty-string `azp` counts as absent, matching the oracle's `not azp`.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token with multiple audiences must contain an 'azp' claim".to_string(),
-        ));
-    }
-    if let (Some(azp), Some(client_id)) = (azp, options.client_id.as_deref())
-        && azp != client_id
-    {
-        // Step 6: a present `azp` (including an empty string, matching the
-        // oracle's `azp is not None`) MUST identify this client.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token 'azp' claim does not match the configured client_id".to_string(),
-        ));
+    // §3.1.3.7 steps 4-5 — authorized-party (`azp`) rules, opt-in only.
+    if options.validate_azp {
+        validate_azp(claims, audiences, options.client_id.as_deref())?;
     }
 
     // §3.1.3.7 step 11 — `nonce` binding (only when the caller passed one).
@@ -422,8 +443,8 @@ pub fn validate_id_token_claims(
 /// then applies the ID-Token profile from `profile`: required `sub`, every
 /// `aud` value trusted (the `client_id` or a
 /// [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
-/// entry), the `azp` authorized-party rules, and the opt-in `nonce`/`max_age`/`at_hash`/`c_hash`
-/// bindings that are checked only when the corresponding option is supplied.
+/// entry), and the opt-in `azp`/`nonce`/`max_age`/`at_hash`/`c_hash` checks,
+/// each run only when the corresponding option is supplied.
 ///
 /// When `profile.client_id` is unset it defaults to the `base` audience, so a
 /// caller that already set the audience need not repeat the `client_id`.
@@ -621,6 +642,7 @@ mod tests {
     fn untrusted_audience_checked_before_azp() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .validate_azp(true)
             .build();
         let c = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
         assert_untrusted_audience(
@@ -629,13 +651,49 @@ mod tests {
         );
     }
 
-    // IDT-003: multiple audiences REQUIRE an azp that identifies this client.
-    // The second audience is trusted so step 3 passes and the azp rules run.
+    // IDT-003: by default azp is ignored, so multiple audiences need no azp and
+    // a foreign azp is accepted. The second audience is trusted so step 3
+    // passes and only the azp rules are in play.
+    #[test]
+    fn ignores_azp_by_default() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+
+        let no_azp = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
+        validate_id_token_claims(&no_azp, Some("RS256"), &cid)
+            .expect("multi-aud without azp validates by default");
+
+        let wrong_azp = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "other-client-9x"}),
+        );
+        validate_id_token_claims(&wrong_azp, Some("RS256"), &cid)
+            .expect("multi-aud with a foreign azp validates by default");
+
+        // Google's Android-to-backend flow: aud is this client, azp the
+        // presenting mobile client.
+        let cross_client =
+            claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "android-client"}));
+        validate_id_token_claims(&cross_client, Some("RS256"), &cid)
+            .expect("cross-client azp validates by default");
+
+        let explicitly_off = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .validate_azp(false)
+            .build();
+        validate_id_token_claims(&cross_client, Some("RS256"), &explicitly_off)
+            .expect("cross-client azp validates with azp validation off");
+    }
+
+    // IDT-003 with `validate_azp(true)`: multiple audiences require an azp that
+    // identifies this client.
     #[test]
     fn enforces_azp_for_multiple_audiences() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
             .trusted_audiences(["other-client-9x"])
+            .validate_azp(true)
             .build();
 
         let single_list = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3"]}));
@@ -663,9 +721,9 @@ mod tests {
             .expect("multi-aud with matching azp validates");
     }
 
-    // An empty-string `azp` must behave exactly like the Python oracle's
-    // `not azp` / `azp is not None` truthiness (F-1 parity), NOT like Rust's
-    // former `azp.is_none()`:
+    // With `validate_azp(true)`, an empty-string `azp` must behave exactly like
+    // the Python oracle's `not azp` / `azp is not None` truthiness (F-1
+    // parity), NOT like Rust's former `azp.is_none()`:
     //   * multi-aud + azp=""            -> azp_required_multi_aud (was fail-open
     //     accept when no client_id was configured);
     //   * multi-aud + azp="" + client_id -> still azp_required_multi_aud, since
@@ -683,6 +741,7 @@ mod tests {
             claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": ""}));
         let trusted_no_cid = IdTokenValidationOptions::builder()
             .trusted_audiences(["s6BhdRkqt3", "other-client-9x"])
+            .validate_azp(true)
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&multi_empty, Some("RS256"), &trusted_no_cid).unwrap_err(),
@@ -694,6 +753,7 @@ mod tests {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
             .trusted_audiences(["other-client-9x"])
+            .validate_azp(true)
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&multi_empty, Some("RS256"), &cid).unwrap_err(),
@@ -713,11 +773,13 @@ mod tests {
             .expect("empty azp on single audience with no client_id validates");
     }
 
-    // IDT-004: a present azp is validated even for a single audience.
+    // IDT-004 with `validate_azp(true)`: a present azp is validated even for a
+    // single audience.
     #[test]
     fn validates_present_azp_for_single_audience() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .validate_azp(true)
             .build();
         let ok = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "s6BhdRkqt3"}));
         validate_id_token_claims(&ok, Some("RS256"), &cid).expect("matching azp validates");
