@@ -38,9 +38,11 @@ logger = logging.getLogger("fastapi_identity_model")
 # Expected number of parts in "Bearer <token>" authorization header
 _BEARER_HEADER_PART_COUNT = 2
 
-# Claims that only ever appear in an ID token (OIDC Core 1.0 §2, §3.1.3.6).
-# Their presence means an ID token was presented where an access token is
-# expected — reject it to prevent token-substitution at the resource server.
+# Claims OIDC Core 1.0 defines for ID tokens (§2, §3.1.3.6, §3.3.2.11). Core
+# does not forbid them elsewhere, so treating them as ID-token-only is a
+# library heuristic: their presence means an ID token was presented where an
+# access token is expected — reject it to prevent token-substitution at the
+# resource server.
 _ID_TOKEN_ONLY_CLAIMS = ("nonce", "at_hash", "c_hash")
 
 # Positive access-token marker claims for the opt-in ID-token-substitution
