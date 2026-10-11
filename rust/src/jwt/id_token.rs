@@ -18,7 +18,11 @@
 //!   authorization request (§3.1.3.7 step 11).
 //! * `auth_time` freshness against `max_age` (§3.1.3.7 step 12).
 //! * `at_hash` / `c_hash` token/code binding for the hybrid and
-//!   authorization-code flows (§3.3.2.11).
+//!   authorization-code flows (§3.3.2.11). A present hash claim must match. An
+//!   absent one is rejected unless the caller says the value did not come in
+//!   the same authorization response as the ID Token
+//!   (`access_token_issued_with_id_token(false)` /
+//!   `code_issued_with_id_token(false)`, §3.1.3.6 / §3.2.2.10 / §3.3.2.11).
 //!
 //! The `at_hash`/`c_hash` hash is chosen from the ID Token header `alg` — the
 //! *signature-verified* algorithm ([`super::parse_header_alg`]), never an
@@ -97,17 +101,39 @@ const EDDSA_ALGS: &[&str] = &["EdDSA", "Ed25519"];
 /// audience). Each remaining check runs only when its input is supplied — `validate_azp(true)` (for the `azp`
 /// rules), a `nonce`, an `access_token` (for `at_hash`), a `code` (for
 /// `c_hash`), or a `max_age` (for `auth_time`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct IdTokenValidationOptions {
     pub(crate) client_id: Option<String>,
     pub(crate) trusted_audiences: Vec<String>,
     pub(crate) validate_azp: bool,
     pub(crate) nonce: Option<String>,
     pub(crate) access_token: Option<String>,
+    pub(crate) access_token_issued_with_id_token: bool,
     pub(crate) code: Option<String>,
+    pub(crate) code_issued_with_id_token: bool,
     pub(crate) max_age: Option<i64>,
     pub(crate) leeway: Duration,
     pub(crate) now: Option<i64>,
+}
+
+impl Default for IdTokenValidationOptions {
+    fn default() -> Self {
+        Self {
+            client_id: None,
+            trusted_audiences: Vec::new(),
+            validate_azp: false,
+            nonce: None,
+            access_token: None,
+            // A supplied access token / code is taken to have come back with the
+            // ID Token, so its hash claim is required (§3.2.2.10, §3.3.2.11).
+            access_token_issued_with_id_token: true,
+            code: None,
+            code_issued_with_id_token: true,
+            max_age: None,
+            leeway: Duration::default(),
+            now: None,
+        }
+    }
 }
 
 impl IdTokenValidationOptions {
@@ -181,17 +207,42 @@ impl IdTokenValidationOptionsBuilder {
         self
     }
 
-    /// Requires the token's `at_hash` to be present and bind to `access_token`
-    /// (§3.3.2.11).
+    /// Requires the token's `at_hash` to match the left-half hash of
+    /// `access_token` (§3.3.2.11). The claim must also be present unless
+    /// [`access_token_issued_with_id_token`](Self::access_token_issued_with_id_token)
+    /// is `false`.
     pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
         self.inner.access_token = Some(access_token.into());
         self
     }
 
-    /// Requires the token's `c_hash` to be present and bind to `code`, the
-    /// authorization code (§3.3.2.11).
+    /// States whether the [`access_token`](Self::access_token) came back in the
+    /// same authorization response as the ID Token (`response_type`
+    /// `id_token token` or `code id_token token`), which makes `at_hash`
+    /// REQUIRED (§3.2.2.10, §3.3.2.11). Defaults to `true`. Pass `false` for a
+    /// token-endpoint ID Token, which may omit `at_hash` (§3.1.3.6); a present
+    /// `at_hash` must still match. Has no effect without an access token.
+    pub fn access_token_issued_with_id_token(mut self, issued_with_id_token: bool) -> Self {
+        self.inner.access_token_issued_with_id_token = issued_with_id_token;
+        self
+    }
+
+    /// Requires the token's `c_hash` to match the left-half hash of `code`, the
+    /// authorization code (§3.3.2.11). The claim must also be present unless
+    /// [`code_issued_with_id_token`](Self::code_issued_with_id_token) is
+    /// `false`.
     pub fn code(mut self, code: impl Into<String>) -> Self {
         self.inner.code = Some(code.into());
+        self
+    }
+
+    /// States whether the [`code`](Self::code) came back in the same
+    /// authorization response as the ID Token (`response_type` `code id_token`
+    /// or `code id_token token`), which makes `c_hash` REQUIRED (§3.3.2.11).
+    /// Defaults to `true`. Pass `false` when it did not; a present `c_hash`
+    /// must still match. Has no effect without a code.
+    pub fn code_issued_with_id_token(mut self, issued_with_id_token: bool) -> Self {
+        self.inner.code_issued_with_id_token = issued_with_id_token;
         self
     }
 
@@ -406,30 +457,62 @@ pub fn validate_id_token_claims(
 
     // §3.3.2.11 — `at_hash` binding (only when an access token was passed).
     if let Some(access_token) = options.access_token.as_deref() {
-        let expected = left_half_hash(access_token, header_alg)?;
-        let matches = claims
-            .get_str("at_hash")
-            .is_some_and(|actual| ct_eq(actual, &expected));
-        if !matches {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'at_hash' claim does not match the access token".to_string(),
-            ));
-        }
+        validate_hash_binding(
+            claims,
+            header_alg,
+            "at_hash",
+            "the access token",
+            access_token,
+            options.access_token_issued_with_id_token,
+        )?;
     }
 
     // §3.3.2.11 — `c_hash` binding (only when an authorization code was passed).
     if let Some(code) = options.code.as_deref() {
-        let expected = left_half_hash(code, header_alg)?;
-        let matches = claims
-            .get_str("c_hash")
-            .is_some_and(|actual| ct_eq(actual, &expected));
-        if !matches {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'c_hash' claim does not match the authorization code".to_string(),
-            ));
-        }
+        validate_hash_binding(
+            claims,
+            header_alg,
+            "c_hash",
+            "the authorization code",
+            code,
+            options.code_issued_with_id_token,
+        )?;
     }
 
+    Ok(())
+}
+
+/// Checks that the `claim` hash (`at_hash`/`c_hash`) binds to `value`
+/// (§3.3.2.11). Presence is required only when `value` came in the same
+/// authorization response as the ID Token (`required`, §3.2.2.10 /
+/// §3.3.2.11); otherwise an absent claim is accepted. A present claim must
+/// match whatever its type. Presence is checked before the hash is computed,
+/// so an absent, unrequired claim never consults the `alg`.
+fn validate_hash_binding(
+    claims: &Claims,
+    header_alg: Option<&str>,
+    claim: &str,
+    subject: &str,
+    value: &str,
+    required: bool,
+) -> Result<()> {
+    if !claims.has(claim) {
+        if required {
+            return Err(IdentityError::IdTokenValidation(format!(
+                "ID token missing required '{claim}' claim for {subject} issued with it"
+            )));
+        }
+        return Ok(());
+    }
+    let expected = left_half_hash(value, header_alg)?;
+    let matches = claims
+        .get_str(claim)
+        .is_some_and(|actual| ct_eq(actual, &expected));
+    if !matches {
+        return Err(IdentityError::IdTokenValidation(format!(
+            "ID token '{claim}' claim does not match {subject}"
+        )));
+    }
     Ok(())
 }
 
@@ -874,11 +957,48 @@ mod tests {
             "'at_hash' claim does not match",
         );
 
+        // By default the access token is taken to have come back with the ID
+        // Token (§3.2.2.10, §3.3.2.11), so at_hash is required.
         let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &opts).unwrap_err(),
+            "missing required 'at_hash'",
+        );
+        let issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token(access_token)
+            .access_token_issued_with_id_token(true)
+            .build();
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
+            "missing required 'at_hash'",
+        );
+        validate_id_token_claims(&good, Some("RS256"), &issued_with)
+            .expect("required at_hash present and correct");
+        assert_id_token_reject(
+            &validate_id_token_claims(&bad, Some("RS256"), &issued_with).unwrap_err(),
             "'at_hash' claim does not match",
         );
+
+        // A token-endpoint ID Token may omit at_hash (§3.1.3.6).
+        let token_endpoint = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token(access_token)
+            .access_token_issued_with_id_token(false)
+            .build();
+        validate_id_token_claims(&absent, Some("RS256"), &token_endpoint)
+            .expect("absent at_hash accepted when not issued with the ID Token");
+
+        // A present at_hash must match whatever its type.
+        let null = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "at_hash": null}));
+        assert_id_token_reject(
+            &validate_id_token_claims(&null, Some("RS256"), &token_endpoint).unwrap_err(),
+            "'at_hash' claim does not match",
+        );
+
+        // With nothing to verify, an unmappable alg is never consulted.
+        validate_id_token_claims(&absent, Some("UNKNOWN"), &token_endpoint)
+            .expect("absent, unrequired at_hash skips the alg lookup");
 
         // No access_token supplied -> at_hash present but unchecked.
         let unchecked = IdTokenValidationOptions::builder()
@@ -943,6 +1063,45 @@ mod tests {
             "c_hash": "5ZRO6ySh8Y5x73OPd63wcyIunjtbSNZh9sQvDCegRDY"
         }));
         validate_id_token_claims(&es_good, Some("ES512"), &es).expect("ES512 c_hash validates");
+
+        // c_hash presence is required by default, and only for a code issued
+        // with the ID Token.
+        let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &rs).unwrap_err(),
+            "missing required 'c_hash'",
+        );
+        let issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
+            .code_issued_with_id_token(true)
+            .build();
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
+            "missing required 'c_hash'",
+        );
+        validate_id_token_claims(&good, Some("RS256"), &issued_with)
+            .expect("required c_hash present and correct");
+        let not_issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
+            .code_issued_with_id_token(false)
+            .build();
+        validate_id_token_claims(&absent, Some("RS256"), &not_issued_with)
+            .expect("absent c_hash accepted when not issued with the ID Token");
+    }
+
+    // The issued-with-ID-Token switches only apply to a supplied value.
+    #[test]
+    fn issued_with_id_token_switches_need_their_value() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token_issued_with_id_token(true)
+            .code_issued_with_id_token(true)
+            .build();
+        let bare = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        validate_id_token_claims(&bare, Some("RS256"), &opts)
+            .expect("switches without an access token or code are no-ops");
     }
 
     // IDT-011: an unknown or missing header alg on a hash check fails closed.
