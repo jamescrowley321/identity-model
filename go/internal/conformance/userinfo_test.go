@@ -57,6 +57,12 @@ func runUserInfoVector(t *testing.T, label, base string, v HTTPVector) {
 				t.Fatalf("%s: expected missing-sub RequestError, got %v", label, err)
 			}
 			return
+		case "unverifiable_sub":
+			var re *userinfo.RequestError
+			if !errors.As(err, &re) || !strings.Contains(err.Error(), "application/jwt") {
+				t.Fatalf("%s: expected application/jwt RequestError, got %v", label, err)
+			}
+			return
 		default:
 			t.Fatalf("%s: unknown expected error %q", label, v.Expect.Error)
 		}
