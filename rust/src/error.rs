@@ -80,6 +80,22 @@ pub enum IdentityError {
     #[error("key not found: {0}")]
     KeyNotFound(String),
 
+    /// A token with no `kid` could be verified by more than one key in the
+    /// JWKS (JWKS-009). With no `kid`, the set is narrowed to signing keys
+    /// (`use` absent or `sig`, RFC 7517 §4.2), then to keys whose `alg` is
+    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it;
+    /// `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
+    /// which reports a `kid` that matches no key.
+    #[error("ambiguous key: token has no kid and {count} keys could verify alg {alg:?} {kids:?}")]
+    AmbiguousKey {
+        /// The token header `alg`.
+        alg: String,
+        /// The ids of the remaining keys that have one.
+        kids: Vec<String>,
+        /// The number of remaining keys.
+        count: usize,
+    },
+
     /// The token endpoint replied with a non-2xx OAuth 2.0 error response
     /// (RFC 6749 §5.2).
     #[error("token endpoint error {error:?}{}: HTTP {status}", .description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]
@@ -121,6 +137,15 @@ mod tests {
         assert_eq!(
             IdentityError::KeyNotFound("abc".into()).to_string(),
             "key not found: abc"
+        );
+        assert_eq!(
+            IdentityError::AmbiguousKey {
+                alg: "RS256".into(),
+                kids: vec!["a".into(), "b".into()],
+                count: 2,
+            }
+            .to_string(),
+            r#"ambiguous key: token has no kid and 2 keys could verify alg "RS256" ["a", "b"]"#
         );
         assert_eq!(
             IdentityError::Configuration("missing token_endpoint".into()).to_string(),

@@ -219,6 +219,66 @@ impl JsonWebKeySet {
         self.find(kid)
             .ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))
     }
+
+    /// Resolves the key that verifies a token whose JOSE header carries `kid`
+    /// and `alg`, scanning the in-memory set only.
+    ///
+    /// With a `kid` it is [`JsonWebKeySet::resolve_key`]. With no `kid` (an OP
+    /// may omit it when its set holds a single key, OIDC Core 1.0 §10.1) the
+    /// set is narrowed to signing keys (`use` absent or `sig`, RFC 7517 §4.2;
+    /// if none, every key), then, while more than one remains, to keys whose
+    /// `alg` is absent or equals `alg` (§4.4) and to keys whose `kty` matches
+    /// `alg`, each step applied only when it leaves a key. The one remaining
+    /// key is returned (JWKS-009). Callers must reject `alg` `none` first.
+    ///
+    /// # Errors
+    ///
+    /// - [`IdentityError::AmbiguousKey`] when no `kid` is given and more than
+    ///   one key remains.
+    /// - [`IdentityError::KeyNotFound`] when `kid` matches no key.
+    pub fn resolve_signing_key(&self, kid: &str, alg: &str) -> Result<&JsonWebKey> {
+        if !kid.is_empty() {
+            return self.resolve_key(kid);
+        }
+        let all: Vec<&JsonWebKey> = self.keys.iter().collect();
+        let mut candidates = narrow(all, |k| k.use_.is_empty() || k.use_ == "sig");
+        if candidates.len() > 1 && !alg.is_empty() {
+            candidates = narrow(candidates, |k| k.alg.is_empty() || k.alg == alg);
+            if let Some(kty) = alg_kty(alg) {
+                candidates = narrow(candidates, |k| k.kty == kty);
+            }
+        }
+        match candidates.as_slice() {
+            [] => Err(IdentityError::KeyNotFound(String::new())),
+            [key] => Ok(key),
+            many => Err(IdentityError::AmbiguousKey {
+                alg: alg.to_string(),
+                kids: many
+                    .iter()
+                    .filter(|k| !k.kid.is_empty())
+                    .map(|k| k.kid.clone())
+                    .collect(),
+                count: many.len(),
+            }),
+        }
+    }
+}
+
+/// Returns the keys that satisfy `keep`, or `keys` unchanged when none does.
+fn narrow(keys: Vec<&JsonWebKey>, keep: impl Fn(&JsonWebKey) -> bool) -> Vec<&JsonWebKey> {
+    let kept: Vec<&JsonWebKey> = keys.iter().copied().filter(|k| keep(k)).collect();
+    if kept.is_empty() { keys } else { kept }
+}
+
+/// The JWK `kty` that can verify a JWS `alg` (RFC 7518 §3.1).
+fn alg_kty(alg: &str) -> Option<&'static str> {
+    match alg {
+        "RS256" | "RS384" | "RS512" | "PS256" | "PS384" | "PS512" => Some("RSA"),
+        "ES256" | "ES384" | "ES512" | "ES256K" => Some("EC"),
+        "EdDSA" | "Ed25519" | "Ed448" => Some("OKP"),
+        "HS256" | "HS384" | "HS512" => Some("oct"),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -343,5 +403,104 @@ mod tests {
             IdentityError::Validation(msg) => assert!(msg.contains("kty"), "{msg}"),
             other => panic!("expected Validation, got {other:?}"),
         }
+    }
+
+    /// Fixture JWK Sets shared with the spec vectors (JWKS-009).
+    fn kidless_fixture(name: &str) -> JsonWebKeySet {
+        let path = format!(
+            "{}/../spec/test-fixtures/jwks/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let body = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        JsonWebKeySet::parse(&body).expect("fixture parses")
+    }
+
+    // JWKS-009: with no kid, the single key left after narrowing by use, alg
+    // and kty is selected.
+    #[test]
+    fn resolve_signing_key_without_kid_narrows_to_one_key() {
+        let cases = [
+            ("kidless-single.json", "RS256", "rsa-sig-key"),
+            ("kidless-sig-enc.json", "RS256", "rsa-sig-key"),
+            ("kidless-rsa-ec.json", "RS256", "rsa-sig-key"),
+            ("kidless-rsa-ec.json", "ES256", "ec-sig-key"),
+        ];
+        for (fixture, alg, want) in cases {
+            let set = kidless_fixture(fixture);
+            let key = set
+                .resolve_signing_key("", alg)
+                .unwrap_or_else(|e| panic!("{fixture} {alg}: {e}"));
+            assert_eq!(key.kid, want, "{fixture} {alg}");
+        }
+    }
+
+    // JWKS-009: a key declaring a different alg does not make the choice
+    // ambiguous (RFC 7517 §4.4), and a set with no signing key falls back to
+    // every key.
+    #[test]
+    fn resolve_signing_key_without_kid_alg_filter_and_fallback() {
+        let by_alg = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"RSA","kid":"rs256","use":"sig","alg":"RS256","n":"a","e":"AQAB"},
+                {"kty":"RSA","kid":"rs384","use":"sig","alg":"RS384","n":"a","e":"AQAB"}
+            ] }"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            by_alg.resolve_signing_key("", "RS384").expect("rs384").kid,
+            "rs384"
+        );
+
+        let enc_only = JsonWebKeySet::parse(
+            br#"{ "keys": [ {"kty":"RSA","kid":"enc-only","use":"enc","n":"a","e":"AQAB"} ] }"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            enc_only
+                .resolve_signing_key("", "RS256")
+                .expect("fallback")
+                .kid,
+            "enc-only"
+        );
+    }
+
+    // JWKS-009: two keys that could verify a kid-less token are ambiguous, a
+    // typed error distinct from KeyNotFound.
+    #[test]
+    fn resolve_signing_key_without_kid_ambiguous() {
+        let set = kidless_fixture("kidless-two-rsa.json");
+        let err = set
+            .resolve_signing_key("", "RS256")
+            .expect_err("two RSA signing keys are ambiguous");
+        match err {
+            IdentityError::AmbiguousKey { alg, kids, count } => {
+                assert_eq!(alg, "RS256");
+                assert_eq!(
+                    kids,
+                    vec!["rsa-sig-key-1".to_string(), "rsa-sig-key-2".to_string()]
+                );
+                assert_eq!(count, 2);
+            }
+            other => panic!("expected AmbiguousKey, got {other:?}"),
+        }
+    }
+
+    // A token with a kid keeps the kid lookup.
+    #[test]
+    fn resolve_signing_key_with_kid_looks_up_kid() {
+        let set = kidless_fixture("kidless-two-rsa.json");
+        assert_eq!(
+            set.resolve_signing_key("rsa-sig-key-2", "RS256")
+                .expect("by kid")
+                .kid,
+            "rsa-sig-key-2"
+        );
+        let err = set
+            .resolve_signing_key("ghost", "RS256")
+            .expect_err("unknown kid");
+        assert!(
+            matches!(&err, IdentityError::KeyNotFound(kid) if kid == "ghost"),
+            "{err:?}"
+        );
     }
 }

@@ -203,6 +203,33 @@ impl JwksClient {
         refreshed.resolve_key(kid).cloned()
     }
 
+    /// Resolves the key at `jwks_uri` that verifies a token whose JOSE header
+    /// carries `kid` and `alg`.
+    ///
+    /// With a `kid` it is [`JwksClient::resolve_key`], forced refresh on a miss
+    /// included. With no `kid` it selects the key as
+    /// [`JsonWebKeySet::resolve_signing_key`] does, from the cached set and
+    /// with no forced refresh (JWKS-009). Callers must reject `alg` `none`
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// - [`IdentityError::AmbiguousKey`] — no `kid` and more than one key
+    ///   could verify the token.
+    /// - The errors of [`JwksClient::resolve_key`].
+    pub async fn resolve_signing_key(
+        &self,
+        jwks_uri: &str,
+        kid: &str,
+        alg: &str,
+    ) -> Result<JsonWebKey> {
+        if !kid.is_empty() {
+            return self.resolve_key(jwks_uri, kid).await;
+        }
+        let key_set = self.fetch(jwks_uri).await?;
+        key_set.resolve_signing_key("", alg).cloned()
+    }
+
     /// Performs the HTTP request and parses the body. Contains no caching logic.
     async fn fetch_and_parse(&self, uri: &str) -> Result<JsonWebKeySet> {
         let mut response = self
@@ -450,6 +477,57 @@ mod tests {
         assert_eq!(key.kid, "rsa-sig-key");
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 2, "one initial fetch + one forced refresh");
+    }
+
+    // JWKS-009: a token with no kid selects the single signing key — which has
+    // a kid of its own — without forcing a refresh.
+    #[tokio::test]
+    async fn resolve_signing_key_without_kid_makes_no_refresh() {
+        let server = MockServer::start().await;
+        let single = r#"{ "keys": [
+            {"kty":"RSA","kid":"rsa-sig-key","use":"sig","alg":"RS256","n":"a","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(single)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "", "RS256")
+            .await
+            .expect("single key selected");
+
+        assert_eq!(key.kid, "rsa-sig-key");
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
+    }
+
+    // JWKS-009: an ambiguous kid-less token errors AmbiguousKey without a
+    // refresh; a kid still resolves through the refresh path.
+    #[tokio::test]
+    async fn resolve_signing_key_without_kid_ambiguous_makes_no_refresh() {
+        let server = MockServer::start().await;
+        let two = r#"{ "keys": [
+            {"kty":"RSA","kid":"a","use":"sig","n":"a","e":"AQAB"},
+            {"kty":"RSA","kid":"b","use":"sig","n":"b","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(two)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let err = client
+            .resolve_signing_key(&jwks_uri(&server), "", "RS256")
+            .await
+            .expect_err("ambiguous");
+        assert!(
+            matches!(&err, IdentityError::AmbiguousKey { count: 2, .. }),
+            "expected AmbiguousKey, got {err:?}"
+        );
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
+
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "b", "RS256")
+            .await
+            .expect("kid b");
+        assert_eq!(key.kid, "b");
     }
 
     // JWKS-004: a kid that never appears errors KeyNotFound after the refresh.

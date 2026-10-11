@@ -606,7 +606,9 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
     let client = JwksClient::builder().allow_http(true).build();
     let uri = format!("{base}/jwks");
     let kid = v.input_str("kid").unwrap_or_default();
-    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`.
+    let alg = v.input_str("alg").unwrap_or_default();
+    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`;
+    // with neither it resolves a token header with no kid and `input.alg`.
     let mut kids = v
         .input
         .get("kids")
@@ -621,7 +623,10 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
             Some("fetch") => client.fetch(&uri).await.map(|set| set.keys),
             Some("resolve") => {
                 let kid = kids.next().unwrap_or(kid);
-                client.resolve_key(&uri, kid).await.map(|key| vec![key])
+                client
+                    .resolve_signing_key(&uri, kid, alg)
+                    .await
+                    .map(|key| vec![key])
             }
             Some("force_refresh") => client.force_refresh(&uri).await.map(|set| set.keys),
             other => panic!("unknown step {other:?}"),
@@ -645,7 +650,8 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
         }
         "reject" => match (expect.error.as_str(), result) {
             ("malformed", Err(IdentityError::Deserialization(_)))
-            | ("key_not_found", Err(IdentityError::KeyNotFound(_))) => {}
+            | ("key_not_found", Err(IdentityError::KeyNotFound(_)))
+            | ("ambiguous_key", Err(IdentityError::AmbiguousKey { .. })) => {}
             ("empty_key_set", Err(IdentityError::Validation(msg))) => {
                 assert!(msg.contains("contains no keys"), "{label}: {msg}");
             }

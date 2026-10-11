@@ -537,6 +537,8 @@ fn validate_hash_binding(
 /// - [`IdentityError::Validation`] — standard JWT validation failed (bad
 ///   signature, wrong issuer/audience, expired token).
 /// - [`IdentityError::KeyNotFound`] — no JWKS key matched the token's `kid`.
+/// - [`IdentityError::AmbiguousKey`] — the token has no `kid` and more than
+///   one JWKS key could verify it.
 /// - [`IdentityError::IdTokenUntrustedAudience`] — the token's `aud` carries
 ///   a value the client does not trust (§3.1.3.7 step 3).
 /// - [`IdentityError::IdTokenValidation`] — another ID-Token-profile rule
