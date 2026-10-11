@@ -590,7 +590,7 @@
       "title": "Select the key for a token with no kid",
       "given": "A token whose JOSE header has no kid",
       "when": "Key resolution is attempted",
-      "then": "The key set is narrowed to signing keys (use absent or sig), then, when more than one remains, to keys whose alg is absent or equals the header alg, then to keys whose kty matches the header alg; exactly one remaining key is used with no forced refresh, and more than one is an ambiguous-key error distinct from key-not-found",
+      "then": "The key set is narrowed to signing keys (use absent or sig), then, when more than one remains, to keys whose alg is absent or equals the header alg, then to keys whose kty matches the header alg; each step applies only when it leaves at least one key, so a set with no signing key falls back to all its keys; exactly one remaining key is used with no forced refresh, and more than one is an ambiguous-key error distinct from key-not-found",
       "references": [
         "OIDC Core 1.0 \u00a710.1",
         "RFC 7517 \u00a74.2",
