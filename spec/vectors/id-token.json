@@ -2,14 +2,14 @@
   "capability": "id-token",
   "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then untrusted audiences (\u00a73.1.3.7 step 3), then azp (steps 4-6), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012).",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then untrusted audiences (\u00a73.1.3.7 step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored.",
   "tests": [
     {
       "id": "IDT-001",
       "title": "Valid baseline ID Token",
       "given": "A decoded ID Token carrying a non-empty sub and a single audience equal to the client_id",
       "when": "The ID-Token profile rules are applied",
-      "then": "Validation succeeds \u2014 sub present, no azp required for a single audience, no optional bindings requested",
+      "then": "Validation succeeds \u2014 sub present, the single audience is the client_id, no optional checks requested",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -88,10 +88,10 @@
     },
     {
       "id": "IDT-003",
-      "title": "Authorized-party (azp) rules for single vs multiple audiences",
-      "given": "A decoded ID Token whose aud is a single value or a list (every additional audience trusted by the client), with or without azp",
+      "title": "Authorized-party (azp) rules for multiple audiences are opt-in",
+      "given": "A decoded ID Token whose aud is a single value or a list (every additional audience trusted by the client), with or without azp, and the caller's validate_azp switch",
       "when": "The ID-Token profile rules are applied",
-      "then": "A single audience needs no azp; multiple audiences REQUIRE an azp that identifies this client (\u00a73.1.3.7 steps 4-6)",
+      "then": "By default azp is ignored (\u00a72). With validate_azp, multiple audiences require an azp (Core 1.0 (2014) \u00a73.1.3.7 step 4 SHOULD, removed in errata set 2) and a present azp must identify this client (errata 2 step 5 MAY/SHOULD)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -135,7 +135,7 @@
           }
         },
         {
-          "name": "multiple audiences, azp absent",
+          "name": "multiple audiences, azp absent, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -155,13 +155,38 @@
             "now": 1700000000
           },
           "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "multiple audiences, azp absent, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "azp_required_multi_aud"
           }
         },
         {
-          "name": "multiple audiences, azp is a different client",
+          "name": "multiple audiences, azp is a different client, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -182,13 +207,39 @@
             "now": 1700000000
           },
           "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "multiple audiences, azp is a different client, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "other-client-9x",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "azp_mismatch"
           }
         },
         {
-          "name": "multiple audiences, azp identifies this client",
+          "name": "multiple audiences, azp identifies this client, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -211,21 +262,68 @@
           "expect": {
             "outcome": "accept"
           }
+        },
+        {
+          "name": "multiple audiences, azp identifies this client, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-element aud list, no azp, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
         }
       ]
     },
     {
       "id": "IDT-004",
-      "title": "azp is validated when present even for a single audience",
-      "given": "A decoded ID Token carrying an azp claim alongside a single audience",
+      "title": "A present azp is compared with the client_id only when azp validation is on",
+      "given": "A decoded ID Token carrying an azp claim alongside a single audience equal to the client_id, and the caller's validate_azp switch",
       "when": "The ID-Token profile rules are applied",
-      "then": "When present, azp MUST equal the configured client_id (\u00a73.1.3.7 step 6)",
+      "then": "By default azp is ignored, so a cross-client token (aud is this client, azp is the presenting client) is accepted. With validate_azp, a present azp must equal the client_id (errata 2 \u00a73.1.3.7 step 5)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
       "vectors": [
         {
-          "name": "azp present and equals client_id",
+          "name": "azp present and equals client_id, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -244,7 +342,68 @@
           }
         },
         {
-          "name": "azp present but does not match client_id",
+          "name": "azp present and equals client_id, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "cross-client azp (Google Android-to-backend), azp validation off",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "android-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "cross-client azp (Google Android-to-backend), azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "android-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "azp_mismatch"
+          }
+        },
+        {
+          "name": "azp present but does not match client_id, azp validation explicitly off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -256,12 +415,74 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "validate_azp": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "azp present but does not match client_id, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "impostor-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "azp_mismatch"
+          }
+        },
+        {
+          "name": "Cognito-shaped ID token (single aud, no azp), azp validation off",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "token_use": "id",
+              "cognito:username": "jdoe",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "Cognito-shaped ID token (single aud, no azp), azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "token_use": "id",
+              "cognito:username": "jdoe",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
           }
         }
       ]
@@ -895,6 +1116,7 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
