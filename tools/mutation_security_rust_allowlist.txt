@@ -26,3 +26,9 @@
 # re-authored. A name with no hash is a hard error, never a silent pass.
 #
 # Every entry weakens the gate, so keep the justification concrete and specific.
+
+# resolve_kidless: `candidates.len() > 1` -> `>= 1` only adds the alg/kty
+# narrowing for a one-key set, and `narrow` returns its input unchanged when
+# the filter would empty it, so a single candidate stays the same single
+# candidate (and an empty set stays empty). Same result for every input.
+src/jwks/key.rs:JsonWebKeySet::resolve_kidless 122c9de7bc970344
