@@ -9,10 +9,6 @@ from .core.config import (
     Config,
     ConfigError,
     ConfigIssue,
-    ConfigSource,
-    EnvSource,
-    MappingSource,
-    Secret,
 )
 
 # Backward compatible sync exports (default)
@@ -198,7 +194,6 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConfigIssue",
-    "ConfigSource",
     "ConfigurationException",
     # DPoP
     "DPoPKey",
@@ -217,7 +212,6 @@ __all__ = [
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
     "DiscoveryPolicy",
-    "EnvSource",
     "FAPIValidationResult",
     "FailedResponseAccessError",
     # HTTP Client
@@ -235,7 +229,6 @@ __all__ = [
     "KeyAlgorithmMismatchException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
-    "MappingSource",
     "MtlsClientAuth",
     "NetworkException",
     # Client authentication (private_key_jwt)
@@ -248,7 +241,6 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
-    "Secret",
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",

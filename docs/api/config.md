@@ -1,91 +1,94 @@
 # Configuration
 
-A typed, fail-closed configuration surface. `Config` resolves settings from
-pluggable sources (environment variables by default), validates **everything
-up front**, and either returns an immutable, fully-typed value or raises a
-single `ConfigError` carrying *every* problem at once — no partial
-configuration ever escapes, and error messages name keys, never values.
+`Config` is a plain, frozen, typed value holding the library's settings. Every
+setting has a default, so `Config()` is a complete configuration. Values are
+validated when the `Config` is created: if any are invalid, one `ConfigError`
+names every invalid setting and no `Config` is returned. An invalid value is
+never replaced by its default.
 
-This is an opt-in layer: construct a `Config` and read its typed fields in
-your own wiring. The library's existing per-call configuration
-(`TokenValidationConfig`, request models) is unchanged.
+`Config` has no loaders and parses no strings. Where the values come from
+(environment variables, a file, a secrets manager) is up to you: build the
+`Config` in your own code.
+
+!!! note
+    The library's discovery, JWKS and HTTP functions don't take a `Config` yet.
+    Until they do, they keep reading the environment variables described in the
+    [Performance Guide](../performance.md).
+
+## Building a `Config` in your own code
 
 ```python
-from py_identity_model import ClientAuthMethod, Config, ConfigError
+from py_identity_model import Config, ConfigError
+
+config = Config(http_timeout=10.0, cache_max_entries=128)
 
 try:
-    cfg = Config.from_env(group="client", client_auth_method=ClientAuthMethod.CLIENT_SECRET_BASIC)
+    Config(http_timeout=0, http_retry_max_attempts=-1)
 except ConfigError as e:
-    for issue in e.issues:  # every problem, reported together
-        print(issue)        # e.g. "CFG-001: required key 'client.id' is missing (client.id)"
-    raise
-
-cfg.http_timeout            # float, validated > 0
-cfg.client_id               # str
-cfg.client_secret.expose()  # Secret: redacted in repr/str, read explicitly
+    for issue in e.issues:  # every invalid setting, in field order
+        print(issue)        # "http_timeout: must be greater than 0", ...
 ```
 
-## Sources and precedence
+Fields are keyword-only. Pass typed values: `Config(http_timeout="10")` is
+rejected (`must be a number`), as are `bool`, NaN and infinity.
 
-Values resolve per key, first hit wins:
+## The same thing with a helper
 
-1. `overrides` — explicit in-code values passed to `Config.build`
-2. your `sources`, in the order given (earlier wins)
-3. the environment (`EnvSource`, appended last unless `env=False`)
-4. the built-in default
+When your settings live somewhere else, write a small function that reads
+them, converts each value to its type and returns a `Config`. Conversion
+belongs in the helper; validation stays in `Config`.
 
 ```python
-from py_identity_model import Config, EnvSource, MappingSource
+from collections.abc import Mapping
 
-cfg = Config.build(
-    sources=[
-        MappingSource({"client.discovery_url": url, "client.id": cid}, name="vault"),
-        EnvSource(prefix="MYAPP_"),
-    ],
-    overrides={"http.timeout": "5"},
-    env=False,          # don't also read the default OIDC_-prefixed environment
-    group="client",
-)
+from py_identity_model import Config
+
+
+def config_from_settings(settings: Mapping[str, str]) -> Config:
+    kwargs: dict[str, object] = {}
+    if "HTTP_TIMEOUT" in settings:
+        kwargs["http_timeout"] = float(settings["HTTP_TIMEOUT"])
+    if "CACHE_MAX_ENTRIES" in settings:
+        kwargs["cache_max_entries"] = int(settings["CACHE_MAX_ENTRIES"])
+    if "CA_BUNDLE" in settings:
+        kwargs["ca_bundle"] = settings["CA_BUNDLE"]
+    return Config(**kwargs)
+
+
+config = config_from_settings({"HTTP_TIMEOUT": "10", "CACHE_MAX_ENTRIES": "128"})
 ```
 
-A custom source is anything satisfying the `ConfigSource` protocol — return
-raw strings for the keys you can supply and nothing else; typing, defaulting,
-and validation stay in the library. A source that raises fails construction
-closed (`CFG-004`).
+## Settings
 
-## Keys
-
-HTTP and cache keys read unprefixed environment variables; the client group
-takes the `EnvSource` prefix (default `OIDC_`).
-
-| Logical key | Env var (default) | Type | Default |
+| Setting | Type | Default | Valid |
 |---|---|---|---|
-| `http.timeout` | `HTTP_TIMEOUT` | float > 0 | `30.0` |
-| `http.retry.max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS` | int >= 0 | `3` |
-| `http.retry.base_delay` | `HTTP_RETRY_BASE_DELAY` | float >= 0 | `1.0` |
-| `jwks.max_size` | `MAX_JWKS_SIZE` | int >= 1 | `524288` |
-| `jwks.max_keys` | `MAX_JWKS_KEYS` | int >= 1 | `100` |
-| `jwks.cache.ttl` | `JWKS_CACHE_TTL` | float, 60–86400 | `86400.0` |
-| `discovery.cache.ttl` | `DISCO_CACHE_TTL` | float, 60–86400 | `3600.0` |
-| `jwks.kid_miss_cooldown` | `KID_MISS_REFRESH_COOLDOWN` | float, 0–3600 | `5.0` |
-| `jwks.cache.max_entries` | `JWKS_CACHE_MAX_ENTRIES` | int >= 0 | `64` |
-| `discovery.cache.max_entries` | `DISCO_CACHE_MAX_ENTRIES` | int >= 0 | `64` |
-| `client.discovery_url` | `OIDC_DISCOVERY_URL` | absolute URL | required in group |
-| `client.id` | `OIDC_CLIENT_ID` | str | required in group |
-| `client.secret` | `OIDC_CLIENT_SECRET` | `Secret` | — |
-| `client.scope` | `OIDC_SCOPE` | str | `"openid profile email"` |
-| `client.audience` | `OIDC_AUDIENCE` | str | falls back to `client.id` |
-| `client.redirect_uri` | `OIDC_REDIRECT_URI` | URL | `""` |
-| `client.post_login_redirect` | `OIDC_POST_LOGIN_REDIRECT` | str | `"/"` |
-| `client.post_logout_redirect` | `OIDC_POST_LOGOUT_REDIRECT` | str | `"/"` |
-| `client.excluded_paths` | `OIDC_EXCLUDED_PATHS` | str list | `("/docs", "/openapi.json", "/health")` |
+| `http_timeout` | `float` | `30.0` s | > 0 |
+| `http_retry_max_attempts` | `int` | `3` | ≥ 0 (0 disables retries) |
+| `http_retry_base_delay` | `float` | `1.0` s, exponential backoff, each retry capped at 120 s | ≥ 0 |
+| `ca_bundle` | `str \| None` | `None` (verify TLS with httpx's default bundle) | a readable file |
+| `jwks_max_size` | `int` | `524288` bytes (512 KiB) | ≥ 1 |
+| `jwks_max_keys` | `int` | `100` | ≥ 1 |
+| `jwks_cache_ttl` | `float` | `86400.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
+| `jwks_kid_miss_cooldown` | `float` | `5.0` s | 0 – 3600 (0 disables the cooldown) |
+| `discovery_cache_ttl` | `float` | `3600.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
+| `cache_max_entries` | `int` | `64`, applied separately to the JWKS cache and the discovery cache | ≥ 1 |
 
-The client group is validated as a unit: requesting `group="client"` requires
-`client.discovery_url` and `client.id` (`CFG-001`), a `client_auth_method`
-that needs a secret requires `client.secret` (`CFG-002`), and supplying a
-client key *without* requesting the group is itself an error (`CFG-002`).
-Issue codes: `CFG-001` missing key, `CFG-002` incomplete group, `CFG-003`
-invalid value, `CFG-004` source failure.
+Error messages name the setting and the rule, never the value you passed.
+`ConfigError` is a `ValueError`.
+
+!!! warning "Breaking change: sources and loaders removed"
+    `Config.from_env`, `Config.build`, `ConfigSource`, `EnvSource`,
+    `MappingSource` and `Secret` have been removed, along with the dotted
+    logical keys (`"http.timeout"`) and the `CFG-00x` issue codes. Build a
+    `Config` with keyword arguments instead. `ConfigIssue` now has
+    `setting` and `message`.
+
+    The client settings (`client_id`, `client_secret`, discovery URL, scope,
+    audience, redirect URIs, excluded paths) are no longer part of `Config`.
+    For the FastAPI package they live on `OIDCSettings`.
+
+    `jwks_cache_max_entries` and `discovery_cache_max_entries` are replaced
+    by one `cache_max_entries`, which must be at least 1.
 
 ## API
 
@@ -95,14 +98,4 @@ invalid value, `CFG-004` source failure.
 
 ::: py_identity_model.core.config.ConfigIssue
 
-::: py_identity_model.core.config.Secret
-
 ::: py_identity_model.core.config.ClientAuthMethod
-
-### Sources
-
-::: py_identity_model.core.config.ConfigSource
-
-::: py_identity_model.core.config.EnvSource
-
-::: py_identity_model.core.config.MappingSource

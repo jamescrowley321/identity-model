@@ -24,7 +24,7 @@ from py_identity_model import DiscoveryDocumentRequest
 | [Auth Code + PKCE](auth-code-pkce.md) | Authorization code grant with PKCE (RFC 7636) |
 | [Authorize Callback](authorize-callback.md) | Authorization callback parsing and state validation |
 | [Claims Validation](claims-validation.md) | Injectable, composable application-policy claims validators |
-| [Configuration](config.md) | Typed, fail-closed configuration with pluggable sources |
+| [Configuration](config.md) | Plain, typed `Config` with defaults, validated on creation |
 | [Device Authorization](device-auth.md) | Device Authorization Grant (RFC 8628) |
 | [Dynamic Client Registration](dcr.md) | Client registration and management (RFC 7591 / 7592) |
 | [FAPI 2.0](fapi.md) | FAPI 2.0 Security Profile compliance validation |
