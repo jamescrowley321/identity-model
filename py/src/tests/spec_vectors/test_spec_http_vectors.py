@@ -382,16 +382,9 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
     if expect["error"] == "unexpected_status":
         assert response.status_code == expect["status"], f"{case_id}: HTTP status"
     if expect["error"] == "missing_fields":
-        observed = set(response.missing_fields)
-        expected = set(expect["fields"])
-        if (
-            case_id == "DISC-008"
-            and expected == {"token_endpoint", "subject_types_supported"}
-            and observed == {"subject_types_supported"}
-        ):
-            raise KnownGap(f"{case_id}: token_endpoint not required (#771)")
-        assert observed == expected, (
-            f"{case_id}: missing fields {sorted(observed)}, expected {sorted(expected)}"
+        assert list(response.missing_fields) == expect["fields"], (
+            f"{case_id}: missing fields {list(response.missing_fields)}, "
+            f"expected {expect['fields']}"
         )
 
 
@@ -653,7 +646,6 @@ _KNOWN_GAPS = {
     "INTR-003-client-secret-post": "no client_secret_post for introspection (#574)",
     "INTR-005-invalid-client": "introspection errors are untyped (#791)",
     "DISC-003-issuer-mismatch": "no issuer-match check (#574)",
-    "DISC-008-missing-multiple-fields": "token_endpoint not required (#771)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",

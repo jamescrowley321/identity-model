@@ -45,6 +45,24 @@ empty. These fields are optional keyword-only additions; existing positional
 response constructors and exception base classes remain compatible.
 
 The metadata describes the checks the library actually performs. It does not
-add issuer matching (#574) or make the authorization/token endpoints required
-(#771). A field failure reports the fields in the failing check, rather than
-claiming an exhaustive audit of the whole document.
+add issuer matching (#574).
+
+## Required metadata
+
+A discovery document must carry all seven REQUIRED fields of
+[OpenID Connect Discovery 1.0 §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata):
+`issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`,
+`response_types_supported`, `subject_types_supported` and
+`id_token_signing_alg_values_supported`. A field that is absent, `null`, an
+empty string or an empty array is missing. The request fails with
+`MISSING_FIELDS`, and `missing_fields` lists every missing field in that order.
+
+§3 exempts `token_endpoint` when a provider supports only the Implicit Flow.
+The library requires it anyway, by policy. No `DiscoveryPolicy` setting relaxes
+any of these fields.
+
+!!! warning "`require_key_set` removed"
+    `DiscoveryPolicy.require_key_set` has been removed. `jwks_uri` is always
+    required, so `DiscoveryPolicy(require_key_set=False)` raises `TypeError`.
+    Delete the argument. A provider that publishes no `jwks_uri` cannot be
+    used for discovery.

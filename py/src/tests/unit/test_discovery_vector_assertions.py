@@ -13,7 +13,6 @@ from py_identity_model.core import jwks_cache
 from py_identity_model.core.models import DiscoveryDocumentResponse, DiscoveryErrorKind
 from py_identity_model.sync import token_validation
 from tests.spec_vectors.test_spec_http_vectors import (
-    KnownGap,
     _discovery_call,
     _discovery_expect,
     _find_repo_root,
@@ -111,10 +110,12 @@ def test_structured_failure_accepts_changed_prose(code, details):
         ("jwks_uri", "issuer"),
         (),
         ("token_endpoint", "issuer"),
-        ("subject_types_supported", "issuer"),
+        ("subject_types_supported",),
+        ("subject_types_supported", "token_endpoint"),
+        ("token_endpoint", "subject_types_supported", "jwks_uri"),
     ],
 )
-def test_wrong_field_sets_never_become_known_gap(fields):
+def test_missing_fields_must_match_in_spec_order(fields):
     response = DiscoveryDocumentResponse(
         is_successful=False,
         error="subject_types_supported",
@@ -133,23 +134,22 @@ def test_wrong_field_sets_never_become_known_gap(fields):
         )
 
 
-def test_only_specific_missing_endpoint_behavior_is_known_gap():
+def test_missing_fields_in_spec_order_pass():
     response = DiscoveryDocumentResponse(
         is_successful=False,
         error="Changed prose",
         error_kind=DiscoveryErrorKind.MISSING_FIELDS,
-        missing_fields=("subject_types_supported",),
+        missing_fields=("token_endpoint", "subject_types_supported"),
     )
-    with pytest.raises(KnownGap, match="#771"):
-        _discovery_expect(
-            "DISC-008",
-            {
-                "outcome": "reject",
-                "error": "missing_fields",
-                "fields": ["token_endpoint", "subject_types_supported"],
-            },
-            ("http://localhost", [response]),
-        )
+    _discovery_expect(
+        "DISC-008",
+        {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": ["token_endpoint", "subject_types_supported"],
+        },
+        ("http://localhost", [response]),
+    )
 
 
 def test_cache_hits_exact_expiry_and_refetch_leave_stdlib_clock_alone(discovery_server):
