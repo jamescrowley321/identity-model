@@ -36,6 +36,7 @@ from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import (
     AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
     TokenValidationException,
 )
 from py_identity_model.sync import token_validation
@@ -529,7 +530,7 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 # ``resolve`` is ``_discover_and_resolve_key`` with a token header carrying the
 # kid (none when the vector gives neither ``kid`` nor ``kids``) and
 # ``input.alg``. Errors are messages on ``TokenValidationException``, except
-# ``ambiguous_key``, which is its own type.
+# ``ambiguous_key`` and ``key_alg_mismatch``, which have their own types.
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
@@ -538,7 +539,12 @@ _JWKS_ERRORS = {
     "malformed": "Invalid JSON",
     "empty_key_set": "No keys available",
     "key_not_found": "No matching kid found",
-    "key_alg_mismatch": "does not match JWT algorithm",
+}
+
+#: Canonical reject codes surfaced as their own exception type.
+_JWKS_TYPED_ERRORS: dict[str, type[TokenValidationException]] = {
+    "ambiguous_key": AmbiguousKeyException,
+    "key_alg_mismatch": KeyAlgorithmMismatchException,
 }
 
 
@@ -595,10 +601,13 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
         assert result == expect["keys"]
         return
     assert isinstance(result, TokenValidationException), f"{case_id}: {result!r}"
-    if expect["error"] == "ambiguous_key":
-        assert isinstance(result, AmbiguousKeyException), f"{case_id}: {result!r}"
+    typed = _JWKS_TYPED_ERRORS.get(expect["error"])
+    if typed is not None:
+        assert isinstance(result, typed), f"{case_id}: {result!r}"
         return
-    assert not isinstance(result, AmbiguousKeyException), f"{case_id}: {result!r}"
+    assert not isinstance(result, tuple(_JWKS_TYPED_ERRORS.values())), (
+        f"{case_id}: {result!r}"
+    )
     message = str(result)
     if expect["error"] == "malformed" and "Unhandled exception" in message:
         raise KnownGap(

@@ -84,8 +84,8 @@ class AmbiguousKeyException(TokenValidationException):
     With no ``kid`` in the JOSE header, the JWK Set is narrowed to signing
     keys (``use`` absent or ``sig``, RFC 7517 §4.2), then to keys whose
     ``alg`` is absent or equals the header ``alg`` (§4.4) and whose ``kty``
-    matches it. More than one key left means the verification key cannot be
-    chosen. This is distinct from a ``kid`` that matches no key.
+    matches it, each step applied only when it leaves a key. More than one
+    key left means the verification key cannot be chosen. This is distinct from a ``kid`` that matches no key.
     ``details["available_kids"]`` lists the remaining keys' ids and
     ``details["key_count"]`` their number.
     """
