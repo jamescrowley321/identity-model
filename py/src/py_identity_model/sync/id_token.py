@@ -35,6 +35,8 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
     nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
+    access_token_issued_with_id_token: bool = True,
+    code_issued_with_id_token: bool = True,
     max_age: int | None = None,
 ) -> dict:
     """Validate an OpenID Connect ID Token (OIDC Core §3.1.3.7 / §3.3.2.11).
@@ -66,10 +68,23 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
             ``False`` and ``azp`` is ignored (§2).
         nonce: The ``nonce`` the RP sent on the authorization request. When
             provided, the token's ``nonce`` MUST match it (§3.1.3.7 step 11).
-        access_token: The access token from the same response. When provided,
-            the token's ``at_hash`` MUST match it (§3.3.2.11).
-        code: The authorization code from the same response. When provided, the
-            token's ``c_hash`` MUST match it (§3.3.2.11).
+        access_token: The access token that came with the ID Token. When
+            provided, the token's ``at_hash`` MUST match it (§3.3.2.11), and
+            MUST be present unless ``access_token_issued_with_id_token`` is
+            ``False``.
+        code: The authorization code. When provided, the token's ``c_hash``
+            MUST match it (§3.3.2.11), and MUST be present unless
+            ``code_issued_with_id_token`` is ``False``.
+        access_token_issued_with_id_token: Whether ``access_token`` came back
+            in the same authorization response as the ID Token
+            (``id_token token`` / ``code id_token token``), which makes
+            ``at_hash`` REQUIRED (§3.2.2.10, §3.3.2.11). Defaults to ``True``.
+            Pass ``False`` for a token-endpoint ID Token, which may omit
+            ``at_hash`` (§3.1.3.6).
+        code_issued_with_id_token: Whether ``code`` came back in the same
+            authorization response as the ID Token (``code id_token`` /
+            ``code id_token token``), which makes ``c_hash`` REQUIRED
+            (§3.3.2.11). Defaults to ``True``.
         max_age: The ``max_age`` the RP requested. When provided, ``auth_time``
             MUST be present and recent enough (§3.1.3.7 step 12).
 
@@ -100,6 +115,8 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
         nonce=nonce,
         access_token=access_token,
         code=code,
+        access_token_issued_with_id_token=access_token_issued_with_id_token,
+        code_issued_with_id_token=code_issued_with_id_token,
         max_age=max_age,
         leeway=token_validation_config.leeway or 0.0,
         now=time.time(),

@@ -22,8 +22,15 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
   present and recent enough (`now - auth_time <= max_age + leeway`).
 - **`at_hash` / `c_hash`** — when you pass `access_token=` / `code=`, the
-  corresponding left-half hash must match, computed under the token's
-  signature-verified header `alg`. An unmappable algorithm fails closed.
+  hash claim must be present and match the value's left-half hash, computed
+  under the token's signature-verified header `alg`. An unmappable algorithm
+  fails closed. Presence is required because a value returned in the same
+  authorization response as the ID Token (`id_token token`, `code id_token`,
+  `code id_token token`) must be bound (§3.2.2.10, §3.3.2.11). An ID Token from
+  the token endpoint may omit `at_hash` (§3.1.3.6): pass
+  `access_token_issued_with_id_token=False` (or `code_issued_with_id_token=False`)
+  when the value did not come back with the ID Token, and an absent claim is
+  accepted while a present one must still match.
 
 The optional checks activate only when you supply the corresponding argument,
 so validation is exactly as strict as the flow you are running. Set
@@ -39,8 +46,8 @@ claims = validate_id_token(
     trusted_audiences=["https://api.example.com"],  # other audiences you trust
     validate_azp=True,             # opt in to the azp rules
     nonce=expected_nonce,          # from the authorization request
-    access_token=access_token,     # enforce at_hash (hybrid/implicit)
-    code=authorization_code,       # enforce c_hash (hybrid)
+    access_token=access_token,     # bind at_hash (hybrid/implicit)
+    code=authorization_code,       # bind c_hash (hybrid)
     max_age=300,                   # require a recent authentication
 )
 ```
