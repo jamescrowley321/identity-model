@@ -2,7 +2,7 @@
   "capability": "id-token",
   "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped.",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then untrusted audiences (\u00a73.1.3.7 step 3), then azp (steps 4-6), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012).",
   "tests": [
     {
       "id": "IDT-001",
@@ -89,7 +89,7 @@
     {
       "id": "IDT-003",
       "title": "Authorized-party (azp) rules for single vs multiple audiences",
-      "given": "A decoded ID Token whose aud is a single value or a list, with or without azp",
+      "given": "A decoded ID Token whose aud is a single value or a list (every additional audience trusted by the client), with or without azp",
       "when": "The ID-Token profile rules are applied",
       "then": "A single audience needs no azp; multiple audiences REQUIRE an azp that identifies this client (\u00a73.1.3.7 steps 4-6)",
       "references": [
@@ -149,6 +149,9 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
             "now": 1700000000
           },
           "expect": {
@@ -173,6 +176,9 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
             "now": 1700000000
           },
           "expect": {
@@ -197,6 +203,9 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
             "now": 1700000000
           },
           "expect": {
@@ -755,6 +764,229 @@
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "unsupported_alg"
+          }
+        }
+      ]
+    },
+    {
+      "id": "IDT-012",
+      "title": "Additional audiences not trusted by the client are rejected",
+      "given": "A decoded ID Token whose aud carries values other than the client_id, and the caller's list of additional audiences it trusts",
+      "when": "The ID-Token profile rules are applied",
+      "then": "Every aud value MUST be the client_id or a trusted audience; any other value rejects the token (\u00a73.1.3.7 step 3). The trusted list only adds trusted values, it cannot switch the check off, and a single audience equal to the client_id is unaffected",
+      "references": [
+        "OIDC Core 1.0 \u00a73.1.3.7"
+      ],
+      "vectors": [
+        {
+          "name": "second audience not trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "second audience not trusted, empty trusted list",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "second audience listed as trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "one of two additional audiences not trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x",
+                "unknown-api-7q"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "untrusted audience rejected before the azp rule",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "aud lacks the client_id, one trusted and one untrusted audience",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "other-client-9x",
+                "unknown-api-7q"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "single-string aud equal to client_id, no trusted list",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-string aud equal to client_id, trusted list supplied",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-element aud list equal to client_id",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
           }
         }
       ]
