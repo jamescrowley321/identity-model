@@ -104,6 +104,24 @@ class IdTokenValidationException(TokenValidationException):
     """
 
 
+class UntrustedAudienceException(IdTokenValidationException):
+    """Raised when an ID Token carries an audience the client does not trust.
+
+    OpenID Connect Core 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if
+    it contains additional audiences not trusted by the Client. The trusted
+    set is the client's ``client_id`` plus any caller-supplied
+    ``trusted_audiences``. ``details["untrusted_audiences"]`` lists the
+    rejected values.
+    """
+
+    def __init__(self, message: str, untrusted_audiences: list):
+        super().__init__(
+            message,
+            token_part="payload",
+            details={"untrusted_audiences": untrusted_audiences},
+        )
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.
@@ -261,6 +279,7 @@ __all__ = [
     "TokenExpiredException",
     "TokenRequestException",
     "TokenValidationException",
+    "UntrustedAudienceException",
     "UserInfoException",
     "ValidationException",
 ]

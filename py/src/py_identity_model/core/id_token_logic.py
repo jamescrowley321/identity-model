@@ -9,6 +9,8 @@ and ``exp`` — is performed by the existing ``validate_token`` path;
 ID Token an ID Token:
 
 * ``sub`` is REQUIRED (§2 / §3.1.3.7).
+* Every ``aud`` value is the ``client_id`` or an audience the caller trusts
+  (§3.1.3.7 step 3).
 * ``azp`` authorized-party rules when the token carries multiple audiences
   (§3.1.3.7 steps 4-6).
 * ``nonce`` binding, when the caller supplies the ``nonce`` it sent on the
@@ -29,8 +31,13 @@ import base64
 import hashlib
 import hmac
 import time
+from typing import TYPE_CHECKING
 
-from ..exceptions import IdTokenValidationException
+from ..exceptions import IdTokenValidationException, UntrustedAudienceException
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 # Signing algorithms whose ``at_hash``/``c_hash`` digest is fixed regardless of
@@ -129,11 +136,37 @@ def _hashes_equal(actual: str, expected: str, field: str) -> bool:
         ) from exc
 
 
+def _reject_untrusted_audiences(
+    claims: dict, client_id: str | None, trusted_audiences: Iterable[str] | None
+) -> None:
+    """Enforce §3.1.3.7 step 3: no audience the client does not trust.
+
+    The trusted set is ``client_id`` plus ``trusted_audiences``. The list only
+    adds trusted values; an empty or omitted list leaves ``client_id`` as the
+    sole trusted audience, so nothing here can switch the check off. With no
+    ``client_id`` and no list, every audience is untrusted (fail closed).
+    """
+    aud = claims.get("aud")
+    if aud is None:
+        return
+    audiences = list(aud) if isinstance(aud, (list, tuple)) else [aud]
+    trusted = set(trusted_audiences or ())
+    if client_id is not None:
+        trusted.add(client_id)
+    untrusted = [a for a in audiences if not isinstance(a, str) or a not in trusted]
+    if untrusted:
+        raise UntrustedAudienceException(
+            "ID token contains audience(s) not trusted by the client",
+            untrusted_audiences=untrusted,
+        )
+
+
 def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knobs
     claims: dict,
     header_alg: str | None,
     *,
     client_id: str | None = None,
+    trusted_audiences: Iterable[str] | None = None,
     nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
@@ -156,7 +189,12 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             select the hash for ``at_hash``/``c_hash``.
         client_id: The relying party's ``client_id`` (i.e.
             ``TokenValidationConfig.audience``). When set, an ``azp`` present in
-            the token MUST equal it (§3.1.3.7 step 6).
+            the token MUST equal it (§3.1.3.7 step 6). It is also the one
+            audience trusted without being listed in ``trusted_audiences``.
+        trusted_audiences: Additional audiences the client trusts besides
+            ``client_id``. Every ``aud`` value MUST be ``client_id`` or one of
+            these (§3.1.3.7 step 3). Omitted or empty means ``client_id`` is
+            the only trusted audience; the list cannot disable the check.
         nonce: When provided, the token's ``nonce`` MUST be present and equal
             this value (§3.1.3.7 step 11).
         access_token: When provided, the token's ``at_hash`` MUST be present
@@ -170,7 +208,10 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             Defaults to :func:`time.time` when omitted.
 
     Raises:
-        IdTokenValidationException: If any ID-Token profile rule is violated.
+        UntrustedAudienceException: If ``aud`` carries a value that is neither
+            ``client_id`` nor in ``trusted_audiences`` (§3.1.3.7 step 3).
+        IdTokenValidationException: If any other ID-Token profile rule is
+            violated.
     """
     # §2 / §3.1.3.7 — ``sub`` is REQUIRED and must be non-empty.
     if not claims.get("sub"):
@@ -178,6 +219,9 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             "ID token missing required 'sub' claim",
             token_part="payload",
         )
+
+    # §3.1.3.7 step 3 — reject audiences the client does not trust.
+    _reject_untrusted_audiences(claims, client_id, trusted_audiences)
 
     # §3.1.3.7 steps 4-6 — authorized-party (``azp``) rules.
     aud = claims.get("aud")

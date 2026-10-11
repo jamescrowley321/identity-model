@@ -39,6 +39,7 @@ from .exceptions import (
     TokenExpiredException,
     TokenRequestException,
     TokenValidationException,
+    UntrustedAudienceException,
     UserInfoException,
     ValidationException,
 )
@@ -260,6 +261,7 @@ __all__ = [
     "TokenRevocationResponse",
     "TokenValidationConfig",
     "TokenValidationException",
+    "UntrustedAudienceException",
     "UserInfoException",
     "UserInfoRequest",
     "UserInfoResponse",

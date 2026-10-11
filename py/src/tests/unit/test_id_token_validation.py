@@ -30,6 +30,7 @@ from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     IdTokenValidationException,
     TokenValidationException,
+    UntrustedAudienceException,
 )
 from py_identity_model.sync.id_token import validate_id_token
 from py_identity_model.sync.token_validation import (
@@ -150,19 +151,37 @@ class TestPureIdTokenClaimValidation:
         # §3.1.3.7 step 4: multiple audiences require an ``azp`` claim.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
         with pytest.raises(IdTokenValidationException, match=r"azp"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["other-client"],
+                now=_NOW,
+            )
 
     def test_multi_aud_with_wrong_azp_rejected(self):
         # §3.1.3.7 step 6: ``azp`` present but not this client is rejected.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp="other-client")
         with pytest.raises(IdTokenValidationException, match=r"azp"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["other-client"],
+                now=_NOW,
+            )
 
     def test_multi_aud_with_correct_azp_accepted(self):
         # §3.1.3.7 steps 4-6 (positive): multiple audiences with a matching
         # ``azp`` validate cleanly.
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
 
     def test_single_aud_with_wrong_azp_rejected(self):
         # §3.1.3.7 step 6: even with a single audience, a present ``azp`` that
@@ -405,6 +424,161 @@ class TestNonAsciiInputsFailClosed:
                 nonce="café",
                 now=_NOW,
             )
+
+
+def _clear_sync_caches() -> None:
+    clear_discovery_cache()
+    clear_jwks_cache()
+
+
+async def _clear_async_caches() -> None:
+    await aio_clear_discovery_cache()
+    await aio_clear_jwks_cache()
+
+
+class TestUntrustedAudiences:
+    """§3.1.3.7 step 3: reject additional audiences the client does not trust."""
+
+    def test_untrusted_second_audience_rejected(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": ["other-client"]}
+
+    def test_untrusted_audience_is_an_id_token_profile_failure(self):
+        # Callers catching the profile (or token-validation) exception still
+        # fail closed on the new rule.
+        assert issubclass(UntrustedAudienceException, IdTokenValidationException)
+
+    def test_trusted_second_audience_accepted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
+
+    def test_empty_trusted_list_still_rejects(self):
+        # The trusted list only adds trusted values; it cannot switch the
+        # check off.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, trusted_audiences=[], now=_NOW
+            )
+
+    def test_only_the_untrusted_values_are_reported(self):
+        claims = _valid_id_claims(
+            aud=[_AUDIENCE, "trusted-api", "rogue-api"], azp=_AUDIENCE
+        )
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["trusted-api"],
+                now=_NOW,
+            )
+        assert exc_info.value.details == {"untrusted_audiences": ["rogue-api"]}
+
+    def test_single_audience_unaffected_by_trusted_list(self):
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
+
+    def test_untrusted_audience_checked_before_azp(self):
+        # Step 3 precedes the step-4 ``azp`` requirement.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+
+    def test_without_client_id_every_audience_is_untrusted(self):
+        # Fails closed: with no client_id and no trusted list there is nothing
+        # the token's audience can be trusted as.
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(_valid_id_claims(), "RS256", now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [_AUDIENCE]}
+
+    def test_non_string_audience_is_untrusted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, 7], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [7]}
+
+    def test_absent_audience_has_nothing_to_reject(self):
+        claims = _valid_id_claims()
+        del claims["aud"]
+        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+
+    @respx.mock
+    def test_sync_wrapper_rejects_untrusted_audience(self, rsa_keypair):
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @respx.mock
+    def test_sync_wrapper_forwards_trusted_audiences(self, rsa_keypair):
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        claims = validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            trusted_audiences=["other-client"],
+        )
+        assert claims["aud"] == [_AUDIENCE, "other-client"]
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_wrapper_rejects_untrusted_audience(self, rsa_keypair):
+        await _clear_async_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        with pytest.raises(UntrustedAudienceException):
+            await aio_validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_wrapper_forwards_trusted_audiences(self, rsa_keypair):
+        await _clear_async_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        claims = await aio_validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            trusted_audiences=["other-client"],
+        )
+        assert claims["aud"] == [_AUDIENCE, "other-client"]
 
 
 class TestSyncValidateIdToken:
