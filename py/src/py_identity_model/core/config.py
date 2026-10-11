@@ -139,7 +139,11 @@ def _check_type(value: object, rule: _Range) -> str | None:
         return None if ok else "must be an integer"
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "must be a number"
-    return None if math.isfinite(value) else "must be a finite number"
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:  # an int too large to convert to a float
+        finite = False
+    return None if finite else "must be a finite number"
 
 
 def _check_number(value: object, rule: _Range) -> str | None:
@@ -160,9 +164,14 @@ def _check_number(value: object, rule: _Range) -> str | None:
 def _check_ca_bundle(value: object) -> str | None:
     if value is None:
         return None
-    if isinstance(value, str) and Path(value).is_file() and os.access(value, os.R_OK):
-        return None
-    return "must be a path to a readable file"
+    problem = "must be a path to a readable file"
+    if not isinstance(value, str):
+        return problem
+    try:
+        readable = Path(value).is_file() and os.access(value, os.R_OK)
+    except (OSError, ValueError):  # e.g. a name too long, an embedded NUL
+        readable = False
+    return None if readable else problem
 
 
 @dataclass(frozen=True, kw_only=True)

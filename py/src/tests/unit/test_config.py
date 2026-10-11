@@ -248,6 +248,35 @@ def test_ca_bundle_empty_string_is_rejected():
     )
 
 
+# An int too large for a float: math.isfinite() overflows on it.
+HUGE_INT = 10**400
+# A file name longer than any filesystem's NAME_MAX: stat() fails ENAMETOOLONG.
+OVERSIZED_NAME = "x" * 300
+
+
+def test_int_too_large_for_a_float_is_reported_with_the_other_issues():
+    with pytest.raises(ConfigError) as ei:
+        Config(http_timeout=HUGE_INT, cache_max_entries=0)
+    assert ei.value.issues == (
+        ConfigIssue("http_timeout", "must be a finite number"),
+        ConfigIssue("cache_max_entries", "must be at least 1"),
+    )
+
+
+@pytest.mark.parametrize(
+    "name", [OVERSIZED_NAME, "ca\0.pem"], ids=["name-too-long", "embedded-nul"]
+)
+def test_ca_bundle_path_the_os_cannot_stat_is_reported_with_the_other_issues(
+    name: str,
+):
+    with pytest.raises(ConfigError) as ei:
+        Config(ca_bundle=name, cache_max_entries=0)
+    assert ei.value.issues == (
+        ConfigIssue("ca_bundle", "must be a path to a readable file"),
+        ConfigIssue("cache_max_entries", "must be at least 1"),
+    )
+
+
 def test_config_error_is_a_value_error():
     # Callers catching ValueError around construction still catch it.
     with pytest.raises(ValueError, match="http_timeout"):
