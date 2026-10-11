@@ -540,6 +540,83 @@ mod tests {
         }
     }
 
+    // DISC-008: null and empty-string required fields count as missing, so
+    // they are reported as MissingFields rather than failing to deserialize.
+    #[tokio::test]
+    async fn reports_null_and_empty_string_required_fields_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = format!(
+            r#"{{
+                "issuer": "{issuer}",
+                "authorization_endpoint": null,
+                "token_endpoint": "",
+                "jwks_uri": "{issuer}/jwks",
+                "response_types_supported": ["code"],
+                "subject_types_supported": null,
+                "id_token_signing_alg_values_supported": ["RS256"]
+            }}"#
+        );
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("null and empty-string required fields must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "authorization_endpoint",
+                    "token_endpoint",
+                    "subject_types_supported"
+                ]
+            ),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
+    // DISC-008: every required field may be null; all seven are reported.
+    #[tokio::test]
+    async fn reports_every_null_required_field_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = r#"{
+            "issuer": null,
+            "authorization_endpoint": null,
+            "token_endpoint": null,
+            "jwks_uri": null,
+            "response_types_supported": null,
+            "subject_types_supported": null,
+            "id_token_signing_alg_values_supported": null
+        }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("null required fields must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "issuer",
+                    "authorization_endpoint",
+                    "token_endpoint",
+                    "jwks_uri",
+                    "response_types_supported",
+                    "subject_types_supported",
+                    "id_token_signing_alg_values_supported"
+                ]
+            ),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
     // DISC-009: unknown fields are ignored (captured in `extra`), not rejected.
     #[tokio::test]
     async fn ignores_unknown_fields() {
