@@ -9,7 +9,11 @@ import warnings
 
 from jwt import get_unverified_header
 
-from ..exceptions import AmbiguousKeyException, TokenValidationException
+from ..exceptions import (
+    AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
+    TokenValidationException,
+)
 from ..logging_config import logger
 from .models import JsonWebKey, JsonWebKeyParameterNames
 
@@ -65,6 +69,7 @@ def _validate_key_alg_consistency(
     algorithm family (e.g. RS256).
 
     Raises:
+        KeyAlgorithmMismatchException: If the key declares a different alg.
         TokenValidationException: If the key type does not match the algorithm.
     """
     _reject_non_string_alg(jwt_alg)
@@ -93,7 +98,7 @@ def _validate_key_alg_consistency(
 
     # If the key declares an alg, it must match the JWT header exactly
     if key.alg and key.alg != jwt_alg:
-        raise TokenValidationException(
+        raise KeyAlgorithmMismatchException(
             f"Key algorithm '{key.alg}' does not match JWT algorithm '{jwt_alg}'",
             token_part="header",
             details={"kid": key.kid, "key_alg": key.alg, "jwt_alg": jwt_alg},

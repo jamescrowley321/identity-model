@@ -538,6 +538,7 @@ _JWKS_ERRORS = {
     "malformed": "Invalid JSON",
     "empty_key_set": "No keys available",
     "key_not_found": "No matching kid found",
+    "key_alg_mismatch": "does not match JWT algorithm",
 }
 
 

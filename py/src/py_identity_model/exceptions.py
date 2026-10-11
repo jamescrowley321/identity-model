@@ -98,6 +98,17 @@ class AmbiguousKeyException(TokenValidationException):
         )
 
 
+class KeyAlgorithmMismatchException(TokenValidationException):
+    """Raised when the key chosen to verify a token declares another ``alg``.
+
+    A JWK that declares ``alg`` is meant for that algorithm only
+    (RFC 7517 §4.4), so a token whose header ``alg`` differs is not verified
+    with it, whether the key was found by ``kid`` or selected without one.
+    ``details`` carries the key's ``kid`` and ``key_alg`` and the token's
+    ``jwt_alg``.
+    """
+
+
 class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
