@@ -503,6 +503,43 @@ mod tests {
         }
     }
 
+    // DISC-008: empty required arrays count as missing, reported in spec order.
+    #[tokio::test]
+    async fn reports_empty_required_arrays_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = format!(
+            r#"{{
+                "issuer": "{issuer}",
+                "authorization_endpoint": "{issuer}/auth",
+                "token_endpoint": "{issuer}/token",
+                "jwks_uri": "{issuer}/jwks",
+                "response_types_supported": [],
+                "subject_types_supported": [],
+                "id_token_signing_alg_values_supported": []
+            }}"#
+        );
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("empty required arrays must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "response_types_supported",
+                    "subject_types_supported",
+                    "id_token_signing_alg_values_supported"
+                ]
+            ),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
     // DISC-009: unknown fields are ignored (captured in `extra`), not rejected.
     #[tokio::test]
     async fn ignores_unknown_fields() {
