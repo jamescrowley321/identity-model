@@ -215,8 +215,6 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
             assert getattr(response, name) == value, f"typed claim {name}"
         return
     error = expect.get("error")
-    if error == "missing_sub" and response.is_successful:
-        raise KnownGap("a response with no sub is accepted without expected_sub (#773)")
     assert not response.is_successful, f"{case_id}: expected reject"
     if error == "subject_mismatch":
         assert "sub mismatch" in (response.error or "")
@@ -638,7 +636,6 @@ _KNOWN_GAPS = {
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",
     "UI-001": "UserInfoResponse has no typed standard claims (#768)",
-    "UI-003-missing-sub": "no-sub response accepted without expected_sub (#773)",
     "UI-004": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-005": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-006": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
