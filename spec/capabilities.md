@@ -132,7 +132,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ### UserInfo
 
 - Implementations MUST GET the `userinfo_endpoint` with `Authorization: Bearer {token}` and return typed standard claims plus an overflow map ([OIDC Core 1.0 §5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
-- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)).
+- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)). A signed or encrypted (`application/jwt`) response that the implementation cannot verify MUST error when an expected `sub` is supplied, rather than succeed with the `sub` unchecked (`UI-009`).
 - Implementations MUST let the caller supply the HTTP client and bound the request with a timeout. This is an API-shape contract with no vector (formerly `UI-008`); it is covered by Go `TestFetch_FunctionalOptions` (`go/pkg/userinfo/userinfo_test.go`), Rust `timeout_bounds_slow_endpoint` (`rust/src/userinfo/mod.rs`), and Python `TestSyncDI::test_userinfo_with_injected_client` / `TestAsyncDI::test_userinfo_with_injected_client` (`py/src/tests/unit/test_http_client_di.py`), which show only that `get_userinfo` accepts an injected `HTTPClient`, not that the request goes through it or that its timeout applies ([#775](https://github.com/jamescrowley321/identity-model/issues/775)).
 
 ## Capability Definitions (Extended Tier)
