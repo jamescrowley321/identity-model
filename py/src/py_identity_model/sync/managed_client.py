@@ -128,9 +128,17 @@ class HTTPClient:
     @property
     def client(self) -> httpx.Client:
         """The underlying ``httpx.Client``."""
+        self.ensure_open()
+        return self._client
+
+    def ensure_open(self) -> None:
+        """Raise ``RuntimeError`` if this client has been closed.
+
+        Entry points call this before serving from the caches, so a closed
+        client fails the same way on a cache hit as on a cache miss.
+        """
         if self._closed:
             raise RuntimeError("HTTPClient has been closed")
-        return self._client
 
     def close(self) -> None:
         """Close the client if this instance owns it.  Idempotent."""

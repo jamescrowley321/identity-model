@@ -268,16 +268,13 @@ def resolve_async_http_client(
 ) -> tuple[AsyncHTTPClient, httpx.AsyncClient | None]:
     """Resolve the async HTTP client to use for a client-authenticating request.
 
-    At most one of *mtls* / *http_client* may be supplied. When *mtls* is
-    configured, a short-lived cert-configured client is built (RFC 8705) with
-    the default client's config; a managed *http_client* is used as-is;
-    otherwise the library default client is used.
-
-    A managed *http_client* cannot be guaranteed to present the requested
-    client certificate at the TLS layer, and the ``prepare_*`` body branch has
-    already dropped ``client_secret``/Basic auth for the mTLS case — so
-    supplying both would silently emit an unauthenticated request. Reject that
-    combination explicitly rather than downgrading.
+    When *mtls* is configured, a short-lived cert-configured client is built
+    (RFC 8705) and wrapped with the ``Config`` of *http_client* when one is
+    given, else of the library default client. The request then goes through
+    that cert client, never through *http_client*'s own connection pool,
+    which cannot be guaranteed to present the certificate; *http_client*
+    supplies only its settings (``ca_bundle``, ``http_timeout``, retries).
+    Without *mtls*, *http_client* is used as-is, else the default client.
 
     Args:
         mtls: The request's mTLS configuration, or ``None``.
@@ -290,21 +287,19 @@ def resolve_async_http_client(
         closed here.
 
     Raises:
-        ValueError: If both *mtls* and *http_client* are supplied.
+        RuntimeError: If *http_client* has been closed.
     """
-    if mtls is not None and http_client is not None:
-        raise ValueError(
-            "Cannot combine a managed http_client with mtls: a managed client "
-            "cannot be guaranteed to present the mTLS client certificate. Pass "
-            "one or the other."
-        )
+    if mtls is None:
+        if http_client is not None:
+            return http_client, None
+        return _get_default(), None
     if http_client is not None:
-        return http_client, None
-    default = _get_default()
-    if mtls is not None:
-        owned = build_mtls_client(mtls, default.config)
-        return AsyncHTTPClient(owned, config=default.config), owned
-    return default, None
+        http_client.ensure_open()
+        config = http_client.config
+    else:
+        config = _get_default().config
+    owned = build_mtls_client(mtls, config)
+    return AsyncHTTPClient(owned, config=config), owned
 
 
 async def close_async_http_client() -> None:
