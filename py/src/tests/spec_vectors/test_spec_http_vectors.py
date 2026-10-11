@@ -34,7 +34,10 @@ from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    AmbiguousKeyException,
+    TokenValidationException,
+)
 from py_identity_model.sync import token_validation
 from py_identity_model.sync.introspection import (
     TokenIntrospectionRequest,
@@ -524,7 +527,9 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 # use the helpers validate_token uses: ``fetch`` is ``_get_cached_jwks`` plus
 # ``validate_jwks_response``, ``force_refresh`` is ``_refresh_jwks``, and
 # ``resolve`` is ``_discover_and_resolve_key`` with a token header carrying the
-# kid. Errors are messages on ``TokenValidationException``.
+# kid (none when the vector gives neither ``kid`` nor ``kids``) and
+# ``input.alg``. Errors are messages on ``TokenValidationException``, except
+# ``ambiguous_key``, which is its own type.
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
@@ -536,14 +541,17 @@ _JWKS_ERRORS = {
 }
 
 
-def _token_with_kid(kid: str) -> str:
+def _token_with_header(kid: str | None, alg: str | None) -> str:
     def b64(obj: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
 
-    return f"{b64({'kid': kid})}.{b64({})}.sig"
+    header = {name: value for name, value in (("kid", kid), ("alg", alg)) if value}
+    return f"{b64(header)}.{b64({})}.sig"
 
 
-def _jwks_step(base: str, step: str, kid: str | None) -> list[dict]:
+def _jwks_step(
+    base: str, step: str, kid: str | None, alg: str | None = None
+) -> list[dict]:
     jwks_uri = base + "/jwks"
     if step == "fetch":
         response = _get_cached_jwks(jwks_uri)
@@ -555,7 +563,7 @@ def _jwks_step(base: str, step: str, kid: str | None) -> list[dict]:
         return [k.as_dict() for k in response.keys or []]
     if step == "resolve":
         key, _, _, _ = _discover_and_resolve_key(
-            _token_with_kid(kid or ""), base + _DISCO_PATH, None, DiscoveryPolicy()
+            _token_with_header(kid, alg), base + _DISCO_PATH, None, DiscoveryPolicy()
         )
         return [key]
     pytest.fail(f"unknown jwks step {step!r}")
@@ -571,7 +579,7 @@ def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
     for n, step in enumerate(steps, 1):
         kid = next(kids, inp.get("kid")) if step == "resolve" else None
         try:
-            keys = _jwks_step(base, step, kid)
+            keys = _jwks_step(base, step, kid, inp.get("alg"))
         except TokenValidationException as exc:
             # A key-not-found miss before the last step does not end the run.
             if n == len(steps) or _JWKS_ERRORS["key_not_found"] not in str(exc):
@@ -586,6 +594,10 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
         assert result == expect["keys"]
         return
     assert isinstance(result, TokenValidationException), f"{case_id}: {result!r}"
+    if expect["error"] == "ambiguous_key":
+        assert isinstance(result, AmbiguousKeyException), f"{case_id}: {result!r}"
+        return
+    assert not isinstance(result, AmbiguousKeyException), f"{case_id}: {result!r}"
     message = str(result)
     if expect["error"] == "malformed" and "Unhandled exception" in message:
         raise KnownGap(

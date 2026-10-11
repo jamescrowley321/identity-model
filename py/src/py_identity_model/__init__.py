@@ -17,6 +17,7 @@ from .core.config import (
 
 # Backward compatible sync exports (default)
 from .exceptions import (
+    AmbiguousKeyException,
     AuthorizeCallbackException,
     CertificateBindingError,
     ConfigurationException,
@@ -162,6 +163,7 @@ __all__ = [
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
+    "AmbiguousKeyException",
     # Auth Code + PKCE
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
