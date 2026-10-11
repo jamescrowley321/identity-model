@@ -239,10 +239,8 @@ git commit -m "test: add thread safety tests"
 **Maintain 100% backward compatibility** unless it's a major version bump.
 
 **SSL Certificate Support:**
-- Support `REQUESTS_CA_BUNDLE` (legacy from requests library)
-- Support `CURL_CA_BUNDLE` (curl/httpx standard)
-- Support `SSL_CERT_FILE` (standard environment variable)
-- Priority order: `SSL_CERT_FILE` > `CURL_CA_BUNDLE` > `REQUESTS_CA_BUNDLE`
+- The CA bundle is `Config.ca_bundle`; the library reads no environment variables
+- `config_helpers.config_from_env()` maps `SSL_CERT_FILE` > `CURL_CA_BUNDLE` > `REQUESTS_CA_BUNDLE` onto it for callers who want that
 
 ### Code Style
 
@@ -348,9 +346,8 @@ Pre-commit hooks may auto-fix formatting issues:
 ### SSL Certificate Failures
 
 If integration tests fail with SSL errors:
-- Check SSL environment variables are set correctly
-- Verify `get_ssl_verify()` is used in all HTTP client calls
-- Ensure httpx clients use `verify=get_ssl_verify()`
+- Check the `Config.ca_bundle` passed to the client points at a readable CA file
+- Ensure httpx clients the library builds use `verify=get_ssl_verify(config)`
 
 ### Pre-commit Formatting Changes
 

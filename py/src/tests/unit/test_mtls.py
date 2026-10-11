@@ -24,6 +24,7 @@ from py_identity_model import (
     AuthorizationCodeTokenRequest,
     CertificateBindingError,
     ClientCredentialsTokenRequest,
+    Config,
     DeviceAuthorizationRequest,
     DeviceTokenRequest,
     DiscoveryDocumentRequest,
@@ -78,6 +79,7 @@ from ..constants import DISCO_URL
 
 
 ADDR = "https://as.example.com/endpoint"
+CERTS_IN_SINGLE_CERT_BUNDLE = 1
 TOKEN_URL = "https://as.example.com/token"
 
 
@@ -138,20 +140,19 @@ class TestBuildMtlsSslContext:
 
     def test_returns_ssl_context_with_client_cert_loaded(self, mtls):
         # load_cert_chain would raise if the cert/key failed to load.
-        assert isinstance(build_mtls_ssl_context(mtls), ssl.SSLContext)
+        assert isinstance(build_mtls_ssl_context(mtls, Config()), ssl.SSLContext)
 
-    def test_verify_false_disables_server_verification(self, mtls, monkeypatch):
-        monkeypatch.setattr("py_identity_model.core.mtls.get_ssl_verify", lambda: False)
-        ctx = build_mtls_ssl_context(mtls)
-        assert ctx.verify_mode == ssl.CERT_NONE
-        assert ctx.check_hostname is False
+    def test_default_config_verifies_server(self, mtls):
+        ctx = build_mtls_ssl_context(mtls, Config())
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
 
-    def test_verify_cafile_requires_server_cert(self, mtls, cert_files, monkeypatch):
+    def test_config_ca_bundle_is_loaded_and_required(self, mtls, cert_files):
         # Reuse the client cert PEM path as a CA bundle to exercise the str path.
-        monkeypatch.setattr(
-            "py_identity_model.core.mtls.get_ssl_verify", lambda: cert_files[0]
-        )
-        assert build_mtls_ssl_context(mtls).verify_mode == ssl.CERT_REQUIRED
+        ca_bundle, _, _ = cert_files
+        ctx = build_mtls_ssl_context(mtls, Config(ca_bundle=ca_bundle))
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.cert_store_stats()["x509"] == CERTS_IN_SINGLE_CERT_BUNDLE
 
 
 @pytest.mark.unit
@@ -621,8 +622,8 @@ class TestEndToEndMtls:
         created: list[httpx.Client] = []
         real_build = sync_http.build_mtls_client
 
-        def _tracking_build(cfg):
-            client = real_build(cfg)
+        def _tracking_build(cfg, config):
+            client = real_build(cfg, config)
             created.append(client)
             return client
 
@@ -659,18 +660,26 @@ class TestResolveClientMtlsConflict:
     def test_sync_mtls_only_builds_owned_client(self, mtls):
         client, owned = sync_http.resolve_http_client(mtls, None)
         try:
-            assert owned is client  # caller must close it
+            assert owned is not None  # caller must close it
+            assert client.client is owned
+            assert client.config is sync_http.get_default_http_client().config
         finally:
-            client.close()
+            if owned is not None:
+                owned.close()
 
     def test_sync_managed_only_passes_through(self):
         managed = HTTPClient()
         try:
             client, owned = sync_http.resolve_http_client(None, managed)
-            assert client is managed.client
+            assert client is managed
             assert owned is None  # caller must NOT close a managed client
         finally:
             managed.close()
+
+    def test_sync_neither_uses_default_client(self):
+        client, owned = sync_http.resolve_http_client(None, None)
+        assert client is sync_http.get_default_http_client()
+        assert owned is None
 
     async def test_async_both_mtls_and_managed_client_raises(self, mtls):
         managed = AsyncHTTPClient()
@@ -683,6 +692,14 @@ class TestResolveClientMtlsConflict:
     async def test_async_mtls_only_builds_owned_client(self, mtls):
         client, owned = aio_http.resolve_async_http_client(mtls, None)
         try:
-            assert owned is client
+            assert owned is not None  # caller must aclose it
+            assert client.client is owned
+            assert client.config is aio_http.get_default_async_http_client().config
         finally:
-            await client.aclose()
+            if owned is not None:
+                await owned.aclose()
+
+    async def test_async_neither_uses_default_client(self):
+        client, owned = aio_http.resolve_async_http_client(None, None)
+        assert client is aio_http.get_default_async_http_client()
+        assert owned is None

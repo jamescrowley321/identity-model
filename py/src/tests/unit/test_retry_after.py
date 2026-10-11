@@ -6,12 +6,14 @@ from email.utils import format_datetime
 import httpx
 import pytest
 
+from py_identity_model import Config
 from py_identity_model.core.http_utils import (
     MAX_RETRY_DELAY_SECONDS,
     parse_retry_after,
     resolve_retry_delay,
 )
 from py_identity_model.sync.http_client import retry_with_backoff
+from py_identity_model.sync.managed_client import HTTPClient
 
 
 # Reference epoch for deterministic HTTP-date parsing
@@ -89,9 +91,6 @@ class TestSyncRetryHonorsRetryAfter:
     """The sync retry decorator waits for the Retry-After interval on a 429."""
 
     def test_sleep_uses_retry_after(self, monkeypatch):
-        monkeypatch.setenv("HTTP_RETRY_MAX_ATTEMPTS", "1")
-        monkeypatch.setenv("HTTP_RETRY_BASE_DELAY", "0")
-
         slept: list[float] = []
         monkeypatch.setattr(
             "py_identity_model.sync.http_client.time.sleep", slept.append
@@ -103,10 +102,12 @@ class TestSyncRetryHonorsRetryAfter:
         ]
 
         @retry_with_backoff()
-        def call():
+        def call(_client: httpx.Client) -> httpx.Response:
             return responses.pop(0)
 
-        result = call()
+        config = Config(http_retry_max_attempts=1, http_retry_base_delay=0)
+        with HTTPClient(config=config) as client:
+            result = call(client)
 
         assert result.status_code == HTTP_OK
         # base_delay is 0, so without Retry-After the wait would be 0; it is 7.

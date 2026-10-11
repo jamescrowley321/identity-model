@@ -33,6 +33,7 @@ from py_identity_model import (
     AuthorizationCodeTokenRequest,
     ClientCredentialsTokenRequest,
     ClientCredentialsTokenResponse,
+    Config,
     DiscoveryDocumentRequest,
     JsonWebKey,
     JwksRequest,
@@ -45,7 +46,10 @@ from py_identity_model import (
     request_client_credentials_token,
     validate_authorize_callback_state,
 )
-from py_identity_model.aio.http_client import _reset_async_http_client
+from py_identity_model.aio.http_client import (
+    _reset_async_http_client,
+    _reset_default_async_http_client,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import is_uncacheable
 from py_identity_model.core.models import DiscoveryDocumentResponse
@@ -55,8 +59,12 @@ from py_identity_model.core.parsers import (
 )
 from py_identity_model.core.pkce import generate_pkce_pair
 from py_identity_model.exceptions import TokenValidationException
-from py_identity_model.sync.http_client import close_http_client
+from py_identity_model.sync.http_client import (
+    _reset_default_http_client,
+    close_http_client,
+)
 
+from ..conftest import TEST_DEFAULT_CONFIG
 from ..harness import (
     HarnessError,
     Provider,
@@ -129,6 +137,10 @@ DEFAULT_VALIDATION_OPTIONS: dict[str, bool] = {
 # ============================================================================
 
 RATE_LIMIT_ERROR_MESSAGE = "Rate limited"
+# Library default for integration runs: a real retry backoff (see
+# _integration_retry_backoff).
+INTEGRATION_RETRY_BASE_DELAY = 1.0
+INTEGRATION_DEFAULT_CONFIG = Config(http_retry_base_delay=INTEGRATION_RETRY_BASE_DELAY)
 MAX_REDIRECTS = 20
 
 
@@ -413,17 +425,27 @@ async def _clear_async_caches():
     _reset_async_http_client()
 
 
-@pytest.fixture(autouse=True)
-def _integration_retry_backoff(monkeypatch):
-    """Give the library a real retry backoff for integration tests.
+@pytest.fixture(scope="package", autouse=True)
+def _integration_retry_backoff():
+    """Give the library default clients a real retry backoff for integration tests.
 
-    The root conftest zeroes ``HTTP_RETRY_BASE_DELAY`` so unit tests that
-    exercise retry paths don't sleep. Integration tests hit live, rate-limited
-    providers, so a genuine discovery/JWKS fetch that draws a transient 429
-    must actually back off (and honor ``Retry-After``) to recover instead of
-    hammering the endpoint with zero delay.
+    The root conftest installs default clients with
+    ``Config(http_retry_base_delay=0)`` so unit tests that exercise retry paths
+    don't sleep. Integration tests hit live, rate-limited providers, so a
+    genuine discovery/JWKS fetch that draws a transient 429 must actually back
+    off (and honor ``Retry-After``) to recover instead of hammering the
+    endpoint with zero delay.
+
+    Package-scoped so the defaults (and their caches) are installed once for
+    the integration package and live across its tests; the session's
+    zero-delay defaults are restored when the package finishes, so unit tests
+    collected in the same session keep their fast retries.
     """
-    monkeypatch.setenv("HTTP_RETRY_BASE_DELAY", "1.0")
+    _reset_default_http_client(INTEGRATION_DEFAULT_CONFIG)
+    _reset_default_async_http_client(INTEGRATION_DEFAULT_CONFIG)
+    yield
+    _reset_default_http_client(TEST_DEFAULT_CONFIG)
+    _reset_default_async_http_client(TEST_DEFAULT_CONFIG)
 
 
 @pytest.fixture(scope="session")

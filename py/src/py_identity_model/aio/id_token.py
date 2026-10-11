@@ -55,8 +55,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
             be the RP's ``client_id`` and ``issuer`` the OP issuer.
         disco_doc_address: Discovery document address (required when
             ``perform_disco`` is True).
-        http_client: Optional managed async HTTP client (see ``validate_token``
-            for the cache-bypass caveats).
+        http_client: Optional managed async HTTP client (see ``validate_token``).
         trusted_audiences: Additional audiences the client trusts besides
             ``token_validation_config.audience``. Every ``aud`` value MUST be
             the audience or one of these (§3.1.3.7 step 3); omitted or empty

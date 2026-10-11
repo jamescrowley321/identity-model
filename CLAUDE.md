@@ -8,7 +8,7 @@ py-identity-model is a production-grade OIDC/OAuth2.0 helper library for Python 
 
 **Key Design Philosophy:**
 - **Dual API Design**: Synchronous (`py_identity_model`) and asynchronous (`py_identity_model.aio`) APIs with shared business logic
-- **Thread Safety**: Sync API uses thread-local storage for HTTP clients; async API uses singleton with lock protection
+- **Thread Safety**: The sync default client gives each thread its own `httpx.Client`; the async default client is a singleton with lock protection
 - **Modular Architecture**: Clean separation between HTTP layer, business logic (`core/`), and API surface
 - **Production Ready**: Used in production for years as foundation for Flask/FastAPI middleware
 
@@ -96,7 +96,7 @@ repo root (they are read by the Python, Go, and Rust suites alike).
 ```
 py/src/py_identity_model/
 ├── sync/                    # Synchronous API implementations
-│   ├── http_client.py      # Thread-local HTTP client (threading.local)
+│   ├── http_client.py      # Default client (thread-local httpx), retry decorator
 │   ├── discovery.py        # Sync discovery document operations
 │   ├── jwks.py             # Sync JWKS operations
 │   ├── token_client.py     # Sync token endpoint operations
@@ -143,10 +143,10 @@ py/src/py_identity_model/
    - Core functions are pure (no I/O) and return result objects or raise exceptions
 
 3. **Caching Strategy**
-   - Discovery documents and JWKS are cached per-process with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `DEFAULT_MAX_CACHE_ENTRIES` = 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
-   - Entries expire on a TTL resolved from `Cache-Control: max-age` → env override (`DISCO_CACHE_TTL` / `JWKS_CACHE_TTL`) → built-in default, clamped to `[60s, 86400s]`. Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
-   - Per-process cache hit/miss/refresh counters are exposed via `core/cache_metrics.py` (`get_cache_counters()`, re-exported at the top level); the async cache paths are instrumented. Clear caches with `clear_discovery_cache()` / `clear_jwks_cache()` (async variants must be `await`ed).
-   - All caches are per-process, not shared across processes
+   - Discovery documents and JWKS are cached with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `Config.cache_max_entries`, default 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. The caches and kid-miss cooldown state are owned by the HTTP client (`HTTPClient.caches` / `AsyncHTTPClient.caches`), so each cache has one `Config` and two clients never share cached documents. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
+   - Entries expire on a TTL resolved from `Cache-Control: max-age` (clamped to `[60s, 86400s]`) → the client's `Config` (`discovery_cache_ttl` / `jwks_cache_ttl`). Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
+   - Per-process cache hit/miss/refresh counters are exposed via `core/cache_metrics.py` (`get_cache_counters()`, re-exported at the top level); the async cache paths are instrumented. Clear caches with `clear_discovery_cache(http_client=None)` / `clear_jwks_cache(http_client=None)` (async variants must be `await`ed).
+   - All caches are per client (the library default client's are shared by the process), never across processes
 
 4. **Error Handling**
    - Per-feature error handlers in `core/error_handlers.py` (e.g., `handle_discovery_error()`, `handle_token_error()`, `handle_userinfo_error()`)
@@ -260,27 +260,27 @@ Format: `<type>/<short-description>` (e.g., `feat/descope-integration`, `fix/jwk
 
 ### HTTP Configuration
 
-Environment variables (see `core/http_utils.py`):
-- `HTTP_TIMEOUT`: Request timeout in seconds (default: 30.0)
-- `HTTP_RETRY_COUNT`: Max retries for rate-limited requests (default: 3)
-- `HTTP_RETRY_BASE_DELAY`: Base delay for exponential backoff (default: 1.0)
-- `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`: Custom CA bundle paths
+The library reads **no** environment variables. Settings live on a frozen,
+validated `Config` (`core/config.py`: `http_timeout`, `http_retry_max_attempts`,
+`http_retry_base_delay`, `ca_bundle`, `jwks_max_size`, `jwks_max_keys`,
+`jwks_cache_ttl`, `jwks_kid_miss_cooldown`, `discovery_cache_ttl`,
+`cache_max_entries`). `HTTPClient(config=...)` / `AsyncHTTPClient(config=...)`
+hold it (`None` → `Config()` defaults, never the environment), and every entry
+point takes `http_client=`; without one, the library default client
+(`get_default_http_client()` / `get_default_async_http_client()`, built from
+`Config()`) is used. Retry decorators read retries/backoff from the managed
+client's `Config`.
+
+The only module that reads `os.environ` is the optional
+`config_helpers.py` (`config_from_env` / `config_from_mapping`), which the
+library never imports or calls.
 
 ### SSL/TLS Configuration
 
-The library supports custom SSL certificates via environment variables. Priority order:
-1. `SSL_CERT_FILE` (httpx native, recommended)
-2. `CURL_CA_BUNDLE` (httpx fallback)
-3. `REQUESTS_CA_BUNDLE` (backward compatibility)
-4. System defaults
-
-Resolved by `get_ssl_verify()`, which is `lru_cache`d — read once per process and
-fixed for its lifetime, so a runtime change needs a restart (or
-`get_ssl_verify.cache_clear()` plus rebuilt clients). Resolution is read-only —
-nothing in this module writes to `os.environ`, so an import never changes the TLS
-trust store of anything else in the process.
-
-See `ssl_config.py` for implementation details.
+`Config.ca_bundle` (a readable file, or `None` for httpx's default bundle) is
+resolved by `get_ssl_verify(config)` in `ssl_config.py`; mTLS contexts use it
+via `build_mtls_ssl_context(mtls, config)`. httpx's own `trust_env` handling
+(`SSL_CERT_FILE`, proxies) is left at httpx's default.
 
 ## Common Pitfalls
 

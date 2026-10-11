@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model import Config
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks,
@@ -21,7 +21,6 @@ from py_identity_model.aio.token_validation import (
     clear_jwks_cache,
     validate_token,
 )
-from py_identity_model.core.jwks_cache import _reset_env_for_testing
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
@@ -678,45 +677,37 @@ class TestAsyncLruReadHitEviction:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_read_hit_protects_hot_entry_from_eviction(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
-        try:
-            urls = [f"https://op-{i}.example/jwks" for i in range(5)]
-            key_dict = generate_rsa_keypair()[0]
-            for url in urls:
-                respx.get(url).mock(
-                    return_value=httpx.Response(
-                        200,
-                        json={"keys": [key_dict]},
-                        headers={"Cache-Control": "max-age=3600"},
-                    )
+    async def test_read_hit_protects_hot_entry_from_eviction(self):
+        hot_url = "https://op-hot.example/jwks"
+        oldest_unread_url = "https://op-1.example/jwks"
+        warm_urls = ["https://op-2.example/jwks", "https://op-3.example/jwks"]
+        overflow_url = "https://op-overflow.example/jwks"
+        capacity_urls = [hot_url, oldest_unread_url, *warm_urls]
+        key_dict = generate_rsa_keypair()[0]
+        for url in [*capacity_urls, overflow_url]:
+            respx.get(url).mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"keys": [key_dict]},
+                    headers={"Cache-Control": "max-age=3600"},
                 )
+            )
 
-            # Fill to capacity: op-0 (oldest) .. op-3 (newest).
-            for url in urls[:4]:
-                await _get_cached_jwks(url)
-            assert list(aio_tv._jwks_cache.keys()) == urls[:4]
+        config = Config(cache_max_entries=len(capacity_urls))
+        async with AsyncHTTPClient(config=config) as client:
+            cache = client.caches.jwks
 
-            # Re-read op-0 — a cache hit (no network) that refreshes recency.
-            await _get_cached_jwks(urls[0])
-            assert list(aio_tv._jwks_cache.keys()) == [
-                urls[1],
-                urls[2],
-                urls[3],
-                urls[0],
-            ]
+            # Fill to capacity: hot (oldest) .. op-3 (newest).
+            for url in capacity_urls:
+                await _get_cached_jwks(url, http_client=client)
+            assert list(cache) == capacity_urls
 
-            # A fifth distinct URI overflows; eviction targets op-1 (oldest
-            # unread), NOT the recently-read op-0.
-            await _get_cached_jwks(urls[4])
-            assert urls[0] in aio_tv._jwks_cache
-            assert urls[1] not in aio_tv._jwks_cache
-            assert set(aio_tv._jwks_cache.keys()) == {
-                urls[0],
-                urls[2],
-                urls[3],
-                urls[4],
-            }
-        finally:
-            _reset_env_for_testing()
+            # Re-read the hot entry — a cache hit (no network) that refreshes
+            # recency.
+            await _get_cached_jwks(hot_url, http_client=client)
+            assert list(cache) == [oldest_unread_url, *warm_urls, hot_url]
+
+            # A further distinct URI overflows; eviction targets op-1 (oldest
+            # unread), NOT the recently-read hot entry.
+            await _get_cached_jwks(overflow_url, http_client=client)
+            assert list(cache) == [*warm_urls, hot_url, overflow_url]
