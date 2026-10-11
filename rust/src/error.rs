@@ -83,8 +83,8 @@ pub enum IdentityError {
     /// A token with no `kid` could be verified by more than one key in the
     /// JWKS (JWKS-009). With no `kid`, the set is narrowed to signing keys
     /// (`use` absent or `sig`, RFC 7517 §4.2), then to keys whose `alg` is
-    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it;
-    /// `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
+    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it,
+    /// each step applied only when it leaves a key; `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
     /// which reports a `kid` that matches no key.
     #[error("ambiguous key: token has no kid and {count} keys could verify alg {alg:?} {kids:?}")]
     AmbiguousKey {

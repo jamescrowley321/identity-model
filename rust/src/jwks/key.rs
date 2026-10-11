@@ -496,6 +496,56 @@ mod tests {
         );
     }
 
+    // JWKS-009: the kty step maps EdDSA to OKP and HS* to oct, so each picks
+    // its key out of a two-key set whose keys declare no alg.
+    #[test]
+    fn resolve_signing_key_without_kid_narrows_by_kty() {
+        let ec_okp = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"EC","kid":"ec","use":"sig","crv":"P-256","x":"a","y":"a"},
+                {"kty":"OKP","kid":"okp","use":"sig","crv":"Ed25519","x":"a"}
+            ] }"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            ec_okp.resolve_signing_key("", "EdDSA").expect("okp").kid,
+            "okp"
+        );
+
+        let rsa_oct = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"RSA","kid":"rsa","use":"sig","n":"a","e":"AQAB"},
+                {"kty":"oct","kid":"oct","use":"sig","k":"a"}
+            ] }"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            rsa_oct.resolve_signing_key("", "HS256").expect("oct").kid,
+            "oct"
+        );
+    }
+
+    // JWKS-009: with no token alg there is nothing to compare a key's alg
+    // against, so a key declaring one does not break the tie.
+    #[test]
+    fn resolve_signing_key_without_kid_or_alg_stays_ambiguous() {
+        let set = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"RSA","kid":"declared","use":"sig","alg":"RS256","n":"a","e":"AQAB"},
+                {"kty":"RSA","kid":"plain","use":"sig","n":"a","e":"AQAB"}
+            ] }"#,
+        )
+        .expect("parses");
+        match set.resolve_signing_key("", "") {
+            Err(IdentityError::AmbiguousKey { alg, kids, count }) => {
+                assert_eq!(alg, "");
+                assert_eq!(kids, vec!["declared".to_string(), "plain".to_string()]);
+                assert_eq!(count, 2);
+            }
+            other => panic!("expected AmbiguousKey, got {other:?}"),
+        }
+    }
+
     // JWKS-009: two keys that could verify a kid-less token are ambiguous, a
     // typed error distinct from KeyNotFound.
     #[test]
