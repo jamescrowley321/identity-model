@@ -61,8 +61,8 @@ func (e *KeyNotFoundError) Error() string {
 // AmbiguousKeyError reports that a token with no kid could be verified by more
 // than one key in the set (JWKS-009). With no kid, the set is narrowed to
 // signing keys (use absent or "sig", RFC 7517 §4.2), then to keys whose alg is
-// absent or equals the header alg (§4.4) and whose kty matches it; Count keys
-// were left. Kids lists the ids of those that have one. It is distinct from
+// absent or equals the header alg (§4.4) and whose kty matches it, each step
+// applied only when it leaves a key; Count keys were left. Kids lists the ids of those that have one. It is distinct from
 // [KeyNotFoundError], which reports a kid that matches no key.
 type AmbiguousKeyError struct {
 	Alg   string
