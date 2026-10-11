@@ -39,7 +39,7 @@ to `shipped` and links its proving test as it lands.
 | ------- | ------ | ---------- | ------------------ | ------------ | ------ |
 | Basic-auth credential form-urlencoding | `core/client_auth.py` | RFC 6749 §2.3.1 / App. B | Reserved chars in `client_id`/secret mangled or `:` splits credential (R.5, #482) | `security/test_basic_auth_encoding.py` | shipped |
 | Reject alg downgrade / confusion (honor caller allowlist; never trust token header) | `core/parsers.py`, `core/token_validation_logic.py`, `core/jwt_helpers.py` | RFC 7515 §4.1.1, RFC 8725 §2.1 | HS/`none` alg-confusion & downgrade forgery (R.1) | `security/test_alg_confusion_contract.py` | shipped |
-| Issuer allowlist pinning before trusting discovery | `core/token_validation_logic.py`, `core/models.py` | OIDC Core §2, RFC 9207 | Multi-tenant issuer spoofing (R.9) | `security/test_issuer_pinning.py` | shipped |
+| Issuer allowlist pinning before trusting discovery | `core/token_validation_logic.py`, `core/models.py` | OIDC Discovery 1.0 §4.3, §7.2; OIDC Core §3.1.3.7 (step 2); RFC 9207 | Multi-tenant issuer spoofing (R.9) | `security/test_issuer_pinning.py` | shipped |
 | Sender-constrained tokens (`cnf.x5t#S256` / `cnf.jkt`) + strict audience | `core/mtls.py`, `core/dpop.py`, `core/token_validation_logic.py` | RFC 8705 §3, RFC 9449 §7 | Stolen-token replay against a bearer RS (R.2) | _pending SC3_ | pending |
 | Enforce `verify_aud` / `verify_iss` / `require exp` | `core/jwt_helpers.py`, `core/token_validation_logic.py` | RFC 7519 §4.1, RFC 8725 §3.x | Audience/issuer/expiry checks silently disabled (R.3) | _pending SC4_ | pending |
 | Require `sub` claim on ID tokens | `core/token_validation_logic.py` | OIDC Core §2 | ID token accepted without a subject (R.10) | _pending SC5_ | pending |

@@ -2,19 +2,24 @@
 
 First-class validation of OpenID Connect ID Tokens. `validate_id_token` runs
 the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
-`exp`) and then enforces the ID-token profile of OIDC Core 1.0 §3.1.3.7 /
-§3.3.2.11 on top:
+`exp`) and then enforces the ID-token profile of OIDC Core 1.0 §2, §3.1.3.7,
+§3.2.2.9 and §3.3.2.10 on top:
 
-- **`sub`** — required and non-empty, always.
+- **`sub`** — required and non-empty, always (§2).
 - **`azp`** — a multi-audience token must carry `azp`, and a present `azp`
   must equal your `client_id` (taken from `token_validation_config.audience`).
+  This is library policy: §3.1.3.7 steps 4-5 make the `client_id` comparison a
+  SHOULD, and errata set 2 has no multi-audience rule.
 - **`nonce`** — when you pass `nonce=`, the claim must be present and equal
-  (compared in constant time).
+  (compared in constant time; §3.1.3.7 step 11).
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
-  present and recent enough (`now - auth_time <= max_age + leeway`).
+  present (§2, §3.1.2.1) and recent enough (`now - auth_time <= max_age +
+  leeway`; §3.1.3.7 step 13, a SHOULD).
 - **`at_hash` / `c_hash`** — when you pass `access_token=` / `code=`, the
-  corresponding left-half hash must match, computed under the token's
-  signature-verified header `alg`. An unmappable algorithm fails closed.
+  corresponding left-half hash must match (`at_hash`: §3.2.2.9 item 3;
+  `c_hash`: §3.3.2.10 item 3), computed under the token's signature-verified
+  header `alg`. Requiring the claim to be present once you pass the value is
+  library policy. An unmappable algorithm fails closed.
 
 The optional checks activate only when you supply the corresponding argument,
 so validation is exactly as strict as the flow you are running. Set
