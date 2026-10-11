@@ -1225,7 +1225,7 @@ def _fetch_userinfo(
 
     Skipped (returns ``{}``) when there is no access token, no userinfo endpoint,
     or the flow opted out. FAPI 2.0 sessions present the DPoP-bound access token
-    with a DPoP proof (RFC 9449); a ``sub`` mismatch is fatal (OIDC Core §5.3.4).
+    with a DPoP proof (RFC 9449); a ``sub`` mismatch is fatal (OIDC Core §5.3.2).
     """
     if not (access_token and disco.userinfo_endpoint and not session.skip_userinfo):
         return {}
@@ -1257,13 +1257,11 @@ def _fetch_userinfo(
     if userinfo_response.is_successful:
         return userinfo_response.claims or {}
 
-    # OIDC Core 1.0 §5.3.4: a sub mismatch is fatal — the RP MUST reject the
-    # UserInfo response if sub differs from the ID token sub.
+    # Any unsuccessful UserInfo result is fatal: an HTTP/parse error, or a sub
+    # mismatch (OIDC Core 1.0 §5.3.2: the RP MUST NOT use the UserInfo response
+    # if sub differs from the ID token sub).
     error_msg = userinfo_response.error
-    logger.error(
-        "REJECTED: UserInfo validation failed (sub mismatch per OIDC Core §5.3.4): %s",
-        error_msg,
-    )
+    logger.error("REJECTED: UserInfo validation failed: %s", error_msg)
     session.result["status"] = "error"
     session.result["error"] = f"userinfo_validation: {error_msg}"
     _store_test_result(session)
@@ -1695,9 +1693,9 @@ async def callback_post(request: Request) -> HTMLResponse | JSONResponse:
 def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
     """Validate a Back-Channel Logout Token posted by the OP (sync worker).
 
-    OpenID Connect Back-Channel Logout 1.0 §2.4/§2.5: the OP POSTs a
-    ``logout_token`` to the RP's ``backchannel_logout_uri``. The RP validates it
-    and responds 200 on success or 400 on failure. Validation is delegated to
+    OpenID Connect Back-Channel Logout 1.0 §2.5/§2.6/§2.8: the OP POSTs a
+    ``logout_token`` to the RP's ``backchannel_logout_uri`` (§2.5). The RP
+    validates it (§2.6) and responds 200 on success or 400 on failure (§2.8). Validation is delegated to
     ``validate_logout_token`` so the harness exercises the library's public API.
     """
     if not logout_token:
@@ -1752,7 +1750,8 @@ def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
         # A non-empty but malformed ``logout_token`` (not a well-formed JWT)
         # trips PyJWT's header decode inside ``validate_token`` and raises a
         # ``PyJWTError`` — which is NOT a ``PyIdentityModelException``. Spec
-        # §2.5 mandates 400 (not an uncaught 500) for an invalid token.
+        # §2.8 (and the end of §2.6) mandates 400 (not an uncaught 500) for an
+        # invalid token.
         logger.error("REJECTED: logout token is not a well-formed JWT: %s", exc)
         return JSONResponse(
             status_code=400,
