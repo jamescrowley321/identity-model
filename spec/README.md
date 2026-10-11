@@ -91,7 +91,7 @@ that implements them**:
 | revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
-| discovery | 10 | 12 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| discovery | 10 | 13 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | client-credentials | 6 | 8 | `go/internal/conformance/httpvector_test.go` (adapter: `client_credentials_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
