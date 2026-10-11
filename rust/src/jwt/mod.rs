@@ -460,7 +460,8 @@ mod tests {
         validate_token(&token, &public_key(), &opts).expect("within skew passes");
     }
 
-    // OIDC Core §3.1.3.7 end-to-end: a multi-audience token missing azp is
+    // Library azp policy (cf. OIDC Core §3.1.3.7 steps 4-5) end-to-end: a
+    // multi-audience token missing azp is
     // rejected after a successful signature verification, and the same token
     // with the correct azp validates.
     #[test]

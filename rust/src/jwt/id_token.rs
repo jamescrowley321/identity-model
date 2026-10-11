@@ -5,14 +5,18 @@
 //! path. [`validate_id_token_claims`] enforces only the additional rules that
 //! make an ID Token an ID Token, on an already-decoded [`Claims`] set:
 //!
-//! * `sub` is REQUIRED and must be non-empty (§2 / §3.1.3.7).
-//! * `azp` authorized-party rules when the token carries multiple audiences
-//!   (§3.1.3.7 steps 4-6).
+//! * `sub` is REQUIRED and must be non-empty (§2).
+//! * `azp` authorized-party rules (§3.1.3.7 steps 4-5, SHOULD). Requiring
+//!   `azp` on a multi-audience token is library policy: errata set 2 has no
+//!   such rule (Core 1.0 (2014) step 4 had it as a SHOULD).
 //! * `nonce` binding, when the caller supplies the `nonce` it sent on the
 //!   authorization request (§3.1.3.7 step 11).
-//! * `auth_time` freshness against `max_age` (§3.1.3.7 step 12).
-//! * `at_hash` / `c_hash` token/code binding for the hybrid and
-//!   authorization-code flows (§3.3.2.11).
+//! * `auth_time` presence when `max_age` was requested (§2, §3.1.2.1) and
+//!   freshness against `max_age` (§3.1.3.7 step 13, SHOULD).
+//! * `at_hash` / `c_hash` binding: `at_hash` per §3.2.2.9 item 3 (Hybrid via
+//!   §3.3.2.9; in the Code Flow `at_hash` is OPTIONAL, §3.1.3.6, and checking
+//!   it is a MAY, §3.1.3.8), `c_hash` per §3.3.2.10 item 3. The claims are
+//!   defined in §3.3.2.11.
 //!
 //! The `at_hash`/`c_hash` hash is chosen from the ID Token header `alg` — the
 //! *signature-verified* algorithm ([`super::parse_header_alg`]), never an
@@ -125,7 +129,8 @@ impl IdTokenValidationOptionsBuilder {
     }
 
     /// Sets the relying party's `client_id`. When a present `azp` is validated
-    /// it MUST equal this value (§3.1.3.7 step 6). [`validate_id_token`]
+    /// it must equal this value (§3.1.3.7 step 5, SHOULD; enforced as library
+    /// policy). [`validate_id_token`]
     /// defaults it to the base audience when unset.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.inner.client_id = Some(client_id.into());
@@ -140,21 +145,21 @@ impl IdTokenValidationOptionsBuilder {
     }
 
     /// Requires the token's `at_hash` to be present and bind to `access_token`
-    /// (§3.3.2.11).
+    /// (match: §3.2.2.9 item 3; presence: library policy).
     pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
         self.inner.access_token = Some(access_token.into());
         self
     }
 
     /// Requires the token's `c_hash` to be present and bind to `code`, the
-    /// authorization code (§3.3.2.11).
+    /// authorization code (match: §3.3.2.10 item 3; presence: library policy).
     pub fn code(mut self, code: impl Into<String>) -> Self {
         self.inner.code = Some(code.into());
         self
     }
 
-    /// Requires `auth_time` to be present and satisfy
-    /// `now - auth_time <= max_age + leeway` (§3.1.3.7 step 12).
+    /// Requires `auth_time` to be present (§2, §3.1.2.1) and satisfy
+    /// `now - auth_time <= max_age + leeway` (§3.1.3.7 step 13, SHOULD).
     pub fn max_age(mut self, max_age: i64) -> Self {
         self.inner.max_age = Some(max_age);
         self
@@ -182,10 +187,11 @@ impl IdTokenValidationOptionsBuilder {
 }
 
 /// Resolves the SHA-2 hash constructor implied by an ID Token `alg` and returns
-/// the digest of `bytes` under it (§3.3.2.11).
+/// the digest of `bytes` under it (§3.2.2.9 / §3.3.2.10 item 1).
 ///
 /// `RS256`/`ES256`/`PS256`/`HS256` → SHA-256, `*384` → SHA-384, `*512` →
-/// SHA-512; `EdDSA`/`Ed25519` → SHA-512.
+/// SHA-512; `EdDSA`/`Ed25519` → SHA-512 (OpenID Connect Token Hash Algorithms
+/// 1.0, Table 1; Core defines no EdDSA mapping).
 ///
 /// # Errors
 ///
@@ -200,7 +206,8 @@ fn digest_for_alg(bytes: &[u8], alg: Option<&str>) -> Result<Vec<u8>> {
         ));
     }
     if EDDSA_ALGS.contains(&alg) {
-        // Assumes Ed25519 (SHA-512). Ed448 also carries alg "EdDSA" but hashes
+        // Assumes Ed25519 (SHA-512, Token Hash Algorithms 1.0 Table 1). Ed448
+        // also carries alg "EdDSA" but hashes
         // with SHAKE256; it is intentionally unsupported here and fails closed
         // on the resulting at_hash/c_hash mismatch.
         return Ok(Sha512::digest(bytes).to_vec());
@@ -219,7 +226,8 @@ fn digest_for_alg(bytes: &[u8], alg: Option<&str>) -> Result<Vec<u8>> {
 }
 
 /// Computes the OIDC left-half hash of `value` under the ID Token `alg`
-/// (§3.3.2.11): base64url-no-pad of the left-most half of `H(value.ascii)`.
+/// (§3.2.2.9 / §3.3.2.10): base64url-no-pad of the left-most half of
+/// `H(value.ascii)`.
 fn left_half_hash(value: &str, alg: Option<&str>) -> Result<String> {
     let digest = digest_for_alg(value.as_bytes(), alg)?;
     let half = digest.len() / 2;
@@ -270,14 +278,14 @@ pub fn validate_id_token_claims(
     header_alg: Option<&str>,
     options: &IdTokenValidationOptions,
 ) -> Result<()> {
-    // §2 / §3.1.3.7 — `sub` is REQUIRED and must be non-empty.
+    // §2 — `sub` is REQUIRED and must be non-empty.
     if claims.subject.as_deref().unwrap_or_default().is_empty() {
         return Err(IdentityError::IdTokenValidation(
             "ID token missing required 'sub' claim".to_string(),
         ));
     }
 
-    // §3.1.3.7 steps 4-6 — authorized-party (`azp`) rules.
+    // §3.1.3.7 steps 4-5 (SHOULD) — authorized-party (`azp`) rules.
     //
     // The trusted Python oracle (`core/id_token_logic.py`) gates the
     // multi-audience "azp REQUIRED" rule on `not azp`, whose truthiness treats
@@ -290,7 +298,8 @@ pub fn validate_id_token_claims(
     let azp = claims.authorized_party.as_deref();
     let azp_present = azp.is_some_and(|value| !value.is_empty());
     if audiences.len() > 1 && !azp_present {
-        // Step 4: with multiple audiences an `azp` claim MUST be present — an
+        // Library policy: a multi-audience token must carry `azp` (errata set 2
+        // has no such rule; Core 1.0 (2014) step 4 had it as a SHOULD) — an
         // empty-string `azp` counts as absent, matching the oracle's `not azp`.
         return Err(IdentityError::IdTokenValidation(
             "ID token with multiple audiences must contain an 'azp' claim".to_string(),
@@ -299,8 +308,9 @@ pub fn validate_id_token_claims(
     if let (Some(azp), Some(client_id)) = (azp, options.client_id.as_deref())
         && azp != client_id
     {
-        // Step 6: a present `azp` (including an empty string, matching the
-        // oracle's `azp is not None`) MUST identify this client.
+        // Step 5 (SHOULD, enforced as library policy): a present `azp`
+        // (including an empty string, matching the oracle's `azp is not None`)
+        // must identify this client.
         return Err(IdentityError::IdTokenValidation(
             "ID token 'azp' claim does not match the configured client_id".to_string(),
         ));
@@ -319,7 +329,8 @@ pub fn validate_id_token_claims(
         }
     }
 
-    // §3.1.3.7 step 12 — `auth_time` freshness (only when `max_age` passed).
+    // §2 / §3.1.2.1 — `auth_time` is REQUIRED when `max_age` was requested;
+    // §3.1.3.7 step 13 (SHOULD) — freshness. Only when `max_age` passed.
     if let Some(max_age) = options.max_age {
         let auth_time = claims.get("auth_time").and_then(numeric_seconds);
         let Some(auth_time) = auth_time else {
@@ -336,7 +347,8 @@ pub fn validate_id_token_claims(
         }
     }
 
-    // §3.3.2.11 — `at_hash` binding (only when an access token was passed).
+    // §3.2.2.9 item 3 — `at_hash` binding (only when an access token was
+    // passed). Rejecting an absent `at_hash` here is library policy.
     if let Some(access_token) = options.access_token.as_deref() {
         let expected = left_half_hash(access_token, header_alg)?;
         let matches = claims
@@ -349,7 +361,8 @@ pub fn validate_id_token_claims(
         }
     }
 
-    // §3.3.2.11 — `c_hash` binding (only when an authorization code was passed).
+    // §3.3.2.10 item 3 — `c_hash` binding (only when an authorization code was
+    // passed). Rejecting an absent `c_hash` here is library policy.
     if let Some(code) = options.code.as_deref() {
         let expected = left_half_hash(code, header_alg)?;
         let matches = claims
@@ -617,7 +630,7 @@ mod tests {
     }
 
     // IDT-007: at_hash binds to the access token under RS256 (SHA-256), using
-    // the real OIDC §3.3.2.11 left-half construction.
+    // the real OIDC left-half construction (Core §3.2.2.9).
     #[test]
     fn enforces_at_hash_rs256() {
         let access_token = "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU";
@@ -674,7 +687,7 @@ mod tests {
     }
 
     // IDT-009 / IDT-010: c_hash binds to the authorization code under RS256 and
-    // ES512. The RS256 case is the OIDC Core §3.3.2.11 worked example.
+    // ES512. The RS256 case is the OIDC Core Appendix A.4/A.6 example value.
     #[test]
     fn enforces_c_hash() {
         let rs = IdTokenValidationOptions::builder()

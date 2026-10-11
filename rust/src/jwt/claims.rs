@@ -293,13 +293,14 @@ impl Claims {
             ));
         }
 
-        // azp — authorized party (OIDC Core 1.0 §3.1.3.7). The claim can only be
+        // azp — authorized party. Library policy, stricter than OIDC Core 1.0
+        // §3.1.3.7 steps 4-5 (SHOULD). The claim can only be
         // checked against the caller's own client_id, which is the expected
         // audience, so these rules apply only when an audience is configured:
-        //  - a present `azp` MUST equal the client_id: a token authorized for a
-        //    different party must not validate for this client;
-        //  - a token carrying more than one audience MUST name the authorized
-        //    party in `azp`, so the client can confirm it is the intended party.
+        //  - a present `azp` must equal the client_id: a token authorized for a
+        //    different party must not validate for this client (step 5);
+        //  - a token carrying more than one audience must name the authorized
+        //    party in `azp` (Core 1.0 (2014) step 4 SHOULD; not in errata set 2).
         // Single-audience tokens without `azp` are unaffected.
         if let Some(client_id) = &opts.expected_audience {
             match &self.authorized_party {
@@ -533,8 +534,8 @@ mod tests {
             .expect("matching nonce passes");
     }
 
-    // OIDC Core §3.1.3.7: a multi-audience token must carry an azp naming the
-    // authorized party; with the correct azp it passes, without it or with the
+    // Library azp policy (cf. OIDC Core §3.1.3.7 steps 4-5): a multi-audience
+    // token must carry an azp naming the authorized party; with the correct azp it passes, without it or with the
     // wrong value it is rejected.
     #[test]
     fn multi_audience_requires_matching_azp() {

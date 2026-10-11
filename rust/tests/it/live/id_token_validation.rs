@@ -31,8 +31,8 @@
 //!   [`IdentityError::IdTokenValidation`]);
 //! * `max_age`/`auth_time` freshness holds on the real `auth_time`.
 //!
-//! node-oidc-provider, like most OPs, mints `at_hash` only for
-//! authorization-endpoint (implicit/hybrid) responses, not the code flow, so
+//! `at_hash` is OPTIONAL in the Code Flow (OIDC Core §3.1.3.6) and
+//! node-oidc-provider's code-flow ID Token omits it, so
 //! the `at_hash` binding is asserted only when the real ID Token actually
 //! carries one — that leg self-guards and documents why it is skipped
 //! otherwise.
@@ -53,7 +53,7 @@ use crate::common::env::{env_nonempty, fail_live_prerequisite, issuer_from_env};
 
 /// A fixed nonce/max_age sent on the authorization request so the OP echoes a
 /// `nonce` and an `auth_time` into the minted ID Token, exercising the
-/// §3.1.3.7 nonce (step 11) and max_age/auth_time (step 12) bindings on a real
+/// §3.1.3.7 nonce (step 11) and max_age/auth_time (step 13) bindings on a real
 /// token.
 const LIVE_NONCE: &str = "live-rs-id-token-nonce-4d1f7a";
 const LIVE_MAX_AGE: i64 = 3600;
@@ -385,7 +385,7 @@ async fn validate_id_token_end_to_end() {
     } else {
         eprintln!(
             "SKIP(at_hash): OP's code-flow ID Token carries no at_hash \
-             (emitted only for authorization-endpoint responses)"
+             (OPTIONAL in the Code Flow, OIDC Core §3.1.3.6)"
         );
     }
 }

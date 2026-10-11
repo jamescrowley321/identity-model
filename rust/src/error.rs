@@ -22,7 +22,8 @@ pub enum IdentityError {
     /// An ID Token failed one of the OpenID Connect ID-Token *profile* rules
     /// layered on top of standard JWT validation — the required `sub`, the
     /// `azp` authorized-party rules, or the opt-in `nonce` / `max_age` /
-    /// `at_hash` / `c_hash` bindings (OIDC Core 1.0 §3.1.3.7 / §3.3.2.11). Kept
+    /// `at_hash` / `c_hash` bindings (OIDC Core 1.0 §2, §3.1.3.7, §3.2.2.9,
+    /// §3.3.2.10). Kept
     /// distinct from [`IdentityError::Validation`] (signature/iss/aud/exp) so a
     /// caller can tell a profile violation apart from a base-JWT failure. The
     /// profile fails **closed**: an unknown or missing header `alg` on an
