@@ -27,9 +27,9 @@ endpoints.
 - JWT handling via the `jsonwebtoken` crate.
 - Builder-pattern configuration; `Result<T, IdentityError>` everywhere (`thiserror`).
 - Caches use `tokio::sync::RwLock` for thread-safe async access.
-- Security hardening: secrets are redacted from `Debug`/error output, `azp` and
-  clock-skew are validated during JWT verification, and redirect-scheme downgrades
-  are rejected.
+- Security hardening: secrets are redacted from `Debug`/error output, clock-skew
+  is validated during JWT verification, `azp` is enforced by the ID-token profile,
+  and redirect-scheme downgrades are rejected.
 
 ## Getting Started
 

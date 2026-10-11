@@ -460,34 +460,29 @@ mod tests {
         validate_token(&token, &public_key(), &opts).expect("within skew passes");
     }
 
-    // OIDC Core §3.1.3.7 end-to-end: a multi-audience token missing azp is
-    // rejected after a successful signature verification, and the same token
-    // with the correct azp validates.
+    // End-to-end through signature verification: base `validate_token` checks
+    // the expected audience and ignores azp, so an access token issued to a
+    // resource server on behalf of a SPA validates. azp is enforced only by the
+    // ID-token profile (OIDC Core 1.0 §3.1.3.7 steps 4-6), matching Python and Go.
     #[test]
-    fn enforces_azp_for_multi_audience_end_to_end() {
+    fn validate_token_ignores_azp_on_access_token() {
         let n = now();
         let opts = ValidationOptions::builder()
             .issuer(TEST_ISSUER)
-            .audience(TEST_AUDIENCE)
+            .audience("api")
             .build();
 
-        let no_azp = mint(json!({
+        let token = mint(json!({
             "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
+            "sub": "user-1",
+            "aud": ["api", "https://idp.example/userinfo"],
+            "azp": "spa-client",
             "exp": n + 3600,
             "iat": n - 5,
         }));
-        let err = validate_token(&no_azp, &public_key(), &opts)
-            .expect_err("multi-aud without azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
-
-        let with_azp = mint(json!({
-            "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
-            "azp": TEST_AUDIENCE,
-            "exp": n + 3600,
-            "iat": n - 5,
-        }));
-        validate_token(&with_azp, &public_key(), &opts).expect("multi-aud with correct azp passes");
+        let validated = validate_token(&token, &public_key(), &opts)
+            .expect("access token with foreign azp validates");
+        assert_eq!(validated.authorized_party.as_deref(), Some("spa-client"));
+        assert_eq!(validated.subject.as_deref(), Some("user-1"));
     }
 }
