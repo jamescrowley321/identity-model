@@ -15,31 +15,33 @@ const CanonicalError = "id_token_profile"
 // match the "reason" field of the shared conformance vectors exactly, so the Go
 // runner agrees with the Python reference on the cause of every rejection.
 const (
-	// ReasonMissingSub: sub is absent or empty (§2 / §3.1.3.7).
+	// ReasonMissingSub: sub is absent or empty (§2).
 	ReasonMissingSub = "missing_sub"
-	// ReasonAZPRequiredMultiAud: multiple audiences but no azp (§3.1.3.7 step 4).
+	// ReasonAZPRequiredMultiAud: multiple audiences but no azp (library policy;
+	// Core 1.0 (2014) §3.1.3.7 step 4 SHOULD, not in errata set 2).
 	ReasonAZPRequiredMultiAud = "azp_required_multi_aud"
-	// ReasonAZPMismatch: azp present but not this client (§3.1.3.7 step 6).
+	// ReasonAZPMismatch: azp present but not this client (§3.1.3.7 step 5,
+	// SHOULD; enforced as library policy).
 	ReasonAZPMismatch = "azp_mismatch"
 	// ReasonNonceMismatch: token nonce absent or not equal to the expected nonce
 	// (§3.1.3.7 step 11).
 	ReasonNonceMismatch = "nonce_mismatch"
-	// ReasonAuthTimeStale: now-auth_time exceeds max_age+leeway (§3.1.3.7 step 12).
+	// ReasonAuthTimeStale: now-auth_time exceeds max_age+leeway (§3.1.3.7 step 13).
 	ReasonAuthTimeStale = "auth_time_stale"
-	// ReasonAuthTimeMissing: max_age requested but auth_time absent (§3.1.3.7
-	// step 12).
+	// ReasonAuthTimeMissing: max_age requested but auth_time absent (§2,
+	// §3.1.2.1).
 	ReasonAuthTimeMissing = "auth_time_missing"
 	// ReasonAtHashMismatch: at_hash absent or not the access token's left-half
-	// hash (§3.3.2.11).
+	// hash (match: §3.2.2.9 item 3; presence: library policy).
 	ReasonAtHashMismatch = "at_hash_mismatch"
 	// ReasonCHashMismatch: c_hash absent or not the authorization code's
-	// left-half hash (§3.3.2.11).
+	// left-half hash (match: §3.3.2.10 item 3; presence: library policy).
 	ReasonCHashMismatch = "c_hash_mismatch"
 	// ReasonUnsupportedAlg: the header alg cannot be mapped to a hash for an
-	// at_hash/c_hash check (§3.3.2.11) — fails closed.
+	// at_hash/c_hash check (§3.2.2.9 / §3.3.2.10 item 1) — fails closed.
 	ReasonUnsupportedAlg = "unsupported_alg"
 	// ReasonAlgRequired: an at_hash/c_hash check was requested but the header
-	// alg is missing (§3.3.2.11) — fails closed.
+	// alg is missing (§3.2.2.9 / §3.3.2.10 item 1) — fails closed.
 	ReasonAlgRequired = "alg_required"
 )
 

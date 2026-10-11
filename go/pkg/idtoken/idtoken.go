@@ -70,12 +70,12 @@ func ValidateClaims(claims map[string]any, headerAlg string, opts ...Option) err
 // the same order as the reference implementation so the first-reported reason
 // matches across languages.
 func validateProfile(claims map[string]any, headerAlg string, cfg *config) error {
-	// §2 / §3.1.3.7 — sub is REQUIRED and must be a non-empty string.
+	// §2 — sub is REQUIRED and must be a non-empty string.
 	if sub, ok := claims["sub"].(string); !ok || sub == "" {
 		return profileErr(ReasonMissingSub, "ID token is missing the required non-empty 'sub' claim")
 	}
 
-	// §3.1.3.7 steps 4-6 — authorized-party (azp) rules.
+	// §3.1.3.7 steps 4-5 (SHOULD) — authorized-party (azp) rules.
 	if err := validateAZP(claims, cfg.clientID); err != nil {
 		return err
 	}
@@ -88,14 +88,16 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		}
 	}
 
-	// §3.1.3.7 step 12 — auth_time freshness (only when max_age was requested).
+	// §2 / §3.1.2.1 — auth_time is REQUIRED when max_age was requested;
+	// §3.1.3.7 step 13 (SHOULD) — freshness. Only when max_age was requested.
 	if cfg.maxAgeSet {
 		if err := validateAuthTime(claims, cfg); err != nil {
 			return err
 		}
 	}
 
-	// §3.3.2.11 — at_hash binding (only when an access token was supplied).
+	// §3.2.2.9 item 3 — at_hash binding (only when an access token was
+	// supplied). Rejecting an absent at_hash here is library policy.
 	if cfg.accessTokenSet {
 		expected, err := leftHalfHash(cfg.accessToken, headerAlg)
 		if err != nil {
@@ -106,7 +108,8 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		}
 	}
 
-	// §3.3.2.11 — c_hash binding (only when an authorization code was supplied).
+	// §3.3.2.10 item 3 — c_hash binding (only when an authorization code was
+	// supplied). Rejecting an absent c_hash here is library policy.
 	if cfg.codeSet {
 		expected, err := leftHalfHash(cfg.code, headerAlg)
 		if err != nil {
@@ -120,7 +123,8 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 	return nil
 }
 
-// validateAZP enforces §3.1.3.7 steps 4-6. A JSON null azp is treated as absent,
+// validateAZP enforces §3.1.3.7 steps 4-5 as library policy (the spec says
+// SHOULD). A JSON null azp is treated as absent,
 // matching the reference (claims.get("azp") is None).
 func validateAZP(claims map[string]any, clientID string) error {
 	audMultiElement := false
@@ -132,19 +136,22 @@ func validateAZP(claims map[string]any, clientID string) error {
 	azpStr, _ := azpRaw.(string)
 	azpFalsy := !azpPresent || azpRaw == nil || azpStr == ""
 
-	// Step 4: with multiple audiences an azp claim MUST be present.
+	// Library policy: a multi-audience token must carry azp. Errata set 2 has no
+	// such rule; Core 1.0 (2014) step 4 had it as a SHOULD.
 	if audMultiElement && azpFalsy {
 		return profileErr(ReasonAZPRequiredMultiAud, "ID token with multiple audiences must contain an 'azp' claim")
 	}
 
-	// Step 6: when present, azp MUST identify this client.
+	// Step 5 (SHOULD, enforced as library policy): a present azp must identify
+	// this client.
 	if azpPresent && azpRaw != nil && clientID != "" && azpStr != clientID {
 		return profileErr(ReasonAZPMismatch, "ID token 'azp' claim does not match the configured client_id")
 	}
 	return nil
 }
 
-// validateAuthTime enforces §3.1.3.7 step 12. auth_time must be a JSON number
+// validateAuthTime enforces auth_time presence (§2, §3.1.2.1) and freshness
+// (§3.1.3.7 step 13). auth_time must be a JSON number
 // (bool is excluded — a JSON bool decodes to Go bool, not float64) and recent
 // enough. The comparison is done in float seconds to match the reference.
 func validateAuthTime(claims map[string]any, cfg *config) error {
@@ -159,10 +166,12 @@ func validateAuthTime(claims map[string]any, cfg *config) error {
 	return nil
 }
 
-// leftHalfHash computes the OIDC §3.3.2.11 at_hash/c_hash of value under the ID
+// leftHalfHash computes the OIDC at_hash/c_hash (Core §3.2.2.9 / §3.3.2.10) of
+// value under the ID
 // Token's header alg: base64url-no-pad of the left-most half of H(value), where
 // H is the SHA-2 variant implied by alg (RS/ES/PS/HS-256→SHA-256, -384→SHA-384,
-// -512→SHA-512, EdDSA/Ed25519→SHA-512). value is an OAuth artifact (access token
+// -512→SHA-512, EdDSA/Ed25519→SHA-512 per OpenID Connect Token Hash Algorithms
+// 1.0, Table 1). value is an OAuth artifact (access token
 // or authorization code) and thus ASCII, so its UTF-8 bytes are its ASCII octets.
 //
 // It fails closed: a missing alg is ReasonAlgRequired and an unmappable alg is
@@ -173,7 +182,8 @@ func leftHalfHash(value, alg string) (string, error) {
 	case a == "":
 		return "", profileErr(ReasonAlgRequired, "ID token header 'alg' is required to validate at_hash/c_hash")
 	case a == "EdDSA" || a == "Ed25519":
-		// Assumes Ed25519 (SHA-512). Ed448 also carries alg "EdDSA" but hashes
+		// Assumes Ed25519 (SHA-512, Token Hash Algorithms 1.0 Table 1). Ed448
+		// also carries alg "EdDSA" but hashes
 		// with SHAKE256; it is unsupported here and fails closed on the mismatch.
 		d := sha512.Sum512([]byte(value))
 		digest = d[:]

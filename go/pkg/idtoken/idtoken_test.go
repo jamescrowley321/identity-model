@@ -24,7 +24,7 @@ const fixedNowUnix = 1_700_000_000
 
 func fixedNow() time.Time { return time.Unix(fixedNowUnix, 0).UTC() }
 
-// Real OIDC §3.3.2.11 left-half hashes, taken from the shared vectors
+// Real OIDC left-half hashes (Core §3.2.2.9 / §3.3.2.10), taken from the shared vectors
 // (spec/vectors/id-token.json). Reused here so the unit tests assert the
 // production hash construction, not a self-consistent fixture.
 const (
@@ -35,7 +35,7 @@ const (
 	es512AtHash      = "2azZeYx02zZttjvAxgBshVhQxqEJ6Ku0oRgkegwI9Ww" // left-half SHA-512
 
 	rs256Code  = "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk"
-	rs256CHash = "LDktKdoQak3Pk0cnXxCltA" // matches the OIDC Core §3.3.2.11 worked example
+	rs256CHash = "LDktKdoQak3Pk0cnXxCltA" // the OIDC Core Appendix A.4/A.6 example value
 
 	es512Code  = "Y29kZS1lczUxMi1hdXRob3JpemF0aW9uLWNvZGUtZXhhbXBsZQ"
 	es512CHash = "5ZRO6ySh8Y5x73OPd63wcyIunjtbSNZh9sQvDCegRDY"
@@ -106,7 +106,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 		opts       []idtoken.Option
 		wantReason string // "" => accept
 	}{
-		// sub (§2 / §3.1.3.7).
+		// sub (§2).
 		{
 			name:   "valid baseline",
 			claims: baseClaims(),
@@ -125,7 +125,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonMissingSub,
 		},
 
-		// azp (§3.1.3.7 steps 4-6).
+		// azp (§3.1.3.7 steps 4-5; multi-aud rule is library policy).
 		{
 			name:   "single-element aud list, no azp",
 			claims: with(map[string]any{"aud": []any{testClientID}}),
@@ -174,7 +174,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonNonceMismatch,
 		},
 
-		// auth_time / max_age (§3.1.3.7 step 12).
+		// auth_time / max_age (§2, §3.1.2.1; §3.1.3.7 step 13).
 		{
 			name:   "auth_time within max_age",
 			claims: with(map[string]any{"auth_time": float64(fixedNowUnix - 100)}),
@@ -208,7 +208,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonAuthTimeMissing,
 		},
 
-		// at_hash (§3.3.2.11) — real RS256 hash.
+		// at_hash (§3.2.2.9) — real RS256 hash.
 		{
 			name:      "at_hash matches (RS256)",
 			claims:    with(map[string]any{"at_hash": rs256AtHash}),
@@ -250,7 +250,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonAtHashMismatch,
 		},
 
-		// c_hash (§3.3.2.11) — real RS256 and ES512 hashes.
+		// c_hash (§3.3.2.10) — real RS256 and ES512 hashes.
 		{
 			name:      "c_hash matches (RS256)",
 			claims:    with(map[string]any{"c_hash": rs256CHash}),
@@ -271,7 +271,7 @@ func TestValidateClaims_Profile(t *testing.T) {
 			opts:      []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithCode(es512Code)},
 		},
 
-		// Fail-closed alg handling (§3.3.2.11).
+		// Fail-closed alg handling (§3.2.2.9 / §3.3.2.10 item 1).
 		{
 			name:       "unknown alg on at_hash check",
 			claims:     with(map[string]any{"at_hash": rs256AtHash}),

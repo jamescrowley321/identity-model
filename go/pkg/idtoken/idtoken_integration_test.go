@@ -22,7 +22,7 @@ import (
 
 // A fixed nonce/max_age sent on the authorization request so node-oidc echoes a
 // nonce and an auth_time into the minted ID Token, letting the live suite
-// exercise the §3.1.3.7 nonce (step 11) and max_age/auth_time (step 12) bindings
+// exercise the §3.1.3.7 nonce (step 11) and max_age/auth_time (step 13) bindings
 // on a real token — mirroring the Python integration suite.
 const (
 	liveNonce  = "live-go-id-token-nonce-9f83c1"
@@ -140,7 +140,7 @@ func decodeUnverifiedClaims(t *testing.T, idToken string) map[string]any {
 // a real auth-code + PKCE flow, its signature is verified against the OP's live
 // JWKS, and the ID-Token profile (sub + azp + the requested nonce/max_age) is
 // enforced on the real claims. node-oidc-provider's code-flow ID Token does not
-// carry an at_hash (OPs emit it only for authorization-endpoint responses), so
+// carry an at_hash (OPTIONAL in the Code Flow, Core §3.1.3.6), so
 // at_hash is asserted only when the OP actually mints one — that leg guards
 // itself and documents the reason. at_hash coverage otherwise lives in the
 // conformance vectors.
@@ -220,7 +220,7 @@ func TestIntegration_ValidateIDToken_NonceBinding(t *testing.T) {
 	}
 }
 
-// TestIntegration_ValidateIDToken_MaxAge exercises the §3.1.3.7 step 12
+// TestIntegration_ValidateIDToken_MaxAge exercises the §3.1.3.7 step 13
 // max_age/auth_time freshness on the real auth_time claim, when the OP included
 // one for the requested max_age.
 func TestIntegration_ValidateIDToken_MaxAge(t *testing.T) {
@@ -243,8 +243,8 @@ func TestIntegration_ValidateIDToken_MaxAge(t *testing.T) {
 }
 
 // TestIntegration_ValidateIDToken_AtHashWhenPresent asserts the at_hash binding
-// only when the OP actually mints an at_hash in its code-flow ID Token. node-oidc
-// (like most OPs) emits at_hash only for authorization-endpoint responses, so
+// only when the OP actually mints an at_hash in its code-flow ID Token. at_hash
+// is OPTIONAL in the Code Flow (Core §3.1.3.6) and node-oidc omits it, so
 // this leg documents its skip; the at_hash construction is covered exhaustively
 // by the conformance vectors (IDT-007/008).
 func TestIntegration_ValidateIDToken_AtHashWhenPresent(t *testing.T) {
@@ -253,8 +253,8 @@ func TestIntegration_ValidateIDToken_AtHashWhenPresent(t *testing.T) {
 
 	live := obtainLiveIDToken(t, ctx)
 	if _, ok := decodeUnverifiedClaims(t, live.idToken)["at_hash"]; !ok {
-		t.Skip("OP's code-flow ID Token carries no at_hash (emitted only for " +
-			"authorization-endpoint responses) — at_hash binding covered by conformance vectors")
+		t.Skip("OP's code-flow ID Token carries no at_hash (OPTIONAL in the " +
+			"Code Flow, Core §3.1.3.6) — at_hash binding covered by conformance vectors")
 	}
 	if live.accessToken == "" {
 		t.Fatalf("ID Token carried an at_hash but the flow returned no access_token")

@@ -27,7 +27,7 @@ type config struct {
 	maxAgeSet      bool
 	// leeway is the clock-skew tolerance. It is applied to the base exp check
 	// (as jwt.WithClockSkew) and, mirroring the reference implementation, to the
-	// max_age/auth_time freshness check (§3.1.3.7 step 12).
+	// max_age/auth_time freshness check (§3.1.3.7 step 13).
 	leeway  time.Duration
 	nowFunc func() time.Time
 }
@@ -85,7 +85,8 @@ func WithIssuer(issuer string) Option {
 
 // WithClientID sets the relying party's client_id. It is enforced as the
 // expected audience of the base JWT validation (§3.1.3.7 step 3) and, when a
-// token carries an azp, azp MUST equal it (§3.1.3.7 step 6).
+// token carries an azp, azp must equal it (§3.1.3.7 step 5, SHOULD; enforced as
+// library policy).
 func WithClientID(clientID string) Option {
 	return func(c *config) { c.clientID = clientID }
 }
@@ -102,7 +103,8 @@ func WithNonce(nonce string) Option {
 }
 
 // WithAccessToken requires the token's at_hash to be present and match the
-// left-half hash of accessToken (§3.3.2.11). When unset, at_hash is not checked.
+// left-half hash of accessToken (match: §3.2.2.9 item 3; presence: library
+// policy). When unset, at_hash is not checked.
 func WithAccessToken(accessToken string) Option {
 	return func(c *config) {
 		c.accessToken = accessToken
@@ -111,7 +113,8 @@ func WithAccessToken(accessToken string) Option {
 }
 
 // WithCode requires the token's c_hash to be present and match the left-half
-// hash of code (§3.3.2.11). When unset, c_hash is not checked.
+// hash of code (match: §3.3.2.10 item 3; presence: library policy). When unset,
+// c_hash is not checked.
 func WithCode(code string) Option {
 	return func(c *config) {
 		c.code = code
@@ -119,9 +122,9 @@ func WithCode(code string) Option {
 	}
 }
 
-// WithMaxAge requires auth_time to be present and satisfy
-// now - auth_time <= maxAge + leeway (§3.1.3.7 step 12). When unset, auth_time
-// is not checked.
+// WithMaxAge requires auth_time to be present (§2, §3.1.2.1) and satisfy
+// now - auth_time <= maxAge + leeway (§3.1.3.7 step 13, SHOULD). When unset,
+// auth_time is not checked.
 func WithMaxAge(maxAge time.Duration) Option {
 	return func(c *config) {
 		c.maxAge = maxAge
@@ -130,7 +133,7 @@ func WithMaxAge(maxAge time.Duration) Option {
 }
 
 // WithClockSkew tolerates up to d of clock drift. It applies to the base exp
-// check and to the max_age/auth_time freshness check (§3.1.3.7 step 12). The
+// check and to the max_age/auth_time freshness check (§3.1.3.7 step 13). The
 // default is zero.
 func WithClockSkew(d time.Duration) Option {
 	return func(c *config) { c.leeway = d }
