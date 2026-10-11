@@ -651,7 +651,8 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
         "reject" => match (expect.error.as_str(), result) {
             ("malformed", Err(IdentityError::Deserialization(_)))
             | ("key_not_found", Err(IdentityError::KeyNotFound(_)))
-            | ("ambiguous_key", Err(IdentityError::AmbiguousKey { .. })) => {}
+            | ("ambiguous_key", Err(IdentityError::AmbiguousKey { .. }))
+            | ("key_alg_mismatch", Err(IdentityError::KeyAlgorithmMismatch { .. })) => {}
             ("empty_key_set", Err(IdentityError::Validation(msg))) => {
                 assert!(msg.contains("contains no keys"), "{label}: {msg}");
             }

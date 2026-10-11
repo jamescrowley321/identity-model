@@ -96,6 +96,20 @@ pub enum IdentityError {
         count: usize,
     },
 
+    /// The key resolved for a token declares an `alg` (RFC 7517 §4.4) other
+    /// than the token header `alg`, so it is not used (JWKS-010). Applies
+    /// whether the key was found by `kid` or selected without one; distinct
+    /// from [`IdentityError::KeyNotFound`] and [`IdentityError::AmbiguousKey`].
+    #[error("key algorithm mismatch: key {kid:?} declares alg {key_alg:?}, token alg is {alg:?}")]
+    KeyAlgorithmMismatch {
+        /// The resolved key's `kid` (empty when it has none).
+        kid: String,
+        /// The `alg` the key declares.
+        key_alg: String,
+        /// The token header `alg`.
+        alg: String,
+    },
+
     /// The token endpoint replied with a non-2xx OAuth 2.0 error response
     /// (RFC 6749 §5.2).
     #[error("token endpoint error {error:?}{}: HTTP {status}", .description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]
@@ -146,6 +160,15 @@ mod tests {
             }
             .to_string(),
             r#"ambiguous key: token has no kid and 2 keys could verify alg "RS256" ["a", "b"]"#
+        );
+        assert_eq!(
+            IdentityError::KeyAlgorithmMismatch {
+                kid: "k1".into(),
+                key_alg: "RS384".into(),
+                alg: "RS256".into(),
+            }
+            .to_string(),
+            r#"key algorithm mismatch: key "k1" declares alg "RS384", token alg is "RS256""#
         );
         assert_eq!(
             IdentityError::Configuration("missing token_endpoint".into()).to_string(),

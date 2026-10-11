@@ -231,15 +231,34 @@ impl JsonWebKeySet {
     /// `alg`, each step applied only when it leaves a key. The one remaining
     /// key is returned (JWKS-009). Callers must reject `alg` `none` first.
     ///
+    /// Either way, a key that declares an `alg` other than a non-empty `alg`
+    /// is not returned (JWKS-010, RFC 7517 §4.4).
+    ///
+    /// The fallback to every key when none is a signing key matches the
+    /// Python implementation, where a `kid` naming a `use` `enc` key is also
+    /// used; enforcing `use` on both paths in every language is tracked in
+    /// #888.
+    ///
     /// # Errors
     ///
     /// - [`IdentityError::AmbiguousKey`] when no `kid` is given and more than
     ///   one key remains.
     /// - [`IdentityError::KeyNotFound`] when `kid` matches no key.
+    /// - [`IdentityError::KeyAlgorithmMismatch`] when the resolved key
+    ///   declares another `alg`.
     pub fn resolve_signing_key(&self, kid: &str, alg: &str) -> Result<&JsonWebKey> {
-        if !kid.is_empty() {
-            return self.resolve_key(kid);
-        }
+        let key = if kid.is_empty() {
+            self.resolve_kidless(alg)?
+        } else {
+            self.resolve_key(kid)?
+        };
+        check_declared_alg(key, alg)?;
+        Ok(key)
+    }
+
+    /// Selects the key for a token with no `kid`, as described on
+    /// [`JsonWebKeySet::resolve_signing_key`].
+    fn resolve_kidless(&self, alg: &str) -> Result<&JsonWebKey> {
         let all: Vec<&JsonWebKey> = self.keys.iter().collect();
         let mut candidates = narrow(all, |k| k.use_.is_empty() || k.use_ == "sig");
         if candidates.len() > 1 && !alg.is_empty() {
@@ -262,6 +281,19 @@ impl JsonWebKeySet {
             }),
         }
     }
+}
+
+/// Rejects `key` when it declares an `alg` other than a non-empty token `alg`
+/// (JWKS-010, RFC 7517 §4.4).
+pub(crate) fn check_declared_alg(key: &JsonWebKey, alg: &str) -> Result<()> {
+    if alg.is_empty() || key.alg.is_empty() || key.alg == alg {
+        return Ok(());
+    }
+    Err(IdentityError::KeyAlgorithmMismatch {
+        kid: key.kid.clone(),
+        key_alg: key.alg.clone(),
+        alg: alg.to_string(),
+    })
 }
 
 /// Returns the keys that satisfy `keep`, or `keys` unchanged when none does.
@@ -482,6 +514,39 @@ mod tests {
                 assert_eq!(count, 2);
             }
             other => panic!("expected AmbiguousKey, got {other:?}"),
+        }
+    }
+
+    // JWKS-010: a key declaring an alg other than the token's is not used,
+    // whether found by kid or selected without one; one declaring the token's
+    // alg is.
+    #[test]
+    fn resolve_signing_key_rejects_key_declaring_other_alg() {
+        let set = kidless_fixture("single-rs384.json");
+        for kid in ["rsa-rs384-key", ""] {
+            let err = set
+                .resolve_signing_key(kid, "RS256")
+                .expect_err("key declares RS384");
+            match err {
+                IdentityError::KeyAlgorithmMismatch {
+                    kid: got,
+                    key_alg,
+                    alg,
+                } => {
+                    assert_eq!(
+                        (got.as_str(), key_alg.as_str(), alg.as_str()),
+                        ("rsa-rs384-key", "RS384", "RS256"),
+                        "kid {kid:?}"
+                    );
+                }
+                other => panic!("kid {kid:?}: expected KeyAlgorithmMismatch, got {other:?}"),
+            }
+            assert_eq!(
+                set.resolve_signing_key(kid, "RS384")
+                    .unwrap_or_else(|e| panic!("kid {kid:?} RS384: {e}"))
+                    .kid,
+                "rsa-rs384-key"
+            );
         }
     }
 

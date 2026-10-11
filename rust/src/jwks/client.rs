@@ -8,7 +8,7 @@ use reqwest::header::ACCEPT;
 use crate::{IdentityError, Result};
 
 use super::cache::Cache;
-use super::key::{JsonWebKey, JsonWebKeySet};
+use super::key::{JsonWebKey, JsonWebKeySet, check_declared_alg};
 
 /// Default lifetime of a cached JWK Set.
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -216,6 +216,8 @@ impl JwksClient {
     ///
     /// - [`IdentityError::AmbiguousKey`] — no `kid` and more than one key
     ///   could verify the token.
+    /// - [`IdentityError::KeyAlgorithmMismatch`] — the resolved key declares
+    ///   an `alg` other than `alg` (JWKS-010).
     /// - The errors of [`JwksClient::resolve_key`].
     pub async fn resolve_signing_key(
         &self,
@@ -224,7 +226,9 @@ impl JwksClient {
         alg: &str,
     ) -> Result<JsonWebKey> {
         if !kid.is_empty() {
-            return self.resolve_key(jwks_uri, kid).await;
+            let key = self.resolve_key(jwks_uri, kid).await?;
+            check_declared_alg(&key, alg)?;
+            return Ok(key);
         }
         let key_set = self.fetch(jwks_uri).await?;
         key_set.resolve_signing_key("", alg).cloned()
@@ -528,6 +532,32 @@ mod tests {
             .await
             .expect("kid b");
         assert_eq!(key.kid, "b");
+    }
+
+    // JWKS-010: a key found by kid that declares another alg is not used, and
+    // the mismatch is not answered with a refresh.
+    #[tokio::test]
+    async fn resolve_signing_key_with_kid_rejects_key_declaring_other_alg() {
+        let server = MockServer::start().await;
+        let single = r#"{ "keys": [
+            {"kty":"RSA","kid":"rs384","use":"sig","alg":"RS384","n":"a","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(single)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        for kid in ["rs384", ""] {
+            let err = client
+                .resolve_signing_key(&jwks_uri(&server), kid, "RS256")
+                .await
+                .expect_err("key declares RS384");
+            assert!(
+                matches!(&err, IdentityError::KeyAlgorithmMismatch { kid, key_alg, alg }
+                    if kid == "rs384" && key_alg == "RS384" && alg == "RS256"),
+                "kid {kid:?}: expected KeyAlgorithmMismatch, got {err:?}"
+            );
+        }
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
     }
 
     // JWKS-004: a kid that never appears errors KeyNotFound after the refresh.

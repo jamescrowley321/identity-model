@@ -148,7 +148,9 @@ pub fn validate_token(
 ///
 /// [`IdentityError::KeyNotFound`] when no key matches the token's `kid` even
 /// after a refresh; [`IdentityError::AmbiguousKey`] when the token has no `kid`
-/// and more than one key could verify it; otherwise the errors of
+/// and more than one key could verify it; [`IdentityError::KeyAlgorithmMismatch`]
+/// when the resolved key declares an `alg` other than the token's (JWKS-010);
+/// otherwise the errors of
 /// [`validate_token`] and [`JwksClient::resolve_signing_key`].
 pub async fn validate_token_with_jwks(
     token: &str,
@@ -586,5 +588,27 @@ mod tests {
             1,
             "no forced refresh"
         );
+    }
+
+    // JWKS-010: a correctly signed RS256 token is rejected when the key that
+    // verifies it declares RS384, whether the token names it by kid or not.
+    #[tokio::test]
+    async fn validate_with_jwks_rejects_key_declaring_other_alg() {
+        let mut rs384 = fixture_jwk();
+        rs384["alg"] = json!("RS384");
+        let (_server, uri) = serve_jwks(vec![rs384]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        for token in [mint(kidless_claims()), mint_without_kid(kidless_claims())] {
+            let err = validate_token_with_jwks(&token, &client, &uri, &opts)
+                .await
+                .expect_err("key declares RS384");
+            assert!(
+                matches!(&err, IdentityError::KeyAlgorithmMismatch { key_alg, alg, .. }
+                    if key_alg == "RS384" && alg == "RS256"),
+                "expected KeyAlgorithmMismatch, got {err:?}"
+            );
+        }
     }
 }
