@@ -1,5 +1,5 @@
 // Package jwt validates compact-serialized JWTs: it verifies the JWS signature
-// using the key resolved by the header kid from a [jwks.JSONWebKeySet] and
+// using the key resolved from a [jwks.JSONWebKeySet] by the header kid and
 // checks the registered claims (iss, aud, exp, nbf, iat).
 //
 // The entry point is [Validate], configured with functional options
@@ -24,6 +24,9 @@
 //     (algorithm confusion).
 //   - A kid absent from the cached key set triggers exactly one JWKS forced
 //     refresh and retry before failing, handling key rotation (RFC 7517 §4.5).
+//   - A token with no kid is verified by the single key left after narrowing
+//     the set by use, alg and kty, with no refresh; more than one candidate is
+//     a [jwks.AmbiguousKeyError], distinct from key-not-found (JWKS-009).
 //
 // RFC / spec references: RFC 7519 (JWT), RFC 7515 (JWS), RFC 7518 (JWA),
 // OIDC Core 1.0 §3.1.3.7 (ID Token Validation). The behavioural contract is in

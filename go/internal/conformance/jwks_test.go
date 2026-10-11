@@ -17,6 +17,7 @@ var jwksErrors = map[string]error{
 	"malformed":     jwks.ErrParse,
 	"empty_key_set": jwks.ErrEmptyKeySet,
 	"key_not_found": jwks.ErrKeyNotFound,
+	"ambiguous_key": jwks.ErrAmbiguousKey,
 }
 
 // runJWKSVector is the jwks.json adapter: one jwks.FetchKeySet handle per
@@ -31,7 +32,8 @@ func runJWKSVector(t *testing.T, label, base string, v HTTPVector) {
 	var got []jwks.JSONWebKey
 	var err error
 	steps, _ := v.Input["steps"].([]any)
-	// Each resolve takes the next of input.kids when given, else input.kid.
+	// Each resolve takes the next of input.kids when given, else input.kid; with
+	// neither it resolves a token header with no kid and input.alg.
 	kids, _ := v.Input["kids"].([]any)
 	for i, step := range steps {
 		switch step {
@@ -46,7 +48,7 @@ func runJWKSVector(t *testing.T, label, base string, v HTTPVector) {
 				kids = kids[1:]
 			}
 			var k *jwks.JSONWebKey
-			if k, err = set.ResolveKeyWithRefresh(ctx, kid); err == nil {
+			if k, err = set.ResolveSigningKey(ctx, kid, inputString(v, "alg")); err == nil {
 				got = []jwks.JSONWebKey{*k}
 			} else if errors.Is(err, jwks.ErrKeyNotFound) && i+1 < len(steps) {
 				// A key-not-found miss before the last step does not end the run.

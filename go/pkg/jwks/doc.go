@@ -11,7 +11,7 @@
 //	key, ok := set.ResolveKey("rsa-sig-key")
 //
 // Behaviour is governed by the cross-language conformance contract in
-// spec/vectors/jwks.json (test IDs JWKS-001..JWKS-008) and the capability
+// spec/vectors/jwks.json (test IDs JWKS-001..JWKS-009) and the capability
 // definitions in spec/capabilities.md:
 //
 //   - The key set is fetched and parsed into typed [JSONWebKey] values, each
@@ -20,6 +20,10 @@
 //   - [JSONWebKeySet.ResolveKey] looks a key up by kid in memory (§4.5);
 //     [JSONWebKeySet.ResolveKeyWithRefresh] forces one refresh and retries on a
 //     miss before reporting key-not-found (handles key rotation).
+//   - [JSONWebKeySet.ResolveSigningKey] resolves the key for a token header:
+//     by kid when present; with no kid, the single key left after narrowing
+//     the in-memory set by use, alg and kty, with no refresh, and a typed
+//     [AmbiguousKeyError] when more than one remains (JWKS-009).
 //   - [JSONWebKeySet.ForceRefresh] invalidates and re-fetches the set after a
 //     signature failure.
 //   - Results are cached with a configurable TTL; a cache hit makes no network

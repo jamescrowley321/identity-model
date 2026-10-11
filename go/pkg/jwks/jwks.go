@@ -158,6 +158,81 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 	return nil, &KeyNotFoundError{Kid: kid}
 }
 
+// ResolveSigningKey resolves the key that verifies a token whose JOSE header
+// carries kid and alg.
+//
+// With a kid it is [JSONWebKeySet.ResolveKeyWithRefresh]. With no kid (an OP
+// may omit it when its set holds a single key, OIDC Core 1.0 §10.1) it scans
+// the in-memory set only, with no forced refresh: the set is narrowed to signing
+// keys (use absent or "sig", RFC 7517 §4.2; if none, every key), then, while
+// more than one remains, to keys whose alg is absent or equals alg (§4.4) and to
+// keys whose kty matches alg, each step applied only when it leaves a key. The
+// one remaining key is returned; more than one is an [AmbiguousKeyError]
+// (JWKS-009). Callers must reject alg "none" before calling it.
+func (s *JSONWebKeySet) ResolveSigningKey(ctx context.Context, kid, alg string) (*JSONWebKey, error) {
+	if kid != "" {
+		return s.ResolveKeyWithRefresh(ctx, kid)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	candidates := kidlessCandidates(s.Keys, alg)
+	switch len(candidates) {
+	case 0:
+		return nil, &KeyNotFoundError{}
+	case 1:
+		k := cloneKey(*candidates[0])
+		return &k, nil
+	}
+	kids := make([]string, 0, len(candidates))
+	for _, k := range candidates {
+		if k.Kid != "" {
+			kids = append(kids, k.Kid)
+		}
+	}
+	return nil, &AmbiguousKeyError{Alg: alg, Kids: kids, Count: len(candidates)}
+}
+
+// algKty maps a JWS alg to the JWK kty that can verify it (RFC 7518 §3.1).
+var algKty = map[string]string{
+	"RS256": "RSA", "RS384": "RSA", "RS512": "RSA",
+	"PS256": "RSA", "PS384": "RSA", "PS512": "RSA",
+	"ES256": "EC", "ES384": "EC", "ES512": "EC", "ES256K": "EC",
+	"EdDSA": "OKP", "Ed25519": "OKP", "Ed448": "OKP",
+	"HS256": "oct", "HS384": "oct", "HS512": "oct",
+}
+
+// kidlessCandidates narrows keys to those that could verify a token with no
+// kid, in the order and with the fallbacks described on
+// [JSONWebKeySet.ResolveSigningKey].
+func kidlessCandidates(keys []JSONWebKey, alg string) []*JSONWebKey {
+	all := make([]*JSONWebKey, 0, len(keys))
+	for i := range keys {
+		all = append(all, &keys[i])
+	}
+	candidates := narrow(all, func(k *JSONWebKey) bool { return k.Use == "" || k.Use == "sig" })
+	if len(candidates) > 1 && alg != "" {
+		candidates = narrow(candidates, func(k *JSONWebKey) bool { return k.Alg == "" || k.Alg == alg })
+		if kty, ok := algKty[alg]; ok {
+			candidates = narrow(candidates, func(k *JSONWebKey) bool { return k.Kty == kty })
+		}
+	}
+	return candidates
+}
+
+// narrow returns the keys that satisfy keep, or keys unchanged when none does.
+func narrow(keys []*JSONWebKey, keep func(*JSONWebKey) bool) []*JSONWebKey {
+	kept := make([]*JSONWebKey, 0, len(keys))
+	for _, k := range keys {
+		if keep(k) {
+			kept = append(kept, k)
+		}
+	}
+	if len(kept) == 0 {
+		return keys
+	}
+	return kept
+}
+
 // ForceRefresh invalidates the cached set for this URI and re-fetches it,
 // replacing Keys with the fresh set (JWKS-006). Callers invoke it after a
 // signature verification failure that may indicate the provider has rotated its

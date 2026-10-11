@@ -58,6 +58,22 @@ func (e *KeyNotFoundError) Error() string {
 	return fmt.Sprintf("jwks: no key found for kid %q", e.Kid)
 }
 
+// AmbiguousKeyError reports that a token with no kid could be verified by more
+// than one key in the set (JWKS-009). With no kid, the set is narrowed to
+// signing keys (use absent or "sig", RFC 7517 §4.2), then to keys whose alg is
+// absent or equals the header alg (§4.4) and whose kty matches it; Count keys
+// were left. Kids lists the ids of those that have one. It is distinct from
+// [KeyNotFoundError], which reports a kid that matches no key.
+type AmbiguousKeyError struct {
+	Alg   string
+	Kids  []string
+	Count int
+}
+
+func (e *AmbiguousKeyError) Error() string {
+	return fmt.Sprintf("jwks: token has no kid and %d keys could verify alg %q %v", e.Count, e.Alg, e.Kids)
+}
+
 // InvalidKeyError reports that a key failed parameter validation (JWKS-002,
 // RFC 7517 §4). A fetch returns it only when no key in the set is usable
 // (JWKS-008). Kid identifies the offending key when present; Reason explains
@@ -88,6 +104,8 @@ var (
 	ErrKeyNotFound = errors.New("jwks: key not found")
 	// ErrInvalidKey matches any [InvalidKeyError].
 	ErrInvalidKey = errors.New("jwks: invalid key")
+	// ErrAmbiguousKey matches any [AmbiguousKeyError].
+	ErrAmbiguousKey = errors.New("jwks: ambiguous key")
 )
 
 func (e *ParseError) Is(target error) bool         { return target == ErrParse }
@@ -96,3 +114,4 @@ func (e *HTTPSRequiredError) Is(target error) bool { return target == ErrHTTPSRe
 func (e *EmptyKeySetError) Is(target error) bool   { return target == ErrEmptyKeySet }
 func (e *KeyNotFoundError) Is(target error) bool   { return target == ErrKeyNotFound }
 func (e *InvalidKeyError) Is(target error) bool    { return target == ErrInvalidKey }
+func (e *AmbiguousKeyError) Is(target error) bool  { return target == ErrAmbiguousKey }
