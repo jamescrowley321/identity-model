@@ -127,3 +127,21 @@ def test_require_key_set_is_gone():
     assert "require_key_set" not in names
     with pytest.raises(TypeError, match="require_key_set"):
         DiscoveryPolicy(require_key_set=False)  # type: ignore[call-arg]
+
+
+def test_fields_after_validate_endpoints_are_keyword_only():
+    """Removing require_key_set must not shift a positional call silently.
+
+    The old fifth positional argument was require_key_set. With the field
+    gone, ``DiscoveryPolicy(True, True, True, True, False)`` would have bound
+    False to additional_endpoint_base_addresses; it raises TypeError instead.
+    """
+    with pytest.raises(TypeError, match="positional"):
+        DiscoveryPolicy(True, True, True, True, False)  # type: ignore[misc]
+    keyword_only = {f.name for f in dataclasses.fields(DiscoveryPolicy) if f.kw_only}
+    assert keyword_only == {
+        "additional_endpoint_base_addresses",
+        "authority",
+        "allow_loopback_endpoints",
+    }
+    assert DiscoveryPolicy(True, True, True, True) == DiscoveryPolicy()

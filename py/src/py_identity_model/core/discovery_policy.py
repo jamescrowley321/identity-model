@@ -10,7 +10,7 @@ development. Use a relaxed policy for testing environments.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 import ipaddress
 from urllib.parse import urlparse
 
@@ -52,12 +52,17 @@ class DiscoveryPolicy:
             blocked regardless of this flag. Distinct from
             ``allow_http_on_loopback`` (which relaxes only the HTTPS scheme
             requirement, not internal-IP routing).
+
+    The fields after ``validate_endpoints`` are keyword-only, so a positional
+    call written for the removed ``require_key_set`` field raises
+    ``TypeError`` instead of binding to the wrong field.
     """
 
     require_https: bool = True
     allow_http_on_loopback: bool = True
     validate_issuer: bool = True
     validate_endpoints: bool = True
+    _: KW_ONLY
     additional_endpoint_base_addresses: list[str] = field(default_factory=list)
     authority: str | None = None
     allow_loopback_endpoints: bool = False

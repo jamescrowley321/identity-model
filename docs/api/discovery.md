@@ -66,3 +66,9 @@ any of these fields.
     required, so `DiscoveryPolicy(require_key_set=False)` raises `TypeError`.
     Delete the argument. A provider that publishes no `jwks_uri` cannot be
     used for discovery.
+
+    The fields after `validate_endpoints` (`additional_endpoint_base_addresses`,
+    `authority`, `allow_loopback_endpoints`) are now keyword-only. A call that
+    passed `require_key_set` as the fifth positional argument, such as
+    `DiscoveryPolicy(True, True, True, True, False)`, raises `TypeError`
+    instead of binding the value to another field. Pass those fields by name.
