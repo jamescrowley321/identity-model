@@ -6,7 +6,16 @@ linters:
   # the golangci v2 default set (errcheck, govet, ineffassign, staticcheck, unused).
   enable:
     - gosec
+    - forbidigo
   settings:
+    forbidigo:
+      # The library reads no environment (spec/config.md): every setting comes
+      # from the caller's options. Tests, examples and the internal test
+      # harnesses read provider profiles from the environment and are excluded
+      # below. Two forbidden calls on one line are reported once.
+      forbid:
+        - pattern: ^os\.(Getenv|LookupEnv|Environ|ExpandEnv)$
+          msg: "the library reads no environment; take the value as an option"
     staticcheck:
       # QF* are gopls quickfix suggestions (style refactorings), not
       # correctness checks; staticcheck itself ships them disabled.
@@ -19,6 +28,12 @@ linters:
       # resp.Body.Close(), which is idiomatic Go.
       - std-error-handling
     rules:
+      # Shipped library code (pkg/ and the internal packages it imports) is
+      # barred from reading the environment; tests, examples and the internal
+      # test harnesses may.
+      - path: (_test\.go$|internal/(integrationtest|conformance)/|examples/)
+        linters:
+          - forbidigo
       # gosec on tests and internal test-support harnesses (integration runner,
       # conformance vector loader): reading fixture/vector files by a variable
       # path (G304), writing to test HTTP-server responses (G705), and test
