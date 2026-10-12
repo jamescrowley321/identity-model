@@ -22,3 +22,10 @@
 # was taken from. A name with no hash is a hard error, never a silent pass.
 #
 # Every entry weakens the gate, so keep the justification concrete and specific.
+
+# Compile-time constants: gremlins has no coverage block for a const
+# expression, so it reports these NOT COVERED and never runs them. Mutated by
+# hand (* -> / and * -> +), each turns TestNewClient_Defaults (pkg/jwks) and
+# TestDefaultsMatchThePage (internal/configpage) red (#757).
+pkg/jwks/options.go:15:23:ARITHMETIC_BASE 7fdf21e68c877967   # DefaultCacheTTL = 24 * time.Hour; pinned by the default tests
+pkg/jwks/options.go:25:29:ARITHMETIC_BASE e1d99983c2291e69   # DefaultRefreshCooldown = 5 * time.Second; pinned by the default tests
