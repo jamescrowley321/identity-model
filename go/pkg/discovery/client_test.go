@@ -215,3 +215,24 @@ func TestFetchConfiguration_WithCABundle(t *testing.T) {
 		t.Errorf("with CA bundle: %v", err)
 	}
 }
+
+// A no-store in a later Cache-Control field line counts (RFC 9110 §5.3).
+func TestFetchConfiguration_CacheControlSpansFieldLines(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Add("Cache-Control", "public, max-age=600")
+		w.Header().Add("Cache-Control", "no-store")
+		_, _ = w.Write(validDocFor(httpURL(r)))
+	}))
+	t.Cleanup(srv.Close)
+	client := testClient(t, WithInsecureAllowHTTP())
+	for range 2 {
+		if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("requests = %d, want 2 (no-store from the second field line)", got)
+	}
+}

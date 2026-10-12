@@ -3,6 +3,7 @@ package jwks
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -246,5 +247,41 @@ func TestClients_DoNotShareCachesOrCooldowns(t *testing.T) {
 	_, _ = setB.ResolveKeyWithRefresh(context.Background(), "ghost")
 	if got := atomic.LoadInt32(hits); got != 4 {
 		t.Errorf("requests = %d, want 4 (one refresh per client)", got)
+	}
+}
+
+// The largest WithMaxSize must not overflow the one-byte-over read limit.
+func TestFetchKeySet_MaxSizeAtMaxInt(t *testing.T) {
+	srv, _ := newServer(t, http.StatusOK, keySetJSON(rsaKeyJSON("k1")))
+	if _, err := testClient(t, WithInsecureAllowHTTP(), WithMaxSize(math.MaxInt)).FetchKeySet(context.Background(), srv.URL); err != nil {
+		t.Errorf("WithMaxSize(math.MaxInt): %v", err)
+	}
+}
+
+// A max-age in a later Cache-Control field line counts (RFC 9110 §5.3).
+func TestFetchKeySet_CacheControlSpansFieldLines(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Add("Cache-Control", "public")
+		w.Header().Add("Cache-Control", "max-age=300")
+		_, _ = w.Write(keySetJSON(rsaKeyJSON("k1")))
+	}))
+	t.Cleanup(srv.Close)
+	client := testClient(t, WithInsecureAllowHTTP())
+	base := time.Unix(1_700_000_000, 0)
+	var clock atomic.Int64
+	clock.Store(base.UnixNano())
+	client.cache.now = func() time.Time { return time.Unix(0, clock.Load()) }
+
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	clock.Store(base.Add(300 * time.Second).UnixNano())
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("requests after 300s = %d, want 2 (max-age=300 from the second field line)", got)
 	}
 }

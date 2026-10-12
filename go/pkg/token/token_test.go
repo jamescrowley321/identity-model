@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -498,3 +499,63 @@ func parseBasicAuth(header string) (user, pass string, ok bool) {
 	r.Header.Set("Authorization", header)
 	return r.BasicAuth()
 }
+
+// An authorization code is single-use (RFC 6749 §4.1.2): a 5xx or a transport
+// error is not retried, even with retries configured, so a code the server
+// already redeemed is never replayed.
+func TestAuthorizationCode_NeverRetries(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	_, err := AuthorizationCode(context.Background(), srv.URL, "cid", "code-1", "https://rp/cb",
+		WithInsecureAllowHTTP(), WithRetryMaxAttempts(3), WithRetryBaseDelay(0))
+	var rErr *RequestError
+	if !errors.As(err, &rErr) || rErr.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("5xx: err = %v, want a RequestError with status 503", err)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Errorf("5xx: POSTs = %d, want 1", got)
+	}
+
+	var attempts atomic.Int32
+	failing := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts.Add(1)
+		return nil, errors.New("connection reset")
+	})}
+	_, err = AuthorizationCode(context.Background(), "https://as.example/token", "cid", "code-1", "https://rp/cb",
+		WithHTTPClient(failing), WithRetryMaxAttempts(3), WithRetryBaseDelay(0))
+	if !errors.As(err, &rErr) {
+		t.Errorf("transport error: err = %v, want a RequestError", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Errorf("transport error: attempts = %d, want 1", got)
+	}
+}
+
+// The other grants keep retrying a 5xx.
+func TestClientCredentials_RetriesServerErrors(t *testing.T) {
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if posts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(successBody))
+	}))
+	t.Cleanup(srv.Close)
+	if _, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret",
+		WithInsecureAllowHTTP(), WithRetryBaseDelay(0)); err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	if got := posts.Load(); got != 2 {
+		t.Errorf("POSTs = %d, want 2", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

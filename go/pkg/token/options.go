@@ -179,7 +179,8 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithRetryMaxAttempts sets how many times a 429, a 5xx or a transport error
-// is retried. Default 3; 0 disables retries; must be >= 0.
+// is retried. Default 3; 0 disables retries; must be >= 0. [AuthorizationCode]
+// never retries: its code is single-use.
 func WithRetryMaxAttempts(n int) Option {
 	return func(c *config) { c.transport.RetryMaxAttempts = n }
 }

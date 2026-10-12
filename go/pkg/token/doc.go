@@ -19,7 +19,8 @@
 // An invalid option value (for example [WithTimeout] of 0) is a [ConfigError]
 // returned before any request is sent. A 429, a 5xx or a transport error is
 // retried with exponential backoff ([WithRetryMaxAttempts],
-// [WithRetryBaseDelay]); see spec/config.md.
+// [WithRetryBaseDelay]); see spec/config.md. [AuthorizationCode] is the
+// exception: its code is single-use, so it is sent once and never retried.
 //
 // Behavioural contract: spec/vectors/client-credentials.json (CC-001..006),
 // spec/vectors/authorization-code.json (ACG-001..005), and

@@ -46,6 +46,7 @@ func Fetch(ctx context.Context, userInfoEndpoint, accessToken string, opts ...Op
 		return nil, &RequestError{Op: "userinfo request", Err: fmt.Errorf("access token is required")}
 	}
 
+	defer cfg.tr.CloseIdleConnections()
 	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoEndpoint, nil)
 		if err != nil {

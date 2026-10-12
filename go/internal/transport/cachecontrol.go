@@ -1,8 +1,10 @@
 package transport
 
 import (
+	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,13 @@ var (
 	noStoreRe = regexp.MustCompile(`(?i)\bno-store\b`)
 	noCacheRe = regexp.MustCompile(`(?i)\bno-cache\b`)
 )
+
+// CacheControl returns every Cache-Control field of h joined into one
+// comma-separated value (RFC 9110 §5.3), so a directive in a later field line
+// counts as much as one in the first.
+func CacheControl(h http.Header) string {
+	return strings.Join(h.Values("Cache-Control"), ",")
+}
 
 // ResolveTTL returns the cache lifetime for a response with the given
 // Cache-Control header: its max-age clamped to [MinCacheTTL, MaxCacheTTL], or

@@ -150,6 +150,11 @@ func ClientCredentials(ctx context.Context, tokenEndpoint, clientID, clientSecre
 // [ClientAuthMethod] (client_secret_basic by default, or client_secret_post via
 // [WithClientAuth]). A non-2xx OAuth error response is returned as a typed
 // [TokenError].
+//
+// The request is sent once and never retried, whatever [WithRetryMaxAttempts]
+// says: an authorization code is single-use (RFC 6749 §4.1.2). If the server
+// redeemed it and the response was lost, a retry would present a used code,
+// and the server SHOULD then revoke the tokens it already issued for it.
 func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redirectURI string, opts ...Option) (*TokenResponse, error) {
 	cfg, err := newConfig(opts...)
 	if err != nil {
@@ -169,6 +174,9 @@ func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redir
 	if cfg.codeVerifier != "" {
 		form.Set("code_verifier", cfg.codeVerifier)
 	}
+
+	// A single-use code must not be replayed (RFC 6749 §4.1.2).
+	cfg.tr = cfg.tr.WithoutRetries()
 
 	// cfg.clientSecret is "" for a public client (identified via client_id in
 	// the body) or the confidential secret from [WithClientSecret], which
@@ -316,6 +324,7 @@ func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, client
 	}
 
 	encoded := form.Encode()
+	defer cfg.tr.CloseIdleConnections()
 	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(encoded))
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -475,5 +476,86 @@ func TestWithClient_LeavesOriginalUntouched(t *testing.T) {
 	other := tr.WithClient(c)
 	if other.Client() != c || tr.Client() != http.DefaultClient {
 		t.Errorf("WithClient changed the original or ignored the new client")
+	}
+}
+
+func TestWithoutRetries_SendsOnceAndLeavesOriginalUntouched(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	tr := mustBuild(t, Defaults())
+	sleeps := recordSleeps(tr)
+
+	resp, err := tr.WithoutRetries().Do(context.Background(), getReq(srv.URL))
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_ = resp.Body.Close()
+	if got := calls.Load(); got != 1 {
+		t.Errorf("calls = %d, want 1", got)
+	}
+	if len(*sleeps) != 0 {
+		t.Errorf("slept %v", *sleeps)
+	}
+	if tr.settings.RetryMaxAttempts != DefaultRetryMaxAttempts {
+		t.Errorf("original RetryMaxAttempts = %d, want %d", tr.settings.RetryMaxAttempts, DefaultRetryMaxAttempts)
+	}
+}
+
+// closeSpy is a RoundTripper that counts CloseIdleConnections calls.
+type closeSpy struct{ closes int }
+
+func (s *closeSpy) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("not used")
+}
+func (s *closeSpy) CloseIdleConnections() { s.closes++ }
+
+func TestCloseIdleConnections_ClosesOnlyAnOwnedClient(t *testing.T) {
+	spy := &closeSpy{}
+	s := Defaults()
+	s.HTTPClient = &http.Client{Transport: spy}
+	mustBuild(t, s).CloseIdleConnections()
+	if spy.closes != 0 {
+		t.Errorf("closed the caller's client's idle connections %d times, want 0", spy.closes)
+	}
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closed := make(chan struct{}, 1)
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	srv.StartTLS()
+	defer srv.Close()
+	s = Defaults()
+	s.CABundle = writeCA(t, srv)
+	tr := mustBuild(t, s)
+	resp, err := tr.Do(context.Background(), getReq(srv.URL))
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	tr.CloseIdleConnections()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the CA-bundle client's idle connection was not closed")
+	}
+}
+
+func TestCacheControl_JoinsEveryField(t *testing.T) {
+	h := http.Header{}
+	h.Add("Cache-Control", "public")
+	h.Add("Cache-Control", "no-store, max-age=300")
+	if got, want := CacheControl(h), "public,no-store, max-age=300"; got != want {
+		t.Errorf("CacheControl = %q, want %q", got, want)
+	}
+	if got := CacheControl(http.Header{}); got != "" {
+		t.Errorf("CacheControl(no field) = %q, want empty", got)
 	}
 }

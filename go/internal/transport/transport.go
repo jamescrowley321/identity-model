@@ -109,11 +109,12 @@ func (s Settings) Build() (*Transport, []Issue) {
 		issues = append(issues, Issue{"WithRetryBaseDelay", RuleNonNegative})
 	}
 	client := s.HTTPClient
+	owned := false
 	if s.CABundle != "" {
 		if s.HTTPClient != nil {
 			issues = append(issues, Issue{"WithCABundle", ruleCAAndClient})
 		} else if c, ok := caBundleClient(s.CABundle); ok {
-			client = c
+			client, owned = c, true
 		} else {
 			issues = append(issues, Issue{"WithCABundle", ruleCABundle})
 		}
@@ -124,7 +125,7 @@ func (s Settings) Build() (*Transport, []Issue) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Transport{settings: s, client: client, sleep: sleepCtx}, nil
+	return &Transport{settings: s, client: client, owned: owned, sleep: sleepCtx}, nil
 }
 
 // caBundleClient returns a client that trusts only the certificates in the PEM
@@ -151,7 +152,9 @@ func caBundleClient(path string) (*http.Client, bool) {
 type Transport struct {
 	settings Settings
 	client   *http.Client
-	sleep    func(context.Context, time.Duration) error
+	// owned is set when Build created client for a CA bundle.
+	owned bool
+	sleep func(context.Context, time.Duration) error
 }
 
 // Client returns the HTTP client requests go through.
@@ -162,6 +165,25 @@ func (t *Transport) WithClient(client *http.Client) *Transport {
 	cp := *t
 	cp.client = client
 	return &cp
+}
+
+// WithoutRetries returns a copy of t that sends each request once, whatever
+// RetryMaxAttempts says. Use it for a request that must not be replayed, such
+// as redeeming a single-use authorization code (RFC 6749 §4.1.2).
+func (t *Transport) WithoutRetries() *Transport {
+	cp := *t
+	cp.settings.RetryMaxAttempts = 0
+	return &cp
+}
+
+// CloseIdleConnections closes the idle connections of a client Build created
+// for a CA bundle. A caller's client and [http.DefaultClient] are left alone.
+// A one-shot call builds a fresh transport each time, so it calls this when
+// done; otherwise every call would leave its own connection pool behind.
+func (t *Transport) CloseIdleConnections() {
+	if t.owned {
+		t.client.CloseIdleConnections()
+	}
 }
 
 // Do sends the request newReq builds, retrying a 429 or 5xx response and a

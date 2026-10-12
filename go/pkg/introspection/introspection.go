@@ -88,6 +88,7 @@ func Introspect(ctx context.Context, introspectionEndpoint, clientID, clientSecr
 	}
 
 	encoded := form.Encode()
+	defer cfg.tr.CloseIdleConnections()
 	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, introspectionEndpoint, strings.NewReader(encoded))
 		if err != nil {

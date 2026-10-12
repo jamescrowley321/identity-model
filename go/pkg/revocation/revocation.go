@@ -128,6 +128,7 @@ func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, tok
 	}
 
 	encoded := form.Encode()
+	defer cfg.tr.CloseIdleConnections()
 	resp, err := cfg.tr.WithClient(&client).Do(ctx, func(ctx context.Context) (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, revocationEndpoint, strings.NewReader(encoded))
 		if err != nil {

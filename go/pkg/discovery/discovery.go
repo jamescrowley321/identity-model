@@ -232,7 +232,7 @@ func (c *Client) fetchAndValidate(ctx context.Context, issuerURL string) (*Provi
 		return nil, "", &IssuerMismatchError{Requested: issuer, Returned: doc.Issuer}
 	}
 
-	return &doc, resp.Header.Get("Cache-Control"), nil
+	return &doc, transport.CacheControl(resp.Header), nil
 }
 
 // missingRequiredFields returns the JSON names of any required fields that the

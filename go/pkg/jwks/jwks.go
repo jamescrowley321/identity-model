@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -340,9 +341,14 @@ func (c *Client) fetchAndParse(ctx context.Context, jwksURI string) ([]JSONWebKe
 
 	// Cap the body at WithMaxSize to guard against an unbounded response
 	// (memory-exhaustion DoS). Read one extra byte so an oversized body can be
-	// detected below.
+	// detected below. At math.MaxInt64 there is no extra byte to read, and +1
+	// would overflow to a negative limit that reads nothing.
 	maxSize := c.cfg.maxSize
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxSize)+1))
+	limit := int64(maxSize)
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, "", fmt.Errorf("jwks: read body: %w", err)
 	}
@@ -362,7 +368,7 @@ func (c *Client) fetchAndParse(ctx context.Context, jwksURI string) ([]JSONWebKe
 	if err != nil {
 		return nil, "", err
 	}
-	return keys, resp.Header.Get("Cache-Control"), nil
+	return keys, transport.CacheControl(resp.Header), nil
 }
 
 // parseKeySet decodes a JWK Set body into validated keys (JWKS-001/002/007).

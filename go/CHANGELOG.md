@@ -81,7 +81,9 @@ requires — resolvable as
   `pkg/introspection`, `pkg/revocation`: a 429, a 5xx or a transport error is
   now retried with exponential backoff (`WithRetryMaxAttempts`, default 3, `0`
   disables; `WithRetryBaseDelay`, default 1 s; each wait capped at 120 s, a
-  longer `Retry-After` wins). `WithTimeout` (default 30 s) bounds each attempt
+  longer `Retry-After` wins). `token.AuthorizationCode` is the exception: it
+  sends its single-use code once and never retries. A max-age or no-store in
+  any `Cache-Control` field line counts. `WithTimeout` (default 30 s) bounds each attempt
   and must be greater than 0. New `WithCABundle(path)` trusts a PEM bundle
   instead of the system roots; it cannot be combined with `WithHTTPClient`. An
   invalid value is a `*ConfigError` returned before any request is sent.
