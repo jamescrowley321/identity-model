@@ -33,7 +33,10 @@ Ranges are inclusive unless written `>`.
 - **`http_timeout`, retries and `ca_bundle`** apply to every request the library
   makes. In Go and Rust they are options on every package or client that makes
   HTTP requests.
-- **`http_retry_max_attempts`**: `0` disables retries.
+- **`http_retry_max_attempts`**: `0` disables retries. Redeeming an
+  authorization code is never retried, whatever this says: the code is
+  single-use (RFC 6749 §4.1.2), and a retry after a lost response would present
+  a used code. Go follows this; Python still retries it (#900).
 - **`http_retry_base_delay`**: exponential backoff from this base; each retry's
   delay is capped at 120 seconds.
 - **`ca_bundle`**: `none` verifies TLS with the HTTP stack's default CA bundle
