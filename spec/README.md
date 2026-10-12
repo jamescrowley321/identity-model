@@ -7,7 +7,7 @@ This directory is the **single source of truth** for what every identity-model l
 | Path | Purpose |
 |------|---------|
 | [`capabilities.md`](capabilities.md) | Canonical capability matrix with normative (MUST/SHOULD/MAY) behavior and per-language status |
-| [`config.md`](config.md) | Configuration contract: canonical key registry, source/precedence resolution, validation modes, error taxonomy, secret redaction |
+| [`config.md`](config.md) | Configuration: every setting's name in Python, Go and Rust, its default and valid range, and the cache rules |
 | `vectors/*.json` | Machine-readable, language-agnostic test-case definitions (one file per capability) |
 | `test-fixtures/` | Shared input data (discovery documents, JWK sets, tokens) referenced by conformance tests |
 
@@ -165,6 +165,3 @@ Each language runs them in-process in its unit suite — Python
 — and fails on an operation it has no runner for. A language skips a
 capability it does not implement by name (Rust: `dpop`, #675) rather than
 failing.
-
-The remaining capability file (`config.json`) is a prose contract
-today and gain vectors + per-language runners as each is adopted.

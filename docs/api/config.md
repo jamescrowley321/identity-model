@@ -209,6 +209,11 @@ async with AsyncHTTPClient(config=config) as client:
 Error messages name the setting and the rule, never the value you passed.
 `ConfigError` is a `ValueError`.
 
+The same settings, with their Go and Rust names and the cache rules, are on
+the cross-language
+[configuration page](https://github.com/jamescrowley321/identity-model/blob/main/spec/config.md).
+Python defines them; Go and Rust match it.
+
 !!! warning "Breaking change: sources and loaders removed"
     `Config.from_env`, `Config.build`, `ConfigSource`, `EnvSource`,
     `MappingSource` and `Secret` have been removed, along with the dotted
