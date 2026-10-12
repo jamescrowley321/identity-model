@@ -14,8 +14,9 @@ could silently break:
   request the default client makes.
 * **Cooldown bookkeeping.** A refresh that absorbs a rotation drops the URI's
   kid-miss stamp, and an evicted URI drops its stamp (bounded sidecar).
-* **Single-flight and the lock-free hit.** A cache miss waits on the URI's
-  fetch lock; a fresh hit takes no lock and refreshes LRU recency (#397).
+* **Single-flight and the cache hits.** A cache miss waits on the URI's
+  fetch lock; a fresh hit takes no lock, and both it and a hit found under
+  the lock refresh LRU recency (#397).
 * **TTL.** A provider's ``Cache-Control: max-age`` sets the entry TTL ahead
   of the client's ``Config`` default.
 """
@@ -27,6 +28,7 @@ from contextlib import asynccontextmanager, contextmanager
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -359,6 +361,49 @@ class TestSyncLockFreeHit:
             )
 
             assert results == [hot_entry.response]
+            assert list(caches.jwks) == [other, hot]
+
+
+class TestSyncDoubleCheckedHit:
+    """A hit found under the fetch lock (another thread populated the entry
+    while this one waited) is served without a fetch and moves the entry to
+    the most-recently-used end. ``is_cache_expired`` reports the entry stale
+    on the lock-free check and fresh on the re-check, the state a concurrent
+    populate leaves behind."""
+
+    @respx.mock
+    def test_disco_double_checked_hit_refreshes_recency(self, monkeypatch):
+        hot, other = CANDIDATE_ORIGINS[0], CANDIDATE_ORIGINS[1]
+        monkeypatch.setattr(
+            sync_tv, "is_cache_expired", Mock(side_effect=[True, False])
+        )
+        with HTTPClient() as client:
+            caches = client.caches
+            caches.disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
+            caches.disco[_disco_key(other)] = _fresh_disco_entry(other)
+
+            result = sync_tv._get_disco_response(
+                f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client
+            )
+
+            assert result is hot_entry.response
+            assert list(caches.disco) == [_disco_key(other), _disco_key(hot)]
+
+    @respx.mock
+    def test_jwks_double_checked_hit_refreshes_recency(self, monkeypatch):
+        hot = f"{CANDIDATE_ORIGINS[0]}{JWKS_PATH}"
+        other = f"{CANDIDATE_ORIGINS[1]}{JWKS_PATH}"
+        monkeypatch.setattr(
+            sync_tv, "is_cache_expired", Mock(side_effect=[True, False])
+        )
+        with HTTPClient() as client:
+            caches = client.caches
+            caches.jwks[hot] = hot_entry = _fresh_jwks_entry()
+            caches.jwks[other] = _fresh_jwks_entry()
+
+            result = sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client)
+
+            assert result is hot_entry.response
             assert list(caches.jwks) == [other, hot]
 
 
