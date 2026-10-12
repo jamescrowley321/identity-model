@@ -273,7 +273,10 @@ client's `Config`.
 
 The only module that reads `os.environ` is the optional
 `config_helpers.py` (`config_from_env` / `config_from_mapping`), which the
-library never imports or calls.
+library never imports or calls. Ruff `TID251` bans `os.environ` / `os.getenv`
+outside the helpers, tests, examples and tooling, and
+`src/tests/unit/test_no_env_reads.py` runs client operations under an
+`os.environ` that fails on any library read.
 
 ### SSL/TLS Configuration
 

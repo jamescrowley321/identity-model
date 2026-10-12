@@ -7,6 +7,7 @@ does the same with ``os.environ``. The library itself never imports the module.
 
 import ast
 import dataclasses
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -290,8 +291,19 @@ def _imported_modules(source: Path) -> set[str]:
     return names
 
 
-def test_no_library_module_imports_the_helpers():
-    package = Path(py_identity_model.__file__).parent
+def _package_dir(name: str) -> Path:
+    """The package's source directory, found without importing it."""
+    spec = importlib.util.find_spec(name)
+    assert spec is not None
+    assert spec.origin is not None
+    return Path(spec.origin).parent
+
+
+@pytest.mark.parametrize(
+    "package_name", ["py_identity_model", "fastapi_identity_model"]
+)
+def test_no_library_module_imports_the_helpers(package_name):
+    package = _package_dir(package_name)
     importers = {
         str(path.relative_to(package))
         for path in package.rglob("*.py")
