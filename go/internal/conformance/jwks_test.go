@@ -21,17 +21,19 @@ var jwksErrors = map[string]error{
 	"key_alg_mismatch": jwks.ErrKeyAlgorithmMismatch,
 }
 
-// runJWKSVector is the jwks.json adapter: one jwks.FetchKeySet handle per
-// vector, driven through input.steps.
+// runJWKSVector is the jwks.json adapter: one jwks.Client per vector, driven
+// through input.steps.
 func runJWKSVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
-	jwks.ClearCache()
 	ctx := context.Background()
 	uri := base + "/jwks"
+	client, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("%s: jwks.NewClient: %v", label, err)
+	}
 
 	var set *jwks.JSONWebKeySet
 	var got []jwks.JSONWebKey
-	var err error
 	steps, _ := v.Input["steps"].([]any)
 	// Each resolve takes the next of input.kids when given, else input.kid; with
 	// neither it resolves a token header with no kid and input.alg.
@@ -39,7 +41,7 @@ func runJWKSVector(t *testing.T, label, base string, v HTTPVector) {
 	for i, step := range steps {
 		switch step {
 		case "fetch":
-			if set, err = jwks.FetchKeySet(ctx, uri, jwks.WithInsecureAllowHTTP()); err == nil {
+			if set, err = client.FetchKeySet(ctx, uri); err == nil {
 				got = set.Keys
 			}
 		case "resolve":

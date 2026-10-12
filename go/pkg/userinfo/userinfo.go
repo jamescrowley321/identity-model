@@ -3,6 +3,7 @@ package userinfo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -26,7 +27,10 @@ const maxBodyBytes = 1 << 20
 // [WithSubjectValidation] to require that the UserInfo "sub" matches the ID
 // token's "sub"; a mismatch is reported as a [SubjectMismatchError].
 func Fetch(ctx context.Context, userInfoEndpoint, accessToken string, opts ...Option) (*UserInfoResponse, error) {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	parsed, err := url.Parse(userInfoEndpoint)
 	if err != nil {
@@ -42,26 +46,20 @@ func Fetch(ctx context.Context, userInfoEndpoint, accessToken string, opts ...Op
 		return nil, &RequestError{Op: "userinfo request", Err: fmt.Errorf("access token is required")}
 	}
 
-	var reqCtx context.Context
-	if cfg.timeout > 0 {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, cfg.timeout)
-		defer cancel()
-	} else {
-		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
-		defer cancel()
-	}
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, userInfoEndpoint, nil)
+	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoEndpoint, nil)
+		if err != nil {
+			return nil, &RequestError{Op: "build request", Err: err}
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
-		return nil, &RequestError{Op: "build request", Err: err}
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
+		var rErr *RequestError
+		if errors.As(err, &rErr) {
+			return nil, err
+		}
 		return nil, &RequestError{Op: fmt.Sprintf("get %s", userInfoEndpoint), Err: err}
 	}
 	defer resp.Body.Close()

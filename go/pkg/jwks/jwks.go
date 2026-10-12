@@ -11,16 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
-
-// maxBodyBytes caps the JWKS response read into memory. A key set is a small
-// JSON object; this guards against a malicious or misconfigured provider
-// streaming an unbounded body (memory-exhaustion DoS).
-const maxBodyBytes = 1 << 20 // 1 MiB
-
-// defaultRequestTimeout bounds a fetch when neither [WithTimeout] nor the
-// caller's context supplies a deadline, so a hung server cannot block forever.
-const defaultRequestTimeout = 30 * time.Second
 
 // JSONWebKey is a single JSON Web Key (RFC 7517 §4). The common signing-key
 // parameters are modelled as fields; key-type-specific material is exposed as
@@ -80,41 +73,79 @@ func (k *JSONWebKey) validate() error {
 
 // JSONWebKeySet is a parsed JWK Set (RFC 7517 §5) plus the state needed to
 // refresh it. Keys holds the keys in document order. The handle remembers the
-// source URI and configuration so [JSONWebKeySet.ForceRefresh] and
+// source URI and its [Client] so [JSONWebKeySet.ForceRefresh] and
 // [JSONWebKeySet.ResolveKeyWithRefresh] can re-fetch on demand.
 type JSONWebKeySet struct {
 	Keys []JSONWebKey
 
-	mu    sync.RWMutex
-	uri   string
-	cfg   *config
-	cache *cache
+	mu     sync.RWMutex
+	uri    string
+	client *Client
+}
+
+// Client fetches, caches and refreshes JWK Sets. It holds its options and owns
+// its cache and kid-miss cooldown state, so two clients never share cached
+// keys. A Client is safe for concurrent use.
+type Client struct {
+	cfg       *config
+	transport *transport.Transport
+	cache     *cache
+}
+
+// NewClient returns a client with opts applied over the defaults. An invalid
+// option value is a [*ConfigError]; it is never replaced by its default.
+func NewClient(opts ...Option) (*Client, error) {
+	cfg, tr, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{cfg: cfg, transport: tr, cache: newCache(cfg.maxEntries)}, nil
+}
+
+// defaultClient backs the package-level [FetchKeySet]. The defaults are
+// valid, so building it cannot fail.
+var defaultClient = func() *Client {
+	c, err := NewClient()
+	if err != nil {
+		panic(err)
+	}
+	return c
+}()
+
+// FetchKeySet fetches, parses and caches the JWK Set at jwksURI using a client
+// built from the defaults. See [Client.FetchKeySet].
+func FetchKeySet(ctx context.Context, jwksURI string) (*JSONWebKeySet, error) {
+	return defaultClient.FetchKeySet(ctx, jwksURI)
 }
 
 // FetchKeySet fetches, parses and caches the JWK Set at jwksURI (typically the
 // jwks_uri from discovery). It returns a [JSONWebKeySet] of the usable keys
 // (JWKS-001, RFC 7517 §5); a key that fails validation is skipped (JWKS-008).
 //
-// Results are cached with a configurable TTL (default 24h, see [WithCacheTTL]);
-// a cache hit within the TTL makes no HTTP request (JWKS-005), and concurrent
-// calls for the same URI are deduplicated to a single in-flight request
-// (singleflight).
-func FetchKeySet(ctx context.Context, jwksURI string, opts ...Option) (*JSONWebKeySet, error) {
-	cfg := newConfig(opts...)
-	keys, err := globalCache.fetch(ctx, jwksURI, cfg)
+// The set is cached for the response's Cache-Control max-age, clamped to 60
+// seconds – 24 hours, or for [WithCacheTTL] when there is none. no-store and
+// no-cache are deliberately ignored: honouring them on public key sets turns
+// every validation into a fetch (#396). A cache hit makes no HTTP request
+// (JWKS-005), and concurrent calls for the same URI share one in-flight
+// request (singleflight).
+func (c *Client) FetchKeySet(ctx context.Context, jwksURI string) (*JSONWebKeySet, error) {
+	keys, err := c.cache.fetch(ctx, jwksURI, c.loader(jwksURI))
 	if err != nil {
 		return nil, err
 	}
-	return &JSONWebKeySet{Keys: keys, uri: jwksURI, cfg: cfg, cache: globalCache}, nil
+	return &JSONWebKeySet{Keys: keys, uri: jwksURI, client: c}, nil
 }
 
-// ClearCache drops every cached JWK Set and refresh-cooldown record from the
-// package-level cache used by [FetchKeySet], forcing the next fetch for any URI
-// to re-request it. It is intended for tests and long-lived processes that need
-// to discard keys deterministically (e.g. a provider key rotation between
-// unrelated operations); normal callers rely on the TTL and
-// [JSONWebKeySet.ForceRefresh].
-func ClearCache() { globalCache.clear() }
+// loader returns the cache loader that fetches jwksURI.
+func (c *Client) loader(jwksURI string) loader {
+	return func(ctx context.Context) ([]JSONWebKey, time.Duration, error) {
+		keys, cacheControl, err := c.fetchAndParse(ctx, jwksURI)
+		if err != nil {
+			return nil, 0, err
+		}
+		return keys, transport.ResolveTTL(cacheControl, c.cfg.cacheTTL), nil
+	}
+}
 
 // ResolveKey returns the key whose kid matches and reports whether one was
 // found, scanning the in-memory set only (JWKS-003, RFC 7517 §4.5). It makes no
@@ -146,7 +177,7 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 	if k, ok := s.ResolveKey(kid); ok {
 		return k, nil
 	}
-	if s.cache.refreshThrottled(s.uri, s.cfg.refreshCooldown) {
+	if s.client.cache.refreshThrottled(s.uri, s.client.cfg.refreshCooldown) {
 		return nil, &KeyNotFoundError{Kid: kid}
 	}
 	if err := s.ForceRefresh(ctx); err != nil {
@@ -263,12 +294,13 @@ func narrow(keys []*JSONWebKey, keep func(*JSONWebKey) bool) []*JSONWebKey {
 // an explicit ForceRefresh is never throttled, but it does start the cooldown
 // window that gates subsequent automatic refreshes.
 func (s *JSONWebKeySet) ForceRefresh(ctx context.Context) error {
-	s.cache.invalidate(s.uri)
-	keys, err := s.cache.fetch(ctx, s.uri, s.cfg)
+	c := s.client
+	c.cache.invalidate(s.uri)
+	keys, err := c.cache.fetch(ctx, s.uri, c.loader(s.uri))
 	if err != nil {
 		return err
 	}
-	s.cache.markRefresh(s.uri, s.cfg.maxEntries)
+	c.cache.markRefresh(s.uri)
 	s.mu.Lock()
 	s.Keys = keys
 	s.mu.Unlock()
@@ -276,67 +308,66 @@ func (s *JSONWebKeySet) ForceRefresh(ctx context.Context) error {
 }
 
 // fetchAndParse performs the HTTP request, parses the body and validates each
-// key. It contains no caching logic so it can be invoked once per singleflight
-// group.
-func fetchAndParse(ctx context.Context, jwksURI string, cfg *config) ([]JSONWebKey, error) {
+// key. It returns the response's Cache-Control header for the cache. It
+// contains no caching logic so it can be invoked once per singleflight group.
+func (c *Client) fetchAndParse(ctx context.Context, jwksURI string) ([]JSONWebKey, string, error) {
 	uri := strings.TrimSpace(jwksURI)
 	if uri == "" {
-		return nil, &ParseError{Err: fmt.Errorf("jwks URI is empty")}
+		return nil, "", &ParseError{Err: fmt.Errorf("jwks URI is empty")}
 	}
 
 	parsed, err := url.Parse(uri)
 	if err != nil {
-		return nil, &ParseError{Err: fmt.Errorf("invalid jwks URI %q: %w", jwksURI, err)}
+		return nil, "", &ParseError{Err: fmt.Errorf("invalid jwks URI %q: %w", jwksURI, err)}
 	}
 	// Require HTTPS in production; http:// only with WithInsecureAllowHTTP.
-	if parsed.Scheme != "https" && !(cfg.allowHTTP && parsed.Scheme == "http") {
-		return nil, &HTTPSRequiredError{URI: jwksURI}
+	if parsed.Scheme != "https" && !(c.cfg.allowHTTP && parsed.Scheme == "http") {
+		return nil, "", &HTTPSRequiredError{URI: jwksURI}
 	}
 
-	// Always bound the request: the configured timeout, or a default so a hung
-	// server cannot block indefinitely.
-	timeout := cfg.timeout
-	if timeout <= 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, uri, nil)
+	resp, err := c.transport.Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("jwks: build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("jwks: fetch %s: %w", uri, err)
+		return nil, "", fmt.Errorf("jwks: fetch %s: %w", uri, err)
 	}
 	defer resp.Body.Close()
 
-	// Cap the body to guard against an unbounded response (memory-exhaustion
-	// DoS). Read one extra byte so an oversized body can be detected below.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
+	// Cap the body at WithMaxSize to guard against an unbounded response
+	// (memory-exhaustion DoS). Read one extra byte so an oversized body can be
+	// detected below.
+	maxSize := c.cfg.maxSize
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxSize)+1))
 	if err != nil {
-		return nil, fmt.Errorf("jwks: read body: %w", err)
+		return nil, "", fmt.Errorf("jwks: read body: %w", err)
 	}
 
 	// A non-2xx response is a transport error carrying the status code. Check
 	// this before the size check so a large error page still surfaces as an
 	// HTTPError (with its status) rather than a misleading parse error.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{StatusCode: resp.StatusCode, URL: uri}
+		return nil, "", &HTTPError{StatusCode: resp.StatusCode, URL: uri}
 	}
 
-	if len(body) > maxBodyBytes {
-		return nil, &ParseError{Err: fmt.Errorf("jwks document exceeds %d bytes", maxBodyBytes)}
+	if len(body) > maxSize {
+		return nil, "", &ParseError{Err: fmt.Errorf("jwks document exceeds %d bytes", maxSize)}
 	}
 
-	return parseKeySet(body, uri)
+	keys, err := parseKeySet(body, uri, c.cfg.maxKeys)
+	if err != nil {
+		return nil, "", err
+	}
+	return keys, resp.Header.Get("Cache-Control"), nil
 }
 
 // parseKeySet decodes a JWK Set body into validated keys (JWKS-001/002/007).
-func parseKeySet(body []byte, uri string) ([]JSONWebKey, error) {
+// A set with more than maxKeys members is rejected before any key is parsed.
+func parseKeySet(body []byte, uri string, maxKeys int) ([]JSONWebKey, error) {
 	// JWKS-007: a non-JSON body, or one whose "keys" member is not an array,
 	// is a parse error.
 	var doc struct {
@@ -344,6 +375,9 @@ func parseKeySet(body []byte, uri string) ([]JSONWebKey, error) {
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, &ParseError{Err: err}
+	}
+	if len(doc.Keys) > maxKeys {
+		return nil, &ParseError{Err: fmt.Errorf("jwks document has %d keys, exceeds limit of %d", len(doc.Keys), maxKeys)}
 	}
 
 	// JWKS-008 (RFC 7517 §5): a key that fails validation or has a mistyped

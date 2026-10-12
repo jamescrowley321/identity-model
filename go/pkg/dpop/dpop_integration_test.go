@@ -32,7 +32,11 @@ func TestIntegration_DPoP_BoundClientCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, discovery.WithInsecureAllowHTTP())
+	dc, err := discovery.NewClient(discovery.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 	if err != nil {
 		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}

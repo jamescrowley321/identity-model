@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
 
 // cacheEntry is a cached configuration with its expiry instant.
@@ -54,19 +56,24 @@ type cache struct {
 
 	group singleflight.Group
 
+	// defaultTTL is the lifetime of a document whose response has no
+	// Cache-Control max-age; maxEntries bounds len(entries).
+	defaultTTL time.Duration
+	maxEntries int
+
 	// now returns the current time; overridable in tests to drive TTL expiry
 	// deterministically (DISC-005).
 	now func() time.Time
 }
 
-// globalCache backs the package-level [FetchConfiguration].
-var globalCache = newCache()
-
-// newCache returns an empty cache using the wall clock.
-func newCache() *cache {
+// newCache returns an empty cache holding at most maxEntries documents, each
+// for defaultTTL unless its response says otherwise, using the wall clock.
+func newCache(defaultTTL time.Duration, maxEntries int) *cache {
 	return &cache{
-		entries: make(map[string]*cacheEntry),
-		now:     time.Now,
+		entries:    make(map[string]*cacheEntry),
+		defaultTTL: defaultTTL,
+		maxEntries: maxEntries,
+		now:        time.Now,
 	}
 }
 
@@ -95,26 +102,22 @@ func (c *cache) lookup(key string) (*ProviderConfiguration, bool) {
 }
 
 // store records cfg for key with the supplied TTL, marks the entry
-// most-recently-used, and enforces the max-entries bound. A maxEntries <= 0
-// disables the bound (unbounded) — the backward-compatible escape hatch.
-func (c *cache) store(key string, cfg *ProviderConfiguration, ttl time.Duration, maxEntries int) {
+// most-recently-used, and enforces the max-entries bound.
+func (c *cache) store(key string, cfg *ProviderConfiguration, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry := &cacheEntry{cfg: cfg, expiresAt: c.now().Add(ttl)}
 	entry.lastAccess.Store(c.nextTick())
 	c.entries[key] = entry
-	c.evictLocked(maxEntries)
+	c.evictLocked()
 }
 
 // evictLocked drops least-recently-used entries until at most maxEntries remain.
-// It must be called with mu held. A maxEntries <= 0 disables eviction. The victim
-// is the entry with the smallest recency tick, found by an O(n) scan (n <=
-// maxEntries) — the trade for keeping lookup on a shared read lock.
-func (c *cache) evictLocked(maxEntries int) {
-	if maxEntries <= 0 {
-		return
-	}
-	for len(c.entries) > maxEntries {
+// It must be called with mu held. The victim is the entry with the smallest
+// recency tick, found by an O(n) scan (n <= maxEntries) — the trade for keeping
+// lookup on a shared read lock.
+func (c *cache) evictLocked() {
+	for len(c.entries) > c.maxEntries {
 		var lruKey string
 		var lruTick int64
 		found := false
@@ -131,29 +134,25 @@ func (c *cache) evictLocked(maxEntries int) {
 	}
 }
 
-// clear drops every cached configuration.
-func (c *cache) clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*cacheEntry)
-}
+// loader fetches one document and returns it with its response's
+// Cache-Control header.
+type loader func(ctx context.Context) (*ProviderConfiguration, string, error)
 
-// fetch returns the cached configuration for issuerURL or fetches it, caching
-// the result. Concurrent misses for the same issuer collapse to one fetch.
+// fetch returns the cached configuration for issuerURL or loads it, caching
+// the result per the Cache-Control rules (spec/config.md): max-age clamped to
+// 60 s – 24 h, else defaultTTL; no-store or no-cache is not cached. Concurrent
+// misses for the same issuer collapse to one load.
 //
 // Concurrency semantics: when several callers miss the cache simultaneously,
 // only the first triggers the HTTP request and the rest wait on its result.
-// The shared fetch runs on a context detached from any single caller (via
+// The shared load runs on a context detached from any single caller (via
 // [context.WithoutCancel]), so one caller cancelling or timing out cannot
 // poison the request other callers depend on; each caller still observes its
-// own context cancellation through the select below. Because the shared fetch
+// own context cancellation through the select below. Because the shared load
 // is detached, a deadline carried only on a caller's context does not bound the
-// underlying request (the caller still unblocks at its deadline, but the fetch
-// runs to the configured [WithTimeout] or the default request timeout). The
-// timeout, cache TTL and max-entries bound applied to the shared fetch are those
-// of the caller that wins the flight (first-wins) — callers needing distinct
-// timeouts should not rely on the shared cache for that guarantee.
-func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
+// underlying request (the caller still unblocks at its deadline, but the load
+// runs to the client's [WithTimeout] per attempt).
+func (c *cache) fetch(ctx context.Context, issuerURL string, load loader) (*ProviderConfiguration, error) {
 	// DISC-004: serve a fresh cache entry without any HTTP request.
 	if doc, ok := c.lookup(issuerURL); ok {
 		return doc, nil
@@ -168,14 +167,16 @@ func (c *cache) fetch(ctx context.Context, issuerURL string, cfg *config) (*Prov
 			return doc, nil
 		}
 		// Detach from the winning caller's context so its cancellation does
-		// not abort the fetch the other waiters share. fetchAndValidate still
-		// bounds the request with the configured (or default) timeout.
-		doc, err := fetchAndValidate(context.WithoutCancel(ctx), issuerURL, cfg)
+		// not abort the load the other waiters share.
+		doc, cacheControl, err := load(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
 		}
-		// Only successful fetches are cached.
-		c.store(issuerURL, doc, cfg.cacheTTL, cfg.maxEntries)
+		// Only successful fetches are cached, and only when the provider
+		// allows it.
+		if !transport.Uncacheable(cacheControl) {
+			c.store(issuerURL, doc, transport.ResolveTTL(cacheControl, c.defaultTTL))
+		}
 		return doc, nil
 	})
 

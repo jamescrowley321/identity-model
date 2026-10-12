@@ -54,7 +54,11 @@ func obtainLiveIDToken(t *testing.T, ctx context.Context) liveIDTokenResult {
 	if tc.AllowHTTP {
 		dopts = append(dopts, discovery.WithInsecureAllowHTTP())
 	}
-	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
+	dc, err := discovery.NewClient(dopts...)
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 	if err != nil {
 		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}
@@ -101,7 +105,11 @@ func obtainLiveIDToken(t *testing.T, ctx context.Context) liveIDTokenResult {
 	if tc.AllowHTTP {
 		jopts = append(jopts, jwks.WithInsecureAllowHTTP())
 	}
-	set, err := jwks.FetchKeySet(ctx, cfg.JWKSURI, jopts...)
+	jc, err := jwks.NewClient(jopts...)
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(ctx, cfg.JWKSURI)
 	if err != nil {
 		t.Fatalf("fetch live jwks: %v", err)
 	}

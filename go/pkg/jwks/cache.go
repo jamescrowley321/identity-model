@@ -67,19 +67,21 @@ type cache struct {
 	// a record with no backing entry that eviction can never reclaim.
 	lastRefresh map[string]time.Time
 
+	// maxEntries bounds len(entries) and len(lastRefresh).
+	maxEntries int
+
 	// now returns the current time; overridable in tests to drive TTL expiry
 	// deterministically (JWKS-005).
 	now func() time.Time
 }
 
-// globalCache backs the package-level [FetchKeySet].
-var globalCache = newCache()
-
-// newCache returns an empty cache using the wall clock.
-func newCache() *cache {
+// newCache returns an empty cache holding at most maxEntries key sets, using
+// the wall clock.
+func newCache(maxEntries int) *cache {
 	return &cache{
 		entries:     make(map[string]*cacheEntry),
 		lastRefresh: make(map[string]time.Time),
+		maxEntries:  maxEntries,
 		now:         time.Now,
 	}
 }
@@ -98,15 +100,12 @@ func (c *cache) nextTick() int64 {
 // record has no backing entry, and evictLocked — which only prunes records for
 // keys still in entries — can never reclaim it. Capping here (evicting the
 // least-recently-refreshed record) keeps lastRefresh bounded under issuer/URI
-// rotation regardless. A maxEntries <= 0 is unbounded, matching the entry map.
-func (c *cache) markRefresh(key string, maxEntries int) {
+// rotation regardless.
+func (c *cache) markRefresh(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lastRefresh[key] = c.now()
-	if maxEntries <= 0 {
-		return
-	}
-	for len(c.lastRefresh) > maxEntries {
+	for len(c.lastRefresh) > c.maxEntries {
 		var oldestKey string
 		var oldest time.Time
 		found := false
@@ -158,28 +157,24 @@ func (c *cache) lookup(key string) ([]JSONWebKey, bool) {
 }
 
 // store records keys for key with the supplied TTL, marks the entry
-// most-recently-used, and enforces the max-entries bound. A maxEntries <= 0
-// disables the bound (unbounded) — the backward-compatible escape hatch.
-func (c *cache) store(key string, keys []JSONWebKey, ttl time.Duration, maxEntries int) {
+// most-recently-used, and enforces the max-entries bound.
+func (c *cache) store(key string, keys []JSONWebKey, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry := &cacheEntry{keys: keys, expiresAt: c.now().Add(ttl)}
 	entry.lastAccess.Store(c.nextTick())
 	c.entries[key] = entry
-	c.evictLocked(maxEntries)
+	c.evictLocked()
 }
 
 // evictLocked drops least-recently-used entries until at most maxEntries remain.
-// It must be called with mu held. A maxEntries <= 0 disables eviction. The victim
-// is the entry with the smallest recency tick, found by an O(n) scan (n <=
-// maxEntries) — the trade for keeping lookup on a shared read lock. Each evicted
-// jwks_uri's sidecar refresh-cooldown record is deleted in lockstep so
-// lastRefresh cannot grow unbounded even though entries is bounded.
-func (c *cache) evictLocked(maxEntries int) {
-	if maxEntries <= 0 {
-		return
-	}
-	for len(c.entries) > maxEntries {
+// It must be called with mu held. The victim is the entry with the smallest
+// recency tick, found by an O(n) scan (n <= maxEntries) — the trade for keeping
+// lookup on a shared read lock. Each evicted jwks_uri's sidecar refresh-cooldown
+// record is deleted in lockstep so lastRefresh cannot grow unbounded even though
+// entries is bounded.
+func (c *cache) evictLocked() {
+	for len(c.entries) > c.maxEntries {
 		var lruKey string
 		var lruTick int64
 		found := false
@@ -206,26 +201,20 @@ func (c *cache) invalidate(key string) {
 	delete(c.entries, key)
 }
 
-// clear drops every cached entry and refresh-cooldown record.
-func (c *cache) clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*cacheEntry)
-	c.lastRefresh = make(map[string]time.Time)
-}
+// loader fetches one key set and returns it with the lifetime to cache it for.
+type loader func(ctx context.Context) ([]JSONWebKey, time.Duration, error)
 
-// fetch returns the cached keys for jwksURI or fetches them, caching the
-// result. Concurrent misses for the same URI collapse to one fetch.
+// fetch returns the cached keys for jwksURI or loads them, caching the result
+// for the lifetime load returns. Concurrent misses for the same URI collapse to
+// one load.
 //
 // Concurrency semantics mirror the discovery client: when several callers miss
 // the cache simultaneously, only the first triggers the HTTP request and the
-// rest wait on its result. The shared fetch runs on a context detached from any
+// rest wait on its result. The shared load runs on a context detached from any
 // single caller (via [context.WithoutCancel]) so one caller cancelling or
 // timing out cannot poison the request other callers depend on; each caller
-// still observes its own context cancellation through the select below. The
-// timeout, cache TTL and max-entries bound applied to the shared fetch are those
-// of the caller that wins the flight (first-wins).
-func (c *cache) fetch(ctx context.Context, jwksURI string, cfg *config) ([]JSONWebKey, error) {
+// still observes its own context cancellation through the select below.
+func (c *cache) fetch(ctx context.Context, jwksURI string, load loader) ([]JSONWebKey, error) {
 	// JWKS-005: serve a fresh cache entry without any HTTP request. Return a
 	// deep copy so the caller's handle cannot mutate the cached master copy.
 	if keys, ok := c.lookup(jwksURI); ok {
@@ -241,14 +230,13 @@ func (c *cache) fetch(ctx context.Context, jwksURI string, cfg *config) ([]JSONW
 			return keys, nil
 		}
 		// Detach from the winning caller's context so its cancellation does
-		// not abort the fetch the other waiters share. fetchAndParse still
-		// bounds the request with the configured (or default) timeout.
-		keys, err := fetchAndParse(context.WithoutCancel(ctx), jwksURI, cfg)
+		// not abort the load the other waiters share.
+		keys, ttl, err := load(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, err
 		}
 		// Only successful fetches are cached.
-		c.store(jwksURI, keys, cfg.cacheTTL, cfg.maxEntries)
+		c.store(jwksURI, keys, ttl)
 		return keys, nil
 	})
 

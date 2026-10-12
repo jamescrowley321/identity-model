@@ -17,7 +17,8 @@ import (
 func runUserInfoVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
 
-	opts := []userinfo.Option{userinfo.WithInsecureAllowHTTP()}
+	// Retries are off so a 5xx vector fails on its single request.
+	opts := []userinfo.Option{userinfo.WithInsecureAllowHTTP(), userinfo.WithRetryMaxAttempts(0)}
 	if sub, ok := v.Input["expected_sub"].(string); ok {
 		opts = append(opts, userinfo.WithSubjectValidation(sub))
 	}

@@ -3,6 +3,8 @@ package introspection
 import (
 	"net/http"
 	"time"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
 
 // ClientAuthMethod selects how the introspecting client presents its
@@ -19,18 +21,15 @@ const (
 	ClientSecretPost
 )
 
-// defaultRequestTimeout bounds an introspection request when [WithTimeout] is
-// not supplied, so a hung endpoint cannot block indefinitely.
-const defaultRequestTimeout = 30 * time.Second
-
 // config holds the resolved settings for an introspection request.
 type config struct {
 	authMethod    ClientAuthMethod
 	tokenTypeHint string
 	extraParams   map[string]string
-	httpClient    *http.Client
-	timeout       time.Duration
-	allowHTTP     bool
+	transport     transport.Settings
+	// tr is built from transport by newConfig.
+	tr        *transport.Transport
+	allowHTTP bool
 }
 
 // Option customises an introspection request via the functional-options
@@ -38,19 +37,32 @@ type config struct {
 // userinfo clients so the packages compose consistently.
 type Option func(*config)
 
-// newConfig applies opts on top of the defaults.
-func newConfig(opts ...Option) *config {
+// ConfigError reports every invalid option passed to a call. Each issue names
+// the option and the rule it broke, never the value.
+type ConfigError = transport.ConfigError
+
+// ConfigIssue is one invalid option in a [ConfigError].
+type ConfigIssue = transport.Issue
+
+// ErrInvalidConfig matches any [ConfigError].
+var ErrInvalidConfig = transport.ErrInvalidConfig
+
+// newConfig applies opts on top of the defaults and validates the transport
+// settings. An invalid value is a [*ConfigError]; nothing is sent.
+func newConfig(opts ...Option) (*config, error) {
 	cfg := &config{
+		transport:  transport.Defaults(),
 		authMethod: ClientSecretBasic,
-		httpClient: http.DefaultClient,
 	}
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	if cfg.httpClient == nil {
-		cfg.httpClient = http.DefaultClient
+	tr, issues := cfg.transport.Build()
+	if len(issues) > 0 {
+		return nil, transport.NewConfigError("introspection", issues)
 	}
-	return cfg
+	cfg.tr = tr
+	return cfg, nil
 }
 
 // WithClientAuth selects the client authentication method (RFC 6749 §2.3). The
@@ -75,17 +87,37 @@ func WithExtraParams(params map[string]string) Option {
 	return func(c *config) { c.extraParams = params }
 }
 
-// WithHTTPClient uses client for the introspection request instead of
-// [http.DefaultClient].
+// WithHTTPClient sends the introspection request through client instead of
+// [http.DefaultClient]. A nil client keeps the default.
 func WithHTTPClient(client *http.Client) Option {
-	return func(c *config) { c.httpClient = client }
+	return func(c *config) { c.transport.HTTPClient = client }
 }
 
-// WithTimeout bounds the introspection request with a context deadline of d. It
-// composes with the caller's context; the earlier deadline wins. The default is
-// 30s.
+// WithTimeout bounds each attempt of the introspection request, including reading the
+// response. It composes with the caller's context; the earlier deadline wins.
+// Default 30 seconds; must be > 0.
 func WithTimeout(d time.Duration) Option {
-	return func(c *config) { c.timeout = d }
+	return func(c *config) { c.transport.Timeout = d }
+}
+
+// WithRetryMaxAttempts sets how many times a 429, a 5xx or a transport error
+// is retried. Default 3; 0 disables retries; must be >= 0.
+func WithRetryMaxAttempts(n int) Option {
+	return func(c *config) { c.transport.RetryMaxAttempts = n }
+}
+
+// WithRetryBaseDelay sets the base of the exponential backoff between retries
+// (base, 2*base, 4*base, …, each capped at 120 seconds; a longer Retry-After
+// wins). Default 1 second; must be >= 0.
+func WithRetryBaseDelay(d time.Duration) Option {
+	return func(c *config) { c.transport.RetryBaseDelay = d }
+}
+
+// WithCABundle verifies TLS against the certificates in the PEM file at path
+// instead of the system roots. It cannot be combined with [WithHTTPClient]:
+// configure the TLS roots on that client instead.
+func WithCABundle(path string) Option {
+	return func(c *config) { c.transport.CABundle = path }
 }
 
 // WithInsecureAllowHTTP permits an http:// introspection endpoint, which is

@@ -62,23 +62,26 @@ func validDocFor(issuer string) []byte {
 	}`)
 }
 
-// freshCache isolates a test from the package-global cache.
-func freshCache(t *testing.T) {
+// testClient returns a new client (so a new cache) with opts applied after a
+// zero retry delay, so retried 5xx responses don't slow the suite.
+func testClient(t *testing.T, opts ...Option) *Client {
 	t.Helper()
-	globalCache.reset()
-	t.Cleanup(globalCache.reset)
+	c, err := NewClient(append([]Option{WithRetryBaseDelay(0)}, opts...)...)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return c
 }
 
 // DISC-001: fetch and parse a valid discovery document.
 func TestFetchConfiguration_Valid(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(hits, 1)
 		_, _ = w.Write(validDocFor(srv.URL))
 	})
 
-	cfg, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	cfg, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
@@ -92,13 +95,12 @@ func TestFetchConfiguration_Valid(t *testing.T) {
 
 // DISC-002: all seven required fields are present and accessible.
 func TestFetchConfiguration_AllRequiredFields(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(validDocFor(srv.URL))
 	})
 
-	cfg, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	cfg, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
@@ -120,11 +122,10 @@ func TestFetchConfiguration_AllRequiredFields(t *testing.T) {
 
 // DISC-003: issuer mismatch is rejected.
 func TestFetchConfiguration_IssuerMismatch(t *testing.T) {
-	freshCache(t)
 	// fixture issuer is https://attacker.example.com, never the server URL.
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "issuer-mismatch.json"))
 
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if !errors.Is(err, ErrIssuerMismatch) {
 		t.Fatalf("err = %v, want ErrIssuerMismatch", err)
 	}
@@ -139,7 +140,6 @@ func TestFetchConfiguration_IssuerMismatch(t *testing.T) {
 
 // DISC-004: a second call within the TTL is served from cache (no HTTP request).
 func TestFetchConfiguration_CacheHit(t *testing.T) {
-	freshCache(t)
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
@@ -147,8 +147,9 @@ func TestFetchConfiguration_CacheHit(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
+	client := testClient(t, WithInsecureAllowHTTP())
 	for i := 0; i < 3; i++ {
-		if _, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+		if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
@@ -159,7 +160,6 @@ func TestFetchConfiguration_CacheHit(t *testing.T) {
 
 // DISC-005: after the TTL expires the next call re-fetches.
 func TestFetchConfiguration_CacheExpiry(t *testing.T) {
-	freshCache(t)
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&hits, 1)
@@ -171,16 +171,15 @@ func TestFetchConfiguration_CacheExpiry(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	var clock atomic.Int64
 	clock.Store(base.UnixNano())
-	globalCache.mu.Lock()
-	globalCache.now = func() time.Time { return time.Unix(0, clock.Load()) }
-	globalCache.mu.Unlock()
+	client := testClient(t, WithCacheTTL(time.Minute), WithInsecureAllowHTTP())
+	client.cache.now = func() time.Time { return time.Unix(0, clock.Load()) }
 
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	// Within TTL: cache hit.
 	clock.Store(base.Add(30 * time.Second).UnixNano())
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
@@ -188,7 +187,7 @@ func TestFetchConfiguration_CacheExpiry(t *testing.T) {
 	}
 	// Past TTL: re-fetch.
 	clock.Store(base.Add(2 * time.Minute).UnixNano())
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 2 {
@@ -198,11 +197,9 @@ func TestFetchConfiguration_CacheExpiry(t *testing.T) {
 
 // DISC-006: non-2xx responses surface a typed HTTP error with the status code.
 func TestFetchConfiguration_HTTPError(t *testing.T) {
-	freshCache(t)
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
-		globalCache.reset()
 		srv, _ := newServer(t, status, []byte(`{}`))
-		_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+		_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 		var hErr *HTTPError
 		if !errors.As(err, &hErr) {
 			t.Fatalf("status %d: err = %v, want *HTTPError", status, err)
@@ -218,9 +215,8 @@ func TestFetchConfiguration_HTTPError(t *testing.T) {
 
 // DISC-007: a non-JSON body surfaces a parse error.
 func TestFetchConfiguration_InvalidJSON(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, []byte("this is not json <html>"))
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if !errors.Is(err, ErrParse) {
 		t.Fatalf("err = %v, want ErrParse", err)
 	}
@@ -232,9 +228,8 @@ func TestFetchConfiguration_InvalidJSON(t *testing.T) {
 
 // DISC-008: a missing required field is reported by name.
 func TestFetchConfiguration_MissingField(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "missing-jwks-uri.json"))
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	var mErr *MissingFieldsError
 	if !errors.As(err, &mErr) {
 		t.Fatalf("err = %v, want *MissingFieldsError", err)
@@ -249,9 +244,8 @@ func TestFetchConfiguration_MissingField(t *testing.T) {
 
 // DISC-008: multiple missing required fields are all reported.
 func TestFetchConfiguration_MissingMultipleFields(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "missing-multiple-fields.json"))
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	var mErr *MissingFieldsError
 	if !errors.As(err, &mErr) {
 		t.Fatalf("err = %v, want *MissingFieldsError", err)
@@ -268,9 +262,8 @@ func TestFetchConfiguration_MissingMultipleFields(t *testing.T) {
 // DISC-008: empty required arrays count as missing and are reported in spec
 // order.
 func TestFetchConfiguration_EmptyRequiredArrays(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "empty-required-arrays.json"))
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	var mErr *MissingFieldsError
 	if !errors.As(err, &mErr) {
 		t.Fatalf("err = %v, want *MissingFieldsError", err)
@@ -284,9 +277,8 @@ func TestFetchConfiguration_EmptyRequiredArrays(t *testing.T) {
 // DISC-008: null and empty-string required fields count as missing and are
 // reported in spec order.
 func TestFetchConfiguration_NullAndEmptyStringRequiredFields(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "null-and-empty-string-required-fields.json"))
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	var mErr *MissingFieldsError
 	if !errors.As(err, &mErr) {
 		t.Fatalf("err = %v, want *MissingFieldsError", err)
@@ -299,12 +291,11 @@ func TestFetchConfiguration_NullAndEmptyStringRequiredFields(t *testing.T) {
 
 // DISC-009: unknown extra fields are ignored, not rejected.
 func TestFetchConfiguration_IgnoresUnknownFields(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(validDocFor(srv.URL))
 	})
-	cfg, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	cfg, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
@@ -323,7 +314,6 @@ func TestFetchConfiguration_IgnoresUnknownFields(t *testing.T) {
 // DISC-010: http:// issuers are rejected by default and allowed only with
 // WithInsecureAllowHTTP.
 func TestFetchConfiguration_RequireHTTPS(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(hits, 1)
@@ -331,7 +321,7 @@ func TestFetchConfiguration_RequireHTTPS(t *testing.T) {
 	})
 
 	// Default (production) mode rejects http:// without a network request.
-	_, err := FetchConfiguration(context.Background(), srv.URL)
+	_, err := testClient(t).FetchConfiguration(context.Background(), srv.URL)
 	if !errors.Is(err, ErrHTTPSRequired) {
 		t.Fatalf("err = %v, want ErrHTTPSRequired", err)
 	}
@@ -340,14 +330,13 @@ func TestFetchConfiguration_RequireHTTPS(t *testing.T) {
 	}
 
 	// With the dev escape hatch the same URL succeeds.
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+	if _, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Errorf("with WithInsecureAllowHTTP: %v", err)
 	}
 }
 
 // AC singleflight: concurrent callers collapse to a single HTTP request.
 func TestFetchConfiguration_Singleflight(t *testing.T) {
-	freshCache(t)
 	var hits int32
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +346,7 @@ func TestFetchConfiguration_Singleflight(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
+	client := testClient(t, WithInsecureAllowHTTP())
 	const n = 20
 	var wg sync.WaitGroup
 	errs := make([]error, n)
@@ -364,7 +354,7 @@ func TestFetchConfiguration_Singleflight(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			_, errs[i] = client.FetchConfiguration(context.Background(), srv.URL)
 		}(i)
 	}
 	// Give goroutines time to register with singleflight before releasing.
@@ -384,7 +374,6 @@ func TestFetchConfiguration_Singleflight(t *testing.T) {
 
 // AC WithHTTPClient: the supplied client is used for the request.
 func TestFetchConfiguration_WithHTTPClient(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(validDocFor(srv.URL))
@@ -392,7 +381,7 @@ func TestFetchConfiguration_WithHTTPClient(t *testing.T) {
 
 	rt := &countingTransport{next: http.DefaultTransport}
 	client := &http.Client{Transport: rt}
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithHTTPClient(client), WithInsecureAllowHTTP()); err != nil {
+	if _, err := testClient(t, WithHTTPClient(client), WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
 	if atomic.LoadInt32(&rt.calls) != 1 {
@@ -402,14 +391,13 @@ func TestFetchConfiguration_WithHTTPClient(t *testing.T) {
 
 // AC WithTimeout: a short deadline surfaces a context error.
 func TestFetchConfiguration_WithTimeout(t *testing.T) {
-	freshCache(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write(validDocFor(httpURL(r)))
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP())
+	_, err := testClient(t, WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -421,19 +409,17 @@ func TestFetchConfiguration_WithTimeout(t *testing.T) {
 // Trailing slashes on the issuer must not change the resolved endpoint or the
 // issuer-match comparison.
 func TestFetchConfiguration_TrailingSlash(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, nil)
 	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(validDocFor(srv.URL))
 	})
-	if _, err := FetchConfiguration(context.Background(), srv.URL+"/", WithInsecureAllowHTTP()); err != nil {
+	if _, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL+"/"); err != nil {
 		t.Errorf("trailing-slash issuer: %v", err)
 	}
 }
 
 // Errors must not be cached: a failure followed by success must re-fetch.
 func TestFetchConfiguration_ErrorsNotCached(t *testing.T) {
-	freshCache(t)
 	var fail atomic.Bool
 	fail.Store(true)
 	var hits int32
@@ -447,11 +433,12 @@ func TestFetchConfiguration_ErrorsNotCached(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP()); err == nil {
+	client := testClient(t, WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
+	if _, err := client.FetchConfiguration(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error on first call")
 	}
 	fail.Store(false)
-	if _, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchConfiguration(context.Background(), srv.URL); err != nil {
 		t.Fatalf("second call after recovery: %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 2 {
@@ -462,9 +449,8 @@ func TestFetchConfiguration_ErrorsNotCached(t *testing.T) {
 // An empty or whitespace-only issuer is a parse error, not a misleading
 // HTTPS-required error.
 func TestFetchConfiguration_BlankIssuer(t *testing.T) {
-	freshCache(t)
 	for _, issuer := range []string{"", "   ", "/"} {
-		_, err := FetchConfiguration(context.Background(), issuer)
+		_, err := testClient(t).FetchConfiguration(context.Background(), issuer)
 		if !errors.Is(err, ErrParse) {
 			t.Errorf("issuer %q: err = %v, want ErrParse", issuer, err)
 		}
@@ -474,13 +460,12 @@ func TestFetchConfiguration_BlankIssuer(t *testing.T) {
 // A non-2xx response must surface as an HTTPError carrying the status even when
 // the error body is large: the status check precedes the size check.
 func TestFetchConfiguration_LargeErrorBody(t *testing.T) {
-	freshCache(t)
 	big := make([]byte, maxBodyBytes+100)
 	for i := range big {
 		big[i] = 'x'
 	}
 	srv, _ := newServer(t, http.StatusInternalServerError, big)
-	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchConfiguration(context.Background(), srv.URL)
 	var hErr *HTTPError
 	if !errors.As(err, &hErr) {
 		t.Fatalf("err = %v, want *HTTPError", err)
@@ -491,16 +476,6 @@ func TestFetchConfiguration_LargeErrorBody(t *testing.T) {
 }
 
 // --- helpers ---
-
-// reset clears all cached entries and restores the wall clock. Test-only helper
-// (defined in a _test.go file so it never ships in the library binary) to
-// isolate cases that share the package-global cache.
-func (c *cache) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*cacheEntry)
-	c.now = time.Now
-}
 
 func contains(s []string, v string) bool {
 	for _, x := range s {
@@ -525,16 +500,4 @@ type countingTransport struct {
 func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	atomic.AddInt32(&t.calls, 1)
 	return t.next.RoundTrip(req)
-}
-
-// TestClearCache drops all cached provider configurations.
-func TestClearCache(t *testing.T) {
-	globalCache.store("https://issuer.example", &ProviderConfiguration{Issuer: "https://issuer.example"}, time.Hour, defaultMaxCacheEntries)
-	if _, ok := globalCache.lookup("https://issuer.example"); !ok {
-		t.Fatal("precondition: entry should be cached")
-	}
-	ClearCache()
-	if _, ok := globalCache.lookup("https://issuer.example"); ok {
-		t.Error("ClearCache did not drop the cached entry")
-	}
 }

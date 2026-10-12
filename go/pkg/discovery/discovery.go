@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
 
 // wellKnownPath is the OIDC discovery document path appended to the issuer.
@@ -20,10 +21,6 @@ const wellKnownPath = "/.well-known/openid-configuration"
 // document is a small JSON object; this guards against a malicious or
 // misconfigured issuer streaming an unbounded body (memory-exhaustion DoS).
 const maxBodyBytes = 1 << 20 // 1 MiB
-
-// defaultRequestTimeout bounds a fetch when neither [WithTimeout] nor the
-// caller's context supplies a deadline, so a hung server cannot block forever.
-const defaultRequestTimeout = 30 * time.Second
 
 // ProviderConfiguration is the parsed OpenID Connect provider metadata
 // document (OIDC Discovery 1.0 §3). Fields not modelled here are preserved in
@@ -97,63 +94,87 @@ var requiredFields = []requiredField{
 	{"id_token_signing_alg_values_supported", func(c *ProviderConfiguration) bool { return len(c.IDTokenSigningAlgValuesSupported) > 0 }},
 }
 
+// Client fetches and caches OIDC provider metadata. It holds its options and
+// owns its cache, so two clients never share cached documents. A Client is safe
+// for concurrent use.
+type Client struct {
+	cfg       *config
+	transport *transport.Transport
+	cache     *cache
+}
+
+// NewClient returns a client with opts applied over the defaults. An invalid
+// option value is a [*ConfigError]; it is never replaced by its default.
+func NewClient(opts ...Option) (*Client, error) {
+	cfg, tr, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{cfg: cfg, transport: tr, cache: newCache(cfg.cacheTTL, cfg.maxEntries)}, nil
+}
+
+// defaultClient backs the package-level [FetchConfiguration]. The defaults are
+// valid, so building it cannot fail.
+var defaultClient = func() *Client {
+	c, err := NewClient()
+	if err != nil {
+		panic(err)
+	}
+	return c
+}()
+
+// FetchConfiguration fetches, validates and caches the OIDC provider metadata
+// for issuerURL using a client built from the defaults. See
+// [Client.FetchConfiguration].
+func FetchConfiguration(ctx context.Context, issuerURL string) (*ProviderConfiguration, error) {
+	return defaultClient.FetchConfiguration(ctx, issuerURL)
+}
+
 // FetchConfiguration fetches, validates and caches the OIDC provider metadata
 // for issuerURL. It requests {issuerURL}/.well-known/openid-configuration,
 // validates the required fields and the issuer match, then returns the parsed
 // [ProviderConfiguration].
 //
-// Results are cached with a configurable TTL (default 24h, see
-// [WithCacheTTL]); a cache hit within the TTL makes no HTTP request
-// (DISC-004), and concurrent calls for the same issuer are deduplicated to a
-// single in-flight request (singleflight).
-func FetchConfiguration(ctx context.Context, issuerURL string, opts ...Option) (*ProviderConfiguration, error) {
-	cfg := newConfig(opts...)
-	return globalCache.fetch(ctx, issuerURL, cfg)
+// The document is cached for the response's Cache-Control max-age, clamped to
+// 60 seconds – 24 hours, or for [WithCacheTTL] when there is none; a no-store
+// or no-cache response is not cached. A cache hit makes no HTTP request
+// (DISC-004), and concurrent calls for the same issuer share one in-flight
+// request (singleflight).
+func (c *Client) FetchConfiguration(ctx context.Context, issuerURL string) (*ProviderConfiguration, error) {
+	return c.cache.fetch(ctx, issuerURL, func(ctx context.Context) (*ProviderConfiguration, string, error) {
+		return c.fetchAndValidate(ctx, issuerURL)
+	})
 }
 
-// ClearCache drops every cached provider configuration from the package-level
-// cache used by [FetchConfiguration], forcing the next call for any issuer to
-// re-fetch. Intended for tests and long-lived processes that need to discard
-// cached metadata deterministically; normal callers rely on the TTL.
-func ClearCache() { globalCache.clear() }
-
 // fetchAndValidate performs the HTTP request, parses the body and validates the
-// document. It contains no caching logic so it can be invoked once per
-// singleflight group.
-func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
+// document. It returns the response's Cache-Control header for the cache. It
+// contains no caching logic so it can be invoked once per singleflight group.
+func (c *Client) fetchAndValidate(ctx context.Context, issuerURL string) (*ProviderConfiguration, string, error) {
 	issuer := strings.TrimRight(strings.TrimSpace(issuerURL), "/")
 	if issuer == "" {
-		return nil, &ParseError{Err: fmt.Errorf("issuer URL is empty")}
+		return nil, "", &ParseError{Err: fmt.Errorf("issuer URL is empty")}
 	}
 
 	parsed, err := url.Parse(issuer)
 	if err != nil {
-		return nil, &ParseError{Err: fmt.Errorf("invalid issuer URL %q: %w", issuerURL, err)}
+		return nil, "", &ParseError{Err: fmt.Errorf("invalid issuer URL %q: %w", issuerURL, err)}
 	}
 	// DISC-010: require HTTPS in production; http:// only with WithInsecureAllowHTTP.
-	if parsed.Scheme != "https" && !(cfg.allowHTTP && parsed.Scheme == "http") {
-		return nil, &HTTPSRequiredError{Issuer: issuerURL}
+	if parsed.Scheme != "https" && !(c.cfg.allowHTTP && parsed.Scheme == "http") {
+		return nil, "", &HTTPSRequiredError{Issuer: issuerURL}
 	}
-
-	// Always bound the request: the configured timeout, or a default so a hung
-	// server cannot block indefinitely.
-	timeout := cfg.timeout
-	if timeout <= 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	endpoint := issuer + wellKnownPath
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	resp, err := c.transport.Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		return req, nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("discovery: build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("discovery: fetch %s: %w", endpoint, err)
+		return nil, "", fmt.Errorf("discovery: fetch %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
@@ -162,32 +183,32 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	// byte so an oversized body can be detected below.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("discovery: read body: %w", err)
+		return nil, "", fmt.Errorf("discovery: read body: %w", err)
 	}
 
 	// DISC-006: non-2xx is a transport error carrying the status code. Check
 	// this before the size check so a large error page still surfaces as an
 	// HTTPError (with its status) rather than a misleading parse error.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{StatusCode: resp.StatusCode, URL: endpoint}
+		return nil, "", &HTTPError{StatusCode: resp.StatusCode, URL: endpoint}
 	}
 
 	if len(body) > maxBodyBytes {
-		return nil, &ParseError{Err: fmt.Errorf("discovery document exceeds %d bytes", maxBodyBytes)}
+		return nil, "", &ParseError{Err: fmt.Errorf("discovery document exceeds %d bytes", maxBodyBytes)}
 	}
 
 	// DISC-007: a non-JSON body (or a JSON value that is not an object) is a
 	// parse error.
 	var doc ProviderConfiguration
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, &ParseError{Err: err}
+		return nil, "", &ParseError{Err: err}
 	}
 	// DISC-009: preserve only unmodelled metadata in Extra. Decoding into a map
 	// then dropping the modelled keys keeps Extra true to its contract — it
 	// must not duplicate fields already exposed as named struct fields.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, &ParseError{Err: err}
+		return nil, "", &ParseError{Err: err}
 	}
 	for name := range raw {
 		if _, modelled := modelledJSONFields[name]; modelled {
@@ -200,7 +221,7 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 
 	// DISC-008 / DISC-002: every required field must be present.
 	if missing := doc.missingRequiredFields(); len(missing) > 0 {
-		return nil, &MissingFieldsError{Fields: missing}
+		return nil, "", &MissingFieldsError{Fields: missing}
 	}
 
 	// DISC-003: the response issuer must match the requested issuer. Compare
@@ -208,10 +229,10 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	// forms are normalised symmetrically (a difference only in a trailing slash
 	// is not a mismatch).
 	if strings.TrimRight(doc.Issuer, "/") != issuer {
-		return nil, &IssuerMismatchError{Requested: issuer, Returned: doc.Issuer}
+		return nil, "", &IssuerMismatchError{Requested: issuer, Returned: doc.Issuer}
 	}
 
-	return &doc, nil
+	return &doc, resp.Header.Get("Cache-Control"), nil
 }
 
 // missingRequiredFields returns the JSON names of any required fields that the

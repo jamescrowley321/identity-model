@@ -26,6 +26,11 @@
 // and configuration failures become a [RequestError]. Both match the package
 // sentinels via errors.Is.
 //
+// An invalid option value (for example [WithTimeout] of 0) is a [ConfigError]
+// returned before any request is sent. A 429, a 5xx or a transport error is
+// retried with exponential backoff ([WithRetryMaxAttempts],
+// [WithRetryBaseDelay]); see spec/config.md.
+//
 // Example — revoking a refresh token during logout:
 //
 //	cfg, _ := discovery.FetchConfiguration(ctx, issuer)

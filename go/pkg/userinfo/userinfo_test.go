@@ -209,7 +209,7 @@ func TestFetch_ServerError_NonJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := Fetch(context.Background(), srv.URL, "tok", WithInsecureAllowHTTP())
+	_, err := Fetch(context.Background(), srv.URL, "tok", WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	var ue *UserInfoError
 	if !errors.As(err, &ue) {
 		t.Fatalf("error = %T (%v), want *UserInfoError", err, err)
@@ -286,7 +286,7 @@ func TestFetch_FunctionalOptions(t *testing.T) {
 
 	start := time.Now()
 	_, err := Fetch(context.Background(), slow.URL, "tok",
-		WithInsecureAllowHTTP(), WithTimeout(20*time.Millisecond))
+		WithInsecureAllowHTTP(), WithTimeout(20*time.Millisecond), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}

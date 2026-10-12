@@ -3,6 +3,7 @@ package introspection
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,7 +39,10 @@ var reservedParams = map[string]bool{
 // typically an HTTP 401 invalid_client — is returned as a typed
 // [IntrospectionError] (RFC 7662 §2.3).
 func Introspect(ctx context.Context, introspectionEndpoint, clientID, clientSecret, token string, opts ...Option) (*Introspection, error) {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	parsed, err := url.Parse(introspectionEndpoint)
 	if err != nil {
@@ -83,27 +87,26 @@ func Introspect(ctx context.Context, introspectionEndpoint, clientID, clientSecr
 		form.Set(k, v)
 	}
 
-	timeout := cfg.timeout
-	if timeout <= 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, introspectionEndpoint, strings.NewReader(form.Encode()))
+	encoded := form.Encode()
+	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, introspectionEndpoint, strings.NewReader(encoded))
+		if err != nil {
+			return nil, &RequestError{Op: "build request", Err: err}
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		if useBasic {
+			// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
+			// encoding so reserved characters survive.
+			req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
+		}
+		return req, nil
+	})
 	if err != nil {
-		return nil, &RequestError{Op: "build request", Err: err}
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	if useBasic {
-		// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
-		// encoding so reserved characters survive.
-		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
-	}
-
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
+		var rErr *RequestError
+		if errors.As(err, &rErr) {
+			return nil, err
+		}
 		return nil, &RequestError{Op: fmt.Sprintf("post %s", introspectionEndpoint), Err: err}
 	}
 	defer resp.Body.Close()

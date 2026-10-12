@@ -59,7 +59,12 @@ func main() {
 	if *insecureHTTP {
 		fetchOpts = append(fetchOpts, jwks.WithInsecureAllowHTTP())
 	}
-	set, err := jwks.FetchKeySet(ctx, *jwksURI, fetchOpts...)
+	jc, err := jwks.NewClient(fetchOpts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid jwks options: %v\n", err)
+		os.Exit(1)
+	}
+	set, err := jc.FetchKeySet(ctx, *jwksURI)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fetch jwks failed: %v\n", err)
 		os.Exit(1)
@@ -134,7 +139,11 @@ func runDemo() error {
 	}
 
 	ctx := context.Background()
-	set, err := jwks.FetchKeySet(ctx, srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		return err
+	}
+	set, err := jc.FetchKeySet(ctx, srv.URL)
 	if err != nil {
 		return err
 	}

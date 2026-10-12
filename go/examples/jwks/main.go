@@ -32,7 +32,12 @@ func main() {
 		opts = append(opts, jwks.WithInsecureAllowHTTP())
 	}
 
-	set, err := jwks.FetchKeySet(context.Background(), *jwksURI, opts...)
+	jc, err := jwks.NewClient(opts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid jwks options: %v\n", err)
+		os.Exit(1)
+	}
+	set, err := jc.FetchKeySet(context.Background(), *jwksURI)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fetch jwks failed: %v\n", err)
 		os.Exit(1)

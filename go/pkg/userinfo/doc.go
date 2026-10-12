@@ -17,6 +17,11 @@
 // configuration failures become a [RequestError]. All three match the package
 // sentinels via errors.Is.
 //
+// An invalid option value (for example [WithTimeout] of 0) is a [ConfigError]
+// returned before any request is sent. A 429, a 5xx or a transport error is
+// retried with exponential backoff ([WithRetryMaxAttempts],
+// [WithRetryBaseDelay]); see spec/config.md.
+//
 // Signed or encrypted UserInfo responses (application/jwt, §5.3.2) are out of
 // scope and reported as a descriptive [RequestError]; this client handles the
 // JSON serialization only.

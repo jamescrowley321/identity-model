@@ -41,11 +41,15 @@ func newServer(t *testing.T, status int, body []byte) (*httptest.Server, *int32)
 	return srv, &hits
 }
 
-// freshCache isolates a test from the package-global cache.
-func freshCache(t *testing.T) {
+// testClient returns a new client (so a new cache) with opts applied after a
+// zero retry delay, so retried 5xx responses don't slow the suite.
+func testClient(t *testing.T, opts ...Option) *Client {
 	t.Helper()
-	globalCache.reset()
-	t.Cleanup(globalCache.reset)
+	c, err := NewClient(append([]Option{WithRetryBaseDelay(0)}, opts...)...)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	return c
 }
 
 // rsaKeyJSON returns a minimal valid RSA signing key with the given kid. The
@@ -62,10 +66,9 @@ func keySetJSON(keys ...string) []byte {
 
 // JWKS-001: fetch and parse a valid JWK Set (RSA + EC) from the shared fixture.
 func TestFetchKeySet_Valid(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "valid.json"))
 
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -80,9 +83,8 @@ func TestFetchKeySet_Valid(t *testing.T) {
 // JWKS-002: each key exposes the required parameters; RSA exposes n/e and EC
 // exposes crv/x/y.
 func TestParseKey_RequiredParams(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "valid.json"))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -120,10 +122,9 @@ func TestParseKey_RequiredParams(t *testing.T) {
 
 // JWKS-002 (negative): a key missing required type material is rejected.
 func TestParseKey_InvalidKeyRejected(t *testing.T) {
-	freshCache(t)
 	// RSA key missing the exponent "e".
 	srv, _ := newServer(t, http.StatusOK, keySetJSON(`{"kty":"RSA","kid":"broken","n":"AQAB"}`))
-	_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	var iErr *InvalidKeyError
 	if !errors.As(err, &iErr) {
 		t.Fatalf("err = %v, want *InvalidKeyError", err)
@@ -138,9 +139,8 @@ func TestParseKey_InvalidKeyRejected(t *testing.T) {
 
 // JWKS-002: a key missing kty is rejected (the only universally required member).
 func TestParseKey_MissingKtyRejected(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, keySetJSON(`{"kid":"no-kty","n":"AQAB","e":"AQAB"}`))
-	_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("err = %v, want ErrInvalidKey", err)
 	}
@@ -149,10 +149,9 @@ func TestParseKey_MissingKtyRejected(t *testing.T) {
 // JWKS-002: unmodelled key parameters are preserved in Extra, and modelled ones
 // do not leak into it.
 func TestParseKey_PreservesExtra(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, keySetJSON(
 		`{"kty":"RSA","kid":"k1","n":"AQAB","e":"AQAB","x5t":"abc","x5c":["cert"]}`))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -173,11 +172,11 @@ func TestParseKey_PreservesExtra(t *testing.T) {
 // must not corrupt the shared cached set seen by a second handle for the same
 // URI. Guards against the cache aliasing fixed in the review.
 func TestResolveKey_ReturnsIsolatedCopy(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, keySetJSON(
 		`{"kty":"RSA","kid":"k1","n":"AQAB","e":"AQAB","x5t":"orig"}`))
 
-	first, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	client := testClient(t, WithInsecureAllowHTTP())
+	first, err := client.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet (first): %v", err)
 	}
@@ -191,7 +190,7 @@ func TestResolveKey_ReturnsIsolatedCopy(t *testing.T) {
 	first.Keys[0].Alg = "TAMPERED"
 
 	// A second cache-hit handle must see the original, untouched values.
-	second, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	second, err := client.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet (second): %v", err)
 	}
@@ -212,9 +211,8 @@ func TestResolveKey_ReturnsIsolatedCopy(t *testing.T) {
 
 // JWKS-003: resolve a key by kid; an absent kid reports not found.
 func TestResolveKey_ByKid(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "valid.json"))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -229,7 +227,6 @@ func TestResolveKey_ByKid(t *testing.T) {
 // JWKS-004: a miss triggers a forced refresh and a retry that then succeeds
 // (key rotation).
 func TestResolveKeyWithRefresh_MissThenRefresh(t *testing.T) {
-	freshCache(t)
 	var rotated atomic.Bool
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +239,7 @@ func TestResolveKeyWithRefresh_MissThenRefresh(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -263,9 +260,8 @@ func TestResolveKeyWithRefresh_MissThenRefresh(t *testing.T) {
 // JWKS-004: when the kid is still absent after a forced refresh, a
 // key-not-found error is returned.
 func TestResolveKeyWithRefresh_StillMissing(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, keySetJSON(rsaKeyJSON("only-key")))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -291,18 +287,15 @@ func TestResolveKeyWithRefresh_StillMissing(t *testing.T) {
 // returns key-not-found with no network request, and refreshing resumes once the
 // cooldown elapses.
 func TestResolveKeyWithRefresh_Throttled(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, keySetJSON(rsaKeyJSON("only-key")))
 
 	base := time.Unix(1_700_000_000, 0)
 	var clock atomic.Int64
 	clock.Store(base.UnixNano())
-	globalCache.mu.Lock()
-	globalCache.now = func() time.Time { return time.Unix(0, clock.Load()) }
-	globalCache.mu.Unlock()
 
-	cooldown := WithRefreshCooldown(time.Minute)
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP(), cooldown)
+	client := testClient(t, WithInsecureAllowHTTP(), WithRefreshCooldown(time.Minute))
+	client.cache.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	set, err := client.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -335,10 +328,10 @@ func TestResolveKeyWithRefresh_Throttled(t *testing.T) {
 
 // JWKS-005: a second call within the TTL is served from cache (no HTTP request).
 func TestFetchKeySet_CacheHit(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "valid.json"))
+	client := testClient(t, WithInsecureAllowHTTP())
 	for i := 0; i < 3; i++ {
-		if _, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+		if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
@@ -349,22 +342,20 @@ func TestFetchKeySet_CacheHit(t *testing.T) {
 
 // JWKS-005: after the TTL expires the next call re-fetches.
 func TestFetchKeySet_CacheExpiry(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "valid.json"))
 
 	base := time.Unix(1_700_000_000, 0)
 	var clock atomic.Int64
 	clock.Store(base.UnixNano())
-	globalCache.mu.Lock()
-	globalCache.now = func() time.Time { return time.Unix(0, clock.Load()) }
-	globalCache.mu.Unlock()
 
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	client := testClient(t, WithCacheTTL(time.Minute), WithInsecureAllowHTTP())
+	client.cache.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	// Within TTL: cache hit.
 	clock.Store(base.Add(30 * time.Second).UnixNano())
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(hits); got != 1 {
@@ -372,7 +363,7 @@ func TestFetchKeySet_CacheExpiry(t *testing.T) {
 	}
 	// Past TTL: re-fetch.
 	clock.Store(base.Add(2 * time.Minute).UnixNano())
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithCacheTTL(time.Minute), WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(hits); got != 2 {
@@ -382,7 +373,6 @@ func TestFetchKeySet_CacheExpiry(t *testing.T) {
 
 // JWKS-006: ForceRefresh invalidates and re-fetches, exposing rotated keys.
 func TestForceRefresh(t *testing.T) {
-	freshCache(t)
 	var rotated atomic.Bool
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +385,7 @@ func TestForceRefresh(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -420,9 +410,8 @@ func TestForceRefresh(t *testing.T) {
 
 // JWKS-007: a malformed (non-JSON) body surfaces a parse error.
 func TestFetchKeySet_Malformed(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, []byte("not json <html>"))
-	_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	var pErr *ParseError
 	if !errors.As(err, &pErr) {
 		t.Fatalf("err = %v, want *ParseError", err)
@@ -434,9 +423,8 @@ func TestFetchKeySet_Malformed(t *testing.T) {
 
 // JWKS-007: an empty key set surfaces a descriptive empty-key-set error.
 func TestFetchKeySet_Empty(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "empty.json"))
-	_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	var eErr *EmptyKeySetError
 	if !errors.As(err, &eErr) {
 		t.Fatalf("err = %v, want *EmptyKeySetError", err)
@@ -450,9 +438,8 @@ func TestFetchKeySet_Empty(t *testing.T) {
 // carries the OpenID conformance suite's unusable keys plus an RSA key missing
 // its modulus beside the real signing key.
 func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "unusable-keys.json"))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -474,9 +461,8 @@ func TestFetchKeySet_UnusableKeysIgnored(t *testing.T) {
 func TestFetchKeySet_NonObjectMemberIsParseError(t *testing.T) {
 	for name, member := range map[string]string{"null": `null`, "string": `"key"`} {
 		t.Run(name, func(t *testing.T) {
-			freshCache(t)
 			srv, _ := newServer(t, http.StatusOK, keySetJSON(member, `{"kty":"RSA","kid":"good","n":"AQAB","e":"AQAB"}`))
-			_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 			if !errors.Is(err, ErrParse) {
 				t.Fatalf("err = %v, want ErrParse", err)
 			}
@@ -486,7 +472,6 @@ func TestFetchKeySet_NonObjectMemberIsParseError(t *testing.T) {
 
 // AC singleflight: concurrent callers collapse to a single HTTP request.
 func TestFetchKeySet_Singleflight(t *testing.T) {
-	freshCache(t)
 	var hits int32
 	release := make(chan struct{})
 	body := fixture(t, "valid.json")
@@ -500,11 +485,12 @@ func TestFetchKeySet_Singleflight(t *testing.T) {
 	const n = 20
 	var wg sync.WaitGroup
 	errs := make([]error, n)
+	client := testClient(t, WithInsecureAllowHTTP())
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			_, errs[i] = client.FetchKeySet(context.Background(), srv.URL)
 		}(i)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -523,28 +509,25 @@ func TestFetchKeySet_Singleflight(t *testing.T) {
 
 // AC options: http:// is rejected by default and allowed with WithInsecureAllowHTTP.
 func TestFetchKeySet_RequiresHTTPS(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "valid.json"))
 
-	_, err := FetchKeySet(context.Background(), srv.URL)
+	_, err := testClient(t).FetchKeySet(context.Background(), srv.URL)
 	if !errors.Is(err, ErrHTTPSRequired) {
 		t.Fatalf("err = %v, want ErrHTTPSRequired", err)
 	}
 	if got := atomic.LoadInt32(hits); got != 0 {
 		t.Errorf("HTTPS check should short-circuit before any request, got %d", got)
 	}
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+	if _, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Errorf("with WithInsecureAllowHTTP: %v", err)
 	}
 }
 
 // AC options: a non-2xx response surfaces a typed HTTP error with the status.
 func TestFetchKeySet_HTTPError(t *testing.T) {
-	freshCache(t)
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
-		globalCache.reset()
 		srv, _ := newServer(t, status, []byte(`{}`))
-		_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+		_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 		var hErr *HTTPError
 		if !errors.As(err, &hErr) {
 			t.Fatalf("status %d: err = %v, want *HTTPError", status, err)
@@ -560,11 +543,10 @@ func TestFetchKeySet_HTTPError(t *testing.T) {
 
 // AC options: the supplied http.Client is used for the request.
 func TestFetchKeySet_WithHTTPClient(t *testing.T) {
-	freshCache(t)
 	srv, _ := newServer(t, http.StatusOK, fixture(t, "valid.json"))
 	rt := &countingTransport{next: http.DefaultTransport}
 	client := &http.Client{Transport: rt}
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithHTTPClient(client), WithInsecureAllowHTTP()); err != nil {
+	if _, err := testClient(t, WithHTTPClient(client), WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
 	if atomic.LoadInt32(&rt.calls) != 1 {
@@ -574,14 +556,13 @@ func TestFetchKeySet_WithHTTPClient(t *testing.T) {
 
 // AC options: a short timeout surfaces a context deadline error.
 func TestFetchKeySet_WithTimeout(t *testing.T) {
-	freshCache(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write(fixture(t, "valid.json"))
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := FetchKeySet(context.Background(), srv.URL, WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP())
+	_, err := testClient(t, WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -593,9 +574,8 @@ func TestFetchKeySet_WithTimeout(t *testing.T) {
 // A blank or whitespace-only URI is a parse error, not a misleading
 // HTTPS-required error.
 func TestFetchKeySet_BlankURI(t *testing.T) {
-	freshCache(t)
 	for _, uri := range []string{"", "   "} {
-		_, err := FetchKeySet(context.Background(), uri)
+		_, err := testClient(t).FetchKeySet(context.Background(), uri)
 		if !errors.Is(err, ErrParse) {
 			t.Errorf("uri %q: err = %v, want ErrParse", uri, err)
 		}
@@ -605,13 +585,12 @@ func TestFetchKeySet_BlankURI(t *testing.T) {
 // A non-2xx response must surface as an HTTPError carrying the status even when
 // the error body is large: the status check precedes the size check.
 func TestFetchKeySet_LargeErrorBody(t *testing.T) {
-	freshCache(t)
-	big := make([]byte, maxBodyBytes+100)
+	big := make([]byte, DefaultMaxSize+100)
 	for i := range big {
 		big[i] = 'x'
 	}
 	srv, _ := newServer(t, http.StatusInternalServerError, big)
-	_, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	_, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	var hErr *HTTPError
 	if !errors.As(err, &hErr) {
 		t.Fatalf("err = %v, want *HTTPError", err)
@@ -623,7 +602,6 @@ func TestFetchKeySet_LargeErrorBody(t *testing.T) {
 
 // Errors must not be cached: a failure followed by success must re-fetch.
 func TestFetchKeySet_ErrorsNotCached(t *testing.T) {
-	freshCache(t)
 	var fail atomic.Bool
 	fail.Store(true)
 	var hits int32
@@ -637,11 +615,12 @@ func TestFetchKeySet_ErrorsNotCached(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP()); err == nil {
+	client := testClient(t, WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error on first call")
 	}
 	fail.Store(false)
-	if _, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP()); err != nil {
+	if _, err := client.FetchKeySet(context.Background(), srv.URL); err != nil {
 		t.Fatalf("second call after recovery: %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 2 {
@@ -651,17 +630,6 @@ func TestFetchKeySet_ErrorsNotCached(t *testing.T) {
 
 // --- helpers ---
 
-// reset clears all cached entries and restores the wall clock. Test-only helper
-// (defined in a _test.go file so it never ships in the library binary) to
-// isolate cases that share the package-global cache.
-func (c *cache) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[string]*cacheEntry)
-	c.lastRefresh = make(map[string]time.Time)
-	c.now = time.Now
-}
-
 type countingTransport struct {
 	next  http.RoundTripper
 	calls int32
@@ -670,18 +638,6 @@ type countingTransport struct {
 func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	atomic.AddInt32(&t.calls, 1)
 	return t.next.RoundTrip(req)
-}
-
-// TestClearCache drops all cached key sets so the next fetch re-requests.
-func TestClearCache(t *testing.T) {
-	globalCache.store("https://issuer.example/jwks", []JSONWebKey{{Kid: "k1"}}, time.Hour, defaultMaxCacheEntries)
-	if _, ok := globalCache.lookup("https://issuer.example/jwks"); !ok {
-		t.Fatal("precondition: entry should be cached")
-	}
-	ClearCache()
-	if _, ok := globalCache.lookup("https://issuer.example/jwks"); ok {
-		t.Error("ClearCache did not drop the cached entry")
-	}
 }
 
 // JWKS-009: a token with no kid is verified by the single key left after
@@ -716,9 +672,8 @@ func TestResolveSigningKey_NoKid(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			freshCache(t)
 			srv, hits := newServer(t, http.StatusOK, tc.body)
-			set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 			if err != nil {
 				t.Fatalf("FetchKeySet: %v", err)
 			}
@@ -739,9 +694,8 @@ func TestResolveSigningKey_NoKid(t *testing.T) {
 // JWKS-009: two keys that could both verify a kid-less token are ambiguous, and
 // the ambiguity is not reported as key-not-found nor answered with a refresh.
 func TestResolveSigningKey_NoKidAmbiguous(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "kidless-two-rsa.json"))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}
@@ -771,9 +725,8 @@ func TestResolveSigningKey_NoKidAmbiguous(t *testing.T) {
 func TestResolveSigningKey_KeyAlgMismatch(t *testing.T) {
 	for _, kid := range []string{"rsa-rs384-key", ""} {
 		t.Run("kid="+kid, func(t *testing.T) {
-			freshCache(t)
 			srv, hits := newServer(t, http.StatusOK, fixture(t, "single-rs384.json"))
-			set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 			if err != nil {
 				t.Fatalf("FetchKeySet: %v", err)
 			}
@@ -809,9 +762,8 @@ func TestResolveSigningKey_KeyAlgMismatch(t *testing.T) {
 
 // A token with a kid keeps the kid lookup and its forced refresh on a miss.
 func TestResolveSigningKey_WithKid(t *testing.T) {
-	freshCache(t)
 	srv, hits := newServer(t, http.StatusOK, fixture(t, "kidless-two-rsa.json"))
-	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	set, err := testClient(t, WithInsecureAllowHTTP()).FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchKeySet: %v", err)
 	}

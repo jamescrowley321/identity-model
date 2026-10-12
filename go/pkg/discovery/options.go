@@ -2,98 +2,94 @@ package discovery
 
 import (
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
 
-// defaultCacheTTL is the default lifetime of a cached discovery document when
-// [WithCacheTTL] is not supplied.
-const defaultCacheTTL = 24 * time.Hour
+// Defaults from spec/config.md.
+const (
+	// DefaultCacheTTL is how long a document is cached when its response has
+	// no Cache-Control max-age.
+	DefaultCacheTTL = time.Hour
+	// DefaultMaxCacheEntries is how many issuers a client's cache holds.
+	DefaultMaxCacheEntries = 64
+)
 
-// defaultMaxCacheEntries bounds how many distinct issuer entries the
-// package-level cache retains when [WithMaxCacheEntries] and the
-// DISCO_CACHE_MAX_ENTRIES environment variable are both unset. 64 covers any
-// realistic multi-issuer deployment while keeping worst-case memory bounded
-// against an unbounded-growth (DoS) attack that drives the relying party to
-// resolve many distinct issuers. Mirrors the reference implementation's default
-// (py-identity-model JWKS_CACHE_MAX_ENTRIES=64).
-const defaultMaxCacheEntries = 64
-
-// maxCacheEntriesEnv is the environment variable that overrides
-// [defaultMaxCacheEntries].
-const maxCacheEntriesEnv = "DISCO_CACHE_MAX_ENTRIES"
-
-// config holds the resolved settings for a FetchConfiguration call.
+// config holds a [Client]'s settings.
 type config struct {
-	httpClient *http.Client
-	cacheTTL   time.Duration
-	timeout    time.Duration
+	transport  transport.Settings
 	allowHTTP  bool
+	cacheTTL   time.Duration
 	maxEntries int
 }
 
-// Option customises FetchConfiguration via the functional-options pattern.
+// Option configures a [Client] (functional options).
 type Option func(*config)
 
-// newConfig applies opts on top of the defaults.
-func newConfig(opts ...Option) *config {
+// ConfigError reports every invalid option passed to [NewClient]. Each issue
+// names the option and the rule it broke, never the value.
+type ConfigError = transport.ConfigError
+
+// ConfigIssue is one invalid option in a [ConfigError].
+type ConfigIssue = transport.Issue
+
+// ErrInvalidConfig matches any [ConfigError].
+var ErrInvalidConfig = transport.ErrInvalidConfig
+
+// newConfig applies opts on top of the defaults and validates the result.
+func newConfig(opts ...Option) (*config, *transport.Transport, error) {
 	cfg := &config{
-		httpClient: http.DefaultClient,
-		cacheTTL:   defaultCacheTTL,
-		maxEntries: maxCacheEntriesFromEnv(),
+		transport:  transport.Defaults(),
+		cacheTTL:   DefaultCacheTTL,
+		maxEntries: DefaultMaxCacheEntries,
 	}
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	if cfg.httpClient == nil {
-		cfg.httpClient = http.DefaultClient
+	tr, issues := cfg.transport.Build()
+	if cfg.cacheTTL < transport.MinCacheTTL || cfg.cacheTTL > transport.MaxCacheTTL {
+		issues = append(issues, ConfigIssue{Setting: "WithCacheTTL", Rule: transport.RuleCacheTTL})
 	}
-	if cfg.cacheTTL <= 0 {
-		cfg.cacheTTL = defaultCacheTTL
+	if cfg.maxEntries < 1 {
+		issues = append(issues, ConfigIssue{Setting: "WithMaxCacheEntries", Rule: transport.RuleAtLeastOne})
 	}
-	// maxEntries is deliberately not clamped: a value <= 0 is the documented
-	// unbounded escape hatch, so it must reach the cache verbatim.
-	return cfg
+	if len(issues) > 0 {
+		return nil, nil, transport.NewConfigError("discovery", issues)
+	}
+	return cfg, tr, nil
 }
 
-// maxCacheEntriesFromEnv resolves the default cache bound from
-// DISCO_CACHE_MAX_ENTRIES. An unset, empty, non-integer or negative value falls
-// back to [defaultMaxCacheEntries] so a typo cannot silently unbound or corrupt
-// the cache; a value of 0 selects the unbounded escape hatch, and any positive
-// integer is the LRU cap. Matches the Rust and Python ports, which also reject
-// negative values rather than treating them as unbounded (cross-language
-// conformance on the shared env contract).
-func maxCacheEntriesFromEnv() int {
-	raw := strings.TrimSpace(os.Getenv(maxCacheEntriesEnv))
-	if raw == "" {
-		return defaultMaxCacheEntries
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
-		return defaultMaxCacheEntries
-	}
-	return n
-}
-
-// WithCacheTTL sets how long a fetched configuration is cached before the next
-// call re-fetches it. The default is 24 hours. A non-positive duration is
-// ignored and the default is retained.
-func WithCacheTTL(d time.Duration) Option {
-	return func(c *config) { c.cacheTTL = d }
-}
-
-// WithHTTPClient uses client for the discovery request instead of
-// [http.DefaultClient].
-func WithHTTPClient(client *http.Client) Option {
-	return func(c *config) { c.httpClient = client }
-}
-
-// WithTimeout bounds the discovery request with a context deadline of d. It
-// composes with the caller's context; the earlier deadline wins.
+// WithTimeout bounds each request attempt, including reading the response.
+// Default 30 seconds; must be > 0.
 func WithTimeout(d time.Duration) Option {
-	return func(c *config) { c.timeout = d }
+	return func(c *config) { c.transport.Timeout = d }
+}
+
+// WithRetryMaxAttempts sets how many times a 429, a 5xx or a transport error
+// is retried. Default 3; 0 disables retries; must be >= 0.
+func WithRetryMaxAttempts(n int) Option {
+	return func(c *config) { c.transport.RetryMaxAttempts = n }
+}
+
+// WithRetryBaseDelay sets the base of the exponential backoff between retries
+// (base, 2*base, 4*base, …, each capped at 120 seconds; a longer Retry-After
+// wins). Default 1 second; must be >= 0.
+func WithRetryBaseDelay(d time.Duration) Option {
+	return func(c *config) { c.transport.RetryBaseDelay = d }
+}
+
+// WithCABundle verifies TLS against the certificates in the PEM file at path
+// instead of the system roots. It cannot be combined with [WithHTTPClient]:
+// configure the TLS roots on that client instead.
+func WithCABundle(path string) Option {
+	return func(c *config) { c.transport.CABundle = path }
+}
+
+// WithHTTPClient sends requests through client instead of
+// [http.DefaultClient]. A nil client keeps the default.
+func WithHTTPClient(client *http.Client) Option {
+	return func(c *config) { c.transport.HTTPClient = client }
 }
 
 // WithInsecureAllowHTTP permits http:// issuer URLs, which are otherwise
@@ -103,29 +99,17 @@ func WithInsecureAllowHTTP() Option {
 	return func(c *config) { c.allowHTTP = true }
 }
 
-// WithMaxCacheEntries bounds the number of distinct issuer entries the
-// package-level cache retains. When the bound is exceeded the least-recently-used
-// entry is evicted (a read hit or a store counts as a use). This caps memory
-// against a caller driven to resolve many distinct issuers — a multi-tenant
-// gateway or an attacker-supplied issuer header — which would otherwise grow the
-// cache without limit (a memory-exhaustion DoS).
-//
-// The default is 64 (see [defaultMaxCacheEntries]); it can also be set process-
-// wide with the DISCO_CACHE_MAX_ENTRIES environment variable, which this option
-// overrides for the call. A value of 0 disables the bound (unbounded), the
-// backward-compatible escape hatch for callers that accept the risk; a negative
-// value is invalid and falls back to the default, matching the
-// DISCO_CACHE_MAX_ENTRIES env-var semantics so a mis-parsed config value cannot
-// silently unbound the cache.
-//
-// Because the cache is shared, the bound applied to a stored entry is the one
-// supplied by the caller that wins the fetch flight (first-wins), consistent
-// with [WithCacheTTL].
+// WithCacheTTL sets how long a document is cached when the response has no
+// Cache-Control max-age. Default 1 hour; must be 60 seconds to 24 hours.
+func WithCacheTTL(d time.Duration) Option {
+	return func(c *config) { c.cacheTTL = d }
+}
+
+// WithMaxCacheEntries bounds how many issuers the client's cache holds. Over
+// the bound the least-recently-used entry (a read hit or a store counts as a
+// use) is evicted, so a caller driven to resolve many distinct issuers — a
+// multi-tenant gateway or an attacker-supplied issuer header — cannot grow the
+// cache without limit. Default 64; must be >= 1.
 func WithMaxCacheEntries(n int) Option {
-	return func(c *config) {
-		if n < 0 {
-			n = defaultMaxCacheEntries
-		}
-		c.maxEntries = n
-	}
+	return func(c *config) { c.maxEntries = n }
 }

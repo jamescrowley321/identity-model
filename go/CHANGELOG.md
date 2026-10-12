@@ -55,6 +55,36 @@ requires — resolvable as
   multiple-audience token with an untrusted audience now reports
   `untrusted_audience` rather than `azp_required_multi_aud`. Without
   `WithClientID` or `WithTrustedAudiences`, any `aud` value is untrusted.
+- **BREAKING** `pkg/discovery`, `pkg/jwks`: settings, defaults, ranges and cache
+  rules now match [`spec/config.md`](../spec/config.md), and the library reads
+  no environment:
+  - Each package has a `Client` (`discovery.NewClient(opts...)`,
+    `jwks.NewClient(opts...)`) that holds its options and owns its cache; two
+    clients never share cached documents. `FetchConfiguration(ctx, issuer)` and
+    `FetchKeySet(ctx, uri)` no longer take options and use a default client
+    built from the defaults. The package-global cache and `ClearCache()` are
+    gone: use a new client for a fresh cache.
+  - An invalid option value is a `*ConfigError` (`ErrInvalidConfig`) from
+    `NewClient` that names every invalid option and its rule. It is no longer
+    silently replaced by the default.
+  - Cache lifetime comes from the response's `Cache-Control: max-age`, clamped
+    to 60 s – 24 h, else `WithCacheTTL`. The discovery default is now 1 hour
+    (was 24 h) and discovery honours `no-store` / `no-cache` (not cached); JWKS
+    ignores them (#396). `WithCacheTTL` must be 60 s – 24 h.
+  - `WithMaxCacheEntries` must be at least 1 (default 64); `0` no longer means
+    unbounded. The `DISCO_CACHE_MAX_ENTRIES` and `JWKS_CACHE_MAX_ENTRIES`
+    environment variables are no longer read.
+  - New `jwks.WithMaxSize` (default 524288 bytes, was a fixed 1 MiB) and
+    `jwks.WithMaxKeys` (default 100). `jwks.WithRefreshCooldown` must be
+    0 – 1 hour.
+- **BREAKING** `pkg/discovery`, `pkg/jwks`, `pkg/token`, `pkg/userinfo`,
+  `pkg/introspection`, `pkg/revocation`: a 429, a 5xx or a transport error is
+  now retried with exponential backoff (`WithRetryMaxAttempts`, default 3, `0`
+  disables; `WithRetryBaseDelay`, default 1 s; each wait capped at 120 s, a
+  longer `Retry-After` wins). `WithTimeout` (default 30 s) bounds each attempt
+  and must be greater than 0. New `WithCABundle(path)` trusts a PEM bundle
+  instead of the system roots; it cannot be combined with `WithHTTPClient`. An
+  invalid value is a `*ConfigError` returned before any request is sent.
 
 ## go/v0.3.0 (2026-09-05)
 

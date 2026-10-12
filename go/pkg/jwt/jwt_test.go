@@ -65,7 +65,11 @@ func keySetFromJSON(t *testing.T, jwksJSON []byte) *jwks.JSONWebKeySet {
 		_, _ = w.Write(jwksJSON)
 	}))
 	t.Cleanup(srv.Close)
-	set, err := jwks.FetchKeySet(context.Background(), srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch key set: %v", err)
 	}
@@ -306,7 +310,11 @@ func TestValidate_KidNotFound_ForcesRefresh(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	set, err := jwks.FetchKeySet(context.Background(), srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch key set: %v", err)
 	}
@@ -331,7 +339,11 @@ func countingKeySet(t *testing.T, jwksJSON []byte) (*jwks.JSONWebKeySet, *int) {
 		_, _ = w.Write(jwksJSON)
 	}))
 	t.Cleanup(srv.Close)
-	set, err := jwks.FetchKeySet(context.Background(), srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch key set: %v", err)
 	}

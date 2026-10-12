@@ -3,6 +3,7 @@ package token
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -124,7 +125,10 @@ func firstReservedExtra(extras map[string]string, grantReserved map[string]bool)
 // with [WithScopes] (CC-005). A non-2xx OAuth error response is returned as a
 // typed [TokenError] (CC-004).
 func ClientCredentials(ctx context.Context, tokenEndpoint, clientID, clientSecret string, opts ...Option) (*TokenResponse, error) {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	form := url.Values{}
 	form.Set("grant_type", grantClientCredentials)
@@ -147,7 +151,10 @@ func ClientCredentials(ctx context.Context, tokenEndpoint, clientID, clientSecre
 // [WithClientAuth]). A non-2xx OAuth error response is returned as a typed
 // [TokenError].
 func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redirectURI string, opts ...Option) (*TokenResponse, error) {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	if cfg.codeVerifier != "" && !validCodeVerifier(cfg.codeVerifier) {
 		return nil, fmt.Errorf("%w: must be 43-128 unreserved characters", ErrInvalidCodeVerifier)
@@ -184,7 +191,10 @@ func AuthorizationCode(ctx context.Context, tokenEndpoint, clientID, code, redir
 // [WithClientAuth] to switch to client_secret_post. A non-2xx OAuth error
 // response is returned as a typed [TokenError] (RFC 6749 §5.2).
 func TokenExchange(ctx context.Context, tokenEndpoint, clientID, clientSecret, subjectToken, subjectTokenType string, opts ...Option) (*TokenResponse, error) {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
 
 	if subjectToken == "" {
 		return nil, fmt.Errorf("%w: subject_token is required", ErrInvalidTokenExchange)
@@ -305,27 +315,26 @@ func doTokenRequest(ctx context.Context, cfg *config, endpoint, clientID, client
 		form.Set(k, v)
 	}
 
-	timeout := cfg.timeout
-	if timeout <= 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	encoded := form.Encode()
+	resp, err := cfg.tr.Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(encoded))
+		if err != nil {
+			return nil, &RequestError{Op: "build request", Err: err}
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		if useBasic {
+			// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
+			// encoding so reserved characters survive.
+			req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
+		}
+		return req, nil
+	})
 	if err != nil {
-		return nil, &RequestError{Op: "build request", Err: err}
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	if useBasic {
-		// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
-		// encoding so reserved characters survive.
-		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
-	}
-
-	resp, err := cfg.httpClient.Do(req)
-	if err != nil {
+		var rErr *RequestError
+		if errors.As(err, &rErr) {
+			return nil, err
+		}
 		return nil, &RequestError{Op: fmt.Sprintf("post %s", endpoint), Err: err}
 	}
 	defer resp.Body.Close()

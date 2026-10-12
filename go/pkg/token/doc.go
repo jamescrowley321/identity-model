@@ -16,6 +16,11 @@
 // decode into a typed [TokenError] (RFC 6749 §5.2). Requests are customised
 // with the functional With* options.
 //
+// An invalid option value (for example [WithTimeout] of 0) is a [ConfigError]
+// returned before any request is sent. A 429, a 5xx or a transport error is
+// retried with exponential backoff ([WithRetryMaxAttempts],
+// [WithRetryBaseDelay]); see spec/config.md.
+//
 // Behavioural contract: spec/vectors/client-credentials.json (CC-001..006),
 // spec/vectors/authorization-code.json (ACG-001..005), and
 // spec/vectors/token-exchange.json (EXCH-001..006); see also

@@ -39,7 +39,12 @@ for a runnable demo, and the cross-language behavioural contract in
 ## Design
 
 - HTTP via the `net/http` standard library; `sync.Pool` for client reuse.
-- Functional options for configuration: `WithTimeout()`, `WithCacheTTL()`, `WithHTTPClient()`.
+- Functional options for configuration, with the settings, defaults and ranges
+  of [`../spec/config.md`](../spec/config.md). The library reads no environment.
+  `discovery.NewClient` and `jwks.NewClient` hold their options and own their
+  caches; an invalid option is a `*ConfigError` when the client is built.
+- Retries with exponential backoff for 429, 5xx and transport errors on every
+  HTTP request; cache lifetimes from `Cache-Control: max-age`.
 - `singleflight` deduplicates concurrent discovery / JWKS fetches.
 - JOSE handling via `go-jose/v4`.
 

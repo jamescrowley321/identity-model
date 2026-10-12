@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -239,7 +240,11 @@ func TestRevoke_DiscoveryEndpointResolution(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base = srv.URL
 
-	cfg, err := discovery.FetchConfiguration(context.Background(), base, discovery.WithInsecureAllowHTTP())
+	dc, err := discovery.NewClient(discovery.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(context.Background(), base)
 	if err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
@@ -348,7 +353,7 @@ func TestRevoke_NonOAuthErrorBody(t *testing.T) {
 	var got capturedRequest
 	srv := newServer(t, http.StatusInternalServerError, []byte("upstream exploded"), &got)
 
-	err := Revoke(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP())
+	err := Revoke(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -416,7 +421,7 @@ func TestRevoke_TimeoutHonored(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	err := Revoke(context.Background(), srv.URL, "cid", "sec", "tok",
-		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP())
+		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -491,6 +496,11 @@ func TestRevoke_RefusesInsecureRedirect(t *testing.T) {
 
 	// Trust the TLS test server's cert but keep the default redirect-following
 	// behaviour otherwise; the package's CheckRedirect guard must still fire.
+	var posts atomic.Int32
+	redirector.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		http.Redirect(w, r, downstream.URL, http.StatusTemporaryRedirect)
+	})
 	client := redirector.Client()
 	err := Revoke(context.Background(), redirector.URL, "cid", "sec", "tok", WithHTTPClient(client))
 	if err == nil {
@@ -501,6 +511,9 @@ func TestRevoke_RefusesInsecureRedirect(t *testing.T) {
 	}
 	if reached {
 		t.Error("token-bearing POST was resent to the plaintext redirect target")
+	}
+	if got := posts.Load(); got != 1 {
+		t.Errorf("POSTs to the redirecting server = %d, want 1 (a refused redirect is not retried)", got)
 	}
 }
 

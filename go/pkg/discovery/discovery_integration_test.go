@@ -33,7 +33,11 @@ func TestIntegration_FetchConfiguration(t *testing.T) {
 		opts = append(opts, discovery.WithInsecureAllowHTTP())
 	}
 
-	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, opts...)
+	dc, err := discovery.NewClient(opts...)
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 	if err != nil {
 		t.Fatalf("FetchConfiguration(%s): %v", tc.Issuer, err)
 	}
@@ -55,7 +59,7 @@ func TestIntegration_FetchConfiguration(t *testing.T) {
 	}
 
 	// A second call within the TTL must be served from cache.
-	if _, err := discovery.FetchConfiguration(ctx, tc.Issuer, opts...); err != nil {
+	if _, err := dc.FetchConfiguration(ctx, tc.Issuer); err != nil {
 		t.Errorf("cached re-fetch: %v", err)
 	}
 }

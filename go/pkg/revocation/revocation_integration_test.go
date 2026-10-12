@@ -29,7 +29,11 @@ func endpoints(t *testing.T, ctx context.Context, tc integrationtest.Config) (to
 	if tc.OpaqueClientID == "" {
 		t.Skip("no opaque-token client for this profile (TEST_OPAQUE_CLIENT_ID unset); revocation integration requires opaque tokens")
 	}
-	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, discovery.WithInsecureAllowHTTP())
+	dc, err := discovery.NewClient(discovery.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 	if err != nil {
 		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}

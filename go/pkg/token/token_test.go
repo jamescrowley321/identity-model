@@ -138,7 +138,7 @@ func TestTokenRequest_NonOAuthErrorBody(t *testing.T) {
 	var got capturedRequest
 	srv := newTokenServer(t, http.StatusBadGateway, "upstream down", &got)
 
-	_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret", WithInsecureAllowHTTP())
+	_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret", WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	var re *RequestError
 	if !errors.As(err, &re) {
 		t.Fatalf("error = %v, want *RequestError", err)
@@ -474,7 +474,7 @@ func TestTokenRequest_Timeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	_, err := ClientCredentials(context.Background(), srv.URL, "cid", "secret",
-		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP())
+		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}

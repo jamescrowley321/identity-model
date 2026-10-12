@@ -21,7 +21,11 @@ func discover(t *testing.T, ctx context.Context, tc integrationtest.Config) *dis
 	if tc.AllowHTTP {
 		dopts = append(dopts, discovery.WithInsecureAllowHTTP())
 	}
-	cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
+	dc, err := discovery.NewClient(dopts...)
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 	if err != nil {
 		integrationtest.FailUnreachable(t, "provider not reachable at %s (local: run `make infra-up`): %v", tc.Issuer, err)
 	}

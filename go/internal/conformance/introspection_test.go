@@ -20,8 +20,11 @@ func runIntrospectionVector(t *testing.T, label, base string, v HTTPVector) {
 
 	endpoint := base + "/introspect"
 	if discover, _ := v.Input["discover"].(bool); discover {
-		discovery.ClearCache()
-		cfg, err := discovery.FetchConfiguration(ctx, base, discovery.WithInsecureAllowHTTP())
+		dc, err := discovery.NewClient(discovery.WithInsecureAllowHTTP())
+		if err != nil {
+			t.Fatalf("%s: discovery.NewClient: %v", label, err)
+		}
+		cfg, err := dc.FetchConfiguration(ctx, base)
 		if err != nil {
 			t.Fatalf("%s: discovery: %v", label, err)
 		}

@@ -282,7 +282,11 @@ func TestIntrospect_DiscoveryEndpointResolution(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base = srv.URL
 
-	cfg, err := discovery.FetchConfiguration(context.Background(), base, discovery.WithInsecureAllowHTTP())
+	dc, err := discovery.NewClient(discovery.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("discovery.NewClient: %v", err)
+	}
+	cfg, err := dc.FetchConfiguration(context.Background(), base)
 	if err != nil {
 		t.Fatalf("FetchConfiguration: %v", err)
 	}
@@ -323,7 +327,7 @@ func TestIntrospect_NonOAuthErrorBody(t *testing.T) {
 	var got capturedRequest
 	srv := newServer(t, http.StatusInternalServerError, []byte("upstream exploded"), &got)
 
-	_, err := Introspect(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP())
+	_, err := Introspect(context.Background(), srv.URL, "cid", "sec", "tok", WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -419,7 +423,7 @@ func TestIntrospect_TimeoutHonored(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	_, err := Introspect(context.Background(), srv.URL, "cid", "sec", "tok",
-		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP())
+		WithTimeout(20*time.Millisecond), WithInsecureAllowHTTP(), WithRetryMaxAttempts(0))
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}

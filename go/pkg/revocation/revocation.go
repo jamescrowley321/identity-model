@@ -3,11 +3,14 @@ package revocation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/jamescrowley321/identity-model/go/internal/transport"
 )
 
 // maxBodyBytes caps the revocation error-response read to guard against an
@@ -43,7 +46,10 @@ var reservedParams = map[string]bool{
 // HTTP 400 unsupported_token_type — is returned as a typed [RevocationError]
 // (§2.2.1).
 func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, token string, opts ...Option) error {
-	cfg := newConfig(opts...)
+	cfg, err := newConfig(opts...)
+	if err != nil {
+		return err
+	}
 
 	parsed, err := url.Parse(revocationEndpoint)
 	if err != nil {
@@ -102,44 +108,45 @@ func Revoke(ctx context.Context, revocationEndpoint, clientID, clientSecret, tok
 		ctx = context.Background()
 	}
 
-	timeout := cfg.timeout
-	if timeout <= 0 {
-		timeout = defaultRequestTimeout
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, revocationEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return &RequestError{Op: "build request", Err: err}
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	if useBasic {
-		// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
-		// encoding so reserved characters survive.
-		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
-	}
-
 	// The initial-URL scheme check above is defeated if the server 307/308-
 	// redirects this token-bearing POST to an http:// (or foreign) host: the body
 	// (token, and on the post path the client_secret) would be resent in
 	// cleartext. Copy the client and enforce the same scheme rule on every
 	// redirect hop so TLS enforcement can't be silently downgraded. The copy
 	// leaves the caller's client (and http.DefaultClient) untouched.
-	client := *cfg.httpClient
+	client := *cfg.tr.Client()
+	// A refusal is permanent: retrying would resend the token-bearing POST to
+	// the redirecting server only to be refused again.
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		if r.URL.Scheme != "https" && !(cfg.allowHTTP && r.URL.Scheme == "http") {
-			return fmt.Errorf("refusing redirect to non-https endpoint %q (use WithInsecureAllowHTTP for http)", r.URL.Redacted())
+			return transport.Permanent(fmt.Errorf("refusing redirect to non-https endpoint %q (use WithInsecureAllowHTTP for http)", r.URL.Redacted()))
 		}
 		if len(via) >= 10 {
-			return fmt.Errorf("stopped after 10 redirects")
+			return transport.Permanent(fmt.Errorf("stopped after 10 redirects"))
 		}
 		return nil
 	}
 
-	resp, err := client.Do(req)
+	encoded := form.Encode()
+	resp, err := cfg.tr.WithClient(&client).Do(ctx, func(ctx context.Context) (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, revocationEndpoint, strings.NewReader(encoded))
+		if err != nil {
+			return nil, &RequestError{Op: "build request", Err: err}
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		if useBasic {
+			// RFC 6749 §2.3.1: form-urlencode the credentials before HTTP Basic
+			// encoding so reserved characters survive.
+			req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
+		}
+		return req, nil
+	})
 	if err != nil {
+		var rErr *RequestError
+		if errors.As(err, &rErr) {
+			return err
+		}
 		return &RequestError{Op: fmt.Sprintf("post %s", revocationEndpoint), Err: err}
 	}
 	defer resp.Body.Close()

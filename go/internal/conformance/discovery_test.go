@@ -9,16 +9,13 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jamescrowley321/identity-model/go/internal/testhook"
 	"github.com/jamescrowley321/identity-model/go/pkg/discovery"
 )
-
-// specSecond is the wall-clock time one vector second maps to: the Go cache
-// has no injectable clock, so TTL vectors run scaled down in real time, with
-// margins (30 vector seconds = 1.5s) wide enough to survive the race detector.
-const specSecond = 50 * time.Millisecond
 
 // fixtureHost is the placeholder host in fixtures and expected results; the
 // fixture serves it rewritten to the vector's base URL.
@@ -27,29 +24,34 @@ const fixtureHost = "https://server.example.com"
 // runDiscoveryVector is the discovery.json adapter: discovery.FetchConfiguration.
 func runDiscoveryVector(t *testing.T, label, base string, v HTTPVector) {
 	t.Helper()
-	discovery.ClearCache()
-	t.Cleanup(discovery.ClearCache)
-
-	var opts []discovery.Option
+	// Retries are off so a 5xx vector fails on its single request.
+	opts := []discovery.Option{discovery.WithRetryMaxAttempts(0)}
 	if requireHTTPS, _ := v.Input["require_https"].(bool); !requireHTTPS {
 		opts = append(opts, discovery.WithInsecureAllowHTTP())
 	}
 	if ttl, ok := v.Input["cache_ttl_seconds"].(float64); ok {
-		opts = append(opts, discovery.WithCacheTTL(time.Duration(ttl)*specSecond))
+		opts = append(opts, discovery.WithCacheTTL(time.Duration(ttl)*time.Second))
+	}
+	// A fresh client per vector is a fresh cache.
+	client, err := discovery.NewClient(opts...)
+	if err != nil {
+		t.Fatalf("%s: discovery.NewClient: %v", label, err)
 	}
 	offsets := []any{0.0}
 	if at, ok := v.Input["calls_at_seconds"].([]any); ok {
 		offsets = at
 	}
 
-	var (
-		cfg *discovery.ProviderConfiguration
-		err error
-	)
+	// The client's cache runs on a vector clock, so a call at offset N sees
+	// N seconds elapsed without waiting for them.
 	start := time.Now()
+	var elapsed atomic.Int64
+	testhook.SetDiscoveryClock(client, func() time.Time { return start.Add(time.Duration(elapsed.Load())) })
+
+	var cfg *discovery.ProviderConfiguration
 	for _, at := range offsets {
-		time.Sleep(time.Until(start.Add(time.Duration(at.(float64)) * specSecond)))
-		if cfg, err = discovery.FetchConfiguration(context.Background(), base, opts...); err != nil {
+		elapsed.Store(int64(time.Duration(at.(float64)) * time.Second))
+		if cfg, err = client.FetchConfiguration(context.Background(), base); err != nil {
 			break
 		}
 	}

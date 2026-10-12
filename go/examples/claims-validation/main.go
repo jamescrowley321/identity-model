@@ -70,7 +70,11 @@ func run() error {
 	defer srv.Close()
 
 	ctx := context.Background()
-	set, err := jwks.FetchKeySet(ctx, srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		return err
+	}
+	set, err := jc.FetchKeySet(ctx, srv.URL)
 	if err != nil {
 		return err
 	}

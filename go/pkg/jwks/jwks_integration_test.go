@@ -33,7 +33,11 @@ func TestIntegration_FetchKeySet(t *testing.T) {
 		if tc.AllowHTTP {
 			dopts = append(dopts, discovery.WithInsecureAllowHTTP())
 		}
-		cfg, err := discovery.FetchConfiguration(ctx, tc.Issuer, dopts...)
+		dc, err := discovery.NewClient(dopts...)
+		if err != nil {
+			t.Fatalf("discovery.NewClient: %v", err)
+		}
+		cfg, err := dc.FetchConfiguration(ctx, tc.Issuer)
 		if err != nil {
 			t.Fatalf("discovery FetchConfiguration(%s): %v", tc.Issuer, err)
 		}
@@ -45,7 +49,11 @@ func TestIntegration_FetchKeySet(t *testing.T) {
 		opts = append(opts, jwks.WithInsecureAllowHTTP())
 	}
 
-	set, err := jwks.FetchKeySet(ctx, jwksURI, opts...)
+	jc, err := jwks.NewClient(opts...)
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(ctx, jwksURI)
 	if err != nil {
 		t.Fatalf("FetchKeySet(%s): %v", jwksURI, err)
 	}

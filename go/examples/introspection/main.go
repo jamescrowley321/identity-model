@@ -79,7 +79,12 @@ func main() {
 		if *insecureHTTP {
 			dopts = append(dopts, discovery.WithInsecureAllowHTTP())
 		}
-		cfg, err := discovery.FetchConfiguration(ctx, *issuer, dopts...)
+		dc, err := discovery.NewClient(dopts...)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid discovery options: %v\n", err)
+			os.Exit(1)
+		}
+		cfg, err := dc.FetchConfiguration(ctx, *issuer)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "discovery failed: %v\n", err)
 			os.Exit(1)

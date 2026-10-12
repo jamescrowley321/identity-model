@@ -31,7 +31,12 @@ func main() {
 		opts = append(opts, discovery.WithInsecureAllowHTTP())
 	}
 
-	cfg, err := discovery.FetchConfiguration(context.Background(), *issuer, opts...)
+	dc, err := discovery.NewClient(opts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid discovery options: %v\n", err)
+		os.Exit(1)
+	}
+	cfg, err := dc.FetchConfiguration(context.Background(), *issuer)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "discovery failed: %v\n", err)
 		os.Exit(1)

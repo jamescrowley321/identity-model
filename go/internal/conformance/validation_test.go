@@ -236,7 +236,11 @@ func mustFixtureKeySet(t *testing.T) *jwks.JSONWebKeySet {
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
-	set, err := jwks.FetchKeySet(context.Background(), srv.URL, jwks.WithInsecureAllowHTTP())
+	jc, err := jwks.NewClient(jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("jwks.NewClient: %v", err)
+	}
+	set, err := jc.FetchKeySet(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch key set: %v", err)
 	}
