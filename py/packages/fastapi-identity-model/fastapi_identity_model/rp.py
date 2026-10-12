@@ -60,6 +60,8 @@ from py_identity_model.aio import (
 
 
 if TYPE_CHECKING:
+    from py_identity_model.aio import AsyncHTTPClient
+
     from .config import OIDCSettings
 
 
@@ -143,9 +145,12 @@ def _expected_issuer(discovery_url: str) -> str:
     return base.rstrip("/")
 
 
-async def _discover(settings: OIDCSettings) -> DiscoveryDocumentResponse:
+async def _discover(
+    settings: OIDCSettings, http_client: AsyncHTTPClient | None
+) -> DiscoveryDocumentResponse:
     disco = await get_discovery_document(
         DiscoveryDocumentRequest(address=settings.discovery_url),
+        http_client=http_client,
     )
     if not disco.is_successful:
         # Log the provider's specific error for operators; return a generic
@@ -185,10 +190,13 @@ def _require_endpoint(value: str | None, name: str) -> str:
 
 
 async def _login(
-    request: Request, settings: OIDCSettings, session_key: str
+    request: Request,
+    settings: OIDCSettings,
+    session_key: str,
+    http_client: AsyncHTTPClient | None,
 ) -> RedirectResponse:
     _require_session(request)
-    disco = await _discover(settings)
+    disco = await _discover(settings, http_client)
     authorization_endpoint = _require_endpoint(
         disco.authorization_endpoint, "authorization_endpoint"
     )
@@ -218,6 +226,7 @@ async def _exchange_code(
     disco: DiscoveryDocumentResponse,
     code: str,
     code_verifier: str,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Exchange the authorization code and return the token dict."""
     token_endpoint = _require_endpoint(disco.token_endpoint, "token_endpoint")
@@ -230,6 +239,7 @@ async def _exchange_code(
             code_verifier=code_verifier,
             client_secret=settings.client_secret or None,
         ),
+        http_client=http_client,
     )
     if not tok.is_successful or not tok.token:
         logger.warning("Token exchange failed: %s", tok.error)
@@ -245,6 +255,7 @@ async def _validate_id_token(
     disco: DiscoveryDocumentResponse,
     id_token: str,
     expected_nonce: str,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Validate the ID token (signature/iss/aud/exp/required claims) and bind the nonce."""
     # Guard the issuer explicitly: a discovery doc missing ``issuer`` would
@@ -260,6 +271,7 @@ async def _validate_id_token(
                 options={"verify_exp": True, "require": ["sub", "iat", "exp"]},
             ),
             disco_doc_address=settings.discovery_url,
+            http_client=http_client,
         )
     except PyIdentityModelException as exc:
         logger.info("ID token validation failed: %s", exc)
@@ -281,6 +293,7 @@ async def _fetch_userinfo(
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
     expected_sub: str | None,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Fetch UserInfo, enforcing the OIDC Core 5.3.2 ``sub`` match as a hard gate.
 
@@ -296,6 +309,7 @@ async def _fetch_userinfo(
     # the sub comparison is enforced here so a mismatch fails the login.
     ui = await get_userinfo(
         UserInfoRequest(address=userinfo_endpoint, token=access_token),
+        http_client=http_client,
     )
     if not ui.is_successful:
         logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
@@ -317,6 +331,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     *,
     store_tokens: bool,
     fetch_userinfo: bool,
+    http_client: AsyncHTTPClient | None,
 ) -> RedirectResponse:
     _require_session(request)
     # Pop the flow state so it is single-use: a failed or replayed callback
@@ -356,8 +371,10 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             detail="Authorization response missing code",
         )
 
-    disco = await _discover(settings)
-    token = await _exchange_code(settings, disco, cb.code, flow["code_verifier"])
+    disco = await _discover(settings, http_client)
+    token = await _exchange_code(
+        settings, disco, cb.code, flow["code_verifier"], http_client
+    )
     id_token = token.get("id_token")
     access_token = token.get("access_token")
 
@@ -369,11 +386,15 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Provider did not return an ID token",
         )
-    claims = await _validate_id_token(settings, disco, id_token, flow["nonce"])
+    claims = await _validate_id_token(
+        settings, disco, id_token, flow["nonce"], http_client
+    )
 
     userinfo: dict = {}
     if fetch_userinfo:
-        userinfo = await _fetch_userinfo(disco, access_token, claims.get("sub"))
+        userinfo = await _fetch_userinfo(
+            disco, access_token, claims.get("sub"), http_client
+        )
 
     session_data: dict = {
         "sub": claims.get("sub"),
@@ -400,6 +421,7 @@ def build_oidc_router(
     session_key: str = "oidc",
     store_tokens: bool = False,
     fetch_userinfo: bool = True,
+    http_client: AsyncHTTPClient | None = None,
 ) -> APIRouter:
     """Build an OIDC relying-party router.
 
@@ -412,6 +434,9 @@ def build_oidc_router(
             validation and anchor identity on the ID token claims alone —
             for providers without a usable UserInfo endpoint, or to avoid
             the extra round-trip per login.
+        http_client: Managed HTTP client for every provider call (discovery,
+            token, JWKS, UserInfo), built from your ``Config``. ``None`` uses
+            the library default client.
 
     Returns:
         An ``APIRouter`` with ``/login``, ``/callback`` and ``/logout`` routes.
@@ -425,7 +450,7 @@ def build_oidc_router(
 
     @router.get("/login")
     async def login(request: Request) -> RedirectResponse:
-        return await _login(request, settings, session_key)
+        return await _login(request, settings, session_key, http_client)
 
     @router.get("/callback")
     async def callback(request: Request) -> RedirectResponse:
@@ -436,6 +461,7 @@ def build_oidc_router(
             str(request.url),
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
+            http_client=http_client,
         )
 
     @router.post("/callback")
@@ -457,6 +483,7 @@ def build_oidc_router(
             callback_url,
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
+            http_client=http_client,
         )
 
     @router.post("/logout")
