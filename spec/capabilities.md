@@ -22,7 +22,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress‡ | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json`¶ | in-progress¶ | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json`¶ | in-progress¶ | implemented | implemented |
-| Core | Configuration | [Configuration](config.md) | —† | implemented† | planned | planned |
+| Core | Configuration | [Configuration](config.md) | —† | implemented† | implemented† | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
 | Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress‡ | implemented | implemented |
 | Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress‡ | implemented | implemented |
@@ -86,7 +86,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > transport lands under
 > [identity-model#573](https://github.com/jamescrowley321/identity-model/issues/573).
 >
-> † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `Config`. Go and Rust flip to `implemented` when they have the same settings, defaults, ranges and cache rules, each checked by a unit test against the page ([#757](https://github.com/jamescrowley321/identity-model/issues/757), [#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
+> † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `Config`. Go has the same settings, defaults, ranges and cache rules, and a Go unit test (`go/internal/configpage`) checks every Go option's default and range against the page. Rust flips to `implemented` when it does the same ([#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
 >
 > **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
 > Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
