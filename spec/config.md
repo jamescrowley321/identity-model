@@ -61,14 +61,18 @@ and [#758](https://github.com/jamescrowley321/identity-model/issues/758) (Rust)
 land, Go and Rust differ from this page:
 
 - They read `JWKS_CACHE_MAX_ENTRIES` and `DISCO_CACHE_MAX_ENTRIES` from the
-  environment. `0` means unbounded.
+  environment. `0`, from the environment or the max-cache-entries option,
+  means unbounded.
 - The discovery cache TTL defaults to 24 hours.
-- An invalid TTL or cooldown falls back to its default instead of being
-  rejected.
+- Values are not range-checked. A zero TTL (Go: zero or negative) falls back
+  to its default, as does a negative cooldown in Go; any other value is used
+  as given.
 - There is no retry, no `ca_bundle`, and no `jwks_max_size` or
   `jwks_max_keys`. Discovery and JWKS response bodies have a fixed 1 MiB cap.
 - They don't read `Cache-Control`. Every response is cached for the configured
   TTL, with no 60 – 86400 clamp.
+- Go has no client type: the `discovery` and `jwks` packages each use one
+  package-level cache that every call shares.
 
 ## Cache rules
 
