@@ -9,14 +9,11 @@ from .core.config import (
     Config,
     ConfigError,
     ConfigIssue,
-    ConfigSource,
-    EnvSource,
-    MappingSource,
-    Secret,
 )
 
 # Backward compatible sync exports (default)
 from .exceptions import (
+    AmbiguousKeyException,
     AuthorizeCallbackException,
     CertificateBindingError,
     ConfigurationException,
@@ -31,6 +28,7 @@ from .exceptions import (
     InvalidIssuerException,
     JarmValidationException,
     JwksException,
+    KeyAlgorithmMismatchException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
     NetworkException,
@@ -40,6 +38,7 @@ from .exceptions import (
     TokenExpiredException,
     TokenRequestException,
     TokenValidationException,
+    UntrustedAudienceException,
     UserInfoException,
     ValidationException,
 )
@@ -162,6 +161,7 @@ __all__ = [
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
+    "AmbiguousKeyException",
     # Auth Code + PKCE
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
@@ -195,7 +195,6 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConfigIssue",
-    "ConfigSource",
     "ConfigurationException",
     # DPoP
     "DPoPKey",
@@ -215,7 +214,6 @@ __all__ = [
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
     "DiscoveryPolicy",
-    "EnvSource",
     "FAPIValidationResult",
     "FailedResponseAccessError",
     # HTTP Client
@@ -230,9 +228,9 @@ __all__ = [
     "JwksException",
     "JwksRequest",
     "JwksResponse",
+    "KeyAlgorithmMismatchException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
-    "MappingSource",
     "MtlsClientAuth",
     "NetworkException",
     # Client authentication (private_key_jwt)
@@ -245,7 +243,6 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
-    "Secret",
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",
@@ -262,6 +259,7 @@ __all__ = [
     "TokenRevocationResponse",
     "TokenValidationConfig",
     "TokenValidationException",
+    "UntrustedAudienceException",
     "UserInfoException",
     "UserInfoRequest",
     "UserInfoResponse",

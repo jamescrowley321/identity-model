@@ -44,21 +44,28 @@ which python
 
 **Solution**:
 ```python
-# NOT RECOMMENDED for production - only for testing/development
-import os
-os.environ['CURL_CA_BUNDLE'] = ''  # Disable SSL verification (unsafe!)
-
 # RECOMMENDED: Install proper certificates
 # On macOS:
 # /Applications/Python\ 3.x/Install\ Certificates.command
 
-# Or specify a custom CA bundle
-import requests
-from py_identity_model import get_discovery_document, DiscoveryDocumentRequest
+# Or verify against a custom CA bundle
+from py_identity_model import (
+    Config,
+    DiscoveryDocumentRequest,
+    HTTPClient,
+    get_discovery_document,
+)
 
-# Use custom CA bundle
-os.environ['REQUESTS_CA_BUNDLE'] = '/path/to/ca-bundle.crt'
+with HTTPClient(config=Config(ca_bundle="/path/to/ca-bundle.crt")) as client:
+    response = get_discovery_document(
+        DiscoveryDocumentRequest(address=disco_url), http_client=client
+    )
 ```
+
+The library reads no environment variables, so setting `REQUESTS_CA_BUNDLE`
+or `CURL_CA_BUNDLE` has no effect on it. To disable verification in a test
+(never in production), wrap your own client:
+`HTTPClient(httpx.Client(verify=False, follow_redirects=False))`.
 
 ### Discovery Document Returns 404
 
@@ -262,6 +269,18 @@ print(f"Token issuer: {claims.get('iss')}")
 
 # Ensure you're using the correct discovery document for your tokens
 ```
+
+### Discovery `ISSUER_MISMATCH`
+
+**Problem**: `get_discovery_document` fails with `DiscoveryErrorKind.ISSUER_MISMATCH`
+
+The document's `issuer` must equal the discovery address without
+`/.well-known/openid-configuration` (OIDC Discovery 1.0 §4.3). Only a trailing
+slash is ignored; host case, an explicit port and the path must match exactly.
+A common cause is discovering through an internal hostname or proxy while the
+provider advertises its public issuer. Discover from the issuer URL itself, or
+configure the provider to advertise the address clients use. See
+[Discovery: Issuer match](api/discovery.md#issuer-match).
 
 ## Common Errors
 

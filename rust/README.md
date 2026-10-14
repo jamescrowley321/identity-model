@@ -17,6 +17,7 @@ endpoints.
 | `jwt` | JWT signature + claims validation, ID token validation, plus injectable/composable claims validators | RFC 7519 / 7515, OIDC Core 1.0 §3.1.3.7 |
 | `token` | Client credentials, auth code, PKCE, token exchange | RFC 6749 / 7636 / 8693 |
 | `introspection` | Token introspection client | RFC 7662 |
+| `dpop` | DPoP key pairs, proof generation, proof verification | RFC 9449, RFC 7638 |
 | `userinfo` | UserInfo endpoint client | OIDC Core 1.0 §5.3 |
 | `error` | `IdentityError` — the crate error type | — |
 
@@ -26,9 +27,9 @@ endpoints.
 - JWT handling via the `jsonwebtoken` crate.
 - Builder-pattern configuration; `Result<T, IdentityError>` everywhere (`thiserror`).
 - Caches use `tokio::sync::RwLock` for thread-safe async access.
-- Security hardening: secrets are redacted from `Debug`/error output, `azp` and
-  clock-skew are validated during JWT verification, and redirect-scheme downgrades
-  are rejected.
+- Security hardening: secrets are redacted from `Debug`/error output, clock-skew
+  is validated during JWT verification, `azp` is checked by the ID-token profile on opt-in (`.validate_azp(true)`),
+  and redirect-scheme downgrades are rejected.
 
 ## Getting Started
 
@@ -40,8 +41,17 @@ cargo run --example basic_setup
 cargo run --example combined_claims_validator
 ```
 
-Integration tests run against the shared provider in [`../infra`](../infra)
-(`make infra-up` from the repo root).
+Unit tests live inline under `src/` next to the code they cover. Everything
+else is one integration-test binary, `tests/it`, split by what a test needs:
+
+- `conformance::` — driven by the shared `../spec` fixtures; offline.
+- `local::` — a server or pipeline this binary runs itself; offline.
+- `live::` — a real provider; `#[ignore]`-gated. Run against the shared
+  provider in [`../infra`](../infra) with `make test-integration-rust` from
+  the repo root (or `make infra-up` then `cargo test -- --ignored`).
+
+Shared helpers (provider selection, skip-or-fail, fixture keys, the headless
+auth-code driver) are in `tests/it/common/`; add to them rather than copying.
 
 ## Claims Validation (injectable policy)
 
@@ -66,13 +76,20 @@ with `ValidationOptions::builder().claims_validator(...)`. See
 for a runnable `combine` demonstration. Behavioural parity with the sibling
 libraries is enforced by the shared vectors in
 [`../spec/test-fixtures/claims-validation/vectors.json`](../spec/test-fixtures/claims-validation/vectors.json),
-driven by `tests/claims_validation_conformance.rs`.
+driven by `tests/it/conformance/claims_validation.rs`.
 
 ## Capabilities
 
 The Core tier (discovery, JWKS, JWT validation including the OIDC ID-token
 profile, client-credentials and authorization-code + PKCE, UserInfo) is
-implemented, as are the Extended token introspection (RFC 7662) and token
-exchange (RFC 8693) capabilities. Revocation and DPoP are not yet implemented.
+implemented, as are the Extended token introspection (RFC 7662), token
+revocation (RFC 7009), and token exchange (RFC 8693) capabilities.
+
+DPoP (RFC 9449) is partially implemented: `dpop` provides key pairs, proof
+generation, and proof verification — `verify_bound_proof` checks a resource
+request's proof together with its `ath` and `cnf.jkt` bindings. Attaching the proof over HTTP — the
+`use_dpop_nonce` retry and the `Authorization: DPoP` scheme — is still the
+caller's job; see the `dpop` module docs.
+
 Behavioral parity with the Python and Go libraries is enforced by the
 cross-language conformance vectors in [`../spec`](../spec).

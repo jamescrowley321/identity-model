@@ -17,40 +17,45 @@ request path off the network. The cache is **not** `functools.lru_cache` /
 automatically, and concurrent misses are coalesced into a single upstream
 fetch. The cache *policy* lives in `core/jwks_cache.py`; the sync and async
 cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
+The caches themselves belong to an HTTP client (`HTTPClient` /
+`AsyncHTTPClient`): each client owns one discovery cache, one JWKS cache and
+one kid-miss cooldown map, and its `Config` sets their TTLs, size and cooldown.
 
 ### What is cached
 
-| Cache | Cache key | Backing store | Default TTL | Env override |
-|-------|-----------|---------------|-------------|--------------|
-| Discovery document | `(address, require_https)` | `OrderedDict` | 3600s (1 hour) | `DISCO_CACHE_TTL` |
-| JWKS | `jwks_uri` | `OrderedDict` | 86400s (24 hours) | `JWKS_CACHE_TTL` |
+| Cache | Cache key | Backing store | Default TTL | `Config` setting |
+|-------|-----------|---------------|-------------|------------------|
+| Discovery document | `(address, policy.cache_key())` | `OrderedDict` | 3600s (1 hour) | `discovery_cache_ttl` |
+| JWKS | `jwks_uri` | `OrderedDict` | 86400s (24 hours) | `jwks_cache_ttl` |
 
 Both caches share the same policy machinery:
 
-- **LRU eviction, 64 entries** (`DEFAULT_MAX_CACHE_ENTRIES`). The store is an
+- **LRU eviction, 64 entries** by default (`Config.cache_max_entries`, applied
+  to each cache separately). The store is an
   `OrderedDict`, not a plain dict, so a *read hit* refreshes recency
   (`touch_cache_entry`) and eviction targets the least-recently-**used** entry.
 - **TTL resolution order.** For each entry the TTL is the first available of:
-  (1) the response's `Cache-Control: max-age`, (2) the environment override,
-  (3) the built-in default. The resolved value is clamped to
-  **[60s, 86400s]** (`MIN_CACHE_TTL_SECONDS` … `MAX_CACHE_TTL_SECONDS`); a bad
-  or out-of-range env value is clamped and logged, never crashes the request.
+  (1) the response's `Cache-Control: max-age`, clamped to **[60s, 86400s]**
+  (`MIN_CACHE_TTL_SECONDS` … `MAX_CACHE_TTL_SECONDS`), (2) the client's
+  `Config` TTL. An out-of-range `Config` value is rejected when the `Config`
+  is built.
 - **Single-flight fetch.** Per-URI striped locks (32 stripes) ensure a cache
   miss issues exactly one upstream fetch; concurrent requests for the same URI
   wait on the stripe and then read the freshly-cached entry (a
   *double-checked* hit) rather than each hitting the network.
 - **Kid-miss cooldown.** If a JWT's `kid` is absent from the cached JWKS the
   cache is treated as stale and a refresh is forced (OP key rotation). This is
-  rate-limited per-URI — default 5s (`DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS`,
-  override `KID_MISS_REFRESH_COOLDOWN`) — so an attacker forging tokens with
+  rate-limited per-URI — default 5s (`Config.jwks_kid_miss_cooldown`) — so an attacker forging tokens with
   random unknown kids cannot amplify inbound traffic into upstream JWKS fetches.
 - **Per-event-loop locks (async).** The async write/fetch locks are keyed on
   the running event loop via `WeakKeyDictionary` (#399), so a test runner or
   embed that creates a new loop per scope does not hit
   `RuntimeError: <Lock> is bound to a different event loop`.
 
-**Important:** the sync and async caches are **separate** process-global
-`OrderedDict`s. They do not share cached data.
+**Important:** caches are per client. Two clients (including a sync and an
+async one) do not share cached data, so keep one long-lived client per
+configuration. Entry points called without `http_client=` use the library
+default client, built from `Config()`; its caches are shared by the process.
 
 ### Clearing Caches
 
@@ -63,8 +68,9 @@ cache — so callers must `await` them.
 # Sync
 from py_identity_model import clear_discovery_cache, clear_jwks_cache
 
-clear_discovery_cache()
+clear_discovery_cache()  # the library default client's caches
 clear_jwks_cache()
+clear_jwks_cache(http_client=client)  # one injected client's caches
 ```
 
 ```python
@@ -260,22 +266,10 @@ The library uses different HTTP client strategies for sync and async to optimize
 
 #### Synchronous API: Thread-Local Clients
 
-Each thread gets its own HTTP client using `threading.local()`:
-
-```python
-# Thread-local storage for sync HTTP client
-_thread_local = threading.local()
-
-def get_http_client() -> httpx.Client:
-    """Get or create HTTP client for current thread."""
-    if not hasattr(_thread_local, "client") or _thread_local.client is None:
-        _thread_local.client = httpx.Client(
-            verify=get_ssl_verify(),
-            timeout=timeout,
-            follow_redirects=True,
-        )
-    return _thread_local.client
-```
+The library default sync client is one process-wide `HTTPClient` built from
+`Config()`, so its caches are shared, but each thread gets its own
+`httpx.Client` (via `threading.local()`), built on first use from the
+client's `Config`.
 
 **Benefits:**
 - ✅ **No global state**: Eliminates race conditions
@@ -295,21 +289,8 @@ def get_http_client() -> httpx.Client:
 
 #### Asynchronous API: Singleton Client
 
-All async operations share a single HTTP client per process:
-
-```python
-_async_http_client: httpx.AsyncClient | None = None
-_async_client_lock = threading.Lock()
-
-async def get_async_http_client() -> httpx.AsyncClient:
-    """Get or create the singleton async HTTP client."""
-    global _async_http_client
-    if _async_http_client is None:
-        with _async_client_lock:  # Thread-safe initialization
-            if _async_http_client is None:
-                _async_http_client = httpx.AsyncClient(...)
-    return _async_http_client
-```
+All async operations without `http_client=` share the library default
+`AsyncHTTPClient`, whose `httpx.AsyncClient` is created once under a lock.
 
 **Benefits:**
 - ✅ **Shared connection pool**: All async operations share connections
@@ -336,29 +317,29 @@ async def get_async_http_client() -> httpx.AsyncClient:
 
 For high-throughput applications, you may want to customize connection limits.
 
-**Note:** The library uses internal client creation, so customizing limits requires forking or using environment variables for timeout configuration.
+Wrap your own `httpx` client and pass it on every call. Its limits, timeout
+and TLS settings apply; the `Config` sets retries, JWKS limits and caching:
 
-**Workaround for Custom Limits:**
 ```python
-# Option 1: Use HTTP_TIMEOUT environment variable
-import os
-os.environ['HTTP_TIMEOUT'] = '60.0'  # Increase timeout to 60 seconds
-
-# Option 2: Create your own client wrapper (advanced)
 import httpx
-from py_identity_model.core.discovery_logic import process_discovery_response
 
-async def custom_discovery_fetch(url: str):
-    """Custom discovery fetch with tuned connection pool."""
-    limits = httpx.Limits(
-        max_connections=200,
-        max_keepalive_connections=50,
-    )
+from py_identity_model import Config
+from py_identity_model.aio import AsyncHTTPClient, validate_token
 
-    async with httpx.AsyncClient(limits=limits, timeout=60.0) as client:
-        response = await client.get(url)
-        return process_discovery_response(response)
+client = AsyncHTTPClient(
+    httpx.AsyncClient(
+        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        timeout=60.0,
+        follow_redirects=False,
+    ),
+    config=Config(cache_max_entries=128),
+)
+
+claims = await validate_token(token, validation_config, disco_url, http_client=client)
 ```
+
+To change only the timeout, `AsyncHTTPClient(config=Config(http_timeout=60.0))`
+is enough.
 
 ### 4. Batch Token Validations
 

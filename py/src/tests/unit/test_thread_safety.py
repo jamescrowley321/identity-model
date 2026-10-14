@@ -9,9 +9,10 @@ import concurrent.futures
 from functools import lru_cache
 import threading
 
-from py_identity_model.ssl_config import get_ssl_verify
+from py_identity_model.sync import http_client as sync_http_client
 from py_identity_model.sync.http_client import (
     _reset_http_client,
+    get_default_http_client,
     get_http_client,
 )
 
@@ -21,32 +22,37 @@ CONCURRENT_CALLS = 100
 EXPECTED_CACHED_RESULT = 84
 
 
-class TestSSLConfigThreadSafety:
-    """Test thread safety of SSL configuration."""
+class TestDefaultClientThreadSafety:
+    """Test thread safety of the library default client."""
 
-    def test_get_ssl_verify_concurrent_access(self):
-        """Test that get_ssl_verify can be called concurrently from multiple threads."""
+    def test_default_client_concurrent_creation_is_shared(self, monkeypatch):
+        """Concurrent first use from many threads yields one default client."""
+        # Start with no default installed; monkeypatch restores the session's
+        # default client afterwards.
+        monkeypatch.setitem(sync_http_client._default_state, "client", None)
         results = []
         errors = []
+        lock = threading.Lock()
 
-        def call_get_ssl_verify():
+        def call_get_default():
             try:
-                result = get_ssl_verify()
-                results.append(result)
+                client = get_default_http_client()
+                with lock:
+                    results.append(client)
             except Exception as e:
-                errors.append(e)
+                with lock:
+                    errors.append(e)
 
-        # Call from 50 threads concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            futures = [executor.submit(call_get_ssl_verify) for _ in range(100)]
+            futures = [
+                executor.submit(call_get_default) for _ in range(CONCURRENT_CALLS)
+            ]
             concurrent.futures.wait(futures)
 
-        # No errors should occur
-        assert len(errors) == 0, f"Errors occurred: {errors}"
-
-        # All results should be identical (cached value)
+        assert errors == []
         assert len(results) == CONCURRENT_CALLS
-        assert all(r == results[0] for r in results), "Results should be identical"
+        # One process-wide default client, so its caches are shared.
+        assert {id(client) for client in results} == {id(get_default_http_client())}
 
 
 class TestHTTPClientThreadSafety:
@@ -54,10 +60,6 @@ class TestHTTPClientThreadSafety:
 
     def test_http_client_concurrent_access(self):
         """Test that HTTP client can be accessed concurrently with thread-local storage."""
-        # Clear SSL verify cache to ensure we use system defaults
-        # (previous tests may have set invalid SSL paths)
-        get_ssl_verify.cache_clear()
-
         # Reset HTTP client for clean state
         _reset_http_client()
 

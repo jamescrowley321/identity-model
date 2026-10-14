@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi import FastAPI, Query, Request
+import httpx
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import PyJWTError
@@ -64,8 +65,8 @@ from py_identity_model import (
     validate_authorize_callback_issuer,
     validate_authorize_callback_state,
     validate_logout_token,
+    validate_id_token,
     validate_post_logout_state,
-    validate_token,
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
@@ -325,7 +326,9 @@ _registered_client: dict[str, str] | None = None
 def _get_http_client() -> HTTPClient:
     global _http_client
     if _http_client is None:
-        _http_client = HTTPClient(verify=False)
+        # The local suite serves a self-signed cert; verification is off for
+        # this harness only, so wrap a client built that way.
+        _http_client = HTTPClient(httpx.Client(verify=False, follow_redirects=False))
     return _http_client
 
 
@@ -1168,9 +1171,10 @@ def _client_for_session(
 ) -> HTTPClient | None:
     """The HTTP client to pass a client-authenticating request.
 
-    mTLS sessions must let the library build a short-lived cert-configured client
-    (``resolve_http_client`` rejects a managed client alongside ``mtls``), so pass
-    ``None``; every other session reuses the shared verify-disabled client.
+    mTLS sessions pass ``None``: the library builds a short-lived cert client
+    from the given client's ``Config``, not from its wrapped verify-disabled
+    ``httpx.Client``, so passing the shared client would not carry
+    ``verify=False`` over. Every other session reuses the shared client.
     """
     return None if session.mtls else http_client
 
@@ -1293,32 +1297,6 @@ def _id_token_validation_params(
             _FAPI2_ID_TOKEN_ALGS,
         )
     return {"verify_exp": True, "require": ["sub", "iat"]}, None
-
-
-def _validate_fapi2_audience(session: AuthSession, claims: dict) -> HTMLResponse | None:
-    """Reject an ID token that carries an audience other than this client.
-
-    PyJWT's ``audience`` check only verifies the client_id is *present* (set
-    intersection), so an extra untrusted audience slips through. FAPI 2.0 / OIDC
-    Core 1.0 §3.1.3.7 require the RP to reject it; the OIDF
-    ``invalid-secondary-aud`` module adds one and expects rejection. Returns an
-    error ``HTMLResponse`` when rejecting, else ``None``.
-    """
-    if not session.fapi2:
-        return None
-    aud_claim = claims.get("aud")
-    aud_values = aud_claim if isinstance(aud_claim, list) else [aud_claim]
-    untrusted = [a for a in aud_values if a != session.client_id]
-    if not untrusted:
-        return None
-    session.result["status"] = "error"
-    session.result["error"] = f"untrusted_audience: {untrusted}"
-    logger.error("REJECTED: id_token contains untrusted audience(s): %s", untrusted)
-    _store_test_result(session)
-    return HTMLResponse(
-        content=f"<h1>Untrusted Audience</h1><p>{html.escape(str(untrusted))}</p>",
-        status_code=400,
-    )
 
 
 def _fetch_fapi2_resource(
@@ -1552,8 +1530,12 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     if id_token_jwt:
         id_token_options, id_token_algorithms = _id_token_validation_params(session)
         try:
-            claims = validate_token(
-                jwt=id_token_jwt,
+            # validate_id_token adds the ID-Token profile on top of the base
+            # checks, including the rejection of audiences other than this
+            # client (OIDC Core §3.1.3.7 step 3) that the FAPI 2.0
+            # invalid-secondary-aud module exercises.
+            claims = validate_id_token(
+                id_token_jwt,
                 token_validation_config=TokenValidationConfig(
                     perform_disco=True,
                     audience=session.client_id,
@@ -1579,7 +1561,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
 
         logger.info(
             "ACCEPTED: id_token validated by py-identity-model "
-            "(signature, issuer, audience, expiry)"
+            "(signature, issuer, audience, expiry, ID-Token profile)"
         )
 
         # Validate nonce
@@ -1603,10 +1585,6 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
                 ),
                 status_code=400,
             )
-
-        aud_error = _validate_fapi2_audience(session, claims)
-        if aud_error is not None:
-            return aud_error
 
     # Fetch UserInfo (if endpoint is available and we have an access token)
     userinfo_result = _fetch_userinfo(

@@ -6,13 +6,23 @@
 //! make an ID Token an ID Token, on an already-decoded [`Claims`] set:
 //!
 //! * `sub` is REQUIRED and must be non-empty (§2 / §3.1.3.7).
-//! * `azp` authorized-party rules when the token carries multiple audiences
-//!   (§3.1.3.7 steps 4-6).
+//! * every `aud` value must be trusted by the client — its `client_id` or one
+//!   of the caller's
+//!   [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
+//!   (§3.1.3.7 step 3). With neither configured, any `aud` value is untrusted
+//!   (fail closed).
+//! * `azp` authorized-party rules, only when the caller opts in with
+//!   [`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)
+//!   (§3.1.3.7 steps 4-5; §2 says to ignore `azp` otherwise).
 //! * `nonce` binding, when the caller supplies the `nonce` it sent on the
 //!   authorization request (§3.1.3.7 step 11).
 //! * `auth_time` freshness against `max_age` (§3.1.3.7 step 12).
 //! * `at_hash` / `c_hash` token/code binding for the hybrid and
-//!   authorization-code flows (§3.3.2.11).
+//!   authorization-code flows (§3.3.2.11). A present hash claim must match. An
+//!   absent one is rejected unless the caller says the value did not come in
+//!   the same authorization response as the ID Token
+//!   (`access_token_issued_with_id_token(false)` /
+//!   `code_issued_with_id_token(false)`, §3.1.3.6 / §3.2.2.10 / §3.3.2.11).
 //!
 //! The `at_hash`/`c_hash` hash is chosen from the ID Token header `alg` — the
 //! *signature-verified* algorithm ([`super::parse_header_alg`]), never an
@@ -22,8 +32,8 @@
 //! ([`subtle::ConstantTimeEq`]).
 //!
 //! Behaviour is proven against the cross-language conformance IDs
-//! `IDT-001`..`IDT-011` in `spec/vectors/id-token.json`
-//! (`rust/tests/spec_conformance_id_token.rs`) — the same language-neutral
+//! `IDT-001`..`IDT-012` in `spec/vectors/id-token.json`
+//! (`rust/tests/it/conformance/id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
 //! This module positively validates the ID-Token profile; it deliberately does
@@ -85,23 +95,50 @@ const EDDSA_ALGS: &[&str] = &["EdDSA", "Ed25519"];
 ///
 /// Construct one with [`IdTokenValidationOptions::builder`]. Every field is
 /// optional: an empty options set enforces only the always-on rules (a
-/// non-empty `sub` and the `azp` authorized-party rules). Each remaining check
-/// runs only when its input is supplied — a `nonce`, an `access_token` (for
-/// `at_hash`), a `code` (for `c_hash`), or a `max_age` (for `auth_time`).
-#[derive(Clone, Debug, Default)]
+/// non-empty `sub` and every `aud` value trusted) — with no `client_id` and no
+/// trusted audiences configured, any `aud` value is untrusted, so set a
+/// `client_id` (or use [`validate_id_token`], which defaults it to the base
+/// audience). Each remaining check runs only when its input is supplied — `validate_azp(true)` (for the `azp`
+/// rules), a `nonce`, an `access_token` (for `at_hash`), a `code` (for
+/// `c_hash`), or a `max_age` (for `auth_time`).
+#[derive(Clone, Debug)]
 pub struct IdTokenValidationOptions {
     pub(crate) client_id: Option<String>,
+    pub(crate) trusted_audiences: Vec<String>,
+    pub(crate) validate_azp: bool,
     pub(crate) nonce: Option<String>,
     pub(crate) access_token: Option<String>,
+    pub(crate) access_token_issued_with_id_token: bool,
     pub(crate) code: Option<String>,
+    pub(crate) code_issued_with_id_token: bool,
     pub(crate) max_age: Option<i64>,
     pub(crate) leeway: Duration,
     pub(crate) now: Option<i64>,
 }
 
+impl Default for IdTokenValidationOptions {
+    fn default() -> Self {
+        Self {
+            client_id: None,
+            trusted_audiences: Vec::new(),
+            validate_azp: false,
+            nonce: None,
+            access_token: None,
+            // A supplied access token / code is taken to have come back with the
+            // ID Token, so its hash claim is required (§3.2.2.10, §3.3.2.11).
+            access_token_issued_with_id_token: true,
+            code: None,
+            code_issued_with_id_token: true,
+            max_age: None,
+            leeway: Duration::default(),
+            now: None,
+        }
+    }
+}
+
 impl IdTokenValidationOptions {
-    /// Returns an options set with every check disabled (only the always-on
-    /// `sub` and `azp` rules apply).
+    /// Returns an options set with every opt-in check disabled (only the
+    /// always-on `sub` and trusted-audience rules apply).
     pub fn new() -> Self {
         Self::default()
     }
@@ -124,11 +161,42 @@ impl IdTokenValidationOptionsBuilder {
         Self::default()
     }
 
-    /// Sets the relying party's `client_id`. When a present `azp` is validated
-    /// it MUST equal this value (§3.1.3.7 step 6). [`validate_id_token`]
+    /// Sets the relying party's `client_id`. It is always a trusted `aud`
+    /// value (§3.1.3.7 step 3), and with
+    /// [`validate_azp`](Self::validate_azp) a present `azp` must equal it.
+    /// [`validate_id_token`]
     /// defaults it to the base audience when unset.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.inner.client_id = Some(client_id.into());
+        self
+    }
+
+    /// Sets the additional audiences, besides the `client_id`, that this client
+    /// trusts to appear in the ID Token's `aud` (§3.1.3.7 step 3). Every `aud`
+    /// value MUST be the `client_id` or one of these, otherwise the token is
+    /// rejected with [`IdentityError::IdTokenUntrustedAudience`].
+    ///
+    /// The list only *adds* trusted values: an empty list (the default) trusts
+    /// the `client_id` alone, and nothing here can switch the check off.
+    /// Replaces any previously set list.
+    pub fn trusted_audiences<I, S>(mut self, audiences: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.inner.trusted_audiences = audiences.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Opts in to the authorized-party (`azp`) rules: a token with multiple
+    /// audiences must carry a non-empty `azp`, and a present `azp` must equal
+    /// the `client_id`. OIDC Core 1.0 errata set 2 makes neither a MUST —
+    /// §3.1.3.7 step 5 is a MAY/SHOULD, and the multiple-audience rule is the
+    /// Core 1.0 (2014) step-4 SHOULD that errata set 2 removed. Defaults to
+    /// `false`: `azp` is ignored, as §2 advises relying parties that use no
+    /// extensions.
+    pub fn validate_azp(mut self, validate_azp: bool) -> Self {
+        self.inner.validate_azp = validate_azp;
         self
     }
 
@@ -139,17 +207,42 @@ impl IdTokenValidationOptionsBuilder {
         self
     }
 
-    /// Requires the token's `at_hash` to be present and bind to `access_token`
-    /// (§3.3.2.11).
+    /// Requires the token's `at_hash` to match the left-half hash of
+    /// `access_token` (§3.3.2.11). The claim must also be present unless
+    /// [`access_token_issued_with_id_token`](Self::access_token_issued_with_id_token)
+    /// is `false`.
     pub fn access_token(mut self, access_token: impl Into<String>) -> Self {
         self.inner.access_token = Some(access_token.into());
         self
     }
 
-    /// Requires the token's `c_hash` to be present and bind to `code`, the
-    /// authorization code (§3.3.2.11).
+    /// States whether the [`access_token`](Self::access_token) came back in the
+    /// same authorization response as the ID Token (`response_type`
+    /// `id_token token` or `code id_token token`), which makes `at_hash`
+    /// REQUIRED (§3.2.2.10, §3.3.2.11). Defaults to `true`. Pass `false` for a
+    /// token-endpoint ID Token, which may omit `at_hash` (§3.1.3.6); a present
+    /// `at_hash` must still match. Has no effect without an access token.
+    pub fn access_token_issued_with_id_token(mut self, issued_with_id_token: bool) -> Self {
+        self.inner.access_token_issued_with_id_token = issued_with_id_token;
+        self
+    }
+
+    /// Requires the token's `c_hash` to match the left-half hash of `code`, the
+    /// authorization code (§3.3.2.11). The claim must also be present unless
+    /// [`code_issued_with_id_token`](Self::code_issued_with_id_token) is
+    /// `false`.
     pub fn code(mut self, code: impl Into<String>) -> Self {
         self.inner.code = Some(code.into());
+        self
+    }
+
+    /// States whether the [`code`](Self::code) came back in the same
+    /// authorization response as the ID Token (`response_type` `code id_token`
+    /// or `code id_token token`), which makes `c_hash` REQUIRED (§3.3.2.11).
+    /// Defaults to `true`. Pass `false` when it did not; a present `c_hash`
+    /// must still match. Has no effect without a code.
+    pub fn code_issued_with_id_token(mut self, issued_with_id_token: bool) -> Self {
+        self.inner.code_issued_with_id_token = issued_with_id_token;
         self
     }
 
@@ -246,6 +339,35 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
     value.as_f64().map(|f| f.trunc() as i64)
 }
 
+/// Enforces the opt-in authorized-party (`azp`) rules
+/// ([`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)).
+///
+/// The trusted Python oracle (`core/id_token_logic.py`) gates the
+/// multi-audience rule on `not azp`, whose truthiness treats an EMPTY-STRING
+/// `azp` identically to an absent one — so a multi-aud token carrying
+/// `azp: ""` is rejected, not accepted. The mismatch check keeps the oracle's
+/// `azp is not None` guard, so a present-but-empty `azp` is still compared
+/// against `client_id`.
+fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) -> Result<()> {
+    let azp = claims.authorized_party.as_deref();
+    let azp_present = azp.is_some_and(|value| !value.is_empty());
+    if audiences.len() > 1 && !azp_present {
+        // Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an `azp`.
+        return Err(IdentityError::IdTokenValidation(
+            "ID token with multiple audiences must contain an 'azp' claim".to_string(),
+        ));
+    }
+    if let (Some(azp), Some(client_id)) = (azp, client_id)
+        && azp != client_id
+    {
+        // Errata 2 step 5: a present `azp` identifies this client.
+        return Err(IdentityError::IdTokenValidation(
+            "ID token 'azp' claim does not match the configured client_id".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Validates the ID-Token-specific claim rules on an already-decoded claim set
 /// (OIDC Core §3.1.3.7 / §3.3.2.11).
 ///
@@ -262,9 +384,13 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
 ///
 /// # Errors
 ///
-/// [`IdentityError::IdTokenValidation`] when any ID-Token profile rule is
-/// violated. Fails **closed**: a hash check whose `header_alg` is missing or
-/// unmappable is an error, not a skipped check.
+/// - [`IdentityError::IdTokenUntrustedAudience`] when an `aud` value is
+///   neither the `client_id` nor one of the configured trusted audiences
+///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
+///   before the opt-in `azp` rules.
+/// - [`IdentityError::IdTokenValidation`] when any other ID-Token profile rule
+///   is violated. Fails **closed**: a hash check whose `header_alg` is missing
+///   or unmappable is an error, not a skipped check.
 pub fn validate_id_token_claims(
     claims: &Claims,
     header_alg: Option<&str>,
@@ -277,33 +403,26 @@ pub fn validate_id_token_claims(
         ));
     }
 
-    // §3.1.3.7 steps 4-6 — authorized-party (`azp`) rules.
-    //
-    // The trusted Python oracle (`core/id_token_logic.py`) gates the
-    // multi-audience "azp REQUIRED" rule on `not azp`, whose truthiness treats
-    // an EMPTY-STRING `azp` identically to an absent one — so a multi-aud token
-    // carrying `azp: ""` must be rejected, not accepted. Mirror that here (the
-    // previous `azp.is_none()` accepted `azp: ""`, a narrow fail-open). The
-    // subsequent mismatch check keeps the oracle's `azp is not None` guard, so a
-    // present-but-empty `azp` is still compared against `client_id`.
+    // §3.1.3.7 step 3 — reject additional audiences not trusted by the
+    // client. The trusted set is {client_id} ∪ trusted_audiences; the list
+    // only adds trusted values, so with neither configured every `aud` value
+    // is untrusted (fail closed). An absent `aud` has nothing to check.
     let audiences = claims.audience.values();
-    let azp = claims.authorized_party.as_deref();
-    let azp_present = azp.is_some_and(|value| !value.is_empty());
-    if audiences.len() > 1 && !azp_present {
-        // Step 4: with multiple audiences an `azp` claim MUST be present — an
-        // empty-string `azp` counts as absent, matching the oracle's `not azp`.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token with multiple audiences must contain an 'azp' claim".to_string(),
-        ));
+    let untrusted: Vec<String> = audiences
+        .iter()
+        .filter(|aud| {
+            options.client_id.as_deref() != Some(aud.as_str())
+                && !options.trusted_audiences.contains(aud)
+        })
+        .cloned()
+        .collect();
+    if !untrusted.is_empty() {
+        return Err(IdentityError::IdTokenUntrustedAudience(untrusted));
     }
-    if let (Some(azp), Some(client_id)) = (azp, options.client_id.as_deref())
-        && azp != client_id
-    {
-        // Step 6: a present `azp` (including an empty string, matching the
-        // oracle's `azp is not None`) MUST identify this client.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token 'azp' claim does not match the configured client_id".to_string(),
-        ));
+
+    // §3.1.3.7 steps 4-5 — authorized-party (`azp`) rules, opt-in only.
+    if options.validate_azp {
+        validate_azp(claims, audiences, options.client_id.as_deref())?;
     }
 
     // §3.1.3.7 step 11 — `nonce` binding (only when the caller passed one).
@@ -338,30 +457,62 @@ pub fn validate_id_token_claims(
 
     // §3.3.2.11 — `at_hash` binding (only when an access token was passed).
     if let Some(access_token) = options.access_token.as_deref() {
-        let expected = left_half_hash(access_token, header_alg)?;
-        let matches = claims
-            .get_str("at_hash")
-            .is_some_and(|actual| ct_eq(actual, &expected));
-        if !matches {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'at_hash' claim does not match the access token".to_string(),
-            ));
-        }
+        validate_hash_binding(
+            claims,
+            header_alg,
+            "at_hash",
+            "the access token",
+            access_token,
+            options.access_token_issued_with_id_token,
+        )?;
     }
 
     // §3.3.2.11 — `c_hash` binding (only when an authorization code was passed).
     if let Some(code) = options.code.as_deref() {
-        let expected = left_half_hash(code, header_alg)?;
-        let matches = claims
-            .get_str("c_hash")
-            .is_some_and(|actual| ct_eq(actual, &expected));
-        if !matches {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'c_hash' claim does not match the authorization code".to_string(),
-            ));
-        }
+        validate_hash_binding(
+            claims,
+            header_alg,
+            "c_hash",
+            "the authorization code",
+            code,
+            options.code_issued_with_id_token,
+        )?;
     }
 
+    Ok(())
+}
+
+/// Checks that the `claim` hash (`at_hash`/`c_hash`) binds to `value`
+/// (§3.3.2.11). Presence is required only when `value` came in the same
+/// authorization response as the ID Token (`required`, §3.2.2.10 /
+/// §3.3.2.11); otherwise an absent claim is accepted. A present claim must
+/// match whatever its type. Presence is checked before the hash is computed,
+/// so an absent, unrequired claim never consults the `alg`.
+fn validate_hash_binding(
+    claims: &Claims,
+    header_alg: Option<&str>,
+    claim: &str,
+    subject: &str,
+    value: &str,
+    required: bool,
+) -> Result<()> {
+    if !claims.has(claim) {
+        if required {
+            return Err(IdentityError::IdTokenValidation(format!(
+                "ID token missing required '{claim}' claim for {subject} issued with it"
+            )));
+        }
+        return Ok(());
+    }
+    let expected = left_half_hash(value, header_alg)?;
+    let matches = claims
+        .get_str(claim)
+        .is_some_and(|actual| ct_eq(actual, &expected));
+    if !matches {
+        return Err(IdentityError::IdTokenValidation(format!(
+            "ID token '{claim}' claim does not match {subject}"
+        )));
+    }
     Ok(())
 }
 
@@ -372,9 +523,11 @@ pub fn validate_id_token_claims(
 /// [`validate_token_with_jwks`](crate::validate_token_with_jwks) (signature
 /// resolved from `jwks`/`jwks_uri`, plus `iss`/`aud`/`iat`/`exp` per `base` —
 /// set `base` audience to the RP's `client_id` so the `aud` check is enforced),
-/// then applies the ID-Token profile from `profile`: required `sub`, the `azp`
-/// authorized-party rules, and the opt-in `nonce`/`max_age`/`at_hash`/`c_hash`
-/// bindings that are checked only when the corresponding option is supplied.
+/// then applies the ID-Token profile from `profile`: required `sub`, every
+/// `aud` value trusted (the `client_id` or a
+/// [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
+/// entry), and the opt-in `azp`/`nonce`/`max_age`/`at_hash`/`c_hash` checks,
+/// each run only when the corresponding option is supplied.
 ///
 /// When `profile.client_id` is unset it defaults to the `base` audience, so a
 /// caller that already set the audience need not repeat the `client_id`.
@@ -384,7 +537,12 @@ pub fn validate_id_token_claims(
 /// - [`IdentityError::Validation`] — standard JWT validation failed (bad
 ///   signature, wrong issuer/audience, expired token).
 /// - [`IdentityError::KeyNotFound`] — no JWKS key matched the token's `kid`.
-/// - [`IdentityError::IdTokenValidation`] — an ID-Token-profile rule failed.
+/// - [`IdentityError::AmbiguousKey`] — the token has no `kid` and more than
+///   one JWKS key could verify it.
+/// - [`IdentityError::IdTokenUntrustedAudience`] — the token's `aud` carries
+///   a value the client does not trust (§3.1.3.7 step 3).
+/// - [`IdentityError::IdTokenValidation`] — another ID-Token-profile rule
+///   failed.
 /// - the transport/parse errors of
 ///   [`validate_token_with_jwks`](crate::validate_token_with_jwks).
 pub async fn validate_id_token(
@@ -457,11 +615,170 @@ mod tests {
         );
     }
 
-    // IDT-003: multiple audiences REQUIRE an azp that identifies this client.
+    /// Asserts a rejection is an [`IdentityError::IdTokenUntrustedAudience`]
+    /// carrying exactly `expected` (in `aud` order).
+    fn assert_untrusted_audience(err: &IdentityError, expected: &[&str]) {
+        match err {
+            IdentityError::IdTokenUntrustedAudience(untrusted) => {
+                let expected: Vec<String> = expected.iter().map(|s| (*s).to_string()).collect();
+                assert_eq!(untrusted, &expected);
+            }
+            other => panic!("expected IdTokenUntrustedAudience, got {other:?}"),
+        }
+    }
+
+    // IDT-012: an additional audience the client does not trust is rejected
+    // (§3.1.3.7 step 3), carrying exactly the untrusted values.
+    #[test]
+    fn rejects_untrusted_additional_audience() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &cid).unwrap_err(),
+            &["other-client-9x"],
+        );
+
+        // Only the values outside the trusted set are reported.
+        let partly = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        let three = claims(json!({
+            "sub": "u",
+            "aud": ["s6BhdRkqt3", "other-client-9x", "unknown-api-7q"],
+            "azp": "s6BhdRkqt3"
+        }));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&three, Some("RS256"), &partly).unwrap_err(),
+            &["unknown-api-7q"],
+        );
+    }
+
+    // IDT-012: listing the additional audience as trusted accepts the token.
+    #[test]
+    fn accepts_trusted_additional_audience() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(vec!["other-client-9x".to_string()])
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        validate_id_token_claims(&c, Some("RS256"), &opts).expect("trusted extra aud validates");
+    }
+
+    // IDT-012: an empty trusted list adds nothing — it cannot switch the check
+    // off.
+    #[test]
+    fn empty_trusted_list_still_rejects() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(Vec::<String>::new())
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &opts).unwrap_err(),
+            &["other-client-9x"],
+        );
+    }
+
+    // With no client_id and no trusted list the trusted set is empty, so any
+    // aud value is untrusted (fail closed).
+    #[test]
+    fn no_client_id_and_no_trusted_list_fails_closed() {
+        let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &IdTokenValidationOptions::new())
+                .unwrap_err(),
+            &["s6BhdRkqt3"],
+        );
+        // An absent aud has nothing to check.
+        let no_aud = claims(json!({"sub": "u"}));
+        validate_id_token_claims(&no_aud, Some("RS256"), &IdTokenValidationOptions::new())
+            .expect("absent aud has nothing to check");
+    }
+
+    // IDT-012: a single audience equal to the client_id is unaffected, with or
+    // without a trusted list.
+    #[test]
+    fn single_audience_unchanged_by_trusted_list() {
+        let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        let plain = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        validate_id_token_claims(&c, Some("RS256"), &plain).expect("single aud validates");
+        let with_list = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        validate_id_token_claims(&c, Some("RS256"), &with_list)
+            .expect("single aud validates with a trusted list");
+    }
+
+    // IDT-012 ordering: step 3 runs before the azp rules, so a multi-aud token
+    // with no azp and an untrusted audience reports the untrusted audience.
+    #[test]
+    fn untrusted_audience_checked_before_azp() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .validate_azp(true)
+            .build();
+        let c = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &cid).unwrap_err(),
+            &["other-client-9x"],
+        );
+    }
+
+    // IDT-003: by default azp is ignored, so multiple audiences need no azp and
+    // a foreign azp is accepted. The second audience is trusted so step 3
+    // passes and only the azp rules are in play.
+    #[test]
+    fn ignores_azp_by_default() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+
+        let no_azp = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
+        validate_id_token_claims(&no_azp, Some("RS256"), &cid)
+            .expect("multi-aud without azp validates by default");
+
+        let wrong_azp = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "other-client-9x"}),
+        );
+        validate_id_token_claims(&wrong_azp, Some("RS256"), &cid)
+            .expect("multi-aud with a foreign azp validates by default");
+
+        // Google's Android-to-backend flow: aud is this client, azp the
+        // presenting mobile client.
+        let cross_client =
+            claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "android-client"}));
+        validate_id_token_claims(&cross_client, Some("RS256"), &cid)
+            .expect("cross-client azp validates by default");
+
+        let explicitly_off = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .validate_azp(false)
+            .build();
+        validate_id_token_claims(&cross_client, Some("RS256"), &explicitly_off)
+            .expect("cross-client azp validates with azp validation off");
+    }
+
+    // IDT-003 with `validate_azp(true)`: multiple audiences require an azp that
+    // identifies this client.
     #[test]
     fn enforces_azp_for_multiple_audiences() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .validate_azp(true)
             .build();
 
         let single_list = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3"]}));
@@ -489,9 +806,9 @@ mod tests {
             .expect("multi-aud with matching azp validates");
     }
 
-    // An empty-string `azp` must behave exactly like the Python oracle's
-    // `not azp` / `azp is not None` truthiness (F-1 parity), NOT like Rust's
-    // former `azp.is_none()`:
+    // With `validate_azp(true)`, an empty-string `azp` must behave exactly like
+    // the Python oracle's `not azp` / `azp is not None` truthiness (F-1
+    // parity), NOT like Rust's former `azp.is_none()`:
     //   * multi-aud + azp=""            -> azp_required_multi_aud (was fail-open
     //     accept when no client_id was configured);
     //   * multi-aud + azp="" + client_id -> still azp_required_multi_aud, since
@@ -499,19 +816,20 @@ mod tests {
     //   * single-aud + azp="" + client_id -> azp_mismatch (the oracle's mismatch
     //     guard is `azp is not None`, so a present empty string is compared);
     //   * single-aud + azp="" + no client_id -> accept (no client_id to compare).
+    // Every audience is listed as trusted so step 3 passes and the azp rules
+    // are what is exercised.
     #[test]
     fn empty_string_azp_matches_oracle_truthiness() {
         // multi-aud + azp="" with no configured client_id: the former
         // `azp.is_none()` accepted this; the oracle rejects it.
         let multi_empty =
             claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": ""}));
+        let trusted_no_cid = IdTokenValidationOptions::builder()
+            .trusted_audiences(["s6BhdRkqt3", "other-client-9x"])
+            .validate_azp(true)
+            .build();
         assert_id_token_reject(
-            &validate_id_token_claims(
-                &multi_empty,
-                Some("RS256"),
-                &IdTokenValidationOptions::new(),
-            )
-            .unwrap_err(),
+            &validate_id_token_claims(&multi_empty, Some("RS256"), &trusted_no_cid).unwrap_err(),
             "multiple audiences must contain an 'azp'",
         );
 
@@ -519,6 +837,8 @@ mod tests {
         // fires first (matching the oracle), not the mismatch check.
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .validate_azp(true)
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&multi_empty, Some("RS256"), &cid).unwrap_err(),
@@ -534,19 +854,17 @@ mod tests {
         );
 
         // single-aud + azp="" with NO client_id: nothing to compare, accept.
-        validate_id_token_claims(
-            &single_empty_cid,
-            Some("RS256"),
-            &IdTokenValidationOptions::new(),
-        )
-        .expect("empty azp on single audience with no client_id validates");
+        validate_id_token_claims(&single_empty_cid, Some("RS256"), &trusted_no_cid)
+            .expect("empty azp on single audience with no client_id validates");
     }
 
-    // IDT-004: a present azp is validated even for a single audience.
+    // IDT-004 with `validate_azp(true)`: a present azp is validated even for a
+    // single audience.
     #[test]
     fn validates_present_azp_for_single_audience() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .validate_azp(true)
             .build();
         let ok = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "s6BhdRkqt3"}));
         validate_id_token_claims(&ok, Some("RS256"), &cid).expect("matching azp validates");
@@ -564,11 +882,13 @@ mod tests {
         let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "nonce": "n-0S6_WzA2Mj"}));
         let matching = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .client_id("s6BhdRkqt3")
             .nonce("n-0S6_WzA2Mj")
             .build();
         validate_id_token_claims(&c, Some("RS256"), &matching).expect("matching nonce validates");
 
         let mismatch = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .nonce("a-different-nonce")
             .build();
         assert_id_token_reject(
@@ -588,6 +908,7 @@ mod tests {
     fn enforces_auth_time_freshness() {
         let within = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_999_900}));
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .now(1_700_000_000)
             .build();
@@ -596,6 +917,7 @@ mod tests {
         let leeway_case =
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_996_390}));
         let with_leeway = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .leeway(Duration::from_secs(60))
             .now(1_700_000_000)
@@ -622,6 +944,7 @@ mod tests {
     fn enforces_at_hash_rs256() {
         let access_token = "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU";
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token(access_token)
             .build();
 
@@ -636,14 +959,53 @@ mod tests {
             "'at_hash' claim does not match",
         );
 
+        // By default the access token is taken to have come back with the ID
+        // Token (§3.2.2.10, §3.3.2.11), so at_hash is required.
         let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &opts).unwrap_err(),
+            "missing required 'at_hash'",
+        );
+        let issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token(access_token)
+            .access_token_issued_with_id_token(true)
+            .build();
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
+            "missing required 'at_hash'",
+        );
+        validate_id_token_claims(&good, Some("RS256"), &issued_with)
+            .expect("required at_hash present and correct");
+        assert_id_token_reject(
+            &validate_id_token_claims(&bad, Some("RS256"), &issued_with).unwrap_err(),
             "'at_hash' claim does not match",
         );
 
+        // A token-endpoint ID Token may omit at_hash (§3.1.3.6).
+        let token_endpoint = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token(access_token)
+            .access_token_issued_with_id_token(false)
+            .build();
+        validate_id_token_claims(&absent, Some("RS256"), &token_endpoint)
+            .expect("absent at_hash accepted when not issued with the ID Token");
+
+        // A present at_hash must match whatever its type.
+        let null = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "at_hash": null}));
+        assert_id_token_reject(
+            &validate_id_token_claims(&null, Some("RS256"), &token_endpoint).unwrap_err(),
+            "'at_hash' claim does not match",
+        );
+
+        // With nothing to verify, an unmappable alg is never consulted.
+        validate_id_token_claims(&absent, Some("UNKNOWN"), &token_endpoint)
+            .expect("absent, unrequired at_hash skips the alg lookup");
+
         // No access_token supplied -> at_hash present but unchecked.
-        let unchecked = IdTokenValidationOptions::new();
+        let unchecked = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
         validate_id_token_claims(&good, Some("RS256"), &unchecked)
             .expect("at_hash unchecked without an access token");
     }
@@ -653,6 +1015,7 @@ mod tests {
     #[test]
     fn at_hash_hash_is_selected_by_alg() {
         let es512 = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("YmExYzZmZTgtZXM1MTItYWNjZXNzLXRva2VuLWV4YW1wbGU")
             .build();
         let good = claims(json!({
@@ -663,6 +1026,7 @@ mod tests {
 
         // An SHA-256-sized at_hash under an ES512 header must not validate.
         let sha256_sized = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU")
             .build();
         let mismatched =
@@ -678,6 +1042,7 @@ mod tests {
     #[test]
     fn enforces_c_hash() {
         let rs = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
             .build();
         let good =
@@ -692,6 +1057,7 @@ mod tests {
         );
 
         let es = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Y29kZS1lczUxMi1hdXRob3JpemF0aW9uLWNvZGUtZXhhbXBsZQ")
             .build();
         let es_good = claims(json!({
@@ -699,12 +1065,52 @@ mod tests {
             "c_hash": "5ZRO6ySh8Y5x73OPd63wcyIunjtbSNZh9sQvDCegRDY"
         }));
         validate_id_token_claims(&es_good, Some("ES512"), &es).expect("ES512 c_hash validates");
+
+        // c_hash presence is required by default, and only for a code issued
+        // with the ID Token.
+        let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &rs).unwrap_err(),
+            "missing required 'c_hash'",
+        );
+        let issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
+            .code_issued_with_id_token(true)
+            .build();
+        assert_id_token_reject(
+            &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
+            "missing required 'c_hash'",
+        );
+        validate_id_token_claims(&good, Some("RS256"), &issued_with)
+            .expect("required c_hash present and correct");
+        let not_issued_with = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
+            .code_issued_with_id_token(false)
+            .build();
+        validate_id_token_claims(&absent, Some("RS256"), &not_issued_with)
+            .expect("absent c_hash accepted when not issued with the ID Token");
+    }
+
+    // The issued-with-ID-Token switches only apply to a supplied value.
+    #[test]
+    fn issued_with_id_token_switches_need_their_value() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .access_token_issued_with_id_token(true)
+            .code_issued_with_id_token(true)
+            .build();
+        let bare = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        validate_id_token_claims(&bare, Some("RS256"), &opts)
+            .expect("switches without an access token or code are no-ops");
     }
 
     // IDT-011: an unknown or missing header alg on a hash check fails closed.
     #[test]
     fn hash_check_fails_closed_on_bad_alg() {
         let at = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU")
             .build();
         let with_at =
@@ -720,6 +1126,7 @@ mod tests {
         );
 
         let code = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
             .build();
         let with_code =
@@ -736,6 +1143,7 @@ mod tests {
     fn boolean_auth_time_is_not_numeric() {
         let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": true}));
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .now(1_700_000_000)
             .build();

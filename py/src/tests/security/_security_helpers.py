@@ -8,7 +8,7 @@ mint via ``encode``).
 import base64
 import json
 
-from ..unit.token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
 
 __all__ = ["generate_rsa_keypair", "sign_jwt", "unsigned_none_alg_jwt"]

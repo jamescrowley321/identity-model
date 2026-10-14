@@ -301,6 +301,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["ES256", "PS256"],
         )
@@ -312,6 +313,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["client_credentials"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["ES256"],
         )
@@ -324,6 +326,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["client_secret_basic"],
             id_token_signing_alg_values_supported=["ES256"],
         )
@@ -336,6 +339,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["RS256"],
         )
@@ -357,6 +361,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=None,
             id_token_signing_alg_values_supported=["ES256"],
         )
@@ -365,28 +370,38 @@ class TestValidateFAPIDiscovery:
         assert any("client_secret_basic" in v for v in result.violations)
 
     def test_none_signing_algs_non_compliant(self):
-        """OIDC Discovery §3 default is RS256 — FAPI-prohibited."""
+        """OIDC Discovery §3: REQUIRED, no RS256 (or any other) default."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=None,
         )
         result = validate_fapi_discovery(disco)
         assert result.is_compliant is False
-        assert any("RS256" in v for v in result.violations)
+        assert result.violations == [
+            "id_token_signing_alg_values_supported not advertised; "
+            "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+        ]
 
     def test_none_fields_non_compliant(self):
-        """Discovery with all None metadata is non-compliant due to RFC defaults."""
+        """All-None metadata: REQUIRED fields missing, auth default prohibited."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
         )
         result = validate_fapi_discovery(disco)
         assert result.is_compliant is False
-        assert any("client_secret_basic" in v for v in result.violations)
-        assert any("RS256" in v for v in result.violations)
+        assert result.violations == [
+            "response_types_supported not advertised; "
+            "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default",
+            "token_endpoint_auth_methods_supported not advertised; "
+            "RFC 8414 default is client_secret_basic, which FAPI 2.0 prohibits",
+            "id_token_signing_alg_values_supported not advertised; "
+            "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default",
+        ]
 
     def test_response_types_missing_code(self):
         disco = DiscoveryDocumentResponse(
@@ -401,8 +416,8 @@ class TestValidateFAPIDiscovery:
         assert result.is_compliant is False
         assert any("response type" in v for v in result.violations)
 
-    def test_response_types_none_is_compliant(self):
-        """OIDC Discovery default for response_types_supported is ['code'] — compliant."""
+    def test_response_types_none_is_non_compliant(self):
+        """OIDC Discovery §3: response_types_supported is REQUIRED, no default."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
@@ -412,13 +427,32 @@ class TestValidateFAPIDiscovery:
             id_token_signing_alg_values_supported=["ES256"],
         )
         result = validate_fapi_discovery(disco)
+        assert result.is_compliant is False
+        assert result.violations == [
+            "response_types_supported not advertised; "
+            "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+        ]
+
+    def test_grant_types_none_is_compliant(self):
+        """OIDC Discovery §3 default is ["authorization_code", "implicit"]."""
+        disco = DiscoveryDocumentResponse(
+            is_successful=True,
+            issuer="https://auth.example.com",
+            grant_types_supported=None,
+            response_types_supported=["code"],
+            token_endpoint_auth_methods_supported=["private_key_jwt"],
+            id_token_signing_alg_values_supported=["ES256"],
+        )
+        result = validate_fapi_discovery(disco)
         assert result.is_compliant is True
+        assert result.violations == []
 
     def test_pkce_methods_without_s256(self):
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["ES256"],
             code_challenge_methods_supported=["plain"],
@@ -432,6 +466,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["ES256"],
             code_challenge_methods_supported=["S256", "plain"],
@@ -445,6 +480,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["ES256"],
             code_challenge_methods_supported=None,
@@ -458,6 +494,7 @@ class TestValidateFAPIDiscovery:
             is_successful=True,
             issuer="https://auth.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["private_key_jwt"],
             id_token_signing_alg_values_supported=["RS256"],
         )
@@ -474,6 +511,7 @@ class TestValidateFAPIDiscoveryAuthMethods:
             is_successful=True,
             issuer="https://fapi.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["tls_client_auth"],
             id_token_signing_alg_values_supported=["PS256"],
         )
@@ -485,6 +523,7 @@ class TestValidateFAPIDiscoveryAuthMethods:
             is_successful=True,
             issuer="https://fapi.example.com",
             grant_types_supported=["authorization_code"],
+            response_types_supported=["code"],
             token_endpoint_auth_methods_supported=["self_signed_tls_client_auth"],
             id_token_signing_alg_values_supported=["ES256"],
         )

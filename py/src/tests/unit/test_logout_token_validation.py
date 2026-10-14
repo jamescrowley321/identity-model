@@ -27,7 +27,8 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
 )
 
-from .token_validation_helpers import (
+from ..constants import DISCO_URL
+from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
     sign_jwt,
@@ -36,7 +37,6 @@ from .token_validation_helpers import (
 
 _ISSUER = "https://example.com"
 _AUDIENCE = "client-123"
-_DISCO_ADDRESS = "https://example.com/.well-known/openid-configuration"
 
 
 @pytest.fixture
@@ -61,6 +61,7 @@ def _valid_logout_claims(**overrides) -> dict:
         "iss": _ISSUER,
         "aud": _AUDIENCE,
         "iat": int(time.time()),
+        "exp": int(time.time()) + 120,
         "jti": "logout-jti-1",
         "sub": "user-1",
         "events": {BACKCHANNEL_LOGOUT_EVENT: {}},
@@ -70,7 +71,7 @@ def _valid_logout_claims(**overrides) -> dict:
 
 
 def _mock_disco_and_jwks(key_dict: dict) -> None:
-    respx.get(_DISCO_ADDRESS).mock(
+    respx.get(DISCO_URL).mock(
         return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
     )
     respx.get("https://example.com/jwks").mock(
@@ -134,6 +135,13 @@ class TestPureLogoutClaimValidation:
         with pytest.raises(LogoutTokenValidationException, match=r"nonce"):
             validate_logout_token_claims(claims)
 
+    def test_missing_exp_rejected(self):
+        # Back-Channel Logout 1.0 errata 1 §2.4: ``exp`` is REQUIRED.
+        claims = _valid_logout_claims()
+        del claims["exp"]
+        with pytest.raises(LogoutTokenValidationException, match=r"'exp'"):
+            validate_logout_token_claims(claims)
+
     def test_missing_jti_rejected(self):
         # §2.4 step 2: ``jti`` is required.
         claims = _valid_logout_claims()
@@ -152,9 +160,7 @@ class TestSyncValidateLogoutToken:
         _mock_disco_and_jwks(key_dict)
         token = sign_jwt(pem, _valid_logout_claims(), headers={"kid": key_dict["kid"]})
 
-        claims = validate_logout_token(
-            token, _config(), disco_doc_address=_DISCO_ADDRESS
-        )
+        claims = validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
         assert claims["sub"] == "user-1"
         assert BACKCHANNEL_LOGOUT_EVENT in claims["events"]
@@ -171,21 +177,20 @@ class TestSyncValidateLogoutToken:
         )
 
         with pytest.raises(TokenExpiredException):
-            validate_logout_token(token, _config(), disco_doc_address=_DISCO_ADDRESS)
+            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @respx.mock
-    def test_logout_token_without_exp_accepted(self, rsa_keypair):
-        # §2.4: ``exp`` is not required; a valid token without it is accepted.
+    def test_logout_token_without_exp_rejected(self, rsa_keypair):
+        # Back-Channel Logout 1.0 errata 1 §2.4: ``exp`` is REQUIRED, so a
+        # validly signed token without it is rejected.
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
         claims = _valid_logout_claims()
-        assert "exp" not in claims
+        del claims["exp"]
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
-        decoded = validate_logout_token(
-            token, _config(), disco_doc_address=_DISCO_ADDRESS
-        )
-        assert decoded["jti"] == "logout-jti-1"
+        with pytest.raises(LogoutTokenValidationException, match=r"'exp'"):
+            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @respx.mock
     def test_signed_token_with_nonce_rejected_after_signature_check(self, rsa_keypair):
@@ -200,7 +205,7 @@ class TestSyncValidateLogoutToken:
         )
 
         with pytest.raises(LogoutTokenValidationException, match=r"nonce"):
-            validate_logout_token(token, _config(), disco_doc_address=_DISCO_ADDRESS)
+            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @respx.mock
     def test_signed_token_missing_events_rejected(self, rsa_keypair):
@@ -212,4 +217,4 @@ class TestSyncValidateLogoutToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(LogoutTokenValidationException, match=r"events"):
-            validate_logout_token(token, _config(), disco_doc_address=_DISCO_ADDRESS)
+            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)

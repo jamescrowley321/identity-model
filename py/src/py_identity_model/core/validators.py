@@ -78,19 +78,29 @@ def validate_https_url(url: str, parameter_name: str) -> None:
         )
 
 
-def validate_required_parameters(response_data: dict) -> None:
-    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3"""
-    required_params = [
-        "issuer",
-        "response_types_supported",
-        "subject_types_supported",
-        "id_token_signing_alg_values_supported",
-    ]
+_REQUIRED_PARAMETERS = (
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "response_types_supported",
+    "subject_types_supported",
+    "id_token_signing_alg_values_supported",
+)
 
+
+def validate_required_parameters(response_data: dict) -> None:
+    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3.
+
+    All seven REQUIRED fields are checked unconditionally. §3 exempts
+    ``token_endpoint`` when only the Implicit Flow is used; requiring it anyway
+    is library policy. A field that is absent, ``null``, ``""`` or ``[]`` is
+    missing, and every missing field is reported in spec order.
+    """
     missing_params = [
         param
-        for param in required_params
-        if param not in response_data or response_data[param] is None
+        for param in _REQUIRED_PARAMETERS
+        if response_data.get(param) in (None, "", [])
     ]
 
     if missing_params:

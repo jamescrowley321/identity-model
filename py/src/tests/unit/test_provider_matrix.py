@@ -20,11 +20,9 @@ if TYPE_CHECKING:
 def _load_provider_matrix() -> ModuleType:
     """Load the standalone provider_matrix script as a module."""
     try:
-        return importlib.import_module("tests.integration.provider_matrix")
+        return importlib.import_module("tests.harness.provider_matrix")
     except ImportError:
-        path = (
-            Path(__file__).resolve().parents[1] / "integration" / "provider_matrix.py"
-        )
+        path = Path(__file__).resolve().parents[1] / "harness" / "provider_matrix.py"
         spec = importlib.util.spec_from_file_location("provider_matrix", path)
         assert spec is not None
         assert spec.loader is not None

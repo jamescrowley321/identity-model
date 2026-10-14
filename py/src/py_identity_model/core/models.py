@@ -1153,7 +1153,10 @@ class UserInfoRequest(BaseRequest):
         expected_sub: Expected ``sub`` claim from the ID token for
             verification per OIDC Core 1.0 Section 5.3.4.  When provided,
             the ``sub`` in the UserInfo response is compared against this
-            value and a mismatch produces an error response.
+            value and a mismatch produces an error response.  A signed or
+            encrypted (``application/jwt``) response cannot be checked here,
+            so it also produces an error response; omit ``expected_sub`` to
+            receive the raw JWT, then verify it and compare its ``sub``.
         dpop_key: When set, the UserInfo request is DPoP-bound (RFC 9449): the
             access token is presented with ``Authorization: DPoP <token>`` and
             a resource-request DPoP proof (carrying the ``ath`` access-token

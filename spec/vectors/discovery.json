@@ -274,7 +274,7 @@
     {
       "id": "DISC-008",
       "title": "Handle missing required field",
-      "given": "A discovery document that omits one or more required fields",
+      "given": "A discovery document that omits one or more required fields, or leaves one empty",
       "when": "Field validation runs",
       "then": "A validation error is raised identifying the missing field(s)",
       "references": [
@@ -311,6 +311,44 @@
             "outcome": "reject",
             "error": "missing_fields",
             "fields": [
+              "token_endpoint",
+              "subject_types_supported"
+            ]
+          }
+        },
+        {
+          "name": "empty-required-arrays",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/empty-required-arrays.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "response_types_supported",
+              "subject_types_supported",
+              "id_token_signing_alg_values_supported"
+            ]
+          }
+        },
+        {
+          "name": "null-and-empty-string-required-fields",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/null-and-empty-string-required-fields.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "authorization_endpoint",
               "token_endpoint",
               "subject_types_supported"
             ]
@@ -380,5 +418,5 @@
       ]
     }
   ],
-  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, unexpected_status (with `status`), invalid_json, missing_fields (with `fields`, in required_fields order), https_required."
+  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, unexpected_status (with `status`), invalid_json, missing_fields (with `fields`, in required_fields order), https_required. A required string field that is null or \"\", or a required array field that is null or [], counts as missing. A required field of the wrong JSON type (e.g. jwks_uri: []) is unspecified (#890)."
 }

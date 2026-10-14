@@ -17,7 +17,7 @@ from ..core.models import (
     DiscoveryDocumentResponse,
     DiscoveryErrorKind,
 )
-from .http_client import get_http_client, retry_with_backoff
+from .http_client import get_default_http_client, retry_with_backoff
 from .managed_client import HTTPClient
 
 
@@ -27,7 +27,7 @@ def _fetch_discovery_document(client: httpx.Client, url: str) -> httpx.Response:
     Fetch discovery document with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's Config.
     """
     return client.get(url)
 
@@ -42,7 +42,7 @@ def get_discovery_document(
     Args:
         disco_doc_req: Discovery document request configuration
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            thread-local default.
+            library default client.
 
     Returns:
         DiscoveryDocumentResponse: Discovery document response
@@ -55,7 +55,7 @@ def get_discovery_document(
         policy = disco_doc_req.policy or DiscoveryPolicy()
         validate_url_scheme(disco_doc_req.address, policy)
 
-        client = http_client.client if http_client else get_http_client()
+        client = http_client if http_client is not None else get_default_http_client()
         response = _fetch_discovery_document(client, disco_doc_req.address)
         return process_discovery_response(
             response, policy, requested_address=disco_doc_req.address

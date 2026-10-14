@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from ..load.runner import LoadResult, evaluate_gates
-from ..load.scenarios import SCENARIOS_BY_ID
+from .runner import LoadResult, evaluate_gates
+from .scenarios import SCENARIOS_BY_ID
 
 
 pytestmark = pytest.mark.unit

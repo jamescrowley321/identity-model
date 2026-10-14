@@ -10,7 +10,8 @@ PyIdentityModelException
 │       ├── SignatureVerificationException
 │       ├── TokenExpiredException
 │       ├── InvalidAudienceException
-│       └── InvalidIssuerException
+│       ├── InvalidIssuerException
+│       └── AmbiguousKeyException
 ├── NetworkException
 │   ├── DiscoveryException
 │   ├── JwksException
@@ -40,6 +41,8 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.InvalidAudienceException
 
 ::: py_identity_model.exceptions.InvalidIssuerException
+
+::: py_identity_model.exceptions.AmbiguousKeyException
 
 ## Network Exceptions
 

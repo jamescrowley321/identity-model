@@ -123,6 +123,19 @@ def test_policy_cannot_disable_the_match(validate_issuer):
     )
 
 
+@pytest.mark.parametrize("issuer", [5, ["https://server.example.com"]])
+def test_non_string_issuer_is_a_mismatch(issuer):
+    document = _document("https://server.example.com") | {"issuer": issuer}
+    response = httpx.Response(200, json=document)
+
+    with pytest.raises(DiscoveryIssuerMismatchError):
+        validate_and_parse_discovery_response(
+            response,
+            DiscoveryPolicy(validate_issuer=False, validate_endpoints=False),
+            requested_address="https://server.example.com" + WELL_KNOWN,
+        )
+
+
 def _redirect_to_attacker(request: httpx.Request) -> httpx.Response:
     if request.url.host == "server.example.com":
         return httpx.Response(302, headers={"Location": ATTACKER + WELL_KNOWN})

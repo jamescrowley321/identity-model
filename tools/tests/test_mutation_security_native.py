@@ -71,6 +71,9 @@ def test_parse_changed_lines_pure_deletion_marks_anchor_line():
 
 _GO_ENTRY = "pkg/jwt/claims_validation.go:106:18:CONDITIONALS_NEGATION"
 _RS_ENTRY = "src/jwt/claims_validation.rs:combine_claims_validators"
+# cargo-mutants names trait-impl methods with spaces.
+_RS_SPACED_FN = "<impl Drop for Guard>::drop"
+_RS_SPACED_ENTRY = f"src/jwt/claims_validation.rs:{_RS_SPACED_FN}"
 _HASH = "0123456789abcdef"
 
 
@@ -101,6 +104,33 @@ def test_load_allowlist_rust_keys_on_file_function_hash():
 def test_load_allowlist_rejects_malformed_entries(entry):
     with pytest.raises(ValueError, match="malformed entry"):
         gate.load_allowlist(entry, "go", gate.parse_go_waiver_name)
+
+
+def test_load_allowlist_rust_accepts_a_function_name_with_spaces():
+    text = f"{_RS_SPACED_ENTRY} {_HASH}  # justification\n"
+    assert gate.load_allowlist(text, "rust", gate.parse_rust_waiver_name) == {
+        ("src/jwt/claims_validation.rs", _RS_SPACED_FN, _HASH)
+    }
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        f"{_RS_SPACED_ENTRY}",  # spaced name, no hash
+        f"{_RS_SPACED_ENTRY} deadbeef",  # hash too short
+        f"{_RS_SPACED_ENTRY} {_HASH} extra",  # trailing field
+    ],
+)
+def test_load_allowlist_rust_spaced_name_still_fails_closed(entry):
+    with pytest.raises(ValueError, match="malformed entry"):
+        gate.load_allowlist(entry, "rust", gate.parse_rust_waiver_name)
+
+
+def test_load_allowlist_go_rejects_a_field_between_name_and_hash():
+    with pytest.raises(ValueError, match="malformed entry"):
+        gate.load_allowlist(
+            f"{_GO_ENTRY} extra {_HASH}", "go", gate.parse_go_waiver_name
+        )
 
 
 def test_load_allowlist_rust_rejects_unparseable_name():
@@ -804,3 +834,16 @@ def test_evaluate_rust_unenumerated_mutant_cannot_be_waived():
     assert unwaived == [
         "ghost: MissedMutant  [outside the gate's enumeration — cannot be waived]"
     ]
+
+
+def test_evaluate_rust_spaced_name_waiver_line_round_trips():
+    info = {"m": _rs_mutant("m", 1, 1, function=_RS_SPACED_FN)}
+    unwaived, _ = gate.evaluate_rust({"m": "MissedMutant"}, info, set())
+    printed = unwaived[0].split("[waiver line: ", 1)[1].removesuffix("]")
+
+    waivers = gate.load_allowlist(
+        f"{printed}  # justification\n", "rust", gate.parse_rust_waiver_name
+    )
+    unwaived, waived = gate.evaluate_rust({"m": "MissedMutant"}, info, waivers)
+    assert unwaived == []
+    assert waived == ["m: MissedMutant"]

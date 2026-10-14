@@ -23,6 +23,8 @@ from py_identity_model.exceptions import (
     DiscoveryException,
 )
 
+from ..constants import DISCO_URL
+
 
 class TestDiscoveryValidationFunctions:
     """Test the new validation functions for Discovery compliance"""
@@ -123,6 +125,9 @@ class TestDiscoveryValidationFunctions:
         """Test that validation passes when all required parameters are present"""
         valid_data = {
             "issuer": "https://example.com",
+            "authorization_endpoint": "https://example.com/auth",
+            "token_endpoint": "https://example.com/token",
+            "jwks_uri": "https://example.com/jwks",
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
@@ -206,7 +211,7 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_validates_required_parameters(self):
         """Test that discovery document validation catches missing required parameters"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -229,13 +234,15 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_validates_issuer_format(self):
         """Test that discovery document validation catches invalid issuer format"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
                 json={
                     "issuer": "http://example.com?query=param",  # Invalid issuer
                     "jwks_uri": "https://example.com/jwks",
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["public"],
                     "id_token_signing_alg_values_supported": ["RS256"],
@@ -254,13 +261,15 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_validates_parameter_values(self):
         """Test that discovery document validation catches invalid parameter values"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
                 json={
                     "issuer": "https://example.com",
                     "jwks_uri": "https://example.com/jwks",
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["invalid_subject_type"],  # Invalid
                     "id_token_signing_alg_values_supported": ["RS256"],
@@ -279,13 +288,15 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_validates_endpoint_urls(self):
         """Test that discovery document validation catches invalid endpoint URLs"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
                 json={
                     "issuer": "https://example.com",
                     "jwks_uri": "not-a-valid-url",  # Invalid URL
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["public"],
                     "id_token_signing_alg_values_supported": ["RS256"],
@@ -304,7 +315,7 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_handles_network_errors(self):
         """Test that discovery document handles network errors properly"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(side_effect=httpx.ConnectError("Network error"))
 
         request = DiscoveryDocumentRequest(address=url)
@@ -317,7 +328,7 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_handles_invalid_json(self):
         """Test that discovery document handles invalid JSON responses"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -336,7 +347,7 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_validates_content_type(self):
         """Test that discovery document validates content type"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
@@ -354,7 +365,7 @@ class TestDiscoveryComplianceIntegration:
     @respx.mock
     def test_discovery_success_with_valid_data(self):
         """Test that discovery document succeeds with valid, compliant data"""
-        url = "https://example.com/.well-known/openid-configuration"
+        url = DISCO_URL
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,

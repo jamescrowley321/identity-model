@@ -7,6 +7,9 @@
 #     <file>:<function> <16-hex content hash>   # justification
 #
 # e.g. `src/jwt/claims_validation.rs:combine_claims_validators a1b2c3d4e5f60718`.
+# The hash is the last field and the name is everything before it, so a
+# function name with spaces (`src/x.rs:<impl Drop for Guard>::drop <hash>`)
+# is pasted as-is.
 # A failing gate run prints the exact `<name> <hash>` line to paste for each
 # survivor, so the hash never needs computing by hand.
 #
@@ -23,3 +26,9 @@
 # re-authored. A name with no hash is a hard error, never a silent pass.
 #
 # Every entry weakens the gate, so keep the justification concrete and specific.
+
+# resolve_kidless: `candidates.len() > 1` -> `>= 1` only adds the alg/kty
+# narrowing for a one-key set, and `narrow` returns its input unchanged when
+# the filter would empty it, so a single candidate stays the same single
+# candidate (and an empty set stays empty). Same result for every input.
+src/jwks/key.rs:JsonWebKeySet::resolve_kidless 122c9de7bc970344

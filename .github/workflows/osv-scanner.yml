@@ -1,7 +1,6 @@
 name: OSV-Scanner
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   schedule:

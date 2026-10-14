@@ -54,6 +54,55 @@ pub(crate) fn no_redirect_client() -> Client {
         .expect("build identity-model non-redirecting HTTP client")
 }
 
+/// Returns a [`reqwest::ClientBuilder`] carrying this crate's redirect hardening,
+/// so a caller who needs their own client does not silently lose it.
+///
+/// Supplying a client to `TokenClientBuilder::http_client` (or the discovery and
+/// JWKS equivalents) *replaces* the hardened default, including the `https` →
+/// `http` redirect refusal. That matters most on the token request, which carries
+/// the client secret: an authorization server answering `307 Location:
+/// http://issuer/token` would otherwise be followed, and because the host is
+/// unchanged reqwest does not strip the `Authorization` header. `allow_http(false)`
+/// does not cover this — it validates the configured endpoint scheme, never a
+/// redirect target.
+///
+/// Start from this builder whenever you need to add default headers — attaching a
+/// DPoP proof, say — and you keep the defence. This builder also refuses a
+/// redirect to a different origin (scheme, host, or port): reqwest forwards
+/// default headers such as `DPoP` to the redirect target, and a 307/308 replays
+/// the request body with them, which on the `client_secret_post` path includes
+/// the client secret.
+///
+/// ```no_run
+/// # use reqwest::header::{HeaderMap, HeaderValue};
+/// let mut headers = HeaderMap::new();
+/// headers.insert("DPoP", HeaderValue::from_static("..."));
+/// let http = rs_identity_model::secure_client_builder()
+///     .default_headers(headers)
+///     .build()?;
+/// # Ok::<(), reqwest::Error>(())
+/// ```
+pub fn secure_client_builder() -> reqwest::ClientBuilder {
+    Client::builder().redirect(same_origin_policy())
+}
+
+/// [`no_downgrade_policy`] that also refuses a hop to a different origin, for
+/// clients carrying caller-supplied default headers.
+fn same_origin_policy() -> Policy {
+    Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error(RedirectBlocked::TooManyRedirects);
+        }
+        if is_tls_downgrade(attempt.previous(), attempt.url()) {
+            return attempt.error(RedirectBlocked::TlsDowngrade);
+        }
+        if is_cross_origin(attempt.previous(), attempt.url()) {
+            return attempt.error(RedirectBlocked::CrossOrigin);
+        }
+        attempt.follow()
+    })
+}
+
 /// A redirect policy that refuses an `https` → `http` downgrade and bounds the
 /// redirect chain to [`MAX_REDIRECTS`] hops.
 fn no_downgrade_policy() -> Policy {
@@ -75,6 +124,12 @@ fn is_tls_downgrade(previous: &[Url], next: &Url) -> bool {
     matches!(previous.last(), Some(prev) if prev.scheme() == "https" && next.scheme() == "http")
 }
 
+/// Reports whether `next` has a different origin (scheme, host, or port) from
+/// the most recent URL in `previous`.
+fn is_cross_origin(previous: &[Url], next: &Url) -> bool {
+    matches!(previous.last(), Some(prev) if prev.origin() != next.origin())
+}
+
 /// Why the redirect policy refused to follow a hop. Surfaced to the caller as
 /// the source of the resulting `reqwest` error.
 #[derive(Debug)]
@@ -83,6 +138,8 @@ enum RedirectBlocked {
     TlsDowngrade,
     /// The redirect chain exceeded [`MAX_REDIRECTS`] hops.
     TooManyRedirects,
+    /// The redirect target is on a different origin.
+    CrossOrigin,
 }
 
 impl fmt::Display for RedirectBlocked {
@@ -92,6 +149,9 @@ impl fmt::Display for RedirectBlocked {
                 f.write_str("refusing to follow an https->http redirect (TLS downgrade)")
             }
             Self::TooManyRedirects => write!(f, "too many redirects (limit {MAX_REDIRECTS})"),
+            Self::CrossOrigin => f.write_str(
+                "refusing to follow a redirect to another origin with caller-supplied headers",
+            ),
         }
     }
 }
@@ -129,6 +189,24 @@ mod tests {
         assert!(!is_tls_downgrade(&http, &url("http://localhost/b")));
         // http -> https is an upgrade, never blocked.
         assert!(!is_tls_downgrade(&http, &url("https://localhost/b")));
+    }
+
+    // A different host, scheme, or port is another origin; a path change is not.
+    #[test]
+    fn detects_cross_origin_hops() {
+        let previous = [url("https://issuer.example.com/token")];
+        for other in [
+            "https://attacker.example/t",
+            "http://issuer.example.com/token",
+            "https://issuer.example.com:8443/token",
+        ] {
+            assert!(is_cross_origin(&previous, &url(other)), "{other}");
+        }
+        assert!(!is_cross_origin(
+            &previous,
+            &url("https://issuer.example.com/other")
+        ));
+        assert!(!is_cross_origin(&[], &url("https://attacker.example/t")));
     }
 
     // With no prior hop there is nothing to downgrade from.
@@ -172,5 +250,48 @@ mod tests {
             .expect("request succeeds");
         assert_eq!(resp.status(), 200);
         assert_eq!(resp.text().await.unwrap(), "ok");
+
+        // The public builder carries caller headers, so it refuses the same hop:
+        // the two mock servers listen on different ports, a different origin.
+        let err = secure_client_builder()
+            .build()
+            .expect("build client")
+            .get(format!("{}/start", start.uri()))
+            .send()
+            .await
+            .expect_err("a cross-origin redirect is refused");
+        assert!(err.is_redirect(), "{err:?}");
+        assert!(
+            err.source()
+                .and_then(|source| source.downcast_ref::<RedirectBlocked>())
+                .is_some_and(|blocked| matches!(blocked, RedirectBlocked::CrossOrigin)),
+            "{err:?}"
+        );
+        assert!(
+            RedirectBlocked::CrossOrigin
+                .to_string()
+                .contains("redirect to another origin"),
+            "{err:?}"
+        );
+
+        // A same-origin hop is still followed.
+        Mock::given(method("GET"))
+            .and(path("/moved"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/here"))
+            .mount(&dest)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/here"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&dest)
+            .await;
+        let resp = secure_client_builder()
+            .build()
+            .expect("build client")
+            .get(format!("{}/moved", dest.uri()))
+            .send()
+            .await
+            .expect("same-origin redirect");
+        assert_eq!(resp.status(), 200);
     }
 }
