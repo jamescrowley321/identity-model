@@ -84,6 +84,9 @@ class TestSyncDiscoAlgorithmAllowlist:
         with pytest.raises(TokenValidationException) as exc_info:
             sync_tv.validate_token(token, _config(allowed), DISCO_URL)
 
+        assert exc_info.value.message == (
+            "Algorithm 'RS256' is not in the allowed algorithms"
+        )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {"alg": "RS256", "allowed": allowed}
 
@@ -99,6 +102,9 @@ class TestSyncDiscoAlgorithmAllowlist:
         with pytest.raises(TokenValidationException) as exc_info:
             sync_tv._retry_with_refreshed_jwks(token, _config(allowed), disco)
 
+        assert exc_info.value.message == (
+            "Algorithm 'RS256' is not in the allowed algorithms"
+        )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {"alg": "RS256", "allowed": allowed}
 
@@ -137,6 +143,9 @@ class TestAsyncDiscoAlgorithmAllowlist:
         with pytest.raises(TokenValidationException) as exc_info:
             await aio_tv.validate_token(token, _config(allowed), DISCO_URL)
 
+        assert exc_info.value.message == (
+            "Algorithm 'RS256' is not in the allowed algorithms"
+        )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {"alg": "RS256", "allowed": allowed}
 
@@ -155,6 +164,9 @@ class TestAsyncDiscoAlgorithmAllowlist:
         with pytest.raises(TokenValidationException) as exc_info:
             await aio_tv._retry_with_refreshed_jwks(token, _config(allowed), disco)
 
+        assert exc_info.value.message == (
+            "Algorithm 'RS256' is not in the allowed algorithms"
+        )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {"alg": "RS256", "allowed": allowed}
 
