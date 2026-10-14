@@ -1033,6 +1033,29 @@
           }
         },
         {
+          "name": "code not issued with the ID Token, c_hash does not match",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "c_hash": "DyAleB7ctGQvU9M3DbMBYQ",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_mismatch"
+          }
+        },
+        {
           "name": "code issued with the ID Token, c_hash absent",
           "input": {
             "claims": {
