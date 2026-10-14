@@ -129,7 +129,7 @@ wrap an `httpx.Client(trust_env=False)`.
 ### mTLS requests never go through a caller-owned client ([#895](https://github.com/jamescrowley321/identity-model/pull/895))
 
 In 4.x a request with `mtls=` and an `http_client=` raised `ValueError`. In
-5.0 the pair is accepted: the request goes through a short-lived client that
+5.0 the pair is accepted when `http_client` is built from a `Config`: the request goes through a short-lived client that
 presents the certificate, built from your `http_client`'s `Config`
 (`ca_bundle`, `http_timeout`, retries). The request never uses your client's
 own httpx connection pool, transport or TLS settings, because a pooled client
@@ -152,10 +152,11 @@ with HTTPClient(config=Config(ca_bundle="/etc/ssl/private-ca.pem")) as http_clie
     response = request_client_credentials_token(request, http_client=http_client)
 ```
 
-If you relied on a wrapped `httpx.Client` for mTLS traffic (for example
-`verify=False` against a test provider), that client's settings no longer
-apply to the mTLS request. Set `ca_bundle` on the `Config` instead. See
-[Mutual TLS](api/mtls.md).
+This works only with an `HTTPClient` built from a `Config`. An `HTTPClient`
+that wraps your own `httpx.Client` still raises `ValueError` when combined
+with `mtls=`, because that client's TLS settings (a pinned CA, a proxy, a
+custom transport) cannot be carried over to the certificate client. Set
+`ca_bundle` on the `Config` instead. See [Mutual TLS](api/mtls.md).
 
 ### FastAPI: `OIDCSettings.from_env` is a separate helper ([#899](https://github.com/jamescrowley321/identity-model/pull/899))
 
