@@ -448,7 +448,7 @@ class DiscoveryErrorKind(Enum):
     UNEXPECTED_STATUS = "unexpected_status"
     """The endpoint returned a non-success HTTP status; see ``status_code``."""
     INVALID_JSON = "invalid_json"
-    """The response body could not be decoded as JSON."""
+    """The response body could not be decoded as a JSON object."""
     MISSING_FIELDS = "missing_fields"
     """A required-field check failed; see ``missing_fields``."""
     HTTPS_REQUIRED = "https_required"
