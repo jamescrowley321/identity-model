@@ -97,8 +97,9 @@ def test_each_falsy_field_is_reported(field, falsy):
     "body", NON_OBJECT_BODIES.values(), ids=NON_OBJECT_BODIES.keys()
 )
 def test_non_object_document_is_a_parse_error(body):
-    with pytest.raises(DiscoveryParseError, match="must be a JSON object"):
+    with pytest.raises(DiscoveryParseError) as exc_info:
         validate_required_parameters(body)  # type: ignore[arg-type]
+    assert str(exc_info.value) == "Discovery document must be a JSON object"
 
 
 async def _discover(body: str, asynchronous: bool):
