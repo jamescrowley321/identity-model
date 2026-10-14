@@ -6,10 +6,12 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
 §3.3.2.11 on top:
 
 - **`sub`** — required and non-empty, always.
-- **`aud`** — every audience must be your `client_id` or one you list in
-  `trusted_audiences=`, always (§3.1.3.7 step 3). The list only adds trusted
-  audiences; it cannot turn the check off. A single-audience token equal to
-  your `client_id` needs no list.
+- **`aud`** — required, always (§2): a token with no audience is rejected even
+  without a `client_id`. Every audience must be your `client_id` or one you
+  list in `trusted_audiences=`, always (§3.1.3.7 step 3). The list only adds
+  trusted audiences; it cannot turn the check off, and it must be a list, not
+  a single string. A single-audience token equal to your `client_id` needs no
+  list.
 - **`azp`** — a multi-audience token must carry `azp`, and a present `azp`
   must equal your `client_id` (taken from `token_validation_config.audience`).
 - **`nonce`** — when you pass `nonce=`, the claim must be present and equal

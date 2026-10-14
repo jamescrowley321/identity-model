@@ -526,10 +526,52 @@ class TestUntrustedAudiences:
                 now=_NOW,
             )
 
-    def test_absent_audience_has_nothing_to_reject(self):
+    @pytest.mark.parametrize("client_id", [_AUDIENCE, None], ids=["client", "none"])
+    def test_absent_audience_rejected(self, client_id):
+        # §2: aud is REQUIRED, with or without a configured client_id.
         claims = _valid_id_claims()
         del claims["aud"]
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token_claims(claims, "RS256", client_id=client_id, now=_NOW)
+
+    @pytest.mark.parametrize(
+        "aud",
+        [None, "", [], [""], ("", "")],
+        ids=["null", "empty-str", "empty-list", "list-of-empty", "tuple-of-empty"],
+    )
+    def test_empty_audience_rejected(self, aud):
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token_claims(
+                _valid_id_claims(aud=aud), "RS256", client_id=_AUDIENCE, now=_NOW
+            )
+
+    def test_missing_audience_is_not_an_untrusted_audience(self):
+        claims = _valid_id_claims(aud=[])
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert not isinstance(exc_info.value, UntrustedAudienceException)
+
+    def test_empty_string_beside_a_real_audience_is_untrusted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, ""], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [""]}
+
+    @respx.mock
+    def test_sync_wrapper_rejects_absent_audience_without_client_id(self, rsa_keypair):
+        # Base validation with no configured audience does not require aud,
+        # so the profile is what rejects the token.
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        claims = _valid_id_claims()
+        del claims["aud"]
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+        config = TokenValidationConfig(
+            perform_disco=True, audience=None, issuer=_ISSUER
+        )
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token(token, config, disco_doc_address=DISCO_URL)
 
     @respx.mock
     def test_sync_wrapper_rejects_untrusted_audience(self, rsa_keypair):

@@ -150,7 +150,11 @@ def _reject_untrusted_audiences(
     sole trusted audience, so nothing here can switch the check off. With no
     ``client_id`` and no list, every audience is untrusted (fail closed).
 
+    ``aud`` is REQUIRED (§2): a token whose ``aud`` is absent, ``null``, or
+    holds only empty strings names no audience and is rejected first.
+
     Raises:
+        IdTokenValidationException: If the token names no audience.
         ConfigurationException: If ``trusted_audiences`` is a bare ``str`` or
             ``bytes``, which would otherwise iterate as single characters.
     """
@@ -161,8 +165,15 @@ def _reject_untrusted_audiences(
         )
     aud = claims.get("aud")
     if aud is None:
-        return
-    audiences = list(aud) if isinstance(aud, (list, tuple)) else [aud]
+        audiences = []
+    elif isinstance(aud, (list, tuple)):
+        audiences = list(aud)
+    else:
+        audiences = [aud]
+    if all(a == "" for a in audiences):
+        raise IdTokenValidationException(
+            "ID token missing required 'aud' claim", token_part="payload"
+        )
     trusted = set(trusted_audiences or ())
     if client_id is not None:
         trusted.add(client_id)
@@ -225,7 +236,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             ``bytes`` instead of an iterable of audiences.
         UntrustedAudienceException: If ``aud`` carries a value that is neither
             ``client_id`` nor in ``trusted_audiences`` (§3.1.3.7 step 3).
-        IdTokenValidationException: If any other ID-Token profile rule is
+        IdTokenValidationException: If ``aud`` is absent, ``null`` or holds
+            only empty strings (§2), or any other ID-Token profile rule is
             violated.
     """
     # §2 / §3.1.3.7 — ``sub`` is REQUIRED and must be non-empty.
