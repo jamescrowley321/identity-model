@@ -108,7 +108,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 - The response MUST contain the required metadata fields: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported` ([§3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)). A required string field that is null or `""`, or a required array field that is null or `[]`, counts as missing, and every missing field MUST be reported, in this order (DISC-008). How a required field of the wrong JSON type (e.g. `jwks_uri: []`) is classified is unspecified ([#890](https://github.com/jamescrowley321/identity-model/issues/890)). §3 makes `token_endpoint` REQUIRED "unless only the Implicit Flow is used"; requiring it unconditionally is deliberate library policy. No configuration option relaxes any of these fields.
 - The `issuer` in the response MUST exactly match the requested issuer ([§4.3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationValidation)); a mismatch MUST error.
 - Implementations MUST cache the parsed document with a configurable TTL. A cache hit MUST NOT make a network request; after TTL expiry the next call MUST re-fetch.
-- Implementations MUST surface distinct, typed errors for transport failures, non-JSON bodies, and missing required fields. Unknown extra fields MUST be ignored, not rejected.
+- Implementations MUST surface distinct, typed errors for transport failures, non-JSON bodies (including a JSON value that is not an object, DISC-007), and missing required fields. Unknown extra fields MUST be ignored, not rejected.
 
 ### JWKS Retrieval + Caching
 
