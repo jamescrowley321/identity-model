@@ -290,12 +290,10 @@ def _client_credentials_call(base: str, inp: dict) -> Any:
         scope=" ".join(inp["scopes"]) if "scopes" in inp else None,
         **kwargs,
     )
-    http_client = None
-    if "http_client_headers" in inp:
-        http_client = HTTPClient(
-            client=httpx.Client(headers=inp["http_client_headers"])
-        )
-    return request_client_credentials_token(request, http_client)
+    if "http_client_headers" not in inp:
+        return request_client_credentials_token(request)
+    with httpx.Client(headers=inp["http_client_headers"]) as raw:
+        return request_client_credentials_token(request, HTTPClient(client=raw))
 
 
 def _client_credentials_expect(case_id: str, expect: dict, response: Any) -> None:
