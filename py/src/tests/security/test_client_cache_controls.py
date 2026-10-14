@@ -19,6 +19,10 @@ could silently break:
   the lock refresh LRU recency (#397).
 * **TTL.** A provider's ``Cache-Control: max-age`` sets the entry TTL ahead
   of the client's ``Config`` default.
+* **Refresh coalescing.** A kid-miss refresh that waited on the fetch lock
+  while another refresh replaced the stale entry returns that entry instead
+  of fetching again, and an entry written at the waiter's own lock-time
+  instant counts as fresh.
 """
 
 from __future__ import annotations
@@ -259,6 +263,120 @@ class TestAsyncRefreshThroughInjectedClient:
             assert client.caches.kid_miss_last_attempt == {}
             assert list(client.caches.jwks) == [JWKS_URI]
         assert dict(get_default_async_http_client().caches.jwks) == {}
+
+
+# ============================================================================
+# Kid-miss refresh coalescing
+# ============================================================================
+
+COALESCED_REQUESTS = [JWKS_URI, f"{ORIGIN}{DISCO_PATH}", JWKS_URI]
+FROZEN_NOW = 1000.0
+
+
+def _frozen_clock() -> Any:
+    return Mock(monotonic=Mock(return_value=FROZEN_NOW))
+
+
+class TestSyncKidMissRefreshCoalescing:
+    def test_waiter_returns_the_refresh_that_replaced_its_stale_entry(
+        self, monkeypatch
+    ):
+        """Another refresh completes while this kid-miss refresh waits on
+        the fetch lock: the waiter uses it and makes no upstream request."""
+        upstream = _Upstream(KID_MISS_BODIES)
+        with upstream.client() as client:
+            sync_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client)
+            caches = client.caches
+            real_lock_for = caches.jwks_fetch_lock
+            raced: list[str] = []
+
+            def lock_after_another_refresh(uri: str) -> threading.Lock:
+                if not raced:
+                    raced.append(uri)
+                    sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client)
+                return real_lock_for(uri)
+
+            monkeypatch.setattr(caches, "jwks_fetch_lock", lock_after_another_refresh)
+
+            claims = sync_tv.validate_token(
+                _token(ORIGIN),
+                _validation_config(ORIGIN),
+                f"{ORIGIN}{DISCO_PATH}",
+                http_client=client,
+            )
+
+            assert claims["sub"] == "user1"
+            assert raced == [JWKS_URI]
+            assert upstream.requests == COALESCED_REQUESTS
+
+    def test_entry_cached_at_the_lock_instant_is_fresh(self, monkeypatch):
+        upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
+        with upstream.client() as client:
+            entry = _fresh_jwks_entry()
+            client.caches.jwks[JWKS_URI] = JwksCacheEntry(
+                response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
+            )
+            monkeypatch.setattr(sync_tv, "time", _frozen_clock())
+
+            response, from_retained = sync_tv._refresh_jwks(
+                JWKS_URI, DiscoveryPolicy(), client
+            )
+
+            assert response is entry.response
+            assert from_retained is False
+            assert upstream.requests == []
+
+
+class TestAsyncKidMissRefreshCoalescing:
+    @pytest.mark.asyncio
+    async def test_waiter_returns_the_refresh_that_replaced_its_stale_entry(
+        self, monkeypatch
+    ):
+        upstream = _Upstream(KID_MISS_BODIES)
+        async with upstream.async_client() as client:
+            await aio_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client)
+            caches = client.caches
+            real_lock_for = caches.jwks_fetch_lock
+            raced: list[str] = []
+
+            @asynccontextmanager
+            async def lock_after_another_refresh(uri: str) -> AsyncIterator[None]:
+                if not raced:
+                    raced.append(uri)
+                    await aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client)
+                async with real_lock_for(uri):
+                    yield
+
+            monkeypatch.setattr(caches, "jwks_fetch_lock", lock_after_another_refresh)
+
+            claims = await aio_tv.validate_token(
+                _token(ORIGIN),
+                _validation_config(ORIGIN),
+                f"{ORIGIN}{DISCO_PATH}",
+                http_client=client,
+            )
+
+            assert claims["sub"] == "user1"
+            assert raced == [JWKS_URI]
+            assert upstream.requests == COALESCED_REQUESTS
+
+    @pytest.mark.asyncio
+    async def test_entry_cached_at_the_lock_instant_is_fresh(self, monkeypatch):
+        upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
+        async with upstream.async_client() as client:
+            entry = _fresh_jwks_entry()
+            client.caches.jwks[JWKS_URI] = JwksCacheEntry(
+                response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
+            )
+            monkeypatch.setattr(aio_tv, "time", _frozen_clock())
+
+            response, from_retained = await aio_tv._refresh_jwks(
+                JWKS_URI, DiscoveryPolicy(), client
+            )
+
+            assert response is entry.response
+            assert from_retained is False
+            assert upstream.requests == []
 
 
 # ============================================================================

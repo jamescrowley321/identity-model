@@ -237,6 +237,8 @@ async def _refresh_jwks(
     jwks_uri: str,
     policy: DiscoveryPolicy | None = None,
     http_client: AsyncHTTPClient | None = None,
+    *,
+    stale_response: JwksResponse | None = None,
 ) -> tuple[JwksResponse, bool]:
     """Force re-fetch JWKS and update cache (key rotation).
 
@@ -262,7 +264,13 @@ async def _refresh_jwks(
     async with caches.jwks_fetch_lock(jwks_uri):
         request_time = time.monotonic()
         entry = caches.jwks.get(jwks_uri)
-        if entry is not None and entry.cached_at >= request_time:
+        # A waiter whose stale entry another refresh replaced while it was
+        # blocked returns the replacement. The stale entry itself is never
+        # returned: only a successful, non-empty fetch replaces an entry.
+        if entry is not None and (
+            entry.cached_at >= request_time
+            or (stale_response is not None and entry.response is not stale_response)
+        ):
             return entry.response, False
 
         logger.info("Forcing JWKS refresh for %s (possible key rotation)", jwks_uri)
@@ -353,7 +361,7 @@ async def _discover_and_resolve_key(
             )
             # See sync._discover_and_resolve_key for the rationale.
             jwks_response, from_retained_cache = await _refresh_jwks(
-                jwks_uri, policy, client
+                jwks_uri, policy, client, stale_response=jwks_response
             )
             if jwks_response.is_successful:
                 refreshed_keys = jwks_response.keys or []
