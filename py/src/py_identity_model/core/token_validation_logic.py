@@ -285,11 +285,25 @@ def build_resolved_config(
     Args:
         original_config: The caller-supplied validation config.
         key_dict: The JWK dict selected from the JWKS response.
-        alg: The signing algorithm declared by the key.
+        alg: The signing algorithm resolved from the key or JWT header.
 
     Returns:
         A new TokenValidationConfig with the resolved key and algorithm.
+
+    Raises:
+        TokenValidationException: If the caller set ``algorithms`` and the
+            resolved algorithm is not in it.
     """
+    # The resolved alg equals the JWT header alg whenever the header carries
+    # one (find_key_by_kid rejects a key whose alg differs), and decode pins
+    # verification to [alg], so this membership check gates the header alg.
+    allowed = original_config.algorithms
+    if allowed is not None and alg not in allowed:
+        raise TokenValidationException(
+            f"Algorithm '{alg}' is not in the allowed algorithms",
+            token_part="header",
+            details={"alg": alg, "allowed": list(allowed)},
+        )
     return TokenValidationConfig(
         perform_disco=original_config.perform_disco,
         key=key_dict,
