@@ -40,6 +40,7 @@ from py_identity_model import (
     DiscoveryPolicy,
     DPoPKey,
     HTTPClient,
+    JwksRequest,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
@@ -52,6 +53,7 @@ from py_identity_model import (
     generate_dpop_key,
     generate_pkce_pair,
     get_discovery_document,
+    get_jwks,
     get_userinfo,
     is_jarm_response,
     parse_authorize_callback_response,
@@ -66,7 +68,13 @@ from py_identity_model import (
     validate_logout_token,
     validate_id_token,
     validate_post_logout_state,
+    validate_token,
 )
+from py_identity_model.core.parsers import (
+    extract_jwt_header_fields,
+    find_key_by_kid,
+)
+from py_identity_model.core.userinfo_logic import validate_userinfo_sub
 from py_identity_model.exceptions import (
     ConfigurationException,
     JarmValidationException,
@@ -1226,6 +1234,10 @@ def _fetch_userinfo(
     Skipped (returns ``{}``) when there is no access token, no userinfo endpoint,
     or the flow opted out. FAPI 2.0 sessions present the DPoP-bound access token
     with a DPoP proof (RFC 9449); a ``sub`` mismatch is fatal (OIDC Core §5.3.4).
+    A signed (``application/jwt``) response is verified against the OP's JWKS
+    with ``iss`` and ``aud`` checked (§5.3.2) before its ``sub`` is compared.
+    The JWKS is fetched before UserInfo: the OIDF module finishes once it has
+    served UserInfo and rejects any later request.
     """
     if not (access_token and disco.userinfo_endpoint and not session.skip_userinfo):
         return {}
@@ -1236,12 +1248,17 @@ def _fetch_userinfo(
         if session.mtls
         else disco.userinfo_endpoint
     )
+    jwks_response = get_jwks(
+        JwksRequest(
+            address=disco.jwks_uri, policy=DiscoveryPolicy(require_https=False)
+        ),
+        http_client=http_client,
+    )
     try:
         userinfo_response = get_userinfo(
             UserInfoRequest(
                 address=userinfo_endpoint,
                 token=access_token,
-                expected_sub=expected_sub,
                 dpop_key=(
                     session.dpop_key if (session.fapi2 and not session.mtls) else None
                 ),
@@ -1254,16 +1271,40 @@ def _fetch_userinfo(
         session.result["userinfo_error"] = str(exc)
         return {}
 
-    if userinfo_response.is_successful:
-        return userinfo_response.claims or {}
+    error_msg: str | None
+    if userinfo_response.is_successful and userinfo_response.raw is not None:
+        try:
+            if not jwks_response.is_successful:
+                raise TokenValidationException(
+                    f"OP JWKS unavailable: {jwks_response.error}"
+                )
+            kid, jwt_alg = extract_jwt_header_fields(userinfo_response.raw)
+            key, alg = find_key_by_kid(kid, jwks_response.keys or [], jwt_alg=jwt_alg)
+            return validate_token(
+                userinfo_response.raw,
+                token_validation_config=TokenValidationConfig(
+                    perform_disco=False,
+                    key=key,
+                    algorithms=[alg],
+                    audience=session.client_id,
+                    issuer=disco.issuer,
+                    subject=expected_sub,
+                    options={"require": ["iss", "aud", "sub"]},
+                ),
+            )
+        except PyIdentityModelException as exc:
+            error_msg = exc.message
+        except PyJWTError as exc:
+            error_msg = f"malformed signed UserInfo: {exc}"
+    else:
+        userinfo_response = validate_userinfo_sub(userinfo_response, expected_sub)
+        if userinfo_response.is_successful:
+            return userinfo_response.claims or {}
+        error_msg = userinfo_response.error
 
-    # OIDC Core 1.0 §5.3.4: a sub mismatch is fatal — the RP MUST reject the
-    # UserInfo response if sub differs from the ID token sub.
-    error_msg = userinfo_response.error
-    logger.error(
-        "REJECTED: UserInfo validation failed (sub mismatch per OIDC Core §5.3.4): %s",
-        error_msg,
-    )
+    # OIDC Core 1.0 §5.3.2/§5.3.4: an unverifiable signed response or a sub
+    # mismatch is fatal.
+    logger.error("REJECTED: UserInfo validation failed: %s", error_msg)
     session.result["status"] = "error"
     session.result["error"] = f"userinfo_validation: {error_msg}"
     _store_test_result(session)
