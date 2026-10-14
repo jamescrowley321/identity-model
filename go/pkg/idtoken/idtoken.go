@@ -130,16 +130,20 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 // contains an audience the client does not trust. The trusted set is the
 // client_id (when set) plus the WithTrustedAudiences list, so with neither
 // configured every aud value is untrusted (fail closed). aud may be a JSON
-// string or array; an absent aud has nothing to check, and a non-string value
-// is never trusted.
+// string or array, and a non-string value is never trusted. aud is REQUIRED
+// (§2): an absent or null aud, or one holding only empty strings, names no
+// audience and is rejected first, with or without a client_id.
 func validateAudiences(claims map[string]any, cfg *config) error {
-	audRaw, present := claims["aud"]
-	if !present {
-		return nil
-	}
-	audiences, ok := audRaw.([]any)
-	if !ok {
+	var audiences []any
+	switch audRaw := claims["aud"].(type) {
+	case nil:
+	case []any:
+		audiences = audRaw
+	default:
 		audiences = []any{audRaw}
+	}
+	if namesNoAudience(audiences) {
+		return profileErr(ReasonMissingAud, "ID token missing required 'aud' claim")
 	}
 	for _, a := range audiences {
 		if aud, isString := a.(string); !isString || !cfg.trustsAudience(aud) {
@@ -147,6 +151,17 @@ func validateAudiences(claims map[string]any, cfg *config) error {
 		}
 	}
 	return nil
+}
+
+// namesNoAudience reports whether every aud value is the empty string
+// (vacuously true for none), matching the reference's all(a == "" ...).
+func namesNoAudience(audiences []any) bool {
+	for _, a := range audiences {
+		if s, ok := a.(string); !ok || s != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // validateAZP enforces §3.1.3.7 steps 4-6. A JSON null azp is treated as absent,

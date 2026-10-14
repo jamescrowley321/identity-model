@@ -7,6 +7,8 @@
 // Connect Core 1.0 §2, §3.1.3.7 and §3.3.2.11:
 //
 //   - sub is REQUIRED and must be non-empty (§2 / §3.1.3.7).
+//   - aud is REQUIRED (§2): an absent or null aud, or one holding only empty
+//     strings, rejects the token even without a client_id.
 //   - every aud value MUST be the client_id or an audience listed via
 //     [WithTrustedAudiences]; any other audience rejects the token (§3.1.3.7
 //     step 3).
