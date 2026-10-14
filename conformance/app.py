@@ -1296,6 +1296,10 @@ def _fetch_userinfo(
             error_msg = exc.message
         except PyJWTError as exc:
             error_msg = f"malformed signed UserInfo: {exc}"
+    elif userinfo_response.is_successful and not isinstance(
+        userinfo_response.claims, dict
+    ):
+        error_msg = "UserInfo response is not a JSON object"
     else:
         userinfo_response = validate_userinfo_sub(userinfo_response, expected_sub)
         if userinfo_response.is_successful:

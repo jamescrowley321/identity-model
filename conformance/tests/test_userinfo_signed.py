@@ -150,3 +150,14 @@ def test_json_userinfo_sub_mismatch_is_rejected() -> None:
 
     assert isinstance(result, HTMLResponse)
     assert result.status_code == 400
+
+
+@pytest.mark.parametrize("body", [[{"sub": SUB}], "sub"], ids=["array", "string"])
+@respx.mock
+def test_non_object_json_userinfo_is_rejected(body: object) -> None:
+    _mock_op(respx.mock, httpx.Response(200, json=body))
+
+    result = _fetch()
+
+    assert isinstance(result, HTMLResponse)
+    assert result.status_code == 400
