@@ -1,6 +1,6 @@
 import pytest
 
-from fastapi_identity_model import OIDCSettings
+from fastapi_identity_model import OIDCSettings, TokenManager
 
 
 pytestmark = pytest.mark.unit
@@ -36,3 +36,23 @@ def test_explicit_audience_preserved():
 def test_empty_required_fields_rejected(discovery_url, client_id):
     with pytest.raises(ValueError, match="non-empty"):
         OIDCSettings(discovery_url=discovery_url, client_id=client_id)
+
+
+def test_client_secret_not_in_repr():
+    s = OIDCSettings(
+        discovery_url="https://op.example.com/.well-known/openid-configuration",
+        client_id="cid",
+        client_secret="s3cr3t",
+    )
+    assert "s3cr3t" not in repr(s)
+    assert s.client_secret == "s3cr3t"
+
+
+def test_token_manager_repr_omits_secrets():
+    manager = TokenManager(
+        discovery_url="https://op.example.com/.well-known/openid-configuration",
+        client_id="cid",
+        client_secret="s3cr3t",
+    )
+    manager.set_tokens(access_token="at-s3cr3t", refresh_token="rt-s3cr3t")
+    assert "s3cr3t" not in repr(manager)

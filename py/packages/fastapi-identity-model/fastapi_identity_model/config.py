@@ -22,7 +22,8 @@ class OIDCSettings:
         redirect_uri: Absolute callback URL registered with the provider
             (must match the router's ``/callback`` route). Only required for the
             login router; a resource-server-only deployment may leave it empty.
-        client_secret: Client secret; omit for public/PKCE clients.
+        client_secret: Client secret; omit for public/PKCE clients. Kept out
+            of ``repr()``.
         scope: Space-delimited scopes requested at authorization.
         audience: Expected ``aud`` for the resource-server middleware. Defaults
             to ``client_id`` when not set.
@@ -34,7 +35,7 @@ class OIDCSettings:
     discovery_url: str
     client_id: str
     redirect_uri: str = ""
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     scope: str = "openid profile email"
     audience: str | None = None
     post_login_redirect: str = "/"
