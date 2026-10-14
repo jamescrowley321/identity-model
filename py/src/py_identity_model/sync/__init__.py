@@ -144,7 +144,12 @@ from .token_validation import (
     clear_jwks_cache,
     validate_token,
 )
-from .userinfo import UserInfoRequest, UserInfoResponse, get_userinfo
+from .userinfo import (
+    UserInfoErrorKind,
+    UserInfoRequest,
+    UserInfoResponse,
+    get_userinfo,
+)
 
 
 __all__ = [
@@ -219,6 +224,7 @@ __all__ = [
     # Token Validation
     "TokenValidationConfig",
     # UserInfo
+    "UserInfoErrorKind",
     "UserInfoRequest",
     "UserInfoResponse",
     "build_authorization_url",

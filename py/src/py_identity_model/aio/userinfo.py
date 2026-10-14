@@ -9,7 +9,7 @@ import httpx
 
 from ..core.dpop import extract_dpop_nonce
 from ..core.error_handlers import handle_userinfo_error
-from ..core.models import UserInfoRequest, UserInfoResponse
+from ..core.models import UserInfoErrorKind, UserInfoRequest, UserInfoResponse
 from ..core.userinfo_logic import (
     log_userinfo_request,
     prepare_userinfo_headers,
@@ -78,6 +78,7 @@ async def get_userinfo(
 
 
 __all__ = [
+    "UserInfoErrorKind",
     "UserInfoRequest",
     "UserInfoResponse",
     "get_userinfo",

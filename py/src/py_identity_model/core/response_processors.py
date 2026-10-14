@@ -29,6 +29,7 @@ from .models import (
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from .parsers import jwks_from_dict
@@ -702,6 +703,7 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
         return UserInfoResponse(
             is_successful=False,
             error="UserInfo response is missing required 'sub' claim",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
         )
     return UserInfoResponse(
         is_successful=True,

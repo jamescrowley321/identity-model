@@ -4,7 +4,11 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio.userinfo import UserInfoRequest, get_userinfo
+from py_identity_model.aio.userinfo import (
+    UserInfoErrorKind,
+    UserInfoRequest,
+    get_userinfo,
+)
 from py_identity_model.exceptions import FailedResponseAccessError
 
 
@@ -203,6 +207,7 @@ class TestAsyncUserInfoSubValidation:
 
         assert result.is_successful is False
         assert result.error == "UserInfo response is missing required 'sub' claim"
+        assert result.error_kind is UserInfoErrorKind.MISSING_SUB
 
     @respx.mock
     async def test_sub_validation_not_requested(self):

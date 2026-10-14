@@ -1172,6 +1172,13 @@ class UserInfoRequest(BaseRequest):
     mtls: MtlsClientAuth | None = None
 
 
+class UserInfoErrorKind(Enum):
+    """Why a UserInfo response failed, set on ``UserInfoResponse.error_kind``."""
+
+    MISSING_SUB = "missing_sub"
+    """The response has no non-empty string ``sub`` (OIDC Core 1.0 §5.3.2)."""
+
+
 @dataclass(repr=False, eq=False)
 class UserInfoResponse(BaseResponse):
     """Response from the UserInfo endpoint.
@@ -1181,6 +1188,7 @@ class UserInfoResponse(BaseResponse):
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "raw"})
 
+    error_kind: UserInfoErrorKind | None = field(default=None, kw_only=True)
     claims: dict | None = None
     raw: str | None = None
 
