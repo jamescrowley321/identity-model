@@ -28,6 +28,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.core.id_token_logic import validate_id_token_claims
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
+    ConfigurationException,
     IdTokenValidationException,
     TokenValidationException,
     UntrustedAudienceException,
@@ -510,6 +511,20 @@ class TestUntrustedAudiences:
         with pytest.raises(UntrustedAudienceException) as exc_info:
             validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
         assert exc_info.value.details == {"untrusted_audiences": [7]}
+
+    @pytest.mark.parametrize(
+        "bare", [_AUDIENCE, b"client-123", ""], ids=["str", "bytes", "empty"]
+    )
+    def test_bare_string_trusted_audiences_rejected(self, bare):
+        # A bare ``str``/``bytes`` would iterate as single characters.
+        with pytest.raises(ConfigurationException, match="trusted_audiences"):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=bare,
+                now=_NOW,
+            )
 
     def test_absent_audience_has_nothing_to_reject(self):
         claims = _valid_id_claims()

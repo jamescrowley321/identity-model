@@ -33,7 +33,11 @@ import hmac
 import time
 from typing import TYPE_CHECKING
 
-from ..exceptions import IdTokenValidationException, UntrustedAudienceException
+from ..exceptions import (
+    ConfigurationException,
+    IdTokenValidationException,
+    UntrustedAudienceException,
+)
 
 
 if TYPE_CHECKING:
@@ -145,7 +149,16 @@ def _reject_untrusted_audiences(
     adds trusted values; an empty or omitted list leaves ``client_id`` as the
     sole trusted audience, so nothing here can switch the check off. With no
     ``client_id`` and no list, every audience is untrusted (fail closed).
+
+    Raises:
+        ConfigurationException: If ``trusted_audiences`` is a bare ``str`` or
+            ``bytes``, which would otherwise iterate as single characters.
     """
+    if isinstance(trusted_audiences, (str, bytes)):
+        raise ConfigurationException(
+            "trusted_audiences must be an iterable of audience strings, "
+            "not a single string"
+        )
     aud = claims.get("aud")
     if aud is None:
         return
@@ -208,6 +221,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             Defaults to :func:`time.time` when omitted.
 
     Raises:
+        ConfigurationException: If ``trusted_audiences`` is a bare ``str`` or
+            ``bytes`` instead of an iterable of audiences.
         UntrustedAudienceException: If ``aud`` carries a value that is neither
             ``client_id`` nor in ``trusted_audiences`` (§3.1.3.7 step 3).
         IdTokenValidationException: If any other ID-Token profile rule is
