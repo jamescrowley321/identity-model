@@ -1,11 +1,14 @@
 # identity-model — Configuration
 
 The settings every identity-model library has, with their defaults, valid
-ranges and cache rules. Python defines them; Go and Rust match this page.
+ranges and cache rules. Python defines them. Go and Rust are being brought to
+match ([#757](https://github.com/jamescrowley321/identity-model/issues/757),
+[#758](https://github.com/jamescrowley321/identity-model/issues/758)); until
+then they differ as listed in [Go and Rust today](#go-and-rust-today).
 
-## The library does not read the environment
+## The Python library does not read the environment
 
-No library code reads environment variables, files or any other source.
+The Python library reads no environment variables, files or any other source.
 Settings take effect only when the caller passes them in: a `Config` on an
 HTTP client in Python, options in Go, client builder methods in Rust.
 
@@ -50,6 +53,22 @@ Ranges are inclusive unless written `>`.
 An invalid value is rejected when the `Config` (Go: the client; Rust: the
 builder's `build()`) is created. It is never replaced by its default. Errors
 name the setting and the rule, never the value.
+
+## Go and Rust today
+
+Until [#757](https://github.com/jamescrowley321/identity-model/issues/757) (Go)
+and [#758](https://github.com/jamescrowley321/identity-model/issues/758) (Rust)
+land, Go and Rust differ from this page:
+
+- They read `JWKS_CACHE_MAX_ENTRIES` and `DISCO_CACHE_MAX_ENTRIES` from the
+  environment. `0` means unbounded.
+- The discovery cache TTL defaults to 24 hours.
+- An invalid TTL or cooldown falls back to its default instead of being
+  rejected.
+- There is no retry, no `ca_bundle`, and no `jwks_max_size` or
+  `jwks_max_keys`. Discovery and JWKS response bodies have a fixed 1 MiB cap.
+- They don't read `Cache-Control`. Every response is cached for the configured
+  TTL, with no 60 – 86400 clamp.
 
 ## Cache rules
 
