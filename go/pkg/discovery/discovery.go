@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -188,6 +189,10 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, &ParseError{Err: err}
+	}
+	// A JSON null decodes into both without error; it is not an object.
+	if raw == nil {
+		return nil, &ParseError{Err: errors.New("discovery document is not a JSON object")}
 	}
 	for name := range raw {
 		if _, modelled := modelledJSONFields[name]; modelled {

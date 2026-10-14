@@ -230,6 +230,22 @@ func TestFetchConfiguration_InvalidJSON(t *testing.T) {
 	}
 }
 
+// DISC-007: a JSON value that is not an object is a parse error, not a
+// document with every required field missing.
+func TestFetchConfiguration_NonObjectJSON(t *testing.T) {
+	for _, body := range []string{"null", "[]", `"x"`, "1", "true"} {
+		t.Run(body, func(t *testing.T) {
+			freshCache(t)
+			srv, _ := newServer(t, http.StatusOK, []byte(body))
+			_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			var pErr *ParseError
+			if !errors.As(err, &pErr) {
+				t.Fatalf("err = %v, want *ParseError", err)
+			}
+		})
+	}
+}
+
 // DISC-008: a missing required field is reported by name.
 func TestFetchConfiguration_MissingField(t *testing.T) {
 	freshCache(t)
