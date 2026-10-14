@@ -52,6 +52,10 @@ certificate client, while the request itself never goes through that
 client's own connection pool, which cannot be guaranteed to present the
 certificate. Without `http_client`, the library default client's `Config()`
 is used.
+The `http_client` must be one the library built (`HTTPClient(config=...)`).
+One that wraps your own `httpx.Client` is refused with `ValueError`, because
+that client's TLS settings (a pinned CA, a proxy) can't carry over to the
+certificate client.
 
 ```python
 from py_identity_model import Config, HTTPClient

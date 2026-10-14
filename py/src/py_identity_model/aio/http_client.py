@@ -262,6 +262,13 @@ def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.AsyncClient
     )
 
 
+_WRAPPED_CLIENT_MTLS_ERROR = (
+    "mtls cannot be combined with a wrapped httpx client: its own TLS "
+    "settings cannot be carried over to the certificate client. Pass "
+    "AsyncHTTPClient(config=Config(ca_bundle=...)) instead."
+)
+
+
 def resolve_async_http_client(
     mtls: MtlsClientAuth | None,
     http_client: AsyncHTTPClient | None,
@@ -288,6 +295,8 @@ def resolve_async_http_client(
 
     Raises:
         RuntimeError: If *http_client* has been closed.
+        ValueError: If *mtls* is combined with an *http_client* that wraps a
+            caller's own httpx client, whose TLS settings would be lost.
     """
     if mtls is None:
         if http_client is not None:
@@ -295,6 +304,8 @@ def resolve_async_http_client(
         return _get_default(), None
     if http_client is not None:
         http_client.ensure_open()
+        if not http_client.owns_client:
+            raise ValueError(_WRAPPED_CLIENT_MTLS_ERROR)
         config = http_client.config
     else:
         config = _get_default().config

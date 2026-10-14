@@ -121,6 +121,11 @@ class HTTPClient:
         return self._config
 
     @property
+    def owns_client(self) -> bool:
+        """Whether this instance built (and closes) its ``httpx.Client``."""
+        return self._owned
+
+    @property
     def caches(self) -> ClientCaches:
         """The discovery/JWKS caches and kid-miss state owned by this client."""
         return self._caches

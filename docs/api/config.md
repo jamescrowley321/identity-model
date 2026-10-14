@@ -153,7 +153,8 @@ async with AsyncHTTPClient(config=config) as client:
   `verify=False` in a test), pass it as the first argument:
   `HTTPClient(httpx.Client(...), config=config)`. Its own timeout and TLS
   settings apply; the `Config` still sets retries, JWKS limits and the
-  caches.
+  caches. A wrapped client can't be combined with `mtls` (that raises
+  `ValueError`); use `HTTPClient(config=Config(ca_bundle=...))` instead.
 
 !!! warning "Breaking change (py-identity-model 5.0): no environment variables"
     The library no longer reads any environment variable. `HTTP_TIMEOUT`,

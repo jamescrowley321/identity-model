@@ -675,6 +675,18 @@ class TestResolveClientMtls:
         with pytest.raises(RuntimeError, match="HTTPClient has been closed"):
             sync_http.resolve_http_client(mtls, managed)
 
+    def test_sync_mtls_with_wrapped_client_raises(self, mtls):
+        """A wrapped httpx.Client's own TLS trust (pinned CA, proxy) cannot
+        carry over to the cert client, so the combination is refused."""
+        with httpx.Client() as raw, HTTPClient(raw) as wrapped:
+            assert wrapped.owns_client is False
+            with pytest.raises(ValueError, match="wrapped httpx client"):
+                sync_http.resolve_http_client(mtls, wrapped)
+
+    def test_sync_owned_client_reports_ownership(self):
+        with HTTPClient() as managed:
+            assert managed.owns_client is True
+
     def test_sync_mtls_only_builds_owned_client(self, mtls):
         client, owned = sync_http.resolve_http_client(mtls, None)
         try:
@@ -757,6 +769,23 @@ class TestResolveClientMtls:
         await managed.close()
         with pytest.raises(RuntimeError, match="AsyncHTTPClient has been closed"):
             aio_http.resolve_async_http_client(mtls, managed)
+
+    async def test_async_mtls_with_wrapped_client_raises(self, mtls):
+        async with httpx.AsyncClient() as raw:
+            wrapped = AsyncHTTPClient(raw)
+            try:
+                assert wrapped.owns_client is False
+                with pytest.raises(ValueError, match="wrapped httpx client"):
+                    aio_http.resolve_async_http_client(mtls, wrapped)
+            finally:
+                await wrapped.close()
+
+    async def test_async_owned_client_reports_ownership(self):
+        managed = AsyncHTTPClient()
+        try:
+            assert managed.owns_client is True
+        finally:
+            await managed.close()
 
     async def test_async_mtls_only_builds_owned_client(self, mtls):
         client, owned = aio_http.resolve_async_http_client(mtls, None)
