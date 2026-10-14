@@ -120,6 +120,7 @@ const UNTRUSTED_AUDIENCE: &str = "untrusted_audience";
 fn reason_marker(reason: &str) -> &'static str {
     match reason {
         "missing_sub" => "required 'sub'",
+        "missing_aud" => "required 'aud'",
         "azp_required_multi_aud" => "multiple audiences must contain an 'azp'",
         "azp_mismatch" => "'azp' claim does not match",
         "nonce_mismatch" => "'nonce' claim does not match",
