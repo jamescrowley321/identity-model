@@ -4,11 +4,8 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio.userinfo import (
-    UserInfoErrorKind,
-    UserInfoRequest,
-    get_userinfo,
-)
+from py_identity_model.aio import UserInfoErrorKind
+from py_identity_model.aio.userinfo import UserInfoRequest, get_userinfo
 from py_identity_model.exceptions import FailedResponseAccessError
 
 

@@ -69,6 +69,7 @@ from ..core.models import (
     BaseResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
+    UserInfoErrorKind,
 )
 from ..core.mtls import (
     certificate_thumbprint_from_file,
@@ -158,12 +159,7 @@ from .token_exchange import (
     exchange_token,
 )
 from .token_validation import TokenValidationConfig, validate_token
-from .userinfo import (
-    UserInfoErrorKind,
-    UserInfoRequest,
-    UserInfoResponse,
-    get_userinfo,
-)
+from .userinfo import UserInfoRequest, UserInfoResponse, get_userinfo
 
 
 __all__ = [
