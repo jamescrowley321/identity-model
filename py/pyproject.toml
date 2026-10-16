@@ -185,9 +185,8 @@ ignore = [
 # The library reads no environment: config_from_env is the one sanctioned
 # reader, and nothing in the library imports it (test_config_helpers.py).
 "src/py_identity_model/config_helpers.py" = ["TID251"]
-# OIDCSettings.from_env still reads the environment until it moves to a
-# helper module (#754), which narrows this entry to that module.
-"packages/fastapi-identity-model/fastapi_identity_model/config.py" = ["TID251"]
+# Likewise oidc_settings_from_env in the FastAPI package.
+"packages/fastapi-identity-model/fastapi_identity_model/config_helpers.py" = ["TID251"]
 "src/tests/unit/test_ssl_config.py" = [
     "S101",    # pytest assertions
     # The import-side-effect regression test must import the package in a fresh

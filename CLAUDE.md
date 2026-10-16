@@ -271,9 +271,10 @@ point takes `http_client=`; without one, the library default client
 `Config()`) is used. Retry decorators read retries/backoff from the managed
 client's `Config`.
 
-The only module that reads `os.environ` is the optional
-`config_helpers.py` (`config_from_env` / `config_from_mapping`), which the
-library never imports or calls. Ruff `TID251` bans `os.environ` / `os.getenv`
+The only modules that read `os.environ` are the optional
+`config_helpers.py` (`config_from_env` / `config_from_mapping`) and the FastAPI
+package's `config_helpers.py` (`oidc_settings_from_env`), which neither package
+ever imports or calls. Ruff `TID251` bans `os.environ` / `os.getenv`
 outside the helpers, tests, examples and tooling, and
 `src/tests/unit/test_no_env_reads.py` runs client operations under an
 `os.environ` that fails on any library read.

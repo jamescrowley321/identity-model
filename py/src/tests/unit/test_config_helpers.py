@@ -14,6 +14,7 @@ import sys
 
 import pytest
 
+import fastapi_identity_model
 import py_identity_model
 from py_identity_model import Config, ConfigError, ConfigIssue
 from py_identity_model.config_helpers import config_from_env, config_from_mapping
@@ -315,11 +316,18 @@ def test_no_library_module_imports_the_helpers(package_name):
     assert importers == set()
 
 
-def test_importing_the_library_does_not_load_the_helpers():
-    code = (
-        "import sys, py_identity_model, py_identity_model.aio;"
-        "print('py_identity_model.config_helpers' in sys.modules)"
-    )
+@pytest.mark.parametrize(
+    ("imports", "helper"),
+    [
+        (
+            "py_identity_model, py_identity_model.aio",
+            "py_identity_model.config_helpers",
+        ),
+        ("fastapi_identity_model", "fastapi_identity_model.config_helpers"),
+    ],
+)
+def test_importing_the_library_does_not_load_the_helpers(imports, helper):
+    code = f"import sys, {imports}; print({helper!r} in sys.modules)"
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
@@ -330,5 +338,6 @@ def test_importing_the_library_does_not_load_the_helpers():
 
 
 def test_helpers_are_not_re_exported_at_the_top_level():
-    exported = set(py_identity_model.__all__)
-    assert {"config_from_env", "config_from_mapping"} & exported == set()
+    exported = set(py_identity_model.__all__) | set(fastapi_identity_model.__all__)
+    helpers = {"config_from_env", "config_from_mapping", "oidc_settings_from_env"}
+    assert helpers & exported == set()
