@@ -148,7 +148,9 @@ def _patch_rp(monkeypatch) -> dict[str, AsyncMock]:
         ),
         "validate_token": AsyncMock(),
         "get_userinfo": AsyncMock(
-            return_value=SimpleNamespace(is_successful=True, claims={"sub": "u1"})
+            return_value=SimpleNamespace(
+                is_successful=True, claims={"sub": "u1"}, error_kind=None
+            )
         ),
     }
     for name, mock in mocks.items():
