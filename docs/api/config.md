@@ -34,9 +34,63 @@ rejected (`must be a number`), as are `bool`, NaN and infinity.
 
 ## The same thing with a helper
 
-When your settings live somewhere else, write a small function that reads
-them, converts each value to its type and returns a `Config`. Conversion
-belongs in the helper; validation stays in `Config`.
+`py_identity_model.config_helpers` has two ready-made helpers that read string
+settings, convert each one to its type and return a `Config`. They are
+optional: the library never imports this module, so nothing reads the
+environment unless you call one.
+
+```python
+from py_identity_model.config_helpers import config_from_env, config_from_mapping
+
+config = config_from_env()                  # HTTP_TIMEOUT, MAX_JWKS_KEYS, ...
+config = config_from_env(prefix="APP_")     # APP_HTTP_TIMEOUT, APP_MAX_JWKS_KEYS, ...
+config = config_from_mapping({"HTTP_TIMEOUT": "10", "JWKS_CACHE_MAX_ENTRIES": "128"})
+```
+
+`config_from_env(prefix)` is `config_from_mapping(os.environ, prefix=prefix)`.
+Both read these keys, with the prefix in front of each:
+
+| Setting | Keys, first one set wins |
+|---|---|
+| `http_timeout` | `HTTP_TIMEOUT` |
+| `http_retry_max_attempts` | `HTTP_RETRY_MAX_ATTEMPTS`, `HTTP_RETRY_COUNT` |
+| `http_retry_base_delay` | `HTTP_RETRY_BASE_DELAY` |
+| `ca_bundle` | `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` |
+| `jwks_max_size` | `MAX_JWKS_SIZE` |
+| `jwks_max_keys` | `MAX_JWKS_KEYS` |
+| `jwks_cache_ttl` | `JWKS_CACHE_TTL` |
+| `jwks_kid_miss_cooldown` | `KID_MISS_REFRESH_COOLDOWN` |
+| `discovery_cache_ttl` | `DISCO_CACHE_TTL` |
+| `cache_max_entries` | `JWKS_CACHE_MAX_ENTRIES` |
+
+A key that is missing, empty or `None` is unset, and its setting keeps the
+default. Other keys are ignored. A value that can't be converted
+(`HTTP_TIMEOUT=fast`) or is out of range (`HTTP_TIMEOUT=0`) raises one
+`ConfigError` listing every bad key. Each issue names the key as you wrote it,
+prefix included (`APP_HTTP_TIMEOUT: must be greater than 0`), never the value.
+
+### Loading a `.env` file
+
+The library has no `.env` parser. Read the file with
+[python-dotenv](https://pypi.org/project/python-dotenv/) (install it yourself)
+and pass the result to `config_from_mapping`:
+
+```python
+from dotenv import dotenv_values
+
+from py_identity_model.config_helpers import config_from_mapping
+
+config = config_from_mapping(dotenv_values(".env"))
+```
+
+`dotenv_values()` doesn't touch `os.environ`. It returns `None` for a line
+with no `=`, which counts as unset.
+
+### Writing your own
+
+For any other source, write a small function that reads it, converts each
+value to its type and returns a `Config`. Conversion belongs in the helper;
+validation stays in `Config`.
 
 ```python
 from collections.abc import Mapping
@@ -46,16 +100,11 @@ from py_identity_model import Config
 
 def config_from_settings(settings: Mapping[str, str]) -> Config:
     kwargs: dict[str, object] = {}
-    if "HTTP_TIMEOUT" in settings:
-        kwargs["http_timeout"] = float(settings["HTTP_TIMEOUT"])
-    if "CACHE_MAX_ENTRIES" in settings:
-        kwargs["cache_max_entries"] = int(settings["CACHE_MAX_ENTRIES"])
-    if "CA_BUNDLE" in settings:
-        kwargs["ca_bundle"] = settings["CA_BUNDLE"]
+    if "timeout" in settings:
+        kwargs["http_timeout"] = float(settings["timeout"])
+    if "ca_bundle" in settings:
+        kwargs["ca_bundle"] = settings["ca_bundle"]
     return Config(**kwargs)
-
-
-config = config_from_settings({"HTTP_TIMEOUT": "10", "CACHE_MAX_ENTRIES": "128"})
 ```
 
 ## Settings
@@ -99,3 +148,7 @@ Error messages name the setting and the rule, never the value you passed.
 ::: py_identity_model.core.config.ConfigIssue
 
 ::: py_identity_model.core.config.ClientAuthMethod
+
+::: py_identity_model.config_helpers.config_from_mapping
+
+::: py_identity_model.config_helpers.config_from_env

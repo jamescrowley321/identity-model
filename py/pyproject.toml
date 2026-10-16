@@ -187,6 +187,13 @@ ignore = [
     # below rather than a scattered `# noqa` at the call site.
     "S603",
 ]
+"src/tests/unit/test_config_helpers.py" = [
+    "S101",    # pytest assertions
+    # Checks that importing the package does not load config_helpers, which
+    # needs a fresh interpreter (this test module imports it). Fixed literal
+    # argv, no shell: same rationale as test_ssl_config.py above.
+    "S603",
+]
 "src/tests/harness/**/*.py" = [
     "S101",    # pytest assertions
     "PLR0913", # minter / mock-OP APIs are intentionally parameter-rich (mint, sign, mint_access_token)
