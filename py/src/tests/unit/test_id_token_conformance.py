@@ -64,6 +64,7 @@ _REASON_EXCEPTION = {
 # per-language coupling (the vectors themselves stay language-neutral).
 _REASON_MESSAGE = {
     "missing_sub": "missing required 'sub'",
+    "missing_aud": "missing required 'aud'",
     "azp_required_multi_aud": "multiple audiences must contain an 'azp'",
     "azp_mismatch": "'azp' claim does not match",
     "nonce_mismatch": "'nonce' claim does not match",

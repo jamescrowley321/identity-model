@@ -9,7 +9,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.core.models import UserInfoRequest
+from py_identity_model.core.models import UserInfoErrorKind, UserInfoRequest
 from py_identity_model.sync.userinfo import get_userinfo
 
 
@@ -89,6 +89,7 @@ class TestSyncUserInfo:
         assert response.is_successful is False
         assert response.error is not None
         assert "401" in response.error
+        assert response.error_kind is None
 
     @respx.mock
     def test_get_userinfo_network_error(self):
@@ -213,6 +214,7 @@ class TestSyncUserInfoSubValidation:
 
         assert response.is_successful is False
         assert response.error == "UserInfo response is missing required 'sub' claim"
+        assert response.error_kind is UserInfoErrorKind.MISSING_SUB
 
     @respx.mock
     def test_sub_validation_not_requested(self):

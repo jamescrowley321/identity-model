@@ -433,11 +433,6 @@ func TestValidateClaims_UntrustedAudience(t *testing.T) {
 			claims: with(map[string]any{"aud": []any{testClientID}}),
 			opts:   []idtoken.Option{client},
 		},
-		{
-			name:   "aud absent has nothing to check",
-			claims: with(map[string]any{"aud": nil}),
-			opts:   []idtoken.Option{client},
-		},
 	}
 	for _, tc := range accepts {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,6 +441,44 @@ func TestValidateClaims_UntrustedAudience(t *testing.T) {
 				t.Fatalf("expected accept, got %v", err)
 			}
 		})
+	}
+}
+
+// TestValidateClaims_MissingAudience pins §2: aud is REQUIRED, so a token that
+// names no audience is rejected with or without a client_id, ahead of the
+// untrusted-audience rule.
+func TestValidateClaims_MissingAudience(t *testing.T) {
+	nullAud := baseClaims()
+	nullAud["aud"] = nil
+	cases := []struct {
+		name   string
+		claims map[string]any
+		opts   []idtoken.Option
+	}{
+		{"absent, no client_id", with(map[string]any{"aud": nil}), nil},
+		{"absent, client_id set", with(map[string]any{"aud": nil}), []idtoken.Option{idtoken.WithClientID(testClientID)}},
+		{"null", nullAud, []idtoken.Option{idtoken.WithClientID(testClientID)}},
+		{"empty string", with(map[string]any{"aud": ""}), []idtoken.Option{idtoken.WithClientID(testClientID)}},
+		{"empty array", with(map[string]any{"aud": []any{}}), []idtoken.Option{idtoken.WithClientID(testClientID)}},
+		{"array of empty strings", with(map[string]any{"aud": []any{"", ""}}), []idtoken.Option{idtoken.WithClientID(testClientID)}},
+		{"absent, trusted list only", with(map[string]any{"aud": nil}), []idtoken.Option{idtoken.WithTrustedAudiences("api")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append([]idtoken.Option{idtoken.WithNow(fixedNow)}, tc.opts...)
+			err := idtoken.ValidateClaims(tc.claims, "RS256", opts...)
+			if got, want := profileReason(t, err), idtoken.ReasonMissingAud; got != want {
+				t.Fatalf("reason = %q, want %q (err: %v)", got, want, err)
+			}
+		})
+	}
+
+	// An empty string beside a real audience is an untrusted value, not a
+	// missing aud.
+	claims := with(map[string]any{"aud": []any{testClientID, ""}, "azp": testClientID})
+	err := idtoken.ValidateClaims(claims, "RS256", idtoken.WithNow(fixedNow), idtoken.WithClientID(testClientID))
+	if got, want := profileReason(t, err), idtoken.ReasonUntrustedAudience; got != want {
+		t.Fatalf("reason = %q, want %q (err: %v)", got, want, err)
 	}
 }
 
