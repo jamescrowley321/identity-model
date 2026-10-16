@@ -346,10 +346,25 @@ class TestPureIdTokenClaimValidation:
                 now=_NOW,
             )
 
-    def test_at_hash_missing_rejected(self):
-        # §3.3.2.11: caller supplied an access token but the token has no
-        # ``at_hash`` to bind it.
-        with pytest.raises(IdTokenValidationException, match=r"at_hash"):
+    def test_at_hash_absent_accepted_for_token_endpoint_access_token(self):
+        # §3.1.3.6: a token-endpoint ID Token may omit ``at_hash``, so an
+        # access token not issued with the ID Token binds only if one is present.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            access_token="SlAV32hkKG-access-token",
+            access_token_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_at_hash_missing_rejected_by_default(self):
+        # §3.2.2.10 / §3.3.2.11: an access token from the same authorization
+        # response as the ID Token REQUIRES ``at_hash``, and a supplied access
+        # token is taken to be one unless the caller says otherwise.
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
             validate_id_token_claims(
                 _valid_id_claims(),
                 "RS256",
@@ -357,6 +372,95 @@ class TestPureIdTokenClaimValidation:
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
             )
+
+    def test_at_hash_wrong_rejected_when_issued_with_id_token(self):
+        # A present but wrong ``at_hash`` is a mismatch, not a missing claim.
+        claims = _valid_id_claims(
+            at_hash=_oidc_left_half("some-other-token", hashlib.sha256)
+        )
+        with pytest.raises(
+            IdTokenValidationException, match=r"'at_hash' claim does not match"
+        ):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                access_token="SlAV32hkKG-access-token",
+                access_token_issued_with_id_token=True,
+                now=_NOW,
+            )
+
+    def test_at_hash_non_string_rejected_when_not_required(self):
+        # A present ``at_hash`` must match even when presence is not required.
+        with pytest.raises(
+            IdTokenValidationException, match=r"'at_hash' claim does not match"
+        ):
+            validate_id_token_claims(
+                _valid_id_claims(at_hash=None),
+                "RS256",
+                client_id=_AUDIENCE,
+                access_token="SlAV32hkKG-access-token",
+                access_token_issued_with_id_token=False,
+                now=_NOW,
+            )
+
+    def test_absent_unrequired_at_hash_skips_alg_lookup(self):
+        # With nothing to verify, an unmappable ``alg`` is never consulted.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "UNKNOWN",
+            client_id=_AUDIENCE,
+            access_token="SlAV32hkKG-access-token",
+            access_token_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_issued_with_id_token_flags_without_values_are_noops(self):
+        # The presence switches only apply to a supplied access token / code.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            access_token_issued_with_id_token=True,
+            code_issued_with_id_token=True,
+            now=_NOW,
+        )
+
+    def test_c_hash_absent_accepted_when_code_not_issued_with_id_token(self):
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            code="Qcb0Orv1-authorization-code",
+            code_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_c_hash_missing_rejected_by_default(self):
+        # §3.3.2.11: a code from the same authorization response as the ID
+        # Token (``code id_token``) REQUIRES ``c_hash``, the default.
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                code="Qcb0Orv1-authorization-code",
+                now=_NOW,
+            )
+
+    def test_c_hash_correct_accepted_when_issued_with_id_token(self):
+        code = "Qcb0Orv1-authorization-code"
+        claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256))
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            code=code,
+            code_issued_with_id_token=True,
+            now=_NOW,
+        )
 
     def test_at_hash_ignored_when_no_access_token(self):
         # ``at_hash`` is not checked when the caller passes no access token.
@@ -451,7 +555,7 @@ class TestNonAsciiInputsFailClosed:
         # digest; surface IdTokenValidationException, not UnicodeEncodeError.
         with pytest.raises(IdTokenValidationException, match=r"ASCII"):
             validate_id_token_claims(
-                _valid_id_claims(),
+                _valid_id_claims(at_hash="present-so-the-hash-is-computed"),
                 "RS256",
                 client_id=_AUDIENCE,
                 access_token="café-access-token",
@@ -462,7 +566,7 @@ class TestNonAsciiInputsFailClosed:
         # Same for a non-ASCII authorization code feeding the c_hash digest.
         with pytest.raises(IdTokenValidationException, match=r"ASCII"):
             validate_id_token_claims(
-                _valid_id_claims(),
+                _valid_id_claims(c_hash="present-so-the-hash-is-computed"),
                 "RS256",
                 client_id=_AUDIENCE,
                 code="café-code",
@@ -822,6 +926,56 @@ class TestSyncValidateIdToken:
             )
 
     @respx.mock
+    def test_signed_id_token_at_hash_absent_accepted(self, rsa_keypair):
+        # A token-endpoint ID Token without ``at_hash`` passes the wrapper.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        claims = validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            access_token="real-access-token-xyz",
+            access_token_issued_with_id_token=False,
+        )
+        assert claims["sub"] == "user-1"
+
+    @respx.mock
+    def test_signed_id_token_at_hash_required_when_issued_with_it(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
+            validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                access_token="real-access-token-xyz",
+                access_token_issued_with_id_token=True,
+            )
+
+    @respx.mock
+    def test_signed_id_token_c_hash_required_when_issued_with_it(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                code="real-auth-code-abc",
+                code_issued_with_id_token=True,
+            )
+
+    @respx.mock
     def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
         # §3.3.2.11: a real RS256-signed ID token whose ``c_hash`` matches the
         # supplied authorization code is accepted through the wrapper.
@@ -959,6 +1113,62 @@ class TestAsyncValidateIdToken:
             access_token=access_token,
         )
         assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_at_hash_absent_accepted(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        claims = await aio_validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            access_token="real-access-token-xyz",
+            access_token_issued_with_id_token=False,
+        )
+        assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_at_hash_required_when_issued_with_it(
+        self, rsa_keypair
+    ):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
+            await aio_validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                access_token="real-access-token-xyz",
+                access_token_issued_with_id_token=True,
+            )
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_c_hash_required_when_issued_with_it(
+        self, rsa_keypair
+    ):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            await aio_validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                code="real-auth-code-abc",
+                code_issued_with_id_token=True,
+            )
 
     @pytest.mark.asyncio
     @respx.mock

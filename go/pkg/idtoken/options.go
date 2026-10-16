@@ -24,10 +24,17 @@ type config struct {
 	nonceSet         bool
 	accessToken      string
 	accessTokenSet   bool
-	code             string
-	codeSet          bool
-	maxAge           time.Duration
-	maxAgeSet        bool
+	// accessTokenWithIDToken: the access token came in the same authorization
+	// response as the ID Token, so at_hash is required (§3.2.2.10, §3.3.2.11).
+	// Defaults to true.
+	accessTokenWithIDToken bool
+	code                   string
+	codeSet                bool
+	// codeWithIDToken: the code came in the same authorization response as the
+	// ID Token, so c_hash is required (§3.3.2.11). Defaults to true.
+	codeWithIDToken bool
+	maxAge          time.Duration
+	maxAgeSet       bool
 	// leeway is the clock-skew tolerance. It is applied to the base exp check
 	// (as jwt.WithClockSkew) and, mirroring the reference implementation, to the
 	// max_age/auth_time freshness check (§3.1.3.7 step 12).
@@ -40,7 +47,7 @@ type config struct {
 type Option func(*config)
 
 func newConfig(opts ...Option) *config {
-	cfg := &config{}
+	cfg := &config{accessTokenWithIDToken: true, codeWithIDToken: true}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -132,8 +139,10 @@ func WithNonce(nonce string) Option {
 	}
 }
 
-// WithAccessToken requires the token's at_hash to be present and match the
-// left-half hash of accessToken (§3.3.2.11). When unset, at_hash is not checked.
+// WithAccessToken requires the token's at_hash to match the left-half hash of
+// accessToken (§3.3.2.11). The claim must also be present unless
+// [WithAccessTokenIssuedWithIDToken](false) is set. When unset, at_hash is not
+// checked.
 func WithAccessToken(accessToken string) Option {
 	return func(c *config) {
 		c.accessToken = accessToken
@@ -141,13 +150,33 @@ func WithAccessToken(accessToken string) Option {
 	}
 }
 
-// WithCode requires the token's c_hash to be present and match the left-half
-// hash of code (§3.3.2.11). When unset, c_hash is not checked.
+// WithAccessTokenIssuedWithIDToken states whether the [WithAccessToken] value
+// came back in the same authorization response as the ID Token (response_type
+// "id_token token" or "code id_token token"), which makes at_hash REQUIRED
+// (§3.2.2.10, §3.3.2.11). The default is true. Pass false for a token-endpoint
+// ID Token, which may omit at_hash (§3.1.3.6); a present at_hash must still
+// match. It has no effect without [WithAccessToken].
+func WithAccessTokenIssuedWithIDToken(issued bool) Option {
+	return func(c *config) { c.accessTokenWithIDToken = issued }
+}
+
+// WithCode requires the token's c_hash to match the left-half hash of code
+// (§3.3.2.11). The claim must also be present unless
+// [WithCodeIssuedWithIDToken](false) is set. When unset, c_hash is not checked.
 func WithCode(code string) Option {
 	return func(c *config) {
 		c.code = code
 		c.codeSet = true
 	}
+}
+
+// WithCodeIssuedWithIDToken states whether the [WithCode] value came back in
+// the same authorization response as the ID Token (response_type
+// "code id_token" or "code id_token token"), which makes c_hash REQUIRED
+// (§3.3.2.11). The default is true. Pass false when it did not; a present
+// c_hash must still match. It has no effect without [WithCode].
+func WithCodeIssuedWithIDToken(issued bool) Option {
+	return func(c *config) { c.codeWithIDToken = issued }
 }
 
 // WithMaxAge requires auth_time to be present and satisfy

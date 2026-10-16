@@ -90,8 +90,16 @@ struct Input {
     nonce: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
+    /// Whether the access token was issued with the ID Token, so `at_hash` is
+    /// required. Absent means true.
+    #[serde(default)]
+    access_token_issued_with_id_token: Option<bool>,
     #[serde(default)]
     code: Option<String>,
+    /// Whether the code was issued with the ID Token, so `c_hash` is required.
+    /// Absent means true.
+    #[serde(default)]
+    code_issued_with_id_token: Option<bool>,
     #[serde(default)]
     max_age: Option<i64>,
     #[serde(default)]
@@ -129,7 +137,9 @@ fn reason_marker(reason: &str) -> &'static str {
         "nonce_mismatch" => "'nonce' claim does not match",
         "auth_time_stale" => "'auth_time' is older than",
         "auth_time_missing" => "missing required numeric 'auth_time'",
+        "at_hash_missing" => "missing required 'at_hash'",
         "at_hash_mismatch" => "'at_hash' claim does not match",
+        "c_hash_missing" => "missing required 'c_hash'",
         "c_hash_mismatch" => "'c_hash' claim does not match",
         "unsupported_alg" => "Unsupported ID token 'alg'",
         "alg_required" => "header 'alg' is required",
@@ -152,8 +162,14 @@ fn options_for(input: &Input) -> IdTokenValidationOptions {
     if let Some(access_token) = &input.access_token {
         b = b.access_token(access_token);
     }
+    if let Some(issued) = input.access_token_issued_with_id_token {
+        b = b.access_token_issued_with_id_token(issued);
+    }
     if let Some(code) = &input.code {
         b = b.code(code);
+    }
+    if let Some(issued) = input.code_issued_with_id_token {
+        b = b.code_issued_with_id_token(issued);
     }
     if let Some(max_age) = input.max_age {
         b = b.max_age(max_age);

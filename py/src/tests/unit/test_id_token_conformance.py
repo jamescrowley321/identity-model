@@ -70,7 +70,9 @@ _REASON_MESSAGE = {
     "nonce_mismatch": "'nonce' claim does not match",
     "auth_time_stale": "'auth_time' is older than the permitted max_age",
     "auth_time_missing": "missing required numeric 'auth_time'",
+    "at_hash_missing": "missing required 'at_hash'",
     "at_hash_mismatch": "'at_hash' claim does not match",
+    "c_hash_missing": "missing required 'c_hash'",
     "c_hash_mismatch": "'c_hash' claim does not match",
     "unsupported_alg": "Unsupported ID token 'alg'",
     "alg_required": "'alg' is required to validate at_hash/c_hash",
@@ -89,6 +91,10 @@ def _run_vector(vector: dict) -> None:
         nonce=inp.get("nonce"),
         access_token=inp.get("access_token"),
         code=inp.get("code"),
+        access_token_issued_with_id_token=inp.get(
+            "access_token_issued_with_id_token", True
+        ),
+        code_issued_with_id_token=inp.get("code_issued_with_id_token", True),
         max_age=inp.get("max_age"),
         leeway=inp.get("leeway", 0.0),
         now=inp.get("now"),

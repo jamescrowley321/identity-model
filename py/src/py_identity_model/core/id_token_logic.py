@@ -208,6 +208,46 @@ def _validate_azp(claims: dict, client_id: str | None) -> None:
         )
 
 
+# The value each §3.3.2.11 hash claim binds to: (input name, error wording).
+_HASH_BINDINGS = {
+    "at_hash": ("access_token", "the access token"),
+    "c_hash": ("code", "the authorization code"),
+}
+
+
+def _validate_hash_binding(
+    claims: dict,
+    header_alg: str | None,
+    claim: str,
+    value: str,
+    required: bool,
+) -> None:
+    """Check an ``at_hash``/``c_hash`` *claim* binds to *value* (§3.3.2.11).
+
+    Presence is required only when *value* was issued in the same
+    authorization response as the ID Token (*required*, §3.2.2.10 /
+    §3.3.2.11); otherwise an absent claim is accepted. A present claim always
+    has to match, whatever its type. Presence is checked before the hash is
+    computed, so an absent, unrequired claim never consults ``alg``.
+    """
+    value_field, subject = _HASH_BINDINGS[claim]
+    if claim not in claims:
+        if required:
+            raise IdTokenValidationException(
+                f"ID token missing required '{claim}' claim for {subject} "
+                "issued with it",
+                token_part="payload",
+            )
+        return
+    expected = _left_half_hash(value, header_alg, value_field)
+    actual = claims[claim]
+    if not isinstance(actual, str) or not _hashes_equal(actual, expected, f"'{claim}'"):
+        raise IdTokenValidationException(
+            f"ID token '{claim}' claim does not match {subject}",
+            token_part="payload",
+        )
+
+
 def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knobs
     claims: dict,
     header_alg: str | None,
@@ -218,6 +258,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
+    access_token_issued_with_id_token: bool = True,
+    code_issued_with_id_token: bool = True,
     max_age: int | None = None,
     leeway: float = 0.0,
     now: float | None = None,
@@ -252,10 +294,25 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             ignored, as §2 advises relying parties that use no extensions.
         nonce: When provided, the token's ``nonce`` MUST be present and equal
             this value (§3.1.3.7 step 11).
-        access_token: When provided, the token's ``at_hash`` MUST be present
-            and match the left-half hash of this access token (§3.3.2.11).
-        code: When provided, the token's ``c_hash`` MUST be present and match
-            the left-half hash of this authorization code (§3.3.2.11).
+        access_token: When provided, the token's ``at_hash`` MUST match the
+            left-half hash of this access token (§3.3.2.11). It MUST also be
+            present unless ``access_token_issued_with_id_token`` is ``False``.
+        code: When provided, the token's ``c_hash`` MUST match the left-half
+            hash of this authorization code (§3.3.2.11). It MUST also be
+            present unless ``code_issued_with_id_token`` is ``False``.
+        access_token_issued_with_id_token: Whether ``access_token`` came back
+            in the same authorization response as the ID Token
+            (``response_type`` ``id_token token`` or ``code id_token token``),
+            which makes ``at_hash`` REQUIRED (§3.2.2.10, §3.3.2.11). Defaults
+            to ``True``. Pass ``False`` for a token-endpoint ID Token, which
+            may omit ``at_hash`` (§3.1.3.6); a present one must still match.
+            No effect without ``access_token``.
+        code_issued_with_id_token: Whether ``code`` came back in the same
+            authorization response as the ID Token (``response_type``
+            ``code id_token`` or ``code id_token token``), which makes
+            ``c_hash`` REQUIRED (§3.3.2.11). Defaults to ``True``. Pass
+            ``False`` when it did not; a present ``c_hash`` must still match.
+            No effect without ``code``.
         max_age: When provided, ``auth_time`` MUST be present and satisfy
             ``now - auth_time <= max_age + leeway`` (§3.1.3.7 step 12).
         leeway: Clock-skew tolerance (seconds) applied to the ``max_age`` check.
@@ -314,27 +371,23 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
 
     # §3.3.2.11 — ``at_hash`` binding (only when an access token was passed).
     if access_token is not None:
-        expected_at_hash = _left_half_hash(access_token, header_alg, "access_token")
-        token_at_hash = claims.get("at_hash")
-        if not isinstance(token_at_hash, str) or not _hashes_equal(
-            token_at_hash, expected_at_hash, "'at_hash'"
-        ):
-            raise IdTokenValidationException(
-                "ID token 'at_hash' claim does not match the access token",
-                token_part="payload",
-            )
+        _validate_hash_binding(
+            claims,
+            header_alg,
+            "at_hash",
+            access_token,
+            required=access_token_issued_with_id_token,
+        )
 
     # §3.3.2.11 — ``c_hash`` binding (only when an authorization code was passed).
     if code is not None:
-        expected_c_hash = _left_half_hash(code, header_alg, "code")
-        token_c_hash = claims.get("c_hash")
-        if not isinstance(token_c_hash, str) or not _hashes_equal(
-            token_c_hash, expected_c_hash, "'c_hash'"
-        ):
-            raise IdTokenValidationException(
-                "ID token 'c_hash' claim does not match the authorization code",
-                token_part="payload",
-            )
+        _validate_hash_binding(
+            claims,
+            header_alg,
+            "c_hash",
+            code,
+            required=code_issued_with_id_token,
+        )
 
 
 __all__ = ["validate_id_token_claims"]

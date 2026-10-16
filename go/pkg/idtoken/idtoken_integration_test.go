@@ -243,41 +243,53 @@ func TestIntegration_ValidateIDToken_MaxAge(t *testing.T) {
 	}
 }
 
-// TestIntegration_ValidateIDToken_AtHashWhenPresent asserts the at_hash binding
-// only when the OP actually mints an at_hash in its code-flow ID Token. node-oidc
-// (like most OPs) emits at_hash only for authorization-endpoint responses, so
-// this leg documents its skip; the at_hash construction is covered exhaustively
-// by the conformance vectors (IDT-007/008).
-func TestIntegration_ValidateIDToken_AtHashWhenPresent(t *testing.T) {
+// TestIntegration_ValidateIDToken_AtHashTokenEndpoint asserts the at_hash rules
+// for a code-flow (token-endpoint) ID Token, where at_hash is OPTIONAL
+// (§3.1.3.6), so the access token is marked as not issued with the ID Token:
+// an OP that omits at_hash is then accepted, one that mints it must bind the
+// issued access token. By default at_hash is REQUIRED (§3.2.2.10, §3.3.2.11).
+func TestIntegration_ValidateIDToken_AtHashTokenEndpoint(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	live := obtainLiveIDToken(t, ctx)
-	if _, ok := decodeUnverifiedClaims(t, live.idToken)["at_hash"]; !ok {
-		t.Skip("OP's code-flow ID Token carries no at_hash (emitted only for " +
-			"authorization-endpoint responses) — at_hash binding covered by conformance vectors")
-	}
 	if live.accessToken == "" {
-		t.Fatalf("ID Token carried an at_hash but the flow returned no access_token")
+		t.Fatalf("the code flow returned no access_token")
+	}
+	validate := func(accessToken string, extra ...idtoken.Option) error {
+		opts := append([]idtoken.Option{
+			idtoken.WithIssuer(live.issuer),
+			idtoken.WithClientID(live.clientID),
+			idtoken.WithAccessToken(accessToken),
+		}, extra...)
+		_, err := idtoken.ValidateIDToken(ctx, live.idToken, live.keySet, opts...)
+		return err
 	}
 
-	// The issued access token passes the at_hash binding.
-	if _, err := idtoken.ValidateIDToken(ctx, live.idToken, live.keySet,
-		idtoken.WithIssuer(live.issuer),
-		idtoken.WithClientID(live.clientID),
-		idtoken.WithAccessToken(live.accessToken),
-	); err != nil {
-		t.Fatalf("ValidateIDToken with at_hash: %v", err)
+	tokenEndpoint := idtoken.WithAccessTokenIssuedWithIDToken(false)
+
+	// The issued access token passes, with or without an at_hash.
+	if err := validate(live.accessToken, tokenEndpoint); err != nil {
+		t.Fatalf("ValidateIDToken with the issued access token: %v", err)
 	}
 
-	// A tampered access token is rejected by the at_hash check.
-	_, err := idtoken.ValidateIDToken(ctx, live.idToken, live.keySet,
-		idtoken.WithIssuer(live.issuer),
-		idtoken.WithClientID(live.clientID),
-		idtoken.WithAccessToken(live.accessToken+"tampered"),
-	)
 	var pe *idtoken.ProfileError
-	if !errors.As(err, &pe) || pe.Reason != idtoken.ReasonAtHashMismatch {
-		t.Fatalf("err = %v, want *ProfileError{at_hash_mismatch}", err)
+	if _, ok := decodeUnverifiedClaims(t, live.idToken)["at_hash"]; ok {
+		// A present at_hash binds: a tampered access token is rejected, and
+		// requiring presence changes nothing.
+		err := validate(live.accessToken+"tampered", tokenEndpoint)
+		if !errors.As(err, &pe) || pe.Reason != idtoken.ReasonAtHashMismatch {
+			t.Fatalf("err = %v, want *ProfileError{at_hash_mismatch}", err)
+		}
+		if err := validate(live.accessToken); err != nil {
+			t.Fatalf("ValidateIDToken requiring at_hash: %v", err)
+		}
+		return
+	}
+
+	// No at_hash: nothing binds, so only the default presence rule rejects.
+	err := validate(live.accessToken)
+	if !errors.As(err, &pe) || pe.Reason != idtoken.ReasonAtHashMissing {
+		t.Fatalf("err = %v, want *ProfileError{at_hash_missing}", err)
 	}
 }
