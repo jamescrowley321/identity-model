@@ -270,6 +270,18 @@ print(f"Token issuer: {claims.get('iss')}")
 # Ensure you're using the correct discovery document for your tokens
 ```
 
+### Discovery `ISSUER_MISMATCH`
+
+**Problem**: `get_discovery_document` fails with `DiscoveryErrorKind.ISSUER_MISMATCH`
+
+The document's `issuer` must equal the discovery address without
+`/.well-known/openid-configuration` (OIDC Discovery 1.0 §4.3). Only a trailing
+slash is ignored; host case, an explicit port and the path must match exactly.
+A common cause is discovering through an internal hostname or proxy while the
+provider advertises its public issuer. Discover from the issuer URL itself, or
+configure the provider to advertise the address clients use. See
+[Discovery: Issuer match](api/discovery.md#issuer-match).
+
 ## Common Errors
 
 ### `PyIdentityModelException: Content did not change`

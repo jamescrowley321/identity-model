@@ -290,12 +290,10 @@ def _client_credentials_call(base: str, inp: dict) -> Any:
         scope=" ".join(inp["scopes"]) if "scopes" in inp else None,
         **kwargs,
     )
-    http_client = None
-    if "http_client_headers" in inp:
-        http_client = HTTPClient(
-            client=httpx.Client(headers=inp["http_client_headers"])
-        )
-    return request_client_credentials_token(request, http_client)
+    if "http_client_headers" not in inp:
+        return request_client_credentials_token(request)
+    with httpx.Client(headers=inp["http_client_headers"]) as raw:
+        return request_client_credentials_token(request, HTTPClient(client=raw))
 
 
 def _client_credentials_expect(case_id: str, expect: dict, response: Any) -> None:
@@ -326,11 +324,7 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
     address = base + _DISCO_PATH
     # The fixture is plain HTTP on loopback; require_https also withdraws the
     # loopback exemption so the HTTPS requirement applies.
-    policy = (
-        DiscoveryPolicy(allow_http_on_loopback=False)
-        if inp.get("require_https")
-        else DiscoveryPolicy()
-    )
+    policy = DiscoveryPolicy(allow_http_on_loopback=not inp.get("require_https"))
     if "calls_at_seconds" not in inp:
         request = DiscoveryDocumentRequest(address=address, policy=policy)
         return base, [get_discovery_document(request)]
@@ -367,13 +361,6 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
         for name, value in want.items():
             assert getattr(response, name) == value, f"{case_id}: {name}"
         return
-    if (
-        case_id == "DISC-003"
-        and expect["error"] == "issuer_mismatch"
-        and response.is_successful
-        and response.issuer == "https://attacker.example.com"
-    ):
-        raise KnownGap(f"{case_id}: issuer mismatch accepted (#574)")
     assert not response.is_successful, f"{case_id}: expected reject, got accept"
     assert response.error_kind is DiscoveryErrorKind(expect["error"]), (
         f"{case_id}: expected {expect['error']}, got {response.error_kind}: {response.error}"
@@ -652,7 +639,6 @@ _KNOWN_GAPS = {
     "INTR-002-inactive-token": "no typed §2.2 introspection members (#772)",
     "INTR-003-client-secret-post": "no client_secret_post for introspection (#574)",
     "INTR-005-invalid-client": "introspection errors are untyped (#791)",
-    "DISC-003-issuer-mismatch": "no issuer-match check (#574)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",

@@ -57,7 +57,9 @@ def get_discovery_document(
 
         client = http_client if http_client is not None else get_default_http_client()
         response = _fetch_discovery_document(client, disco_doc_req.address)
-        return process_discovery_response(response, policy)
+        return process_discovery_response(
+            response, policy, requested_address=disco_doc_req.address
+        )
     except Exception as e:
         return handle_discovery_error(e)
     finally:

@@ -180,7 +180,9 @@ def test_no_policy_relaxes_jwks_uri(policy):
         request=httpx.Request("GET", DISCO_URL),
     )
     with pytest.raises(DiscoveryMissingFieldsError) as exc_info:
-        validate_and_parse_discovery_response(response, policy)
+        validate_and_parse_discovery_response(
+            response, policy, requested_address=DISCO_URL
+        )
     assert exc_info.value.fields == ("jwks_uri",)
 
 
