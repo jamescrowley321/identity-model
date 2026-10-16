@@ -96,6 +96,9 @@ func idTokenOptionsFor(in IDTokenInput) []idtoken.Option {
 	if in.ClientID != "" {
 		opts = append(opts, idtoken.WithClientID(in.ClientID))
 	}
+	if in.TrustedAudiences != nil {
+		opts = append(opts, idtoken.WithTrustedAudiences(in.TrustedAudiences...))
+	}
 	if in.Nonce != nil {
 		opts = append(opts, idtoken.WithNonce(*in.Nonce))
 	}

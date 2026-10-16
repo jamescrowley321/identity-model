@@ -6,6 +6,12 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
 §3.3.2.11 on top:
 
 - **`sub`** — required and non-empty, always.
+- **`aud`** — required, always (§2): a token with no audience is rejected even
+  without a `client_id`. Every audience must be your `client_id` or one you
+  list in `trusted_audiences=`, always (§3.1.3.7 step 3). The list only adds
+  trusted audiences; it cannot turn the check off, and it must be a list, not
+  a single string. A single-audience token equal to your `client_id` needs no
+  list.
 - **`azp`** — a multi-audience token must carry `azp`, and a present `azp`
   must equal your `client_id` (taken from `token_validation_config.audience`).
 - **`nonce`** — when you pass `nonce=`, the claim must be present and equal
@@ -27,6 +33,7 @@ claims = validate_id_token(
     id_token,
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
     disco_doc_address=DISCOVERY_URL,
+    trusted_audiences=["https://api.example.com"],  # other audiences you trust
     nonce=expected_nonce,          # from the authorization request
     access_token=access_token,     # enforce at_hash (hybrid/implicit)
     code=authorization_code,       # enforce c_hash (hybrid)
@@ -36,7 +43,10 @@ claims = validate_id_token(
 
 Profile failures raise `IdTokenValidationException`; standard JWT failures
 raise `TokenValidationException`. The former subclasses the latter, so
-`except TokenValidationException` fails closed on both.
+`except TokenValidationException` fails closed on both. An untrusted audience
+raises `UntrustedAudienceException`, a subclass of
+`IdTokenValidationException` whose `details["untrusted_audiences"]` lists the
+rejected values.
 
 The Go library ships the same profile as
 [`pkg/idtoken`](https://github.com/jamescrowley321/identity-model/tree/main/go/pkg/idtoken)
@@ -63,3 +73,5 @@ as a pure function over an already-validated claim set:
 ## Exceptions
 
 ::: py_identity_model.exceptions.IdTokenValidationException
+
+::: py_identity_model.exceptions.UntrustedAudienceException

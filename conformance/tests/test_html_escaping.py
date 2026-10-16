@@ -135,7 +135,7 @@ class TestIdTokenValidationFailedEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 side_effect=TokenValidationException(XSS_PAYLOAD),
             ),
         ):
@@ -177,7 +177,7 @@ class TestUserInfoValidationFailedEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": "user-1",
                     "iss": _Disco.issuer,
@@ -229,7 +229,7 @@ class TestSuccessBodyClaimEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": "user-1",
                     "iss": _Disco.issuer,
@@ -271,7 +271,7 @@ class TestSuccessBodyClaimEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": QUOTE_PAYLOAD,
                     "iss": _Disco.issuer,

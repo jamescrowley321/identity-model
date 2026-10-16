@@ -27,7 +27,10 @@ from pathlib import Path
 import pytest
 
 from py_identity_model.core.id_token_logic import validate_id_token_claims
-from py_identity_model.exceptions import IdTokenValidationException
+from py_identity_model.exceptions import (
+    IdTokenValidationException,
+    UntrustedAudienceException,
+)
 
 
 def _find_repo_root() -> Path:
@@ -49,12 +52,19 @@ _CAPABILITY = json.loads(_SPEC_FILE.read_text())
 _CASES = _CAPABILITY["tests"]
 
 
-# Each canonical reject ``reason`` maps to a stable substring of the message
+# ``untrusted_audience`` has its own exception type, so the runner pins it by
+# type rather than by message.
+_REASON_EXCEPTION = {
+    "untrusted_audience": UntrustedAudienceException,
+}
+
+# Each other canonical reject ``reason`` maps to a stable substring of the message
 # raised by ``validate_id_token_claims`` for that rule. Go/Rust map the same
 # labels to their own error variants; keeping the map here is the ONLY
 # per-language coupling (the vectors themselves stay language-neutral).
 _REASON_MESSAGE = {
     "missing_sub": "missing required 'sub'",
+    "missing_aud": "missing required 'aud'",
     "azp_required_multi_aud": "multiple audiences must contain an 'azp'",
     "azp_mismatch": "'azp' claim does not match",
     "nonce_mismatch": "'nonce' claim does not match",
@@ -74,6 +84,7 @@ def _run_vector(vector: dict) -> None:
         inp["claims"],
         inp["header_alg"],
         client_id=inp.get("client_id"),
+        trusted_audiences=inp.get("trusted_audiences"),
         nonce=inp.get("nonce"),
         access_token=inp.get("access_token"),
         code=inp.get("code"),
@@ -112,6 +123,17 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
         with pytest.raises(IdTokenValidationException) as exc_info:
             _run_vector(vector)
         reason = expect["reason"]
+        want_type = _REASON_EXCEPTION.get(reason)
+        if want_type is not None:
+            assert type(exc_info.value) is want_type, (
+                f"{case_id}: reason {reason!r} expected {want_type.__name__}, "
+                f"got {type(exc_info.value).__name__}: {exc_info.value}"
+            )
+            return
+        assert not isinstance(exc_info.value, UntrustedAudienceException), (
+            f"{case_id}: reason {reason!r} but the audience rule fired: "
+            f"{exc_info.value}"
+        )
         want_substring = _REASON_MESSAGE.get(reason)
         assert want_substring is not None, (
             f"{case_id}: unknown canonical reason {reason!r} — extend _REASON_MESSAGE"

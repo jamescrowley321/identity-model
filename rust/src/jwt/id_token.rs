@@ -6,6 +6,11 @@
 //! make an ID Token an ID Token, on an already-decoded [`Claims`] set:
 //!
 //! * `sub` is REQUIRED and must be non-empty (§2 / §3.1.3.7).
+//! * every `aud` value must be trusted by the client — its `client_id` or one
+//!   of the caller's
+//!   [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
+//!   (§3.1.3.7 step 3). With neither configured, any `aud` value is untrusted
+//!   (fail closed).
 //! * `azp` authorized-party rules when the token carries multiple audiences
 //!   (§3.1.3.7 steps 4-6).
 //! * `nonce` binding, when the caller supplies the `nonce` it sent on the
@@ -22,7 +27,7 @@
 //! ([`subtle::ConstantTimeEq`]).
 //!
 //! Behaviour is proven against the cross-language conformance IDs
-//! `IDT-001`..`IDT-011` in `spec/vectors/id-token.json`
+//! `IDT-001`..`IDT-012` in `spec/vectors/id-token.json`
 //! (`rust/tests/it/conformance/id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
@@ -85,12 +90,16 @@ const EDDSA_ALGS: &[&str] = &["EdDSA", "Ed25519"];
 ///
 /// Construct one with [`IdTokenValidationOptions::builder`]. Every field is
 /// optional: an empty options set enforces only the always-on rules (a
-/// non-empty `sub` and the `azp` authorized-party rules). Each remaining check
+/// non-empty `sub`, every `aud` value trusted, and the `azp` authorized-party
+/// rules) — with no `client_id` and no trusted audiences configured, any `aud`
+/// value is untrusted, so set a `client_id` (or use [`validate_id_token`],
+/// which defaults it to the base audience). Each remaining check
 /// runs only when its input is supplied — a `nonce`, an `access_token` (for
 /// `at_hash`), a `code` (for `c_hash`), or a `max_age` (for `auth_time`).
 #[derive(Clone, Debug, Default)]
 pub struct IdTokenValidationOptions {
     pub(crate) client_id: Option<String>,
+    pub(crate) trusted_audiences: Vec<String>,
     pub(crate) nonce: Option<String>,
     pub(crate) access_token: Option<String>,
     pub(crate) code: Option<String>,
@@ -100,8 +109,8 @@ pub struct IdTokenValidationOptions {
 }
 
 impl IdTokenValidationOptions {
-    /// Returns an options set with every check disabled (only the always-on
-    /// `sub` and `azp` rules apply).
+    /// Returns an options set with every opt-in check disabled (only the
+    /// always-on `sub`, trusted-audience and `azp` rules apply).
     pub fn new() -> Self {
         Self::default()
     }
@@ -124,11 +133,29 @@ impl IdTokenValidationOptionsBuilder {
         Self::default()
     }
 
-    /// Sets the relying party's `client_id`. When a present `azp` is validated
-    /// it MUST equal this value (§3.1.3.7 step 6). [`validate_id_token`]
+    /// Sets the relying party's `client_id`. It is always a trusted `aud`
+    /// value (§3.1.3.7 step 3), and when a present `azp` is validated it MUST
+    /// equal this value (§3.1.3.7 step 6). [`validate_id_token`]
     /// defaults it to the base audience when unset.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
         self.inner.client_id = Some(client_id.into());
+        self
+    }
+
+    /// Sets the additional audiences, besides the `client_id`, that this client
+    /// trusts to appear in the ID Token's `aud` (§3.1.3.7 step 3). Every `aud`
+    /// value MUST be the `client_id` or one of these, otherwise the token is
+    /// rejected with [`IdentityError::IdTokenUntrustedAudience`].
+    ///
+    /// The list only *adds* trusted values: an empty list (the default) trusts
+    /// the `client_id` alone, and nothing here can switch the check off.
+    /// Replaces any previously set list.
+    pub fn trusted_audiences<I, S>(mut self, audiences: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.inner.trusted_audiences = audiences.into_iter().map(Into::into).collect();
         self
     }
 
@@ -262,9 +289,14 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
 ///
 /// # Errors
 ///
-/// [`IdentityError::IdTokenValidation`] when any ID-Token profile rule is
-/// violated. Fails **closed**: a hash check whose `header_alg` is missing or
-/// unmappable is an error, not a skipped check.
+/// - [`IdentityError::IdTokenUntrustedAudience`] when an `aud` value is
+///   neither the `client_id` nor one of the configured trusted audiences
+///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
+///   before the `azp` rules.
+/// - [`IdentityError::IdTokenValidation`] when `aud` is absent, null or holds
+///   only empty strings (§2), checked after `sub`, or when any other ID-Token
+///   profile rule is violated. Fails **closed**: a hash check whose `header_alg` is missing
+///   or unmappable is an error, not a skipped check.
 pub fn validate_id_token_claims(
     claims: &Claims,
     header_alg: Option<&str>,
@@ -277,6 +309,32 @@ pub fn validate_id_token_claims(
         ));
     }
 
+    // §2 — `aud` is REQUIRED. An absent or null `aud`, or one holding only
+    // empty strings, names no audience and is rejected with or without a
+    // `client_id`.
+    let audiences = claims.audience.values();
+    if audiences.iter().all(String::is_empty) {
+        return Err(IdentityError::IdTokenValidation(
+            "ID token missing required 'aud' claim".to_string(),
+        ));
+    }
+
+    // §3.1.3.7 step 3 — reject additional audiences not trusted by the
+    // client. The trusted set is {client_id} ∪ trusted_audiences; the list
+    // only adds trusted values, so with neither configured every `aud` value
+    // is untrusted (fail closed).
+    let untrusted: Vec<String> = audiences
+        .iter()
+        .filter(|aud| {
+            options.client_id.as_deref() != Some(aud.as_str())
+                && !options.trusted_audiences.contains(aud)
+        })
+        .cloned()
+        .collect();
+    if !untrusted.is_empty() {
+        return Err(IdentityError::IdTokenUntrustedAudience(untrusted));
+    }
+
     // §3.1.3.7 steps 4-6 — authorized-party (`azp`) rules.
     //
     // The trusted Python oracle (`core/id_token_logic.py`) gates the
@@ -286,7 +344,6 @@ pub fn validate_id_token_claims(
     // previous `azp.is_none()` accepted `azp: ""`, a narrow fail-open). The
     // subsequent mismatch check keeps the oracle's `azp is not None` guard, so a
     // present-but-empty `azp` is still compared against `client_id`.
-    let audiences = claims.audience.values();
     let azp = claims.authorized_party.as_deref();
     let azp_present = azp.is_some_and(|value| !value.is_empty());
     if audiences.len() > 1 && !azp_present {
@@ -372,8 +429,10 @@ pub fn validate_id_token_claims(
 /// [`validate_token_with_jwks`](crate::validate_token_with_jwks) (signature
 /// resolved from `jwks`/`jwks_uri`, plus `iss`/`aud`/`iat`/`exp` per `base` —
 /// set `base` audience to the RP's `client_id` so the `aud` check is enforced),
-/// then applies the ID-Token profile from `profile`: required `sub`, the `azp`
-/// authorized-party rules, and the opt-in `nonce`/`max_age`/`at_hash`/`c_hash`
+/// then applies the ID-Token profile from `profile`: required `sub`, every
+/// `aud` value trusted (the `client_id` or a
+/// [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
+/// entry), the `azp` authorized-party rules, and the opt-in `nonce`/`max_age`/`at_hash`/`c_hash`
 /// bindings that are checked only when the corresponding option is supplied.
 ///
 /// When `profile.client_id` is unset it defaults to the `base` audience, so a
@@ -384,7 +443,10 @@ pub fn validate_id_token_claims(
 /// - [`IdentityError::Validation`] — standard JWT validation failed (bad
 ///   signature, wrong issuer/audience, expired token).
 /// - [`IdentityError::KeyNotFound`] — no JWKS key matched the token's `kid`.
-/// - [`IdentityError::IdTokenValidation`] — an ID-Token-profile rule failed.
+/// - [`IdentityError::IdTokenUntrustedAudience`] — the token's `aud` carries
+///   a value the client does not trust (§3.1.3.7 step 3).
+/// - [`IdentityError::IdTokenValidation`] — another ID-Token-profile rule
+///   failed.
 /// - the transport/parse errors of
 ///   [`validate_token_with_jwks`](crate::validate_token_with_jwks).
 pub async fn validate_id_token(
@@ -457,11 +519,163 @@ mod tests {
         );
     }
 
+    // IDT-013: aud is REQUIRED (§2). A token naming no audience is rejected
+    // with or without a client_id, ahead of the untrusted-audience rule.
+    #[test]
+    fn rejects_missing_audience() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        let none = IdTokenValidationOptions::new();
+        for (aud, opts) in [
+            (None, &none),
+            (None, &cid),
+            (Some(json!(null)), &cid),
+            (Some(json!("")), &cid),
+            (Some(json!([])), &cid),
+            (Some(json!(["", ""])), &cid),
+        ] {
+            let mut value = json!({"sub": "u"});
+            if let Some(aud) = &aud {
+                value["aud"] = aud.clone();
+            }
+            assert_id_token_reject(
+                &validate_id_token_claims(&claims(value), Some("RS256"), opts).unwrap_err(),
+                "required 'aud'",
+            );
+        }
+
+        // An empty string beside a real audience is untrusted, not missing.
+        let mixed = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", ""], "azp": "s6BhdRkqt3"}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&mixed, Some("RS256"), &cid).unwrap_err(),
+            &[""],
+        );
+    }
+
+    /// Asserts a rejection is an [`IdentityError::IdTokenUntrustedAudience`]
+    /// carrying exactly `expected` (in `aud` order).
+    fn assert_untrusted_audience(err: &IdentityError, expected: &[&str]) {
+        match err {
+            IdentityError::IdTokenUntrustedAudience(untrusted) => {
+                let expected: Vec<String> = expected.iter().map(|s| (*s).to_string()).collect();
+                assert_eq!(untrusted, &expected);
+            }
+            other => panic!("expected IdTokenUntrustedAudience, got {other:?}"),
+        }
+    }
+
+    // IDT-012: an additional audience the client does not trust is rejected
+    // (§3.1.3.7 step 3), carrying exactly the untrusted values.
+    #[test]
+    fn rejects_untrusted_additional_audience() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &cid).unwrap_err(),
+            &["other-client-9x"],
+        );
+
+        // Only the values outside the trusted set are reported.
+        let partly = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        let three = claims(json!({
+            "sub": "u",
+            "aud": ["s6BhdRkqt3", "other-client-9x", "unknown-api-7q"],
+            "azp": "s6BhdRkqt3"
+        }));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&three, Some("RS256"), &partly).unwrap_err(),
+            &["unknown-api-7q"],
+        );
+    }
+
+    // IDT-012: listing the additional audience as trusted accepts the token.
+    #[test]
+    fn accepts_trusted_additional_audience() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(vec!["other-client-9x".to_string()])
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        validate_id_token_claims(&c, Some("RS256"), &opts).expect("trusted extra aud validates");
+    }
+
+    // IDT-012: an empty trusted list adds nothing — it cannot switch the check
+    // off.
+    #[test]
+    fn empty_trusted_list_still_rejects() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(Vec::<String>::new())
+            .build();
+        let c = claims(
+            json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": "s6BhdRkqt3"}),
+        );
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &opts).unwrap_err(),
+            &["other-client-9x"],
+        );
+    }
+
+    // With no client_id and no trusted list the trusted set is empty, so any
+    // aud value is untrusted (fail closed).
+    #[test]
+    fn no_client_id_and_no_trusted_list_fails_closed() {
+        let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &IdTokenValidationOptions::new())
+                .unwrap_err(),
+            &["s6BhdRkqt3"],
+        );
+    }
+
+    // IDT-012: a single audience equal to the client_id is unaffected, with or
+    // without a trusted list.
+    #[test]
+    fn single_audience_unchanged_by_trusted_list() {
+        let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        let plain = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        validate_id_token_claims(&c, Some("RS256"), &plain).expect("single aud validates");
+        let with_list = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        validate_id_token_claims(&c, Some("RS256"), &with_list)
+            .expect("single aud validates with a trusted list");
+    }
+
+    // IDT-012 ordering: step 3 runs before the azp rules, so a multi-aud token
+    // with no azp and an untrusted audience reports the untrusted audience.
+    #[test]
+    fn untrusted_audience_checked_before_azp() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        let c = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &cid).unwrap_err(),
+            &["other-client-9x"],
+        );
+    }
+
     // IDT-003: multiple audiences REQUIRE an azp that identifies this client.
+    // The second audience is trusted so step 3 passes and the azp rules run.
     #[test]
     fn enforces_azp_for_multiple_audiences() {
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
             .build();
 
         let single_list = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3"]}));
@@ -499,19 +713,19 @@ mod tests {
     //   * single-aud + azp="" + client_id -> azp_mismatch (the oracle's mismatch
     //     guard is `azp is not None`, so a present empty string is compared);
     //   * single-aud + azp="" + no client_id -> accept (no client_id to compare).
+    // Every audience is listed as trusted so step 3 passes and the azp rules
+    // are what is exercised.
     #[test]
     fn empty_string_azp_matches_oracle_truthiness() {
         // multi-aud + azp="" with no configured client_id: the former
         // `azp.is_none()` accepted this; the oracle rejects it.
         let multi_empty =
             claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": ""}));
+        let trusted_no_cid = IdTokenValidationOptions::builder()
+            .trusted_audiences(["s6BhdRkqt3", "other-client-9x"])
+            .build();
         assert_id_token_reject(
-            &validate_id_token_claims(
-                &multi_empty,
-                Some("RS256"),
-                &IdTokenValidationOptions::new(),
-            )
-            .unwrap_err(),
+            &validate_id_token_claims(&multi_empty, Some("RS256"), &trusted_no_cid).unwrap_err(),
             "multiple audiences must contain an 'azp'",
         );
 
@@ -519,6 +733,7 @@ mod tests {
         // fires first (matching the oracle), not the mismatch check.
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&multi_empty, Some("RS256"), &cid).unwrap_err(),
@@ -534,12 +749,8 @@ mod tests {
         );
 
         // single-aud + azp="" with NO client_id: nothing to compare, accept.
-        validate_id_token_claims(
-            &single_empty_cid,
-            Some("RS256"),
-            &IdTokenValidationOptions::new(),
-        )
-        .expect("empty azp on single audience with no client_id validates");
+        validate_id_token_claims(&single_empty_cid, Some("RS256"), &trusted_no_cid)
+            .expect("empty azp on single audience with no client_id validates");
     }
 
     // IDT-004: a present azp is validated even for a single audience.
@@ -564,11 +775,13 @@ mod tests {
         let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "nonce": "n-0S6_WzA2Mj"}));
         let matching = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
+            .client_id("s6BhdRkqt3")
             .nonce("n-0S6_WzA2Mj")
             .build();
         validate_id_token_claims(&c, Some("RS256"), &matching).expect("matching nonce validates");
 
         let mismatch = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .nonce("a-different-nonce")
             .build();
         assert_id_token_reject(
@@ -588,6 +801,7 @@ mod tests {
     fn enforces_auth_time_freshness() {
         let within = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_999_900}));
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .now(1_700_000_000)
             .build();
@@ -596,6 +810,7 @@ mod tests {
         let leeway_case =
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_996_390}));
         let with_leeway = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .leeway(Duration::from_secs(60))
             .now(1_700_000_000)
@@ -622,6 +837,7 @@ mod tests {
     fn enforces_at_hash_rs256() {
         let access_token = "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU";
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token(access_token)
             .build();
 
@@ -643,7 +859,9 @@ mod tests {
         );
 
         // No access_token supplied -> at_hash present but unchecked.
-        let unchecked = IdTokenValidationOptions::new();
+        let unchecked = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
         validate_id_token_claims(&good, Some("RS256"), &unchecked)
             .expect("at_hash unchecked without an access token");
     }
@@ -653,6 +871,7 @@ mod tests {
     #[test]
     fn at_hash_hash_is_selected_by_alg() {
         let es512 = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("YmExYzZmZTgtZXM1MTItYWNjZXNzLXRva2VuLWV4YW1wbGU")
             .build();
         let good = claims(json!({
@@ -663,6 +882,7 @@ mod tests {
 
         // An SHA-256-sized at_hash under an ES512 header must not validate.
         let sha256_sized = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU")
             .build();
         let mismatched =
@@ -678,6 +898,7 @@ mod tests {
     #[test]
     fn enforces_c_hash() {
         let rs = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
             .build();
         let good =
@@ -692,6 +913,7 @@ mod tests {
         );
 
         let es = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Y29kZS1lczUxMi1hdXRob3JpemF0aW9uLWNvZGUtZXhhbXBsZQ")
             .build();
         let es_good = claims(json!({
@@ -705,6 +927,7 @@ mod tests {
     #[test]
     fn hash_check_fails_closed_on_bad_alg() {
         let at = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .access_token("jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU")
             .build();
         let with_at =
@@ -720,6 +943,7 @@ mod tests {
         );
 
         let code = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .code("Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk")
             .build();
         let with_code =
@@ -736,6 +960,7 @@ mod tests {
     fn boolean_auth_time_is_not_numeric() {
         let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": true}));
         let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
             .max_age(3600)
             .now(1_700_000_000)
             .build();
