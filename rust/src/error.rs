@@ -80,6 +80,36 @@ pub enum IdentityError {
     #[error("key not found: {0}")]
     KeyNotFound(String),
 
+    /// A token with no `kid` could be verified by more than one key in the
+    /// JWKS (JWKS-009). With no `kid`, the set is narrowed to signing keys
+    /// (`use` absent or `sig`, RFC 7517 §4.2), then to keys whose `alg` is
+    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it,
+    /// each step applied only when it leaves a key; `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
+    /// which reports a `kid` that matches no key.
+    #[error("ambiguous key: token has no kid and {count} keys could verify alg {alg:?} {kids:?}")]
+    AmbiguousKey {
+        /// The token header `alg`.
+        alg: String,
+        /// The ids of the remaining keys that have one.
+        kids: Vec<String>,
+        /// The number of remaining keys.
+        count: usize,
+    },
+
+    /// The key resolved for a token declares an `alg` (RFC 7517 §4.4) other
+    /// than the token header `alg`, so it is not used (JWKS-010). Applies
+    /// whether the key was found by `kid` or selected without one; distinct
+    /// from [`IdentityError::KeyNotFound`] and [`IdentityError::AmbiguousKey`].
+    #[error("key algorithm mismatch: key {kid:?} declares alg {key_alg:?}, token alg is {alg:?}")]
+    KeyAlgorithmMismatch {
+        /// The resolved key's `kid` (empty when it has none).
+        kid: String,
+        /// The `alg` the key declares.
+        key_alg: String,
+        /// The token header `alg`.
+        alg: String,
+    },
+
     /// The token endpoint replied with a non-2xx OAuth 2.0 error response
     /// (RFC 6749 §5.2).
     #[error("token endpoint error {error:?}{}: HTTP {status}", .description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]
@@ -121,6 +151,24 @@ mod tests {
         assert_eq!(
             IdentityError::KeyNotFound("abc".into()).to_string(),
             "key not found: abc"
+        );
+        assert_eq!(
+            IdentityError::AmbiguousKey {
+                alg: "RS256".into(),
+                kids: vec!["a".into(), "b".into()],
+                count: 2,
+            }
+            .to_string(),
+            r#"ambiguous key: token has no kid and 2 keys could verify alg "RS256" ["a", "b"]"#
+        );
+        assert_eq!(
+            IdentityError::KeyAlgorithmMismatch {
+                kid: "k1".into(),
+                key_alg: "RS384".into(),
+                alg: "RS256".into(),
+            }
+            .to_string(),
+            r#"key algorithm mismatch: key "k1" declares alg "RS384", token alg is "RS256""#
         );
         assert_eq!(
             IdentityError::Configuration("missing token_endpoint".into()).to_string(),

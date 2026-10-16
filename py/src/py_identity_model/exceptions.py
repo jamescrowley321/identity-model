@@ -78,6 +78,37 @@ class InvalidIssuerException(TokenValidationException):
         super().__init__(message, token_part="payload", details=details)
 
 
+class AmbiguousKeyException(TokenValidationException):
+    """Raised when a token with no ``kid`` matches more than one JWK.
+
+    With no ``kid`` in the JOSE header, the JWK Set is narrowed to signing
+    keys (``use`` absent or ``sig``, RFC 7517 §4.2), then to keys whose
+    ``alg`` is absent or equals the header ``alg`` (§4.4) and whose ``kty``
+    matches it, each step applied only when it leaves a key. More than one
+    key left means the verification key cannot be chosen. This is distinct from a ``kid`` that matches no key.
+    ``details["available_kids"]`` lists the remaining keys' ids and
+    ``details["key_count"]`` their number.
+    """
+
+    def __init__(self, message: str, available_kids: list, key_count: int):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"available_kids": available_kids, "key_count": key_count},
+        )
+
+
+class KeyAlgorithmMismatchException(TokenValidationException):
+    """Raised when the key chosen to verify a token declares another ``alg``.
+
+    A JWK that declares ``alg`` is meant for that algorithm only
+    (RFC 7517 §4.4), so a token whose header ``alg`` differs is not verified
+    with it, whether the key was found by ``kid`` or selected without one.
+    ``details`` carries the key's ``kid`` and ``key_alg`` and the token's
+    ``jwt_alg``.
+    """
+
+
 class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
