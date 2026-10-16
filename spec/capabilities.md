@@ -91,12 +91,10 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
 > Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
 > neither. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
-> A third divergence is deliberate and is not being reconciled: Rust enforces `azp` on base token
-> validation whenever an expected audience is set, while Python and Go enforce it in the narrower
-> id-token profile. Rust stays strict.
 >
 > Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
-> Go gained with the id-token profile (#629–#632).
+> Go gained with the id-token profile (#629–#632). Rust enforces `azp` only in that profile too, not on
+> base token validation.
 >
 > **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 
