@@ -86,7 +86,7 @@ class TestBuildResolvedConfigCopiesAllFields:
             perform_disco=True,
             key={"orig": "unused"},
             audience="aud-sentinel",
-            algorithms=["RS512"],  # must be replaced by [alg]
+            algorithms=["RS512", "ES256"],  # must be narrowed to [alg]
             issuer="iss-sentinel",
             subject="sub-sentinel",
             options={"verify_aud": False},
