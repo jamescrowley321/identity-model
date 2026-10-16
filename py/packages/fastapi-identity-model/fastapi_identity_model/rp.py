@@ -47,6 +47,7 @@ from py_identity_model.aio import (
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
     TokenValidationConfig,
+    UserInfoErrorKind,
     UserInfoRequest,
     build_authorization_url,
     generate_pkce_pair,
@@ -286,8 +287,8 @@ async def _fetch_userinfo(
 
     An unavailable UserInfo endpoint (no endpoint, or a transient fetch
     failure) is tolerated — identity is anchored on the validated ID token.
-    But a *successful* fetch whose ``sub`` disagrees with the ID token is a
-    token-substitution signal and must abort the login, not be swallowed.
+    But a response with no ``sub``, or a ``sub`` that disagrees with the ID
+    token, is a token-substitution signal and must abort the login.
     """
     userinfo_endpoint = disco.userinfo_endpoint
     if not access_token or not userinfo_endpoint:
@@ -297,6 +298,11 @@ async def _fetch_userinfo(
     ui = await get_userinfo(
         UserInfoRequest(address=userinfo_endpoint, token=access_token),
     )
+    if ui.error_kind is UserInfoErrorKind.MISSING_SUB:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="UserInfo response has no subject",
+        )
     if not ui.is_successful:
         logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
         return {}

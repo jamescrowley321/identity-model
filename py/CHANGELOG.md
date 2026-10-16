@@ -2,6 +2,100 @@
 
 <!-- version list -->
 
+## v4.1.1 (2026-10-16)
+
+### Bug Fixes
+
+- **py**: Enforce the caller's algorithms allowlist on discovery validation
+  ([#908](https://github.com/jamescrowley321/identity-model/pull/908),
+  [`55a2b27`](https://github.com/jamescrowley321/identity-model/commit/55a2b2753a1691737b65e634896851e4a78c1a1e))
+
+### Chores
+
+- Sync uv.lock with 4.1.0
+  ([`81b9597`](https://github.com/jamescrowley321/identity-model/commit/81b95972d54f27c5efaad2d26a399bcc1577229d))
+
+- **deps)(deps**: Bump werkzeug from 3.1.8 to 3.1.9 in /py
+  ([#864](https://github.com/jamescrowley321/identity-model/pull/864),
+  [`dbffd00`](https://github.com/jamescrowley321/identity-model/commit/dbffd00ae6f55c40c8b047b947cea293c3edbbb8))
+
+### Continuous Integration
+
+- Lint the workflow files with actionlint and shellcheck
+  ([#735](https://github.com/jamescrowley321/identity-model/pull/735),
+  [`fe40b09`](https://github.com/jamescrowley321/identity-model/commit/fe40b09d197bc05f579cae4ac3d4422aff15007e))
+
+- Run conformance, CodeQL and OSV on PRs into any branch
+  ([#871](https://github.com/jamescrowley321/identity-model/pull/871),
+  [`47c05cf`](https://github.com/jamescrowley321/identity-model/commit/47c05cfccde75f62429fa7a84b75ae946fac3711))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#866](https://github.com/jamescrowley321/identity-model/pull/866),
+  [`fc333f5`](https://github.com/jamescrowley321/identity-model/commit/fc333f576c0149ed2274a86168471bf458c33f4c))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#865](https://github.com/jamescrowley321/identity-model/pull/865),
+  [`eea566d`](https://github.com/jamescrowley321/identity-model/commit/eea566d7db13826884a062e5ca3c98552e96207f))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#863](https://github.com/jamescrowley321/identity-model/pull/863),
+  [`14b07ba`](https://github.com/jamescrowley321/identity-model/commit/14b07ba69f7b791b6f1550df9a30f95c040e662a))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#862](https://github.com/jamescrowley321/identity-model/pull/862),
+  [`4cfd672`](https://github.com/jamescrowley321/identity-model/commit/4cfd67288c04ebd746b5d157da420502b1a4a5b0))
+
+- **deps)(deps**: Bump ossf/scorecard-action
+  ([#911](https://github.com/jamescrowley321/identity-model/pull/911),
+  [`d9f761b`](https://github.com/jamescrowley321/identity-model/commit/d9f761b87384ea36332914744846813475bdd3b7))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#912](https://github.com/jamescrowley321/identity-model/pull/912),
+  [`616bbd5`](https://github.com/jamescrowley321/identity-model/commit/616bbd54f996d43ab2f14d4b93e3c07259680e87))
+
+- **deps)(deps**: Bump the github-actions group with 7 updates
+  ([#903](https://github.com/jamescrowley321/identity-model/pull/903),
+  [`73d0af4`](https://github.com/jamescrowley321/identity-model/commit/73d0af4964b203cacebfb2eb08123db9081ca7d0))
+
+- **mutation**: Gate the Rust DPoP module and redirect policy
+  ([#675](https://github.com/jamescrowley321/identity-model/pull/675),
+  [`a2bae55`](https://github.com/jamescrowley321/identity-model/commit/a2bae55f71f2e1c4d10f75213fc212a86b287adf))
+
+### Testing
+
+- Move the shared discovery URL to a suite-neutral module
+  ([#851](https://github.com/jamescrowley321/identity-model/pull/851),
+  [`b3a541e`](https://github.com/jamescrowley321/identity-model/commit/b3a541ef4ba7ea7cf79452640111ffece386fae5))
+
+- Replace the mistyped discovery URL with the shared constant
+  ([#851](https://github.com/jamescrowley321/identity-model/pull/851),
+  [`b3a541e`](https://github.com/jamescrowley321/identity-model/commit/b3a541ef4ba7ea7cf79452640111ffece386fae5))
+
+- Share test constants and stop suites importing from each other
+  ([#851](https://github.com/jamescrowley321/identity-model/pull/851),
+  [`b3a541e`](https://github.com/jamescrowley321/identity-model/commit/b3a541ef4ba7ea7cf79452640111ffece386fae5))
+
+- Share the example discovery URL across unit tests
+  ([#851](https://github.com/jamescrowley321/identity-model/pull/851),
+  [`b3a541e`](https://github.com/jamescrowley321/identity-model/commit/b3a541ef4ba7ea7cf79452640111ffece386fae5))
+
+- Stop test suites importing from each other
+  ([#851](https://github.com/jamescrowley321/identity-model/pull/851),
+  [`b3a541e`](https://github.com/jamescrowley321/identity-model/commit/b3a541ef4ba7ea7cf79452640111ffece386fae5))
+
+- **py**: Assert the disco algorithm-allowlist rejection message
+  ([#908](https://github.com/jamescrowley321/identity-model/pull/908),
+  [`55a2b27`](https://github.com/jamescrowley321/identity-model/commit/55a2b2753a1691737b65e634896851e4a78c1a1e))
+
+- **py**: Include resolved alg in allowlist for build_resolved_config field test
+  ([#908](https://github.com/jamescrowley321/identity-model/pull/908),
+  [`55a2b27`](https://github.com/jamescrowley321/identity-model/commit/55a2b2753a1691737b65e634896851e4a78c1a1e))
+
+- **py**: Pin the algorithms-allowlist rejection contract
+  ([#908](https://github.com/jamescrowley321/identity-model/pull/908),
+  [`55a2b27`](https://github.com/jamescrowley321/identity-model/commit/55a2b2753a1691737b65e634896851e4a78c1a1e))
+
+
 ## v4.1.0 (2026-10-03)
 
 ### Chores
