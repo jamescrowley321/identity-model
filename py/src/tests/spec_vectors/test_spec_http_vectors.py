@@ -26,6 +26,7 @@ import pytest
 
 from py_identity_model import (
     ClientAuthMethod,
+    Config,
     DiscoveryDocumentRequest,
     DiscoveryErrorKind,
     get_discovery_document,
@@ -59,8 +60,6 @@ from py_identity_model.sync.token_validation import (
     _discover_and_resolve_key,
     _get_cached_jwks,
     _refresh_jwks,
-    clear_discovery_cache,
-    clear_jwks_cache,
 )
 from py_identity_model.sync.userinfo import UserInfoRequest, get_userinfo
 
@@ -336,23 +335,23 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
         request = DiscoveryDocumentRequest(address=address, policy=policy)
         return base, [get_discovery_document(request)]
     responses = []
-    try:
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv("DISCO_CACHE_TTL", str(inp["cache_ttl_seconds"]))
-            jwks_cache._reset_env_for_testing()
-            now = [0.0]
-            cache_clock = SimpleNamespace(monotonic=lambda: now[0])
-            mp.setattr(token_validation, "time", cache_clock)
-            mp.setattr(jwks_cache, "time", cache_clock)
-            token_validation.clear_discovery_cache()
-            start = now[0]
-            for at in inp["calls_at_seconds"]:
-                now[0] = start + at
-                responses.append(token_validation._get_disco_response(address, policy))
-    finally:
-        # After the env var is restored, so the cache re-reads the default TTL.
-        token_validation.clear_discovery_cache()
-        jwks_cache._reset_env_for_testing()
+    # A dedicated client carries the vector's TTL and owns its own cache, so
+    # nothing is left in the library default client's cache afterwards.
+    config = Config(
+        discovery_cache_ttl=inp["cache_ttl_seconds"],
+        http_retry_base_delay=0,
+    )
+    with HTTPClient(config=config) as client, pytest.MonkeyPatch.context() as mp:
+        now = [0.0]
+        cache_clock = SimpleNamespace(monotonic=lambda: now[0])
+        mp.setattr(token_validation, "time", cache_clock)
+        mp.setattr(jwks_cache, "time", cache_clock)
+        start = now[0]
+        for at in inp["calls_at_seconds"]:
+            now[0] = start + at
+            responses.append(
+                token_validation._get_disco_response(address, policy, client)
+            )
     return base, responses
 
 
@@ -550,41 +549,49 @@ def _token_with_header(kid: str | None, alg: str | None) -> str:
 
 
 def _jwks_step(
-    base: str, step: str, kid: str | None, alg: str | None = None
+    client: HTTPClient,
+    base: str,
+    step: str,
+    kid: str | None,
+    alg: str | None = None,
 ) -> list[dict]:
     jwks_uri = base + "/jwks"
     if step == "fetch":
-        response = _get_cached_jwks(jwks_uri)
+        response = _get_cached_jwks(jwks_uri, http_client=client)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "force_refresh":
-        response, _ = _refresh_jwks(jwks_uri)
+        response, _ = _refresh_jwks(jwks_uri, http_client=client)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "resolve":
-        key, _, _, _ = _discover_and_resolve_key(
-            _token_with_header(kid, alg), base + _DISCO_PATH, None, DiscoveryPolicy()
+        key, _, _ = _discover_and_resolve_key(
+            _token_with_header(kid, alg),
+            base + _DISCO_PATH,
+            client,
+            DiscoveryPolicy(),
         )
         return [key]
     pytest.fail(f"unknown jwks step {step!r}")
 
 
 def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
-    clear_jwks_cache()
-    clear_discovery_cache()
-    # Each resolve takes the next of input.kids when given, else input.kid.
-    kids = iter(inp.get("kids", []))
-    steps = inp["steps"]
-    keys: list[dict] = []
-    for n, step in enumerate(steps, 1):
-        kid = next(kids, inp.get("kid")) if step == "resolve" else None
-        try:
-            keys = _jwks_step(base, step, kid, inp.get("alg"))
-        except TokenValidationException as exc:
-            # A key-not-found miss before the last step does not end the run.
-            if n == len(steps) or _JWKS_ERRORS["key_not_found"] not in str(exc):
-                return exc
-            keys = []
+    # A fresh client per vector: empty discovery/JWKS caches and no kid-miss
+    # cooldown carried over from another vector.
+    with HTTPClient(config=Config(http_retry_base_delay=0)) as client:
+        # Each resolve takes the next of input.kids when given, else input.kid.
+        kids = iter(inp.get("kids", []))
+        steps = inp["steps"]
+        keys: list[dict] = []
+        for n, step in enumerate(steps, 1):
+            kid = next(kids, inp.get("kid")) if step == "resolve" else None
+            try:
+                keys = _jwks_step(client, base, step, kid, inp.get("alg"))
+            except TokenValidationException as exc:
+                # A key-not-found miss before the last step does not end the run.
+                if n == len(steps) or _JWKS_ERRORS["key_not_found"] not in str(exc):
+                    return exc
+                keys = []
     return [{m: k[m] for m in _JWK_MEMBERS if k.get(m)} for k in keys]
 
 

@@ -10,10 +10,9 @@ never replaced by its default.
 (environment variables, a file, a secrets manager) is up to you: build the
 `Config` in your own code.
 
-!!! note
-    The library's discovery, JWKS and HTTP functions don't take a `Config` yet.
-    Until they do, they keep reading the environment variables described in the
-    [Performance Guide](../performance.md).
+The library reads no environment variables. A setting takes effect only
+through a `Config` you pass in, on an HTTP client (see
+[Passing a `Config` to the library](#passing-a-config-to-the-library)).
 
 ## Building a `Config` in your own code
 
@@ -106,6 +105,92 @@ def config_from_settings(settings: Mapping[str, str]) -> Config:
         kwargs["ca_bundle"] = settings["ca_bundle"]
     return Config(**kwargs)
 ```
+
+## Passing a `Config` to the library
+
+A `Config` belongs to an HTTP client. `HTTPClient` (sync) and
+`AsyncHTTPClient` (async) take `config=`, and every entry point (discovery,
+JWKS, token validation, token requests, UserInfo and the rest) takes
+`http_client=`:
+
+```python
+from py_identity_model import (
+    Config,
+    DiscoveryDocumentRequest,
+    HTTPClient,
+    get_discovery_document,
+    validate_token,
+)
+
+config = Config(http_timeout=10.0, cache_max_entries=128)
+
+with HTTPClient(config=config) as client:
+    disco = get_discovery_document(
+        DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
+    )
+    claims = validate_token(token, validation_config, DISCO_URL, http_client=client)
+```
+
+```python
+from py_identity_model.aio import AsyncHTTPClient, validate_token
+
+async with AsyncHTTPClient(config=config) as client:
+    claims = await validate_token(
+        token, validation_config, DISCO_URL, http_client=client
+    )
+```
+
+- `config=None` means `Config()` defaults, not the environment.
+- Called without `http_client=`, an entry point uses the library default
+  client, built from `Config()`.
+- Each client owns its discovery cache, JWKS cache and kid-miss cooldown, so
+  each cache has one `Config`. Two clients don't share cached documents: keep
+  one long-lived client per configuration rather than one per call.
+- `clear_discovery_cache(http_client=...)` and
+  `clear_jwks_cache(http_client=...)` clear one client's caches (the default
+  client's when `http_client` is omitted).
+- To wrap your own `httpx.Client` (for a proxy, custom TLS, or
+  `verify=False` in a test), pass it as the first argument:
+  `HTTPClient(httpx.Client(...), config=config)`. Its own timeout and TLS
+  settings apply; the `Config` still sets retries, JWKS limits and the
+  caches. A wrapped client can't be combined with `mtls` (that raises
+  `ValueError`); use `HTTPClient(config=Config(ca_bundle=...))` instead.
+
+!!! warning "Breaking change (py-identity-model 5.0): no environment variables"
+    The library no longer reads any environment variable. `HTTP_TIMEOUT`,
+    `HTTP_RETRY_MAX_ATTEMPTS` / `HTTP_RETRY_COUNT`, `HTTP_RETRY_BASE_DELAY`,
+    `MAX_JWKS_SIZE`, `MAX_JWKS_KEYS`, `JWKS_CACHE_TTL`, `DISCO_CACHE_TTL`,
+    `KID_MISS_REFRESH_COOLDOWN`, `JWKS_CACHE_MAX_ENTRIES`, `SSL_CERT_FILE`,
+    `CURL_CA_BUNDLE` and `REQUESTS_CA_BUNDLE` are ignored by the library.
+    Build a `Config` and pass it on a client. To keep reading the same
+    variables, use the helper:
+
+    ```python
+    from py_identity_model import HTTPClient
+    from py_identity_model.config_helpers import config_from_env
+
+    client = HTTPClient(config=config_from_env())
+    ```
+
+    Also changed:
+
+    - `HTTPClient` / `AsyncHTTPClient` take `config=` instead of `timeout=`
+      and `verify=`. For `verify=False`, wrap your own `httpx.Client`.
+    - An injected `http_client` now caches discovery documents and JWKS
+      and applies the kid-miss cooldown, like the default client. It used to
+      bypass them and log a warning.
+    - Module-level caches are gone; `clear_discovery_cache` /
+      `clear_jwks_cache` take an optional `http_client`.
+    - `get_retry_config`, `get_timeout`, `get_max_jwks_size` and
+      `get_max_jwks_keys` are removed; `get_ssl_verify(config)` takes a
+      `Config` and is no longer cached.
+    - A negative retry count is rejected when the `Config` is built, so it
+      can no longer reach the retry loop.
+
+    httpx itself still honours `SSL_CERT_FILE` / `SSL_CERT_DIR` and proxy
+    variables when it builds a client with its default `trust_env=True`. That
+    is httpx's behavior, not the library's; wrap an
+    `httpx.Client(trust_env=False, ...)` to turn it off.
 
 ## Settings
 

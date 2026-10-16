@@ -44,21 +44,28 @@ which python
 
 **Solution**:
 ```python
-# NOT RECOMMENDED for production - only for testing/development
-import os
-os.environ['CURL_CA_BUNDLE'] = ''  # Disable SSL verification (unsafe!)
-
 # RECOMMENDED: Install proper certificates
 # On macOS:
 # /Applications/Python\ 3.x/Install\ Certificates.command
 
-# Or specify a custom CA bundle
-import requests
-from py_identity_model import get_discovery_document, DiscoveryDocumentRequest
+# Or verify against a custom CA bundle
+from py_identity_model import (
+    Config,
+    DiscoveryDocumentRequest,
+    HTTPClient,
+    get_discovery_document,
+)
 
-# Use custom CA bundle
-os.environ['REQUESTS_CA_BUNDLE'] = '/path/to/ca-bundle.crt'
+with HTTPClient(config=Config(ca_bundle="/path/to/ca-bundle.crt")) as client:
+    response = get_discovery_document(
+        DiscoveryDocumentRequest(address=disco_url), http_client=client
+    )
 ```
+
+The library reads no environment variables, so setting `REQUESTS_CA_BUNDLE`
+or `CURL_CA_BUNDLE` has no effect on it. To disable verification in a test
+(never in production), wrap your own client:
+`HTTPClient(httpx.Client(verify=False, follow_redirects=False))`.
 
 ### Discovery Document Returns 404
 

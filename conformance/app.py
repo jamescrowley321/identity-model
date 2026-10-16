@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import NameOID
 from fastapi import FastAPI, Query, Request
+import httpx
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import PyJWTError
@@ -333,7 +334,9 @@ _registered_client: dict[str, str] | None = None
 def _get_http_client() -> HTTPClient:
     global _http_client
     if _http_client is None:
-        _http_client = HTTPClient(verify=False)
+        # The local suite serves a self-signed cert; verification is off for
+        # this harness only, so wrap a client built that way.
+        _http_client = HTTPClient(httpx.Client(verify=False, follow_redirects=False))
     return _http_client
 
 
@@ -1176,9 +1179,10 @@ def _client_for_session(
 ) -> HTTPClient | None:
     """The HTTP client to pass a client-authenticating request.
 
-    mTLS sessions must let the library build a short-lived cert-configured client
-    (``resolve_http_client`` rejects a managed client alongside ``mtls``), so pass
-    ``None``; every other session reuses the shared verify-disabled client.
+    mTLS sessions pass ``None``: the library builds a short-lived cert client
+    from the given client's ``Config``, not from its wrapped verify-disabled
+    ``httpx.Client``, so passing the shared client would not carry
+    ``verify=False`` over. Every other session reuses the shared client.
     """
     return None if session.mtls else http_client
 

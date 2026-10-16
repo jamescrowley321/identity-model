@@ -30,7 +30,7 @@ async def _request_userinfo(
     Request UserInfo with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's Config.
     """
     return await client.get(url, headers=headers)
 
@@ -45,7 +45,7 @@ async def get_userinfo(
     Args:
         request: UserInfo request with endpoint address and access token
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            module-level singleton.
+            library default client.
 
     Returns:
         UserInfoResponse: Response with claims (JSON) or raw JWT string

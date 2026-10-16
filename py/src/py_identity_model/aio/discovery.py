@@ -17,7 +17,7 @@ from ..core.models import (
     DiscoveryDocumentResponse,
     DiscoveryErrorKind,
 )
-from .http_client import get_async_http_client, retry_with_backoff_async
+from .http_client import get_default_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 
 
@@ -29,7 +29,7 @@ async def _fetch_discovery_document(
     Fetch discovery document with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's Config.
     """
     return await client.get(url)
 
@@ -44,7 +44,7 @@ async def get_discovery_document(
     Args:
         disco_doc_req: Discovery document request configuration
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            module-level singleton.
+            library default client.
 
     Returns:
         DiscoveryDocumentResponse: Discovery document response
@@ -57,7 +57,9 @@ async def get_discovery_document(
         policy = disco_doc_req.policy or DiscoveryPolicy()
         validate_url_scheme(disco_doc_req.address, policy)
 
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _fetch_discovery_document(client, disco_doc_req.address)
         return process_discovery_response(response, policy)
     except Exception as e:

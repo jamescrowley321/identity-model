@@ -19,7 +19,6 @@ from ..exceptions import (
 )
 from ..logging_config import logger
 from .discovery_policy import DiscoveryPolicy
-from .http_utils import get_max_jwks_keys, get_max_jwks_size
 from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
@@ -42,6 +41,8 @@ from .validators import (
 
 if TYPE_CHECKING:
     import httpx
+
+    from .config import Config
 
 
 def _get_url_authority(url: str) -> str:
@@ -413,6 +414,7 @@ _VALID_JWKS_CONTENT_TYPES = frozenset({"application/json", "application/jwk-set+
 
 def _extract_jwks_keys(
     response_json: object,
+    max_keys: int,
 ) -> tuple[list[dict], str | None]:
     """Extract and validate the 'keys' array from a parsed JWKS response.
 
@@ -436,7 +438,6 @@ def _extract_jwks_keys(
             f"got {type(raw_keys).__name__}"
         )
 
-    max_keys = get_max_jwks_keys()
     if len(raw_keys) > max_keys:
         return [], (
             f"JWKS response contains too many keys: {len(raw_keys)} "
@@ -495,12 +496,14 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     return keys, None
 
 
-def parse_jwks_response(response: httpx.Response) -> JwksResponse:
+def parse_jwks_response(response: httpx.Response, config: Config) -> JwksResponse:
     """
     Parse JWKS HTTP response.
 
     Args:
         response: HTTP response from JWKS endpoint
+        config: The client's configuration; supplies ``jwks_max_size`` and
+            ``jwks_max_keys``.
 
     Returns:
         JwksResponse: Parsed JWKS response with keys
@@ -508,7 +511,7 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
     if response.is_success:
         # Check response size before parsing — Content-Length first to
         # avoid materialising the body for obviously-oversized responses.
-        max_size = get_max_jwks_size()
+        max_size = config.jwks_max_size
         content_length = response.headers.get("Content-Length")
         try:
             cl_too_large = content_length is not None and int(content_length) > max_size
@@ -547,7 +550,7 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
             )
 
         response_json = response.json()
-        raw_keys, keys_error = _extract_jwks_keys(response_json)
+        raw_keys, keys_error = _extract_jwks_keys(response_json, config.jwks_max_keys)
         keys: list[JsonWebKey] = []
         if not keys_error:
             keys, keys_error = _build_jwks_keys(raw_keys)

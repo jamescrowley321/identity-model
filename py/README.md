@@ -167,15 +167,22 @@ async def admin() -> dict:
 
 ## Configuration
 
-### Environment Variables
+Settings are passed in; the library reads no environment variables. Build a
+`Config` and pass it on an HTTP client, then pass the client to any entry
+point:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HTTP_TIMEOUT` | 30.0 | Request timeout (seconds) |
-| `HTTP_RETRY_COUNT` | 3 | Retries for rate-limited requests |
-| `HTTP_RETRY_BASE_DELAY` | 1.0 | Base delay for exponential backoff |
-| `SSL_CERT_FILE` | — | CA bundle path (recommended) |
-| `REQUESTS_CA_BUNDLE` | — | CA bundle path (legacy compat) |
+```python
+from py_identity_model import Config, HTTPClient, validate_token
+
+client = HTTPClient(config=Config(http_timeout=10.0, ca_bundle="/path/to/ca.crt"))
+claims = validate_token(token, validation_config, disco_url, http_client=client)
+```
+
+Without `http_client=`, the library default client (built from `Config()`) is
+used. To read the settings from environment variables (`HTTP_TIMEOUT`,
+`HTTP_RETRY_COUNT`, `SSL_CERT_FILE`, ...), call the optional helper
+`py_identity_model.config_helpers.config_from_env()`. Every setting and its
+default is listed in the [Configuration reference](https://jamescrowley321.github.io/identity-model/api/config/).
 
 ## Documentation
 
