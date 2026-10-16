@@ -99,6 +99,9 @@ func idTokenOptionsFor(in IDTokenInput) []idtoken.Option {
 	if in.TrustedAudiences != nil {
 		opts = append(opts, idtoken.WithTrustedAudiences(in.TrustedAudiences...))
 	}
+	if in.ValidateAZP {
+		opts = append(opts, idtoken.WithAZPValidation())
+	}
 	if in.Nonce != nil {
 		opts = append(opts, idtoken.WithNonce(*in.Nonce))
 	}

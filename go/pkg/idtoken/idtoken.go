@@ -19,9 +19,9 @@ import (
 // (signature, iss, aud, iat and exp) — supply [WithClientID] so the aud check
 // binds the token to the RP and [WithIssuer] for the OP issuer — then applies
 // the ID-Token profile: required sub, rejection of any aud value that is neither
-// the client_id nor listed via [WithTrustedAudiences], the azp authorized-party
-// rules, and the opt-in nonce / max_age / at_hash / c_hash bindings checked only
-// when the corresponding option is supplied.
+// the client_id nor listed via [WithTrustedAudiences], and the opt-in azp /
+// nonce / max_age / at_hash / c_hash checks, each run only when the
+// corresponding option is supplied.
 //
 // It returns the validated [jwt.Claims] on success. Base-validation failures
 // surface the jwt package's error types; profile failures surface a
@@ -81,9 +81,11 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		return err
 	}
 
-	// §3.1.3.7 steps 4-6 — authorized-party (azp) rules.
-	if err := validateAZP(claims, cfg.clientID); err != nil {
-		return err
+	// §3.1.3.7 steps 4-5 — authorized-party (azp) rules, opt-in only.
+	if cfg.validateAZP {
+		if err := validateAZP(claims, cfg.clientID); err != nil {
+			return err
+		}
 	}
 
 	// §3.1.3.7 step 11 — nonce binding (only when the caller supplied one).
@@ -164,8 +166,8 @@ func namesNoAudience(audiences []any) bool {
 	return true
 }
 
-// validateAZP enforces §3.1.3.7 steps 4-6. A JSON null azp is treated as absent,
-// matching the reference (claims.get("azp") is None).
+// validateAZP enforces the opt-in azp rules ([WithAZPValidation]). A JSON null
+// azp is treated as absent, matching the reference (claims.get("azp") is None).
 func validateAZP(claims map[string]any, clientID string) error {
 	audMultiElement := false
 	if arr, ok := claims["aud"].([]any); ok && len(arr) > 1 {
@@ -176,12 +178,12 @@ func validateAZP(claims map[string]any, clientID string) error {
 	azpStr, _ := azpRaw.(string)
 	azpFalsy := !azpPresent || azpRaw == nil || azpStr == ""
 
-	// Step 4: with multiple audiences an azp claim MUST be present.
+	// Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an azp.
 	if audMultiElement && azpFalsy {
 		return profileErr(ReasonAZPRequiredMultiAud, "ID token with multiple audiences must contain an 'azp' claim")
 	}
 
-	// Step 6: when present, azp MUST identify this client.
+	// Errata 2 step 5: a present azp identifies this client.
 	if azpPresent && azpRaw != nil && clientID != "" && azpStr != clientID {
 		return profileErr(ReasonAZPMismatch, "ID token 'azp' claim does not match the configured client_id")
 	}

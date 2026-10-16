@@ -93,8 +93,10 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > neither. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
 >
 > Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
-> Go gained with the id-token profile (#629–#632). Rust enforces `azp` only in that profile too, not on
-> base token validation.
+> Go gained with the id-token profile (#629–#632). All three languages check `azp` only in that profile,
+> never on base token validation, and only when the caller opts in (Python `validate_azp=True`, Go
+> `WithAZPValidation()`, Rust `.validate_azp(true)`): OIDC Core 1.0 errata set 2 makes neither `azp` rule a
+> MUST (§3.1.3.7 steps 4-5), and §2 tells relying parties that use no extensions to ignore `azp`.
 >
 > **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 

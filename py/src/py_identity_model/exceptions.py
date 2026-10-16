@@ -91,7 +91,7 @@ class IdTokenValidationException(TokenValidationException):
     """Raised when OpenID Connect ID Token profile validation fails.
 
     Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-    and §3.3.2.11 (required ``sub``, the ``azp`` authorized-party rules,
+    and §3.3.2.11 (required ``sub``, the opt-in ``azp`` authorized-party rules,
     ``nonce`` binding, ``auth_time``/``max_age`` freshness, and the
     ``at_hash``/``c_hash`` token/code binding) that sit on top of standard JWT
     validation.

@@ -31,6 +31,7 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
     http_client: HTTPClient | None = None,
     *,
     trusted_audiences: Iterable[str] | None = None,
+    validate_azp: bool = False,
     nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
@@ -42,10 +43,9 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
     ``iss``, ``aud``, ``iat`` and ``exp`` when present) — set
     ``token_validation_config.audience`` to the RP's ``client_id`` so the
     ``aud`` check is enforced there — then applies the ID-Token profile:
-    required ``sub``, no audience the client does not trust, the ``azp``
-    authorized-party rules, and the optional ``nonce`` / ``max_age`` /
-    ``at_hash`` / ``c_hash`` bindings that are checked only when the
-    corresponding argument is supplied.
+    required ``sub``, no audience the client does not trust, and the optional
+    ``azp`` / ``nonce`` / ``max_age`` / ``at_hash`` / ``c_hash`` checks, each
+    run only when the corresponding argument is supplied.
 
     Args:
         id_token: The compact-serialized ID Token JWT.
@@ -59,6 +59,11 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
             ``token_validation_config.audience``. Every ``aud`` value MUST be
             the audience or one of these (§3.1.3.7 step 3); omitted or empty
             means the audience is the only trusted one.
+        validate_azp: Opt in to the ``azp`` authorized-party rules: multiple
+            audiences require an ``azp``, and a present ``azp`` must equal
+            ``token_validation_config.audience``. Neither is a MUST in OIDC
+            Core 1.0 errata set 2 (§3.1.3.7 steps 4-5), so the default is
+            ``False`` and ``azp`` is ignored (§2).
         nonce: The ``nonce`` the RP sent on the authorization request. When
             provided, the token's ``nonce`` MUST match it (§3.1.3.7 step 11).
         access_token: The access token from the same response. When provided,
@@ -91,6 +96,7 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
         header_alg,
         client_id=token_validation_config.audience,
         trusted_audiences=trusted_audiences,
+        validate_azp=validate_azp,
         nonce=nonce,
         access_token=access_token,
         code=code,

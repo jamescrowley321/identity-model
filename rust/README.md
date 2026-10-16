@@ -28,7 +28,7 @@ endpoints.
 - Builder-pattern configuration; `Result<T, IdentityError>` everywhere (`thiserror`).
 - Caches use `tokio::sync::RwLock` for thread-safe async access.
 - Security hardening: secrets are redacted from `Debug`/error output, clock-skew
-  is validated during JWT verification, `azp` is enforced by the ID-token profile,
+  is validated during JWT verification, `azp` is checked by the ID-token profile on opt-in (`.validate_azp(true)`),
   and redirect-scheme downgrades are rejected.
 
 ## Getting Started

@@ -110,8 +110,8 @@ def _config_for(
 
     ``audience`` is the RP's ``client_id`` and no ``verify_aud``-disabling
     options are supplied, so the standard path enforces the ``aud`` check (an ID
-    Token MUST be audienced to the RP) and feeds ``client_id`` into the
-    ID-Token profile's ``azp`` rules.
+    Token MUST be audienced to the RP) and makes ``client_id`` the trusted
+    audience of the ID-Token profile.
     """
     return TokenValidationConfig(
         perform_disco=True,

@@ -126,36 +126,63 @@ func TestValidateClaims_Profile(t *testing.T) {
 			wantReason: idtoken.ReasonMissingSub,
 		},
 
-		// azp (§3.1.3.7 steps 4-6). The multiple-audience cases trust their
-		// second audience so they reach the azp rules instead of being rejected
-		// first by the step-3 untrusted-audience check.
+		// azp (§3.1.3.7 steps 4-5), opt-in via WithAZPValidation. The
+		// multiple-audience cases trust their second audience so they reach
+		// the azp rules instead of being rejected first by the step-3
+		// untrusted-audience check.
 		{
 			name:   "single-element aud list, no azp",
 			claims: with(map[string]any{"aud": []any{testClientID}}),
-			opts:   []idtoken.Option{idtoken.WithClientID(testClientID)},
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithAZPValidation()},
 		},
 		{
-			name:       "multiple audiences, azp absent",
-			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
-			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
-			wantReason: idtoken.ReasonAZPRequiredMultiAud,
-		},
-		{
-			name:   "multiple audiences, azp identifies this client",
-			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
+			name:   "multiple audiences, azp absent, azp validation off",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
 			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
 		},
 		{
-			name:       "multiple audiences, azp is a different client",
+			name:       "multiple audiences, azp absent, azp validation on",
+			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x"), idtoken.WithAZPValidation()},
+			wantReason: idtoken.ReasonAZPRequiredMultiAud,
+		},
+		{
+			name:       "multiple audiences, empty azp, azp validation on",
+			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": ""}),
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x"), idtoken.WithAZPValidation()},
+			wantReason: idtoken.ReasonAZPRequiredMultiAud,
+		},
+		{
+			name:   "multiple audiences, azp identifies this client, azp validation on",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": testClientID}),
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x"), idtoken.WithAZPValidation()},
+		},
+		{
+			name:   "multiple audiences, azp is a different client, azp validation off",
+			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": "other-client-9x"}),
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
+		},
+		{
+			name:       "multiple audiences, azp is a different client, azp validation on",
 			claims:     with(map[string]any{"aud": []any{testClientID, "other-client-9x"}, "azp": "other-client-9x"}),
-			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x")},
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithTrustedAudiences("other-client-9x"), idtoken.WithAZPValidation()},
 			wantReason: idtoken.ReasonAZPMismatch,
 		},
 		{
-			name:       "single audience, azp present but mismatched",
-			claims:     with(map[string]any{"azp": "impostor-client"}),
-			opts:       []idtoken.Option{idtoken.WithClientID(testClientID)},
+			name:   "single audience, cross-client azp, azp validation off",
+			claims: with(map[string]any{"azp": "android-client"}),
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID)},
+		},
+		{
+			name:       "single audience, cross-client azp, azp validation on",
+			claims:     with(map[string]any{"azp": "android-client"}),
+			opts:       []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithAZPValidation()},
 			wantReason: idtoken.ReasonAZPMismatch,
+		},
+		{
+			name:   "single audience, null azp, azp validation on",
+			claims: with(map[string]any{"azp": nil}),
+			opts:   []idtoken.Option{idtoken.WithClientID(testClientID), idtoken.WithAZPValidation()},
 		},
 
 		// nonce (§3.1.3.7 step 11).
@@ -353,7 +380,7 @@ func TestValidateClaims_UntrustedAudience(t *testing.T) {
 		{
 			name:   "rejected before azp rule (multi-aud, no azp)",
 			claims: with(map[string]any{"aud": []any{testClientID, "other-client-9x"}}),
-			opts:   []idtoken.Option{client},
+			opts:   []idtoken.Option{client, idtoken.WithAZPValidation()},
 		},
 		{
 			name:   "non-string aud element is untrusted",

@@ -83,6 +83,9 @@ struct Input {
     /// (§3.1.3.7 step 3). Absent means none.
     #[serde(default)]
     trusted_audiences: Option<Vec<String>>,
+    /// Opts in to the `azp` rules. Absent means false.
+    #[serde(default)]
+    validate_azp: bool,
     #[serde(default)]
     nonce: Option<String>,
     #[serde(default)]
@@ -142,6 +145,7 @@ fn options_for(input: &Input) -> IdTokenValidationOptions {
     if let Some(trusted) = &input.trusted_audiences {
         b = b.trusted_audiences(trusted);
     }
+    b = b.validate_azp(input.validate_azp);
     if let Some(nonce) = &input.nonce {
         b = b.nonce(nonce);
     }

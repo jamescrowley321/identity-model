@@ -22,9 +22,11 @@ const (
 	// ReasonUntrustedAudience: aud contains a value that is neither the
 	// client_id nor an audience the client trusts (§3.1.3.7 step 3).
 	ReasonUntrustedAudience = "untrusted_audience"
-	// ReasonAZPRequiredMultiAud: multiple audiences but no azp (§3.1.3.7 step 4).
+	// ReasonAZPRequiredMultiAud: multiple audiences but no azp, with
+	// [WithAZPValidation] (Core 1.0 (2014) §3.1.3.7 step 4).
 	ReasonAZPRequiredMultiAud = "azp_required_multi_aud"
-	// ReasonAZPMismatch: azp present but not this client (§3.1.3.7 step 6).
+	// ReasonAZPMismatch: azp present but not this client, with
+	// [WithAZPValidation] (§3.1.3.7 step 5).
 	ReasonAZPMismatch = "azp_mismatch"
 	// ReasonNonceMismatch: token nonce absent or not equal to the expected nonce
 	// (§3.1.3.7 step 11).
