@@ -45,6 +45,32 @@ empty. These fields are optional keyword-only additions; existing positional
 response constructors and exception base classes remain compatible.
 
 The metadata describes the checks the library actually performs. It does not
-add issuer matching (#574) or make the authorization/token endpoints required
-(#771). A field failure reports the fields in the failing check, rather than
-claiming an exhaustive audit of the whole document.
+add issuer matching (#574).
+
+## Required metadata
+
+A discovery document must carry all seven REQUIRED fields of
+[OpenID Connect Discovery 1.0 §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata):
+`issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`,
+`response_types_supported`, `subject_types_supported` and
+`id_token_signing_alg_values_supported`. A field that is absent, `null`,
+`false`, `0`, an empty string, an empty array or an empty object is missing.
+The request fails with `MISSING_FIELDS`, and `missing_fields` lists every
+missing field in that order. A body that is valid JSON but not an object (for
+example `[]` or `null`) fails with `INVALID_JSON`.
+
+§3 exempts `token_endpoint` when a provider supports only the Implicit Flow.
+The library requires it anyway, by policy. No `DiscoveryPolicy` setting relaxes
+any of these fields.
+
+!!! warning "`require_key_set` removed"
+    `DiscoveryPolicy.require_key_set` has been removed. `jwks_uri` is always
+    required, so `DiscoveryPolicy(require_key_set=False)` raises `TypeError`.
+    Delete the argument. A provider that publishes no `jwks_uri` cannot be
+    used for discovery.
+
+    The fields after `validate_endpoints` (`additional_endpoint_base_addresses`,
+    `authority`, `allow_loopback_endpoints`) are now keyword-only. A call that
+    passed `require_key_set` as the fifth positional argument, such as
+    `DiscoveryPolicy(True, True, True, True, False)`, raises `TypeError`
+    instead of binding the value to another field. Pass those fields by name.

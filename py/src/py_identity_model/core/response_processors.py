@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 from ..exceptions import (
     ConfigurationException,
     DiscoveryException,
-    DiscoveryMissingFieldsError,
     DiscoveryParseError,
 )
 from ..logging_config import logger
@@ -220,14 +219,6 @@ def validate_and_parse_discovery_response(
 
     # Validate parameter values
     validate_parameter_values(response_json)
-
-    # Enforce require_key_set policy
-    if (policy is None or policy.require_key_set) and not response_json.get("jwks_uri"):
-        raise DiscoveryMissingFieldsError(
-            "Discovery document does not contain a jwks_uri, "
-            "required by policy (require_key_set=True)",
-            ("jwks_uri",),
-        )
 
     # Normalize policy for endpoint validation: treat None as strict defaults
     effective_policy = policy if policy is not None else DiscoveryPolicy()

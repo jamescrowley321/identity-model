@@ -2,13 +2,13 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The parsed OpenID Connect provider metadata document (OIDC Discovery 1.0 §3).
 ///
 /// The seven fields the conformance contract marks required
 /// (`spec/vectors/discovery.json`) are modelled as plain owned values and
-/// default to empty when absent, so a document that omits one parses
+/// default to empty when absent or null, so a document that omits one parses
 /// successfully and is then reported by presence validation (DISC-008) rather
 /// than failing to deserialize. Optional endpoints are `Option`, and any field
 /// not modelled here is preserved in [`ProviderMetadata::extra`] so unknown
@@ -16,25 +16,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProviderMetadata {
     /// Issuer identifier. MUST match the requested issuer (DISC-003).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub issuer: String,
     /// Authorization endpoint URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub authorization_endpoint: String,
     /// Token endpoint URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub token_endpoint: String,
     /// JWKS document URL.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub jwks_uri: String,
     /// OAuth 2.0 `response_type` values supported.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub response_types_supported: Vec<String>,
     /// Subject identifier types supported.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub subject_types_supported: Vec<String>,
     /// JWS `alg` values supported for the ID Token.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub id_token_signing_alg_values_supported: Vec<String>,
 
     /// UserInfo endpoint URL, if advertised.
@@ -72,6 +72,17 @@ pub struct ProviderMetadata {
     /// (not rejected) per OIDC Discovery 1.0 §3 (DISC-009).
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Deserializes a JSON `null` as `T::default()`, so a required field that is
+/// null reads as empty and is reported as missing (DISC-008) instead of
+/// failing to deserialize.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl ProviderMetadata {
