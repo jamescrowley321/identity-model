@@ -53,9 +53,11 @@ A discovery document must carry all seven REQUIRED fields of
 [OpenID Connect Discovery 1.0 §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata):
 `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`,
 `response_types_supported`, `subject_types_supported` and
-`id_token_signing_alg_values_supported`. A field that is absent, `null`, an
-empty string or an empty array is missing. The request fails with
-`MISSING_FIELDS`, and `missing_fields` lists every missing field in that order.
+`id_token_signing_alg_values_supported`. A field that is absent, `null`,
+`false`, `0`, an empty string, an empty array or an empty object is missing.
+The request fails with `MISSING_FIELDS`, and `missing_fields` lists every
+missing field in that order. A body that is valid JSON but not an object (for
+example `[]` or `null`) fails with `INVALID_JSON`.
 
 §3 exempts `token_endpoint` when a provider supports only the Implicit Flow.
 The library requires it anyway, by policy. No `DiscoveryPolicy` setting relaxes

@@ -388,8 +388,9 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) 
 ///   neither the `client_id` nor one of the configured trusted audiences
 ///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
 ///   before the opt-in `azp` rules.
-/// - [`IdentityError::IdTokenValidation`] when any other ID-Token profile rule
-///   is violated. Fails **closed**: a hash check whose `header_alg` is missing
+/// - [`IdentityError::IdTokenValidation`] when `aud` is absent, null or holds
+///   only empty strings (§2), checked after `sub`, or when any other ID-Token
+///   profile rule is violated. Fails **closed**: a hash check whose `header_alg` is missing
 ///   or unmappable is an error, not a skipped check.
 pub fn validate_id_token_claims(
     claims: &Claims,
@@ -403,11 +404,20 @@ pub fn validate_id_token_claims(
         ));
     }
 
+    // §2 — `aud` is REQUIRED. An absent or null `aud`, or one holding only
+    // empty strings, names no audience and is rejected with or without a
+    // `client_id`.
+    let audiences = claims.audience.values();
+    if audiences.iter().all(String::is_empty) {
+        return Err(IdentityError::IdTokenValidation(
+            "ID token missing required 'aud' claim".to_string(),
+        ));
+    }
+
     // §3.1.3.7 step 3 — reject additional audiences not trusted by the
     // client. The trusted set is {client_id} ∪ trusted_audiences; the list
     // only adds trusted values, so with neither configured every `aud` value
-    // is untrusted (fail closed). An absent `aud` has nothing to check.
-    let audiences = claims.audience.values();
+    // is untrusted (fail closed).
     let untrusted: Vec<String> = audiences
         .iter()
         .filter(|aud| {
@@ -615,6 +625,40 @@ mod tests {
         );
     }
 
+    // IDT-013: aud is REQUIRED (§2). A token naming no audience is rejected
+    // with or without a client_id, ahead of the untrusted-audience rule.
+    #[test]
+    fn rejects_missing_audience() {
+        let cid = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .build();
+        let none = IdTokenValidationOptions::new();
+        for (aud, opts) in [
+            (None, &none),
+            (None, &cid),
+            (Some(json!(null)), &cid),
+            (Some(json!("")), &cid),
+            (Some(json!([])), &cid),
+            (Some(json!(["", ""])), &cid),
+        ] {
+            let mut value = json!({"sub": "u"});
+            if let Some(aud) = &aud {
+                value["aud"] = aud.clone();
+            }
+            assert_id_token_reject(
+                &validate_id_token_claims(&claims(value), Some("RS256"), opts).unwrap_err(),
+                "required 'aud'",
+            );
+        }
+
+        // An empty string beside a real audience is untrusted, not missing.
+        let mixed = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", ""], "azp": "s6BhdRkqt3"}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&mixed, Some("RS256"), &cid).unwrap_err(),
+            &[""],
+        );
+    }
+
     /// Asserts a rejection is an [`IdentityError::IdTokenUntrustedAudience`]
     /// carrying exactly `expected` (in `aud` order).
     fn assert_untrusted_audience(err: &IdentityError, expected: &[&str]) {
@@ -698,10 +742,6 @@ mod tests {
                 .unwrap_err(),
             &["s6BhdRkqt3"],
         );
-        // An absent aud has nothing to check.
-        let no_aud = claims(json!({"sub": "u"}));
-        validate_id_token_claims(&no_aud, Some("RS256"), &IdTokenValidationOptions::new())
-            .expect("absent aud has nothing to check");
     }
 
     // IDT-012: a single audience equal to the client_id is unaffected, with or

@@ -7,16 +7,27 @@ switch may relax ``jwks_uri`` (the removed ``require_key_set``).
 """
 
 import dataclasses
+import json
 
 import httpx
 import pytest
+import respx
 
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    DiscoveryErrorKind,
+    get_discovery_document,
+)
+from py_identity_model.aio.discovery import get_discovery_document as async_discover
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.response_processors import (
     validate_and_parse_discovery_response,
 )
 from py_identity_model.core.validators import validate_required_parameters
-from py_identity_model.exceptions import DiscoveryMissingFieldsError
+from py_identity_model.exceptions import (
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -45,6 +56,8 @@ COMPLETE_DOCUMENT = {
 }
 
 EMPTY_VALUES = {"null": None, "empty-string": "", "empty-array": []}
+FALSY_VALUES = {"false": False, "zero": 0, "empty-object": {}}
+NON_OBJECT_BODIES = {"array": [], "null": None, "string": "x", "number": 1}
 
 
 def _without(*fields: str) -> dict:
@@ -74,6 +87,56 @@ def test_each_empty_field_is_reported(field, empty):
     assert _missing({**COMPLETE_DOCUMENT, field: empty}).fields == (field,)
 
 
+@pytest.mark.parametrize("field", REQUIRED_FIELDS)
+@pytest.mark.parametrize("falsy", FALSY_VALUES.values(), ids=FALSY_VALUES.keys())
+def test_each_falsy_field_is_reported(field, falsy):
+    assert _missing({**COMPLETE_DOCUMENT, field: falsy}).fields == (field,)
+
+
+@pytest.mark.parametrize(
+    "body", NON_OBJECT_BODIES.values(), ids=NON_OBJECT_BODIES.keys()
+)
+def test_non_object_document_is_a_parse_error(body):
+    with pytest.raises(DiscoveryParseError) as exc_info:
+        validate_required_parameters(body)  # type: ignore[arg-type]
+    assert str(exc_info.value) == "Discovery document must be a JSON object"
+
+
+async def _discover(body: str, asynchronous: bool):
+    respx.get(DISCO_URL).mock(
+        return_value=httpx.Response(
+            200, text=body, headers={"Content-Type": "application/json"}
+        )
+    )
+    request = DiscoveryDocumentRequest(address=DISCO_URL)
+    if asynchronous:
+        return await async_discover(request)
+    return get_discovery_document(request)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("falsy", FALSY_VALUES.values(), ids=FALSY_VALUES.keys())
+@respx.mock
+async def test_falsy_jwks_uri_is_missing_fields(asynchronous, falsy):
+    body = json.dumps({**COMPLETE_DOCUMENT, "jwks_uri": falsy})
+    response = await _discover(body, asynchronous)
+    assert response.is_successful is False
+    assert response.error_kind is DiscoveryErrorKind.MISSING_FIELDS
+    assert response.missing_fields == ("jwks_uri",)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "body", NON_OBJECT_BODIES.values(), ids=NON_OBJECT_BODIES.keys()
+)
+@respx.mock
+async def test_non_object_body_is_invalid_json(asynchronous, body):
+    response = await _discover(json.dumps(body), asynchronous)
+    assert response.is_successful is False
+    assert response.error_kind is DiscoveryErrorKind.INVALID_JSON
+    assert response.missing_fields == ()
+
+
 def test_every_missing_field_is_reported_in_spec_order():
     error = _missing({})
     assert error.fields == REQUIRED_FIELDS
@@ -94,7 +157,7 @@ def test_empty_required_arrays_are_reported_together():
 def test_non_empty_values_of_any_type_are_present():
     """Presence is the only rule here; value checks run later."""
     validate_required_parameters({**COMPLETE_DOCUMENT, "subject_types_supported": [0]})
-    validate_required_parameters({**COMPLETE_DOCUMENT, "issuer": 0})
+    validate_required_parameters({**COMPLETE_DOCUMENT, "issuer": 1})
 
 
 @pytest.mark.parametrize(

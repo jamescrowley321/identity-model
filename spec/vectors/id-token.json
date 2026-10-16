@@ -2,7 +2,7 @@
   "capability": "id-token",
   "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.2.2.10, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`, and the `access_token_issued_with_id_token`/`code_issued_with_id_token` switches \u2014 absent means true), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_missing, at_hash_mismatch, c_hash_missing, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512, EdDSA\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then untrusted audiences (\u00a73.1.3.7 step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored. at_hash/c_hash presence is required per bound value. A supplied access token or code is taken to have come back in the same authorization response as the ID Token (\u00a73.2.2.10, \u00a73.3.2.11: `id_token token`, `code id_token`, `code id_token token`) unless the caller sets its switch (`access_token_issued_with_id_token`/`code_issued_with_id_token`) to false, so by default an absent claim rejects (`at_hash_missing`/`c_hash_missing`). With the switch false \u2014 e.g. an ID Token from the token endpoint, where at_hash is OPTIONAL (\u00a73.1.3.6, \u00a73.3.3.6) \u2014 an absent claim is accepted and a present one must still match (`*_mismatch`). Absent means the claim key is missing; the presence check runs before the hash is computed, and a switch without its access_token/code has no effect.",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`, and the `access_token_issued_with_id_token`/`code_issued_with_id_token` switches \u2014 absent means true), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, missing_aud, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_missing, at_hash_mismatch, c_hash_missing, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512, EdDSA\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then a missing aud (IDT-013), then untrusted audiences (\u00a73.1.3.7 step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored. at_hash/c_hash presence is required per bound value. A supplied access token or code is taken to have come back in the same authorization response as the ID Token (\u00a73.2.2.10, \u00a73.3.2.11: `id_token token`, `code id_token`, `code id_token token`) unless the caller sets its switch (`access_token_issued_with_id_token`/`code_issued_with_id_token`) to false, so by default an absent claim rejects (`at_hash_missing`/`c_hash_missing`). With the switch false \u2014 e.g. an ID Token from the token endpoint, where at_hash is OPTIONAL (\u00a73.1.3.6, \u00a73.3.3.6) \u2014 an absent claim is accepted and a present one must still match (`*_mismatch`). Absent means the claim key is missing; the presence check runs before the hash is computed, and a switch without its access_token/code has no effect.",
   "tests": [
     {
       "id": "IDT-001",
@@ -1033,6 +1033,29 @@
           }
         },
         {
+          "name": "code not issued with the ID Token, c_hash does not match",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "c_hash": "DyAleB7ctGQvU9M3DbMBYQ",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_mismatch"
+          }
+        },
+        {
           "name": "code issued with the ID Token, c_hash absent",
           "input": {
             "claims": {
@@ -1490,6 +1513,138 @@
           },
           "expect": {
             "outcome": "accept"
+          }
+        }
+      ]
+    },
+    {
+      "id": "IDT-013",
+      "title": "An ID Token without an audience is rejected",
+      "given": "A decoded ID Token whose aud is absent, null, an empty string, an empty array, or an array of empty strings",
+      "when": "The ID-Token profile rules are applied",
+      "then": "aud is REQUIRED (\u00a72), so a token that names no audience is rejected whether or not a client_id is configured. The check runs after sub and before the untrusted-audience rule",
+      "references": [
+        "OIDC Core 1.0 \u00a72",
+        "OIDC Core 1.0 \u00a73.1.3.7"
+      ],
+      "vectors": [
+        {
+          "name": "aud absent, no client_id",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud absent, client_id set",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud null, client_id set",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": null,
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud empty string",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud empty array",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud array of one empty string",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                ""
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
           }
         }
       ]

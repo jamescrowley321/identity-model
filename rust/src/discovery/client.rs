@@ -473,6 +473,27 @@ mod tests {
         );
     }
 
+    // DISC-007: a JSON value that is not an object is rejected as invalid JSON,
+    // not parsed into a document with every required field missing.
+    #[tokio::test]
+    async fn maps_non_object_json_to_invalid_json() {
+        for body in ["null", "[]", "\"x\"", "1", "true"] {
+            let server = MockServer::start().await;
+            mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+            let client = DiscoveryClient::builder().allow_http(true).build();
+            let err = client
+                .discover(&server.uri())
+                .await
+                .expect_err("a non-object body must error");
+
+            assert!(
+                matches!(err, DiscoveryError::InvalidJson { .. }),
+                "{body}: expected InvalidJson, got {err:?}"
+            );
+        }
+    }
+
     // DISC-008: a document missing a required field is rejected with that field.
     #[tokio::test]
     async fn reports_missing_required_field() {

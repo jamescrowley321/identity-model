@@ -248,7 +248,7 @@
     {
       "id": "DISC-007",
       "title": "Handle invalid JSON response",
-      "given": "An issuer whose discovery endpoint returns a non-JSON body",
+      "given": "An issuer whose discovery endpoint returns a non-JSON body, or a JSON value that is not an object",
       "when": "Discovery is invoked",
       "then": "A parse/deserialization error is raised",
       "references": [
@@ -262,6 +262,34 @@
             "/.well-known/openid-configuration": {
               "status": 200,
               "body_fixture": "discovery/not-json.txt"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_json"
+          }
+        },
+        {
+          "name": "json-array-body",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/array-body.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_json"
+          }
+        },
+        {
+          "name": "json-null-body",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/null-body.json"
             }
           },
           "expect": {

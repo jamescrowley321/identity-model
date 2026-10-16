@@ -15,6 +15,7 @@ from ..exceptions import (
     DiscoveryException,
     DiscoveryHTTPSRequiredError,
     DiscoveryMissingFieldsError,
+    DiscoveryParseError,
 )
 from .discovery_policy import DiscoveryPolicy, is_loopback
 
@@ -94,13 +95,18 @@ def validate_required_parameters(response_data: dict) -> None:
 
     All seven REQUIRED fields are checked unconditionally. §3 exempts
     ``token_endpoint`` when only the Implicit Flow is used; requiring it anyway
-    is library policy. A field that is absent, ``null``, ``""`` or ``[]`` is
-    missing, and every missing field is reported in spec order.
+    is library policy. A field whose value is falsy (absent, ``null``, ``""``,
+    ``[]``, ``false``, ``0`` or ``{}``) is missing, and every missing field is
+    reported in spec order.
+
+    Raises:
+        DiscoveryParseError: If the document is not a JSON object.
+        DiscoveryMissingFieldsError: If any required field is missing.
     """
+    if not isinstance(response_data, dict):
+        raise DiscoveryParseError("Discovery document must be a JSON object")
     missing_params = [
-        param
-        for param in _REQUIRED_PARAMETERS
-        if response_data.get(param) in (None, "", [])
+        param for param in _REQUIRED_PARAMETERS if not response_data.get(param)
     ]
 
     if missing_params:
