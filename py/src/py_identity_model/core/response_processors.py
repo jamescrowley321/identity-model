@@ -29,6 +29,7 @@ from .models import (
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from .parsers import jwks_from_dict
@@ -665,7 +666,8 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
     Parse UserInfo HTTP response.
 
     Supports Content-Type detection per OIDC Core 1.0 Section 5.3.2/5.3.3:
-    - application/json: Claims extracted as dict
+    - application/json: Claims extracted as dict; a body with no non-empty string
+      ``sub`` claim is an error (Section 5.3.2)
     - application/jwt: Raw JWT string stored for caller to decode/validate
 
     Args:
@@ -695,6 +697,14 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
 
     # Default to JSON parsing (application/json or unspecified)
     claims = response.json()
+    # OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
+    sub = claims.get("sub") if isinstance(claims, dict) else None
+    if not isinstance(sub, str) or not sub:
+        return UserInfoResponse(
+            is_successful=False,
+            error="UserInfo response is missing required 'sub' claim",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
+        )
     return UserInfoResponse(
         is_successful=True,
         claims=claims,
