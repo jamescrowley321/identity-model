@@ -753,6 +753,11 @@ mod tests {
             ),
             "{err:?}"
         );
+        let err = check_key_strength(&sized_key("RSA", &modulus(2047, 257))).expect_err("weak");
+        assert!(
+            matches!(err, IdentityError::WeakKey { bits: 2047, .. }),
+            "leading zero octets don't count: {err:?}"
+        );
 
         assert!(check_key_strength(&sized_key("EC", &[1u8; 28])).is_ok());
         assert!(check_key_strength(&sized_key("EC", &[1u8; 66])).is_ok());
