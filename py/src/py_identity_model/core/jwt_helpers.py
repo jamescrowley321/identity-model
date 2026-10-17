@@ -22,6 +22,7 @@ from ..exceptions import (
     TokenValidationException,
 )
 from ..logging_config import logger
+from .key_strength import enforce_key_strength
 from .models import JsonWebKey
 
 
@@ -185,6 +186,8 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         InvalidAudienceException: If audience is invalid
         InvalidIssuerException: If issuer is invalid
         SignatureVerificationException: If signature is invalid
+        WeakKeyException: If ``key`` is an RSA key under 2048 bits or an EC
+            key under 224 bits
         TokenValidationException: For other token validation errors
     """
     try:
@@ -205,6 +208,10 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         # members so a public key is never misread as private (see
         # _normalize_verification_key).
         normalized_key = _normalize_verification_key(key)
+
+        # RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: refuse a weak RSA or EC key
+        # before it is used to verify anything.
+        enforce_key_strength(normalized_key)
 
         decoded = _decode_jwt(
             jwt,

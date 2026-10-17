@@ -29,6 +29,13 @@ SUPPORTED_SIGNING_ALGORITHMS = frozenset(
     }
 )
 
+# Algorithms a token may be signed with when ``TokenValidationConfig.algorithms``
+# is unset: the asymmetric set above, matching the Go (``defaultAllowedAlgorithms``)
+# and Rust (``DEFAULT_ALLOWED_ALGORITHMS``) defaults. HMAC is excluded so a token
+# can't be verified with a provider's public key used as a shared secret
+# (RFC 8725 §2.1, §3.1), and ``none`` is never accepted.
+DEFAULT_ALLOWED_ALGORITHMS = SUPPORTED_SIGNING_ALGORITHMS
+
 
 def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> None:
     """Validate that *algorithm* is a supported asymmetric signing algorithm.
@@ -51,6 +58,7 @@ def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> N
 
 
 __all__ = [
+    "DEFAULT_ALLOWED_ALGORITHMS",
     "SUPPORTED_SIGNING_ALGORITHMS",
     "validate_signing_algorithm",
 ]

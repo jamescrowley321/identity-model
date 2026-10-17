@@ -1,7 +1,8 @@
 """Thin Python executor for the shared /spec conformance vectors (CONS-1.5).
 
-Drives every executable vector in ``spec/vectors/validation.json`` against
-py-identity-model's validation API — the same language-neutral vector set the
+Drives every executable vector in ``spec/vectors/validation.json`` through the
+steps ``validate_token`` runs once it has resolved the key
+(``build_resolved_config``, ``decode_with_config``) — the same language-neutral vector set the
 Go (``go/internal/conformance``) and Rust (``rust/tests/it/conformance/validation.rs``)
 runners execute — so the "build conformance vectors once" constraint holds.
 
@@ -38,9 +39,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt as pyjwt
 import pytest
 
-from py_identity_model.core.jwt_helpers import decode_and_validate_jwt
 from py_identity_model.core.models import TokenValidationConfig
-from py_identity_model.core.token_validation_logic import validate_claims
+from py_identity_model.core.token_validation_logic import (
+    build_resolved_config,
+    decode_with_config,
+    validate_claims,
+)
 from py_identity_model.exceptions import (
     InvalidAudienceException,
     InvalidIssuerException,
@@ -48,6 +52,7 @@ from py_identity_model.exceptions import (
     SignatureVerificationException,
     TokenExpiredException,
     TokenValidationException,
+    WeakKeyException,
 )
 
 
@@ -77,6 +82,9 @@ _CASES = _CAPABILITY["tests"]
 
 _SIGNING_JWK = json.loads(
     (_FIXTURE_ROOT / "validation" / "signing-key.jwk.json").read_text()
+)
+_ED25519_SIGNING_JWK = json.loads(
+    (_FIXTURE_ROOT / "validation" / "ed25519-signing-key.jwk.json").read_text()
 )
 _PUBLIC_JWKS = json.loads((_FIXTURE_ROOT / "validation" / "jwks.json").read_text())
 
@@ -124,6 +132,9 @@ def _mint_token(token_spec: dict) -> str:
     if signing_key == "fixture":
         key = pyjwt.PyJWK(_SIGNING_JWK).key
         kid = token_spec.get("header_kid") or _SIGNING_JWK.get("kid", "test-key-1")
+    elif signing_key == "ed25519":
+        key = pyjwt.PyJWK(_ED25519_SIGNING_JWK).key
+        kid = token_spec.get("header_kid") or _ED25519_SIGNING_JWK["kid"]
     elif signing_key == "ephemeral":
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         kid = token_spec.get("header_kid") or "ephemeral-key"
@@ -134,14 +145,21 @@ def _mint_token(token_spec: dict) -> str:
     return pyjwt.encode(claims, key, algorithm=alg, headers={"kid": kid})
 
 
-def _resolve_verification_key(token: str) -> dict:
-    """Resolve the verification JWK by the token's header kid (JWT-001)."""
+def _resolve_verification_key(token: str) -> tuple[dict, str]:
+    """Resolve the verification JWK by the token's header kid (JWT-001).
+
+    Returns the raw JWK and the algorithm the library resolves for it: the
+    key's ``alg``, else the header ``alg`` (``find_key_by_kid``). The raw JWK is
+    used rather than a parsed ``JsonWebKey``, whose curve allowlist would refuse
+    the P-192 key of JWT-014 before the strength floor sees it.
+    """
     header = pyjwt.get_unverified_header(token)
     kid = header.get("kid")
-    for key in _PUBLIC_JWKS["keys"]:
-        if key.get("kid") == kid:
-            return key
-    return _PUBLIC_JWKS["keys"][0]
+    key = next(
+        (k for k in _PUBLIC_JWKS["keys"] if k.get("kid") == kid),
+        _PUBLIC_JWKS["keys"][0],
+    )
+    return key, key.get("alg") or header["alg"]
 
 
 def _nonce_validator(expected_nonce: str):
@@ -159,7 +177,6 @@ def _execute(vector: dict) -> dict:
     """Run one vector through py-identity-model's validation API."""
     options = vector.get("options", {})
     token = _mint_token(vector["token"])
-    key = _resolve_verification_key(token)
 
     audience = options.get("expected_audience")
     issuer = options.get("expected_issuer")
@@ -168,7 +185,6 @@ def _execute(vector: dict) -> dict:
         if "clock_skew" in options
         else None
     )
-    algorithms = options.get("allowed_algorithms") or ["RS256"]
     # PARITY NOTE (JWT-013): the capability requires iat presence (RFC 7519
     # §4.1.6, profiled in spec/capabilities.md). Go and Rust enforce this
     # NATIVELY (go/pkg/jwt/claims.go, rust/src/jwt/claims.rs both hard-require
@@ -186,15 +202,17 @@ def _execute(vector: dict) -> dict:
         # the capability treats an unexpected aud as ignorable (JWT-001).
         pyjwt_options["verify_aud"] = False
 
-    decoded = decode_and_validate_jwt(
-        token,
-        key,
-        algorithms,
-        audience,
-        issuer,
-        pyjwt_options,
+    # No allowed_algorithms leaves algorithms=None: the library default allowlist.
+    key, alg = _resolve_verification_key(token)
+    config = TokenValidationConfig(
+        perform_disco=True,
+        audience=audience,
+        algorithms=options.get("allowed_algorithms"),
+        issuer=issuer,
+        options=pyjwt_options,
         leeway=leeway,
     )
+    decoded = decode_with_config(token, build_resolved_config(config, key, alg))
     if "expected_nonce" in options:
         validate_claims(
             decoded,
@@ -234,6 +252,10 @@ def _assert_canonical_reject(err: PyIdentityModelException, expect: dict) -> Non
     if code == "signature":
         assert isinstance(err, SignatureVerificationException), (
             f"signature rejection surfaced as {type(err).__name__}: {message}"
+        )
+    elif code == "weak_key":
+        assert isinstance(err, WeakKeyException), (
+            f"weak_key rejection surfaced as {type(err).__name__}: {message}"
         )
     elif code in ("alg_none", "unsupported_alg", "malformed", "key_conversion"):
         # py-identity-model surfaces these pre-claim failures as the base

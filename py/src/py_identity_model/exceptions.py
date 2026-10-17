@@ -130,6 +130,27 @@ class KeyAlgorithmMismatchException(TokenValidationException):
     """
 
 
+class WeakKeyException(TokenValidationException):
+    """Raised when the key chosen to verify a token is below the strength floor.
+
+    An RSA key needs a modulus of at least 2048 bits (RFC 7518 §3.3, §3.5) and
+    an EC key a coordinate of at least 224 bits (FAPI 2.0 Security Profile
+    §5.4.1). OKP keys have a fixed size and no floor. The key is not skipped:
+    choosing it and finding it too weak fails validation, with no JWK Set
+    refresh. ``details`` holds the key's ``kid`` (``None`` when absent),
+    ``kty``, its size in ``bits`` and the ``min_bits`` it needed.
+    """
+
+    def __init__(
+        self, message: str, kid: str | None, kty: str, bits: int, min_bits: int
+    ):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"kid": kid, "kty": kty, "bits": bits, "min_bits": min_bits},
+        )
+
+
 class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
@@ -367,4 +388,5 @@ __all__ = [
     "UntrustedAudienceException",
     "UserInfoException",
     "ValidationException",
+    "WeakKeyException",
 ]
