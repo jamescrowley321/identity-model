@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 import gc
+from typing import TYPE_CHECKING
 
 import certifi
 import httpx
@@ -63,6 +64,10 @@ from ..token_validation_helpers import (
 )
 
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
 JWKS_URL = DISCO_RESPONSE_WITH_JWKS["jwks_uri"]
 OTHER_JWKS_URL = "https://other.example/jwks"
 THIRD_JWKS_URL = "https://third.example/jwks"
@@ -92,14 +97,22 @@ def _mock_disco() -> respx.Route:
     )
 
 
-@pytest.fixture(autouse=True)
-def _empty_default_caches() -> None:
+def _clear_default_caches() -> None:
     clear_discovery_cache()
     clear_jwks_cache()
     async_cache = get_default_async_validation_cache()
     async_cache.disco.clear()
     async_cache.jwks.clear()
     async_cache.kid_miss_last_attempt.clear()
+
+
+@pytest.fixture(autouse=True)
+def _empty_default_caches() -> Iterator[None]:
+    """Empty the default caches before and after: entries left here would
+    reach other tests on the same worker."""
+    _clear_default_caches()
+    yield
+    _clear_default_caches()
 
 
 # ============================================================================
