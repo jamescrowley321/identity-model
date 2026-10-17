@@ -143,6 +143,111 @@ jobs:
         working-directory: conformance
         run: docker compose down -v
 
+  # FAPI 2.0 RP plans (security profile, mTLS variant, message signing). Own
+  # job so it runs in parallel with the basic trio rather than lengthening it.
+  conformance-fapi2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Start conformance suite
+        working-directory: conformance
+        run: docker compose up -d --build --wait
+        timeout-minutes: 10
+
+      - name: Wait for conformance suite
+        run: |
+          echo "Waiting for conformance suite at https://localhost.emobix.co.uk:8443..."
+          for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost.emobix.co.uk:8443/ || true)
+            if [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 400 ] 2>/dev/null; then
+              echo "Conformance suite is ready (HTTP $HTTP_CODE)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timed out waiting for conformance suite"
+              docker compose -f conformance/docker-compose.yml logs server
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Wait for RP harness
+        run: |
+          echo "Waiting for RP harness at http://localhost:8888/health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "RP harness is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Timed out waiting for RP harness"
+              docker compose -f conformance/docker-compose.yml logs rp
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install test runner dependencies
+        run: uv pip install --system httpx cryptography
+
+      - name: Run FAPI 2.0 Security Profile RP conformance tests
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-rp \
+            --output conformance/results/fapi2-rp-latest.json \
+            --verbose
+
+      - name: Run FAPI 2.0 mTLS RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-mtls-rp \
+            --output conformance/results/fapi2-mtls-rp-latest.json \
+            --verbose
+
+      - name: Run FAPI 2.0 Message Signing RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-message-signing-rp \
+            --output conformance/results/fapi2-message-signing-rp-latest.json \
+            --verbose
+
+      - name: Collect suite and harness logs
+        if: always()
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml logs server > conformance/results/logs/server.log 2>&1 || true
+          docker compose -f conformance/docker-compose.yml logs rp > conformance/results/logs/rp.log 2>&1 || true
+
+      - name: Upload conformance results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: conformance-fapi2-results
+          path: |
+            conformance/results/fapi2-*-latest.json
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        working-directory: conformance
+        run: docker compose down -v
+
   # fastapi-identity-model package regression: the same local suite plans,
   # driven against the real build_oidc_router via the rp-fastapi harness.
   # Regression stage only — no hosted suite, no certification export (#242).
