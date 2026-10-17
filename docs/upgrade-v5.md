@@ -263,6 +263,30 @@ if method is not ClientAuthMethod.NONE:
     ...
 ```
 
+### `private_key_jwt` assertions are addressed to the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950))
+
+`PrivateKeyJwt` has a new `issuer` field. Set it to the authorization
+server's issuer identifier (the discovery document's `issuer`), and every
+client assertion the library builds (PAR, token, introspection, revocation,
+device authorization and token exchange) carries it as `aud`, as
+[FAPI 2.0 Security Profile §5.3.3.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.3.1)
+requires. An explicit `audience` still wins. With neither set, `aud` is still
+the request `address` (the endpoint URL), as in 4.x.
+
+```python
+from py_identity_model import PrivateKeyJwt
+
+private_key_jwt = PrivateKeyJwt(
+    private_key=pem,
+    algorithm="ES256",
+    issuer=discovery.issuer,
+)
+```
+
+`aud` is always a single string. An `audience` or `issuer` that is not a
+`str` (for example a list) raises `ValueError` when the request is built;
+4.x signed a list into the assertion as a JSON array.
+
 ### FastAPI: `OIDCSettings.from_env` is a separate helper ([#899](https://github.com/jamescrowley321/identity-model/pull/899))
 
 The FastAPI package reads no environment variables either. Use the helper,

@@ -56,6 +56,7 @@ from py_identity_model.core.token_exchange_logic import (
 
 
 UUID_STRING_LENGTH = 36
+ISSUER = "https://as.example.com"
 JWT_BEARER_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
 
@@ -349,6 +350,64 @@ class TestApplyPrivateKeyJwt:
         )
         assert decoded["aud"] == "https://issuer.example.com"
 
+    def test_audience_defaults_to_issuer_when_known(self):
+        # FAPI 2.0 Security Profile §5.3.3.1: the client sends the issuer
+        # identifier as aud, so a known issuer beats the endpoint URL.
+        private_pem, _ = _ec_keypair()
+        params: dict[str, str] = {}
+        apply_private_key_jwt(
+            params,
+            PrivateKeyJwt(private_key=private_pem, algorithm="ES256", issuer=ISSUER),
+            client_id="my-client",
+            default_audience="https://as.example.com/token",
+        )
+        decoded = pyjwt.decode(
+            params["client_assertion"], options={"verify_signature": False}
+        )
+        assert decoded["aud"] == ISSUER
+
+    def test_explicit_audience_beats_issuer(self):
+        private_pem, _ = _ec_keypair()
+        params: dict[str, str] = {}
+        apply_private_key_jwt(
+            params,
+            PrivateKeyJwt(
+                private_key=private_pem,
+                algorithm="ES256",
+                audience="https://override.example.com",
+                issuer=ISSUER,
+            ),
+            client_id="my-client",
+            default_audience="https://as.example.com/token",
+        )
+        decoded = pyjwt.decode(
+            params["client_assertion"], options={"verify_signature": False}
+        )
+        assert decoded["aud"] == "https://override.example.com"
+
+    @pytest.mark.parametrize("field", ["audience", "issuer"])
+    @pytest.mark.parametrize(
+        "value",
+        [[ISSUER], (ISSUER,), b"https://as.example.com"],
+        ids=["list", "tuple", "bytes"],
+    )
+    def test_aud_is_a_single_string(self, field, value):
+        # The assertion aud is one string, never an array (FAPI 2.0 SP §5.3.3.1).
+        private_pem, _ = _ec_keypair()
+        config = PrivateKeyJwt(
+            private_key=private_pem, algorithm="ES256", **{field: value}
+        )
+        params: dict[str, str] = {}
+
+        with pytest.raises(ValueError, match=f"{field} must be a string"):
+            apply_private_key_jwt(
+                params,
+                config,
+                client_id="my-client",
+                default_audience="https://as.example.com/token",
+            )
+        assert params == {}
+
 
 # Every client-authenticating endpoint and its prepare function. Each tuple is
 # (label, prepare_fn, request_obj) for every client-authenticating endpoint.
@@ -460,6 +519,27 @@ class TestPrepareFunctionPrecedence:
         )
         assert decoded["sub"] == "c", label
         assert decoded["aud"] == ADDR, label
+
+    @pytest.mark.parametrize(
+        ("label", "prepare_fn", "request_obj"),
+        _prepare_cases(),
+        ids=lambda v: v if isinstance(v, str) else "",
+    )
+    def test_assertion_aud_is_the_issuer_at_every_endpoint(
+        self, label, prepare_fn, request_obj
+    ):
+        # PAR, token, introspection, revocation, device and token exchange all
+        # address the assertion to the issuer, not to their endpoint URL.
+        private_pem, _ = _ec_keypair()
+        request_obj.private_key_jwt = PrivateKeyJwt(
+            private_key=private_pem, algorithm="ES256", issuer=ISSUER
+        )
+        params, _headers, _auth = prepare_fn(request_obj)
+
+        decoded = pyjwt.decode(
+            params["client_assertion"], options={"verify_signature": False}
+        )
+        assert decoded["aud"] == ISSUER, label
 
     @pytest.mark.parametrize(
         ("label", "prepare_fn", "request_obj"),
