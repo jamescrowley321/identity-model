@@ -185,7 +185,10 @@ clients only send requests and hold no cache.
   client that verifies TLS. The kid-miss cooldown is shared by all of them.
   Wrap your httpx client once, not per request, or every request fetches the
   documents again (see
-  [Trust scopes](api/http-client.md#trust-scopes)).
+  [Trust scopes](api/http-client.md#trust-scopes)). The scope is the
+  `ca_bundle` path, not its contents: after changing a CA bundle in place,
+  call `clear_discovery_cache()` and `clear_jwks_cache()`, or build a fresh
+  `ValidationCache`.
 - The cache settings (`jwks_cache_ttl`, `discovery_cache_ttl`,
   `cache_max_entries`, `jwks_kid_miss_cooldown`) are read from the cache's
   `Config`. On a client's `Config` they have no effect.

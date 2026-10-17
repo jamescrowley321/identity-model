@@ -106,6 +106,12 @@ client using the cache, so clients built per request are still rate-limited
 together. Wrapping a new httpx client per request gives each request its own
 scope, so every request fetches the documents again; build it once instead.
 
+A scope is keyed by the `ca_bundle` path, not the bundle's contents. If you
+change trust material in place (for example, rewrite the bundle file to drop
+a compromised CA), documents cached under the old trust are still served
+until their TTL expires: call `clear_discovery_cache()` and
+`clear_jwks_cache()`, or build a fresh `ValidationCache`, after the change.
+
 `clear_discovery_cache(cache=None)` and `clear_jwks_cache(cache=None)` empty a
 cache (the default one when `cache` is omitted; await the async versions).
 
