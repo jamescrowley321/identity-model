@@ -7,6 +7,7 @@ provider metadata.
 
 from functools import partial
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 
@@ -48,9 +49,16 @@ class TestFAPIDiscoveryCompliance:
             assert isinstance(violation, str)
             assert len(violation) > 0
 
-    def test_profile_built_only_from_compliant_discovery(self, discovery_document):
-        """The profile accepts the live discovery document iff it is compliant."""
+    def test_profile_from_live_discovery(self, discovery_document):
+        """The profile refuses whatever validate_fapi_discovery refuses, and more.
+
+        Non-compliant metadata is refused with exactly the discovery
+        violations. Compliant metadata can still be refused for the client's
+        own requirements; the local fixtures serve plain http, which the
+        profile never accepts for the issuer.
+        """
         violations = validate_fapi_discovery(discovery_document).violations
+        issuer = discovery_document.issuer
         build = partial(
             FAPI2ClientProfile,
             discovery_document,
@@ -62,10 +70,14 @@ class TestFAPIDiscoveryCompliance:
             with pytest.raises(FAPIProfileError) as exc_info:
                 build()
             assert exc_info.value.violations == violations
+        elif urlparse(issuer).scheme != "https":
+            with pytest.raises(FAPIProfileError) as exc_info:
+                build()
+            assert f"issuer must use https, got {issuer!r}" in exc_info.value.violations
         else:
             profile = build()
-            assert profile.issuer == discovery_document.issuer
-            assert profile.private_key_jwt == _pkj(issuer=discovery_document.issuer)
+            assert profile.issuer == issuer
+            assert profile.private_key_jwt == _pkj(issuer=issuer)
 
 
 REDIRECT_URI = "https://bank.example.com/callback"
