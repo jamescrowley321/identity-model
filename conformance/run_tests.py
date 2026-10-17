@@ -906,8 +906,11 @@ def run_plan(
     token: str | None = None,
     publish: str = "",
     profile: str = "",
+    only_module: str | None = None,
 ) -> tuple[str, list[TestResult]]:
-    """Run all tests in a conformance test plan.
+    """Run the tests in a conformance test plan.
+
+    With ``only_module`` set, only modules whose name contains it run.
 
     Returns a tuple of (plan_id, results).
     """
@@ -1005,6 +1008,12 @@ def run_plan(
         logger.error("No test modules found in plan")
         sys.exit(1)
 
+    try:
+        test_names = _select_modules(test_names, only_module)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     logger.info("Tests to run: %s", ", ".join(test_names))
 
     # Client credentials from plan config
@@ -1035,6 +1044,25 @@ def run_plan(
         results.append(result)
 
     return plan_id, results
+
+
+def _select_modules(test_names: list[str], only_module: str | None) -> list[str]:
+    """Keep the plan's modules whose name contains ``only_module``.
+
+    ``None`` keeps every module. A filter that is empty or matches nothing
+    raises ``ValueError`` so a typo cannot pass as an empty, green run.
+    """
+    if only_module is None:
+        return test_names
+    if not only_module:
+        raise ValueError("--only-module must not be empty")
+    selected = [name for name in test_names if only_module in name]
+    if not selected:
+        raise ValueError(
+            f"--only-module {only_module!r} matches no module in the plan: "
+            + ", ".join(test_names)
+        )
+    return selected
 
 
 # Statuses that count as a clean, submission-worthy outcome. Everything else —
@@ -1258,6 +1286,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--only-module",
+        default=None,
+        help=(
+            "Run only the plan's test modules whose name contains this substring "
+            "(e.g. invalid-alternate-alg). Not allowed with --export-zip or "
+            "--rp-logs-zip: a partial plan is not certification evidence."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -1278,6 +1315,12 @@ def main() -> None:
             "local run mint your own token in the suite UI and set it:\n"
             "  export CONFORMANCE_TOKEN=<your-token>",
             args.suite_url,
+        )
+        sys.exit(1)
+
+    if args.only_module is not None and (args.export_zip or args.rp_logs_zip):
+        logger.error(
+            "--only-module cannot be combined with --export-zip or --rp-logs-zip"
         )
         sys.exit(1)
 
@@ -1312,6 +1355,7 @@ def main() -> None:
         token=env_token or None,
         publish=publish_value,
         profile=args.plan,
+        only_module=args.only_module,
     )
 
     all_ok = print_summary(results)
