@@ -1,9 +1,15 @@
 """Unit tests for the FAPI 2.0 client profile and the object-based validators."""
 
 from dataclasses import FrozenInstanceError, replace
+import json
+import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from cryptography.hazmat.primitives.asymmetric import rsa
+import jwt as pyjwt
+from jwt.algorithms import RSAAlgorithm
+from jwt.exceptions import InvalidKeyError
 import pytest
 
 from py_identity_model.core.authorize_response import (
@@ -18,11 +24,19 @@ from py_identity_model.core.fapi import (
 )
 from py_identity_model.core.models import (
     DiscoveryDocumentResponse,
+    JwksResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
 )
+from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.core.state_validation import AuthorizeCallbackValidationResult
+from py_identity_model.exceptions import (
+    JarmValidationException,
+    TokenValidationException,
+)
+from py_identity_model.sync.jarm import process_jarm_response
+from py_identity_model.sync.token_validation import validate_token
 
 
 ISSUER = "https://auth.example.com"
@@ -365,7 +379,11 @@ class TestFAPI2ClientProfileConstruction:
     def test_weak_private_key_jwt_algorithm_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             _profile(client_auth=_pkj(algorithm="RS256"))
-        assert exc_info.value.violations == [_alg_violation("private_key_jwt", "RS256")]
+        assert exc_info.value.violations == [
+            _alg_violation("private_key_jwt", "RS256"),
+            "Server does not advertise private_key_jwt algorithm 'RS256' in "
+            "token_endpoint_auth_signing_alg_values_supported",
+        ]
 
     def test_client_secret_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
@@ -632,3 +650,223 @@ class TestFAPI2ClientProfileTokenRequest:
                 code="code", code_verifier="", dpop_key=DPOP_KEY
             )
         assert exc_info.value.violations == ["PKCE code_verifier is required"]
+
+
+def _profile_from(discovery: DiscoveryDocumentResponse, **kwargs: Any):
+    args: dict[str, Any] = {
+        "client_id": CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "client_auth": _pkj(),
+        **kwargs,
+    }
+    return FAPI2ClientProfile(discovery, **args)
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileServerSupport:
+    """The server must support the profile's own auth and binding."""
+
+    def test_http_token_endpoint_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(_discovery(token_endpoint="http://auth.example.com/token"))
+        assert exc_info.value.violations == [
+            "token_endpoint must use https, got 'http://auth.example.com/token'"
+        ]
+
+    def test_http_mtls_alias_refused(self):
+        discovery = _discovery(
+            mtls_endpoint_aliases={
+                "token_endpoint": "http://mtls.auth.example.com/token",
+                "pushed_authorization_request_endpoint": MTLS_PAR_ENDPOINT,
+            }
+        )
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery, client_auth=_mtls())
+        assert exc_info.value.violations == [
+            "token_endpoint must use https, got 'http://mtls.auth.example.com/token'"
+        ]
+
+    def test_private_key_jwt_not_advertised_refused(self):
+        discovery = _discovery(
+            token_endpoint_auth_methods_supported=["self_signed_tls_client_auth"]
+        )
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery)
+        assert exc_info.value.violations == [
+            "Server does not advertise private_key_jwt in "
+            "token_endpoint_auth_methods_supported"
+        ]
+
+    def test_private_key_jwt_algorithm_not_advertised_refused(self):
+        discovery = _discovery(
+            token_endpoint_auth_signing_alg_values_supported=["PS256"]
+        )
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery)
+        assert exc_info.value.violations == [
+            "Server does not advertise private_key_jwt algorithm 'ES256' in "
+            "token_endpoint_auth_signing_alg_values_supported"
+        ]
+
+    def test_private_key_jwt_without_dpop_support_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(_discovery(dpop_signing_alg_values_supported=None))
+        assert exc_info.value.violations == [
+            "Server does not advertise DPoP with one of ES256, EdDSA, PS256 "
+            "(dpop_signing_alg_values_supported); a private_key_jwt client binds "
+            "its tokens with DPoP"
+        ]
+
+    def test_mtls_method_not_advertised_refused(self):
+        discovery = _discovery(
+            token_endpoint_auth_methods_supported=["private_key_jwt"]
+        )
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery, client_auth=_mtls())
+        assert exc_info.value.violations == [
+            "Server does not advertise an mTLS client authentication method "
+            "(tls_client_auth or self_signed_tls_client_auth) in "
+            "token_endpoint_auth_methods_supported"
+        ]
+
+    def test_either_mtls_method_advertised_accepted(self):
+        """The OIDF suite advertises tls_client_auth and accepts self-signed."""
+        discovery = _discovery(
+            token_endpoint_auth_methods_supported=["tls_client_auth"]
+        )
+        profile = _profile_from(discovery, client_auth=_mtls())
+        assert profile.mtls == _mtls()
+
+    def test_mtls_without_certificate_bound_tokens_refused(self):
+        discovery = _discovery(tls_client_certificate_bound_access_tokens=None)
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery, client_auth=_mtls())
+        assert exc_info.value.violations == [
+            "Server does not advertise tls_client_certificate_bound_access_tokens: "
+            "true; an mTLS client binds its tokens to its certificate"
+        ]
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileMutation:
+    """Mutable client-auth objects cannot weaken the profile."""
+
+    def test_changing_the_callers_object_does_not_reach_the_profile(self):
+        pkj = _pkj(issuer=ISSUER)
+        profile = _profile(client_auth=pkj)
+        pkj.issuer = None
+        assert profile.private_key_jwt == _pkj(issuer=ISSUER)
+
+    def test_changing_a_built_request_does_not_reach_the_profile(self):
+        profile = _profile()
+        request = profile.pushed_authorization_request(
+            state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+        )
+        assert request.private_key_jwt is not None
+        request.private_key_jwt.audience = TOKEN_ENDPOINT
+        assert profile.private_key_jwt == _pkj(issuer=ISSUER)
+
+    def test_endpoint_url_fallback_after_construction_refused_by_par(self):
+        profile = _profile()
+        assert profile.private_key_jwt is not None
+        profile.private_key_jwt.issuer = None
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.pushed_authorization_request(
+                state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [AUD_NOT_ISSUER.format(aud=None)]
+
+    def test_endpoint_url_audience_after_construction_refused_by_token(self):
+        profile = _profile()
+        assert profile.private_key_jwt is not None
+        profile.private_key_jwt.audience = TOKEN_ENDPOINT
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.authorization_code_token_request(
+                code="code", code_verifier="verifier", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [AUD_NOT_ISSUER.format(aud=TOKEN_ENDPOINT)]
+
+    def test_weak_algorithm_after_construction_refused_by_token(self):
+        profile = _profile()
+        assert profile.private_key_jwt is not None
+        profile.private_key_jwt.algorithm = "RS256"
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.authorization_code_token_request(
+                code="code", code_verifier="verifier", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [_alg_violation("private_key_jwt", "RS256")]
+
+
+def _rs256_signer() -> tuple[rsa.RSAPrivateKey, dict]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk.pop("key_ops", None)
+    public_jwk.update(kid="rs256-key", use="sig", alg="RS256")
+    return private_key, public_jwk
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileAlgorithms:
+    """ID Token and JARM signatures outside §5.4.1 are rejected."""
+
+    def test_id_token_validation_config(self):
+        config = _profile().id_token_validation_config()
+        assert config.perform_disco is True
+        assert config.audience == CLIENT_ID
+        assert config.issuer == ISSUER
+        assert config.algorithms == ["ES256", "EdDSA", "PS256"]
+        assert config.options == {
+            "verify_exp": True,
+            "require": ["iss", "aud", "exp", "iat", "sub"],
+        }
+
+    def test_rs256_id_token_rejected(self):
+        private_key, public_jwk = _rs256_signer()
+        now = int(time.time())
+        id_token = pyjwt.encode(
+            {"iss": ISSUER, "aud": CLIENT_ID, "sub": "u", "iat": now, "exp": now + 60},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "rs256-key"},
+        )
+        config = replace(
+            _profile().id_token_validation_config(),
+            perform_disco=False,
+            key=public_jwk,
+        )
+        # InvalidKeyError escapes offline validation unwrapped (#974).
+        with pytest.raises((TokenValidationException, InvalidKeyError)):
+            validate_token(id_token, config)
+
+    def test_rs256_jarm_response_rejected(self):
+        private_key, public_jwk = _rs256_signer()
+        response = pyjwt.encode(
+            {"iss": ISSUER, "aud": CLIENT_ID, "exp": int(time.time()) + 60},
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "rs256-key"},
+        )
+        profile = _profile(jarm=True)
+        with pytest.raises(
+            JarmValidationException, match="'RS256' is not in the allowed"
+        ):
+            process_jarm_response(
+                f"{REDIRECT_URI}?response={response}",
+                client_id=CLIENT_ID,
+                issuer=profile.issuer,
+                jwks=JwksResponse(
+                    is_successful=True, keys=[jwks_from_dict(public_jwk)]
+                ),
+                algorithms=profile.signing_algorithms,
+            )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("suffix", ["?", "?tenant=a&"])
+def test_authorization_url_trailing_delimiter_not_doubled(suffix):
+    profile = _profile_from(
+        _discovery(authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}{suffix}")
+    )
+    assert profile.authorization_url("urn:x") == (
+        f"{AUTHORIZATION_ENDPOINT}{suffix}client_id={CLIENT_ID}&request_uri=urn%3Ax"
+    )

@@ -25,6 +25,7 @@ from .models import (
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    TokenValidationConfig,
 )
 from .mtls import resolve_mtls_endpoint
 from .state_validation import validate_authorize_callback_issuer
@@ -42,6 +43,7 @@ FAPI2_ALLOWED_SIGNING_ALGORITHMS = frozenset({"PS256", "ES256", "EdDSA"})
 FAPI2_ALLOWED_AUTH_METHODS = frozenset(
     {"private_key_jwt", "tls_client_auth", "self_signed_tls_client_auth"}
 )
+_MTLS_AUTH_METHODS = frozenset({"tls_client_auth", "self_signed_tls_client_auth"})
 FAPI2_REQUIRED_PKCE_METHOD = "S256"
 FAPI2_REQUIRED_RESPONSE_TYPE = "code"
 # FAPI 2.0 Security Profile §5.3.3.2: clients should not send longer nonces.
@@ -474,6 +476,58 @@ def validate_fapi_discovery(
     )
 
 
+def _server_support_violations(
+    discovery: DiscoveryDocumentResponse,
+    *,
+    private_key_jwt: PrivateKeyJwt | None,
+    mtls: MtlsClientAuth | None,
+) -> list[str]:
+    """The server must support the client's chosen auth and token binding.
+
+    :func:`validate_fapi_discovery` only checks that *some* FAPI method is
+    offered; the profile's own method has to be one of them.
+    """
+    violations: list[str] = []
+    methods = _str_values(discovery.token_endpoint_auth_methods_supported)
+    if private_key_jwt is not None:
+        if "private_key_jwt" not in methods:
+            violations.append(
+                "Server does not advertise private_key_jwt in "
+                "token_endpoint_auth_methods_supported"
+            )
+        auth_algs = _str_values(
+            discovery.token_endpoint_auth_signing_alg_values_supported
+        )
+        if private_key_jwt.algorithm not in auth_algs:
+            violations.append(
+                f"Server does not advertise private_key_jwt algorithm "
+                f"'{private_key_jwt.algorithm}' in "
+                "token_endpoint_auth_signing_alg_values_supported"
+            )
+        dpop_algs = _str_values(discovery.dpop_signing_alg_values_supported)
+        if not dpop_algs & FAPI2_ALLOWED_SIGNING_ALGORITHMS:
+            violations.append(
+                "Server does not advertise DPoP with one of "
+                f"{_fapi_algorithms()} (dpop_signing_alg_values_supported); a "
+                "private_key_jwt client binds its tokens with DPoP"
+            )
+    if mtls is not None:
+        # RFC 8705 §2.1 and §2.2 share one request shape; the PKI and
+        # self-signed variants differ only in how the server checks the cert.
+        if not methods & _MTLS_AUTH_METHODS:
+            violations.append(
+                "Server does not advertise an mTLS client authentication method "
+                "(tls_client_auth or self_signed_tls_client_auth) in "
+                "token_endpoint_auth_methods_supported"
+            )
+        if discovery.tls_client_certificate_bound_access_tokens is not True:
+            violations.append(
+                "Server does not advertise tls_client_certificate_bound_access_"
+                "tokens: true; an mTLS client binds its tokens to its certificate"
+            )
+    return violations
+
+
 # JARM (OAuth 2.0 JWT Secured Authorization Response Mode) §2.3.4: "jwt" picks
 # the default mode for the response type.
 JARM_RESPONSE_MODE = "jwt"
@@ -556,14 +610,15 @@ class FAPI2ClientProfile:
         _raise_on(validate_fapi_discovery(discovery).violations)
 
         issuer = discovery.issuer or ""
+        # Copies, so the caller's object cannot change the profile's settings.
         private_key_jwt: PrivateKeyJwt | None = None
         mtls: MtlsClientAuth | None = None
         if isinstance(self.client_auth, PrivateKeyJwt):
-            private_key_jwt = self.client_auth
-            if private_key_jwt.issuer is None and private_key_jwt.audience is None:
-                private_key_jwt = replace(private_key_jwt, issuer=issuer)
+            auth = self.client_auth
+            unset = auth.issuer is None and auth.audience is None
+            private_key_jwt = replace(auth, issuer=issuer if unset else auth.issuer)
         elif isinstance(self.client_auth, MtlsClientAuth):
-            mtls = self.client_auth
+            mtls = replace(self.client_auth)
         else:
             raise FAPIProfileError(
                 [
@@ -590,11 +645,18 @@ class FAPI2ClientProfile:
         for name, value in derived.items():
             object.__setattr__(self, name, value)
 
-        violations = [
-            f"{name} is required"
-            for name, value in derived.items()
-            if name not in ("private_key_jwt", "mtls") and not value
-        ]
+        violations: list[str] = []
+        for name in (
+            "issuer",
+            "authorization_endpoint",
+            "pushed_authorization_request_endpoint",
+            "token_endpoint",
+        ):
+            url = derived[name]
+            if not url:
+                violations.append(f"{name} is required")
+            elif urlparse(url).scheme.lower() != "https":
+                violations.append(f"{name} must use https, got {url!r}")
         if not self.client_id:
             violations.append("client_id is required")
         violations.extend(
@@ -603,6 +665,11 @@ class FAPI2ClientProfile:
             )
         )
         violations.extend(_assertion_audience_violations(private_key_jwt, issuer))
+        violations.extend(
+            _server_support_violations(
+                discovery, private_key_jwt=private_key_jwt, mtls=mtls
+            )
+        )
         violations.extend(
             _redirect_uri_violations(self.redirect_uri, native_app=self.native_app)
         )
@@ -613,10 +680,40 @@ class FAPI2ClientProfile:
         """Algorithms to accept for ID Tokens, JARM responses and DPoP (§5.4.1)."""
         return sorted(FAPI2_ALLOWED_SIGNING_ALGORITHMS)
 
-    def _sender_constraint_violations(self, dpop_key: DPoPKey | None) -> list[str]:
+    def _request_violations(self, dpop_key: DPoPKey | None) -> list[str]:
+        """Re-check the settings a request carries (they are mutable objects)."""
+        violations = _assertion_audience_violations(self.private_key_jwt, self.issuer)
         if self.mtls is not None and dpop_key is not None:
-            return [_MTLS_WITH_DPOP]
-        return _sender_constraint_request_violations(dpop_key=dpop_key, mtls=self.mtls)
+            violations.append(_MTLS_WITH_DPOP)
+        return violations
+
+    def _client_auth_copies(
+        self,
+    ) -> tuple[PrivateKeyJwt | None, MtlsClientAuth | None]:
+        """Fresh copies for a request, so changing it cannot reach the profile."""
+        return (
+            replace(self.private_key_jwt) if self.private_key_jwt else None,
+            replace(self.mtls) if self.mtls else None,
+        )
+
+    def id_token_validation_config(self) -> TokenValidationConfig:
+        """ID Token validation settings for this profile.
+
+        Signature algorithms are limited to PS256, ES256 and EdDSA (§5.4.1);
+        ``iss``, ``aud``, ``exp``, ``iat`` and ``sub`` are required and the
+        issuer and audience are pinned.  Pass it to ``validate_id_token`` with
+        the discovery address.
+        """
+        return TokenValidationConfig(
+            perform_disco=True,
+            audience=self.client_id,
+            issuer=self.issuer,
+            algorithms=self.signing_algorithms,
+            options={
+                "verify_exp": True,
+                "require": ["iss", "aud", "exp", "iat", "sub"],
+            },
+        )
 
     def pushed_authorization_request(
         self,
@@ -635,6 +732,7 @@ class FAPI2ClientProfile:
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
         """
+        private_key_jwt, mtls = self._client_auth_copies()
         request = PushedAuthorizationRequest(
             address=self.pushed_authorization_request_endpoint,
             client_id=self.client_id,
@@ -645,17 +743,19 @@ class FAPI2ClientProfile:
             nonce=nonce,
             code_challenge=code_challenge,
             code_challenge_method=FAPI2_REQUIRED_PKCE_METHOD,
-            private_key_jwt=self.private_key_jwt,
+            private_key_jwt=private_key_jwt,
             dpop_key=dpop_key,
-            mtls=self.mtls,
+            mtls=mtls,
             response_mode=JARM_RESPONSE_MODE if self.jarm else None,
         )
-        violations = validate_fapi_authorization_request(
-            request, native_app=self.native_app
-        ).violations
-        if self.mtls is not None and dpop_key is not None:
-            violations.append(_MTLS_WITH_DPOP)
-        _raise_on(violations)
+        _raise_on(
+            [
+                *validate_fapi_authorization_request(
+                    request, native_app=self.native_app
+                ).violations,
+                *self._request_violations(dpop_key),
+            ]
+        )
         return request
 
     def authorization_url(self, request_uri: str) -> str:
@@ -666,8 +766,12 @@ class FAPI2ClientProfile:
         if not request_uri:
             raise FAPIProfileError(["request_uri is required"])
         query = urlencode({"client_id": self.client_id, "request_uri": request_uri})
-        separator = "&" if urlparse(self.authorization_endpoint).query else "?"
-        return f"{self.authorization_endpoint}{separator}{query}"
+        endpoint = self.authorization_endpoint
+        if endpoint.endswith(("?", "&")):
+            separator = ""
+        else:
+            separator = "&" if urlparse(endpoint).query else "?"
+        return f"{endpoint}{separator}{query}"
 
     def validate_callback_issuer(
         self, response: AuthorizeCallbackResponse
@@ -692,7 +796,13 @@ class FAPI2ClientProfile:
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
         """
-        violations = self._sender_constraint_violations(dpop_key)
+        private_key_jwt, mtls = self._client_auth_copies()
+        violations = [
+            *_client_violations(
+                private_key_jwt=private_key_jwt, mtls=mtls, dpop_key=dpop_key
+            ),
+            *self._request_violations(dpop_key),
+        ]
         if not code_verifier:
             violations.append("PKCE code_verifier is required")
         _raise_on(violations)
@@ -702,9 +812,9 @@ class FAPI2ClientProfile:
             code=code,
             redirect_uri=self.redirect_uri,
             code_verifier=code_verifier,
-            private_key_jwt=self.private_key_jwt,
+            private_key_jwt=private_key_jwt,
             dpop_key=dpop_key,
-            mtls=self.mtls,
+            mtls=mtls,
         )
 
 
