@@ -27,7 +27,7 @@ the library never imports or calls it, so it runs only when a caller calls it.
 | `ca_bundle` | `WithCABundle` | `ca_bundle` | path | `none` | `readable file` |
 | `jwks_max_size` | `jwks.WithMaxSize` | `JwksClientBuilder::max_size` | bytes | `524288` | `≥ 1` |
 | `jwks_max_keys` | `jwks.WithMaxKeys` | `JwksClientBuilder::max_keys` | count | `100` | `≥ 1` |
-| `jwks_cache_ttl` | `jwks.WithCacheTTL` | `JwksClientBuilder::cache_ttl` | seconds | `86400` | `60 – 86400` |
+| `jwks_cache_ttl` | `jwks.WithCacheTTL` | `JwksClientBuilder::cache_ttl` | seconds | `3600` | `60 – 86400` |
 | `jwks_kid_miss_cooldown` | `jwks.WithRefreshCooldown` | `JwksClientBuilder::refresh_cooldown` | seconds | `5` | `0 – 3600` |
 | `discovery_cache_ttl` | `discovery.WithCacheTTL` | `DiscoveryClientBuilder::cache_ttl` | seconds | `3600` | `60 – 86400` |
 | `cache_max_entries` | `discovery.WithMaxCacheEntries`, `jwks.WithMaxCacheEntries` | `DiscoveryClientBuilder::max_cache_entries`, `JwksClientBuilder::max_cache_entries` | count | `64` | `≥ 1` |
@@ -64,7 +64,7 @@ land, Go and Rust differ from this page:
 - They read `JWKS_CACHE_MAX_ENTRIES` and `DISCO_CACHE_MAX_ENTRIES` from the
   environment. `0`, from the environment or the max-cache-entries option,
   means unbounded.
-- The discovery cache TTL defaults to 24 hours.
+- The discovery cache TTL and the JWKS cache TTL both default to 24 hours.
 - Values are not range-checked. A zero TTL (Go: zero or negative) falls back
   to its default, as does a negative cooldown in Go; any other value is used
   as given.

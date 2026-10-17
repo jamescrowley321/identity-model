@@ -212,7 +212,7 @@ async with AsyncHTTPClient(config=config) as client:
 | `ca_bundle` | `str \| None` | `None` (verify TLS with httpx's default bundle) | a readable file |
 | `jwks_max_size` | `int` | `524288` bytes (512 KiB) | ≥ 1 |
 | `jwks_max_keys` | `int` | `100` | ≥ 1 |
-| `jwks_cache_ttl` | `float` | `86400.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
+| `jwks_cache_ttl` | `float` | `3600.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
 | `jwks_kid_miss_cooldown` | `float` | `5.0` s | 0 – 3600 (0 disables the cooldown) |
 | `discovery_cache_ttl` | `float` | `3600.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
 | `cache_max_entries` | `int` | `64`, applied separately to the JWKS cache and the discovery cache | ≥ 1 |

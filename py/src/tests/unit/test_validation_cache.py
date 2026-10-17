@@ -333,3 +333,29 @@ class TestTwoEventLoops:
             assert asyncio.run(validate_then_clear()) == PRIME_AND_ONE_REFRESH
         finally:
             _reset_default_async_validation_cache()
+
+
+ONE_HOUR_SECONDS = 3600.0
+
+
+class TestJwksFallbackTtl:
+    """Without ``Cache-Control``, a JWKS is kept for one hour (#953), so a key
+    the provider pulls stops validating within the hour."""
+
+    @respx.mock
+    def test_sync_jwks_without_cache_control_is_kept_one_hour(self):
+        _mock_provider()
+        cache = ValidationCache()
+        [token] = _unknown_kid_tokens(count=1)
+        with pytest.raises(TokenValidationException):
+            validate_token(token, VALIDATION, DISCO_URL, cache=cache)
+        assert cache.jwks[JWKS_URL].ttl == ONE_HOUR_SECONDS
+
+    @respx.mock
+    async def test_async_jwks_without_cache_control_is_kept_one_hour(self):
+        _mock_provider()
+        cache = AsyncValidationCache()
+        [token] = _unknown_kid_tokens(count=1)
+        with pytest.raises(TokenValidationException):
+            await async_validate_token(token, VALIDATION, DISCO_URL, cache=cache)
+        assert cache.jwks[JWKS_URL].ttl == ONE_HOUR_SECONDS

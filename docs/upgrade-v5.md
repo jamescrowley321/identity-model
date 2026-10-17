@@ -213,6 +213,23 @@ and keep it: a cache built per request starts empty and has no cooldown
 history. In the FastAPI package, pass it as `cache=` to
 `TokenValidationMiddleware` or `build_ws_authenticator`.
 
+### The JWKS cache keeps keys for 1 hour, not 24 ([#953](https://github.com/jamescrowley321/identity-model/issues/953))
+
+When the JWKS response has no `Cache-Control: max-age`, the key set is now
+kept for 1 hour (`Config.jwks_cache_ttl` defaults to `3600`, was `86400`). A
+key the provider pulls stops validating within the hour. A provider's
+`max-age` still wins, clamped to 60 – 86400 seconds as before. A provider
+without `max-age` sees up to one JWKS fetch per hour per process instead of
+one per day.
+
+To keep the 4.x lifetime:
+
+```python
+from py_identity_model import Config, ValidationCache
+
+cache = ValidationCache(config=Config(jwks_cache_ttl=86400.0))
+```
+
 ### `ClientAuthMethod.requires_secret` is removed ([#934](https://github.com/jamescrowley321/identity-model/issues/934))
 
 The property had no reader in the library. `ClientAuthMethod` and its members

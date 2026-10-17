@@ -27,7 +27,7 @@ TTLs, size and cooldown. HTTP clients only send requests.
 | Cache | Cache key | Backing store | Default TTL | `Config` setting |
 |-------|-----------|---------------|-------------|------------------|
 | Discovery document | `(address, policy.cache_key())` | `OrderedDict` | 3600s (1 hour) | `discovery_cache_ttl` |
-| JWKS | `jwks_uri` | `OrderedDict` | 86400s (24 hours) | `jwks_cache_ttl` |
+| JWKS | `jwks_uri` | `OrderedDict` | 3600s (1 hour) | `jwks_cache_ttl` |
 
 Both caches share the same policy machinery:
 

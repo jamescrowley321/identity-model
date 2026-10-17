@@ -6,7 +6,7 @@ supporting automatic cache expiry and forced refresh on key rotation (RFC 7517 Â
 
 JWKS TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's JWKS HTTP response
-2. ``Config.jwks_cache_ttl`` (default: 86400, 24 hours)
+2. ``Config.jwks_cache_ttl`` (default: 3600, 1 hour)
 
 Discovery TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's discovery HTTP response
@@ -38,7 +38,9 @@ if TYPE_CHECKING:
     from ..core.config import Config
     from ..core.models import DiscoveryDocumentResponse, JwksResponse
 
-DEFAULT_JWKS_CACHE_TTL_SECONDS: float = 86400.0  # 24 hours
+# 1 hour: without a provider max-age, a key the provider pulls stops
+# validating within the hour (#953). Was 24 hours before 5.0.
+DEFAULT_JWKS_CACHE_TTL_SECONDS: float = 3600.0
 DEFAULT_DISCO_CACHE_TTL_SECONDS: float = 3600.0  # 1 hour
 MIN_CACHE_TTL_SECONDS: float = 60.0
 MAX_CACHE_TTL_SECONDS: float = 86400.0
