@@ -28,6 +28,7 @@ from ..core.models import (
 from ..core.parsers import (
     extract_jwt_header_fields,
     find_key_by_kid,
+    is_signing_key,
 )
 from ..core.token_validation_logic import (
     build_resolved_config,
@@ -267,13 +268,16 @@ def _discover_and_resolve_key(
     jwks_response = _get_cached_jwks(jwks_uri, policy, client)
     validate_jwks_response(jwks_response)
     kid, jwt_alg = extract_jwt_header_fields(jwt)
-    # OP key rotation: if the JWT's kid is not in the cached JWKS, the cache
+    # OP key rotation: if the JWT's kid names no signing key in the cached
+    # JWKS (a ``use: enc`` key does not count, RFC 7517 §4.2), the cache
     # is stale. Force a refresh before lookup so rotation is handled without
     # waiting for a signature failure on a key we don't have. The cooldown
     # gate prevents an unauthenticated attacker from amplifying inbound JWT
     # traffic into upstream JWKS fetches by spamming random kids.
     cached_keys = jwks_response.keys or []
-    if kid is not None and not any(k.kid == kid for k in cached_keys):
+    if kid is not None and not any(
+        k.kid == kid and is_signing_key(k) for k in cached_keys
+    ):
         if should_attempt_kid_miss_refresh(
             caches.kid_miss_last_attempt,
             jwks_uri,
@@ -295,7 +299,9 @@ def _discover_and_resolve_key(
             )
             if jwks_response.is_successful:
                 refreshed_keys = jwks_response.keys or []
-                kid_found = any(k.kid == kid for k in refreshed_keys)
+                kid_found = any(
+                    k.kid == kid and is_signing_key(k) for k in refreshed_keys
+                )
                 # Skip the cooldown bookkeeping entirely when the refresh
                 # degraded to a retained-cache fallback. The upstream's
                 # empty response is not attacker-amplifiable, so the

@@ -497,6 +497,33 @@ except AmbiguousKeyException as exc:
     print(exc.details["available_kids"])
 ```
 
+### `use: "enc"` keys never verify signatures ([#888](https://github.com/jamescrowley321/identity-model/issues/888))
+
+A JWK marked `use: "enc"` is for encryption only
+([RFC 7517 §4.2](https://www.rfc-editor.org/rfc/rfc7517#section-4.2)), so 5.0
+never uses one to verify a signature. Only keys whose `use` is `sig` or absent
+are considered. In 4.x a `kid` naming an `enc` key selected it, and a token
+with no `kid` fell back to the `enc` keys when the set held no signing key.
+
+- A `kid` that names only an `enc` key is treated like an unknown `kid`: one
+  JWK Set refresh, then `KeyNotFoundException`.
+- A token with no `kid` against a set with no signing key raises
+  `KeyNotFoundException`, not `AmbiguousKeyException`.
+
+`KeyNotFoundException` is new. It subclasses `TokenValidationException`, and
+an unknown `kid` raises it too, with the same message as in 4.x. A provider
+that labels its signing keys `use: "enc"` must fix the label. Its tokens fail
+validation until it does.
+
+```python
+from py_identity_model import KeyNotFoundException, validate_token
+
+try:
+    claims = validate_token(token, validation_config, DISCOVERY_URL)
+except KeyNotFoundException as exc:
+    print(exc.details["kid"], exc.details["available_kids"])
+```
+
 ## UserInfo
 
 ### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))

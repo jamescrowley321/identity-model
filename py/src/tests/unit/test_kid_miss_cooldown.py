@@ -50,6 +50,7 @@ from py_identity_model.core.models import (
     TokenValidationConfig,
 )
 from py_identity_model.exceptions import (
+    KeyNotFoundException,
     SignatureVerificationException,
     TokenValidationException,
 )
@@ -1163,3 +1164,126 @@ class TestEmptyRefreshDoesNotStampCooldown:
         assert response.is_successful is True
         kids = {k.kid for k in response.keys or []}
         assert kids == {"cached-kid"}
+
+
+# ============================================================================
+# A kid that names only a ``use: enc`` key names no signing key (RFC 7517
+# §4.2), so it is a kid miss: one cooldown-gated forced refresh, then
+# key-not-found. A relabelled key picked up by that refresh verifies.
+# ============================================================================
+
+
+class TestEncKeyKidIsKidMiss:
+    @staticmethod
+    def _keys_and_token(kid: str = "k1") -> tuple[dict, dict, str]:
+        sig_key, pem = generate_rsa_keypair()
+        sig_key.update(kid=kid, use="sig")
+        enc_key = {**sig_key, "use": "enc"}
+        token = sign_jwt(
+            pem,
+            {"sub": "user1", "iss": "https://example.com"},
+            headers={"kid": kid},
+        )
+        return enc_key, sig_key, token
+
+    @staticmethod
+    def _config() -> TokenValidationConfig:
+        return TokenValidationConfig(
+            perform_disco=True, audience=None, issuer="https://example.com"
+        )
+
+    @respx.mock
+    def test_sync_enc_kid_refreshes_then_verifies_relabelled_key(self):
+        enc_key, sig_key, token = self._keys_and_token()
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks_route = respx.get(JWKS_URL).mock(
+            side_effect=[
+                httpx.Response(200, json={"keys": [enc_key]}),
+                httpx.Response(200, json={"keys": [sig_key]}),
+            ]
+        )
+
+        decoded = validate_token(
+            jwt=token,
+            token_validation_config=self._config(),
+            disco_doc_address=DISCO_URL,
+        )
+
+        assert decoded["sub"] == "user1"
+        assert jwks_route.call_count == EXPECTED_FETCH_COUNT
+        assert JWKS_URL not in _sync_caches().kid_miss_last_attempt
+
+    @respx.mock
+    def test_sync_enc_kid_is_key_not_found_after_one_refresh(self):
+        enc_key, _, token = self._keys_and_token()
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks_route = respx.get(JWKS_URL).mock(
+            return_value=httpx.Response(200, json={"keys": [enc_key]})
+        )
+
+        with HTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+            for _ in range(2):
+                with pytest.raises(KeyNotFoundException):
+                    validate_token(
+                        jwt=token,
+                        token_validation_config=self._config(),
+                        disco_doc_address=DISCO_URL,
+                        http_client=client,
+                    )
+            stamped = JWKS_URL in client.caches.kid_miss_last_attempt
+
+        assert jwks_route.call_count == EXPECTED_FETCH_COUNT
+        assert stamped
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_enc_kid_refreshes_then_verifies_relabelled_key(self):
+        enc_key, sig_key, token = self._keys_and_token()
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks_route = respx.get(JWKS_URL).mock(
+            side_effect=[
+                httpx.Response(200, json={"keys": [enc_key]}),
+                httpx.Response(200, json={"keys": [sig_key]}),
+            ]
+        )
+
+        decoded = await async_validate_token(
+            jwt=token,
+            token_validation_config=self._config(),
+            disco_doc_address=DISCO_URL,
+        )
+
+        assert decoded["sub"] == "user1"
+        assert jwks_route.call_count == EXPECTED_FETCH_COUNT
+        assert JWKS_URL not in _async_caches().kid_miss_last_attempt
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_enc_kid_is_key_not_found_after_one_refresh(self):
+        enc_key, _, token = self._keys_and_token()
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks_route = respx.get(JWKS_URL).mock(
+            return_value=httpx.Response(200, json={"keys": [enc_key]})
+        )
+
+        async with AsyncHTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+            for _ in range(2):
+                with pytest.raises(KeyNotFoundException):
+                    await async_validate_token(
+                        jwt=token,
+                        token_validation_config=self._config(),
+                        disco_doc_address=DISCO_URL,
+                        http_client=client,
+                    )
+            stamped = JWKS_URL in client.caches.kid_miss_last_attempt
+
+        assert jwks_route.call_count == EXPECTED_FETCH_COUNT
+        assert stamped

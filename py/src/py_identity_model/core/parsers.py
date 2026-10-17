@@ -12,6 +12,7 @@ from jwt import get_unverified_header
 from ..exceptions import (
     AmbiguousKeyException,
     KeyAlgorithmMismatchException,
+    KeyNotFoundException,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -180,6 +181,27 @@ def jwks_from_dict(keys_dict: dict) -> JsonWebKey:
     )
 
 
+def is_signing_key(key: JsonWebKey) -> bool:
+    """Return True when *key* may verify a signature.
+
+    Per RFC 7517 §4.2 a key whose ``use`` is ``sig`` or absent is a signing
+    key; any other ``use`` (``enc``, or a URI) is not, so the key is never
+    used to verify a signature, whether named by ``kid`` or not.
+    """
+    return key.use in (None, "sig")
+
+
+def _key_not_found(kid: str | None, keys: list[JsonWebKey]) -> KeyNotFoundException:
+    """Build the error for a token no signing key in *keys* can verify."""
+    available_kids = [k.kid for k in keys if k.kid and is_signing_key(k)]
+    message = (
+        f"No matching kid found: {kid}"
+        if kid is not None
+        else "JWT has no kid header and JWKS contains no signing key"
+    )
+    return KeyNotFoundException(message, kid=kid, available_kids=available_kids)
+
+
 def _no_kid_candidates(
     keys: list[JsonWebKey],
     jwt_alg: str | None,
@@ -190,6 +212,7 @@ def _no_kid_candidates(
     keys the set happens to hold.
 
     Raises:
+        KeyNotFoundException: If the set holds no signing key.
         TokenValidationException: If ``jwt_alg`` is ``none``.
     """
     _reject_non_string_alg(jwt_alg)
@@ -200,10 +223,10 @@ def _no_kid_candidates(
             details={"alg": jwt_alg},
         )
 
-    # Per RFC 7517 §4.2, filter to signing keys (use="sig" or use omitted)
-    signing_keys = [k for k in keys if k.use in (None, "sig")]
+    # RFC 7517 §4.2: only signing keys (use="sig" or omitted) may verify.
+    signing_keys = [k for k in keys if is_signing_key(k)]
     if not signing_keys:
-        signing_keys = keys  # Fall back to all keys if none marked for signing
+        raise _key_not_found(None, keys)
 
     if len(signing_keys) > 1 and jwt_alg:
         # RFC 7517 §4.4: a key that declares a different ``alg`` cannot
@@ -232,12 +255,16 @@ def find_key_by_kid(
 
     This is the core key lookup logic shared by sync and async implementations.
 
+    Only signing keys (``use`` absent or ``sig``, RFC 7517 §4.2) are
+    considered: a ``use: enc`` key is never returned, so a ``kid`` naming one
+    is key-not-found.
+
     When the JWT has no ``kid`` header (OIDC Core Section 10.1 lets the OP omit
-    it when its JWK Set holds a single key), the set is narrowed to signing
-    keys (``use`` absent or ``sig``), then, while more than one remains, to
-    keys whose ``alg`` is absent or equals the header ``alg`` and whose ``kty``
-    matches it. Exactly one remaining key is used; more than one raises
-    :class:`AmbiguousKeyException`.
+    it when its JWK Set holds a single key), the signing keys are narrowed,
+    while more than one remains, to keys whose ``alg`` is absent or equals the
+    header ``alg`` and whose ``kty`` matches it. Exactly one remaining key is
+    used; more than one raises :class:`AmbiguousKeyException`, and none
+    raises :class:`KeyNotFoundException`.
 
     Args:
         kid: The key ID from the JWT header
@@ -251,7 +278,9 @@ def find_key_by_kid(
     Raises:
         AmbiguousKeyException: If ``kid`` is absent and more than one key
             could verify the token
-        TokenValidationException: If no keys available or no matching key found
+        KeyNotFoundException: If no signing key matches ``kid``, or ``kid``
+            is absent and the set holds no signing key
+        TokenValidationException: If no keys are available
     """
     if not keys:
         raise TokenValidationException("No keys available in JWKS response")
@@ -274,14 +303,9 @@ def find_key_by_kid(
             key_count=len(signing_keys),
         )
 
-    filtered_keys = [k for k in keys if k.kid == kid]
+    filtered_keys = [k for k in keys if k.kid == kid and is_signing_key(k)]
     if not filtered_keys:
-        available_kids = [k.kid for k in keys if k.kid]
-        raise TokenValidationException(
-            f"No matching kid found: {kid}",
-            token_part="header",
-            details={"kid": kid, "available_kids": available_kids},
-        )
+        raise _key_not_found(kid, keys)
 
     public_key = filtered_keys[0]
     _validate_key_alg_consistency(public_key, jwt_alg)
@@ -298,9 +322,9 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     """
     Find the public key from JWKS that matches the JWT's kid.
 
-    When the JWT has no ``kid`` header, the key is chosen as in
-    :func:`find_key_by_kid`: the single key left after narrowing by ``use``,
-    ``alg`` and ``kty``.
+    As in :func:`find_key_by_kid`, only signing keys are considered. When the
+    JWT has no ``kid`` header, the key is the single signing key left after
+    narrowing by ``alg`` and ``kty``.
 
     Args:
         jwt: The JWT token
@@ -312,7 +336,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     Raises:
         AmbiguousKeyException: If ``kid`` is absent and more than one key
             could verify the token
-        TokenValidationException: If no matching key is found
+        KeyNotFoundException: If no signing key matches
     """
     warnings.warn(
         "get_public_key_from_jwk is deprecated and will be removed in a future "
@@ -346,17 +370,14 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
             key_count=len(signing_keys),
         )
 
-    filtered_keys = list(filter(lambda x: x.kid == kid, keys))
+    filtered_keys = [k for k in keys if k.kid == kid and is_signing_key(k)]
     if not filtered_keys:
-        available_kids = [k.kid for k in keys if k.kid]
+        error = _key_not_found(kid, keys)
         logger.error(
-            f"No matching kid found. Requested: {kid}, Available: {available_kids}",
+            f"No matching kid found. Requested: {kid}, "
+            f"Available: {error.details['available_kids']}",
         )
-        raise TokenValidationException(
-            f"No matching kid found: {kid}",
-            token_part="header",
-            details={"kid": kid, "available_kids": available_kids},
-        )
+        raise error
 
     key = copy.deepcopy(filtered_keys[0])
     jwt_alg = headers.get("alg")
@@ -372,5 +393,6 @@ __all__ = [
     "extract_jwt_header_fields",
     "extract_kid_from_jwt",
     "find_key_by_kid",
+    "is_signing_key",
     "jwks_from_dict",
 ]
