@@ -590,7 +590,7 @@
       "title": "Select the key for a token with no kid",
       "given": "A token whose JOSE header has no kid",
       "when": "Key resolution is attempted",
-      "then": "The key set is narrowed to signing keys (use absent or sig), then, when more than one remains, to keys whose alg is absent or equals the header alg, then to keys whose kty matches the header alg; each step applies only when it leaves at least one key, so a set with no signing key falls back to all its keys; exactly one remaining key is used with no forced refresh, and more than one is an ambiguous-key error distinct from key-not-found",
+      "then": "The key set is narrowed to signing keys (use absent or sig), with no fallback; then, when more than one remains, to keys whose alg is absent or equals the header alg, then to keys whose kty matches the header alg, each of those two steps applied only when it leaves at least one key; exactly one remaining key is used with no forced refresh, more than one is an ambiguous-key error distinct from key-not-found, and none is key-not-found (JWKS-011)",
       "references": [
         "OIDC Core 1.0 \u00a710.1",
         "RFC 7517 \u00a74.2",
@@ -833,6 +833,74 @@
                 "e": "AQAB"
               }
             ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "JWKS-011",
+      "title": "Never verify a signature with a use=enc key",
+      "given": "A JWK Set holding a key marked use: enc",
+      "when": "The key for a token header is resolved",
+      "then": "Only signing keys (use absent or sig) are candidates: a kid that names only an enc key is a kid miss, so a forced refresh is performed before a key-not-found error; a token with no kid against a set with no signing key is a key-not-found error, distinct from ambiguous-key, with no forced refresh",
+      "references": [
+        "RFC 7517 \u00a74.2",
+        "OIDC Core 1.0 \u00a710.1.1"
+      ],
+      "vectors": [
+        {
+          "name": "kid-naming-encryption-key-not-found-after-refresh",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "rsa-enc-key",
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/kidless-sig-enc.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 2
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
+          }
+        },
+        {
+          "name": "kidless-encryption-only-set-not-found",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "alg": "RS256"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/enc-only.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "key_not_found"
           }
         }
       ]
