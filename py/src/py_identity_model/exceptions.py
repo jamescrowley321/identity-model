@@ -275,6 +275,21 @@ class DiscoveryHTTPSRequiredError(ConfigurationException):
     """A discovery URL violates the HTTPS requirement."""
 
 
+class AzpRequiresClientIdError(ConfigurationException):
+    """``validate_azp`` was enabled without a ``client_id`` to compare against.
+
+    OIDC Core 1.0 §3.1.3.7 step 5 compares a present ``azp`` with the
+    client's own ``client_id``; with none configured the check cannot run as
+    asked, so it is a caller misconfiguration rather than a token defect.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "validate_azp requires a client_id (the token validation audience) "
+            "to compare 'azp' against"
+        )
+
+
 class FailedResponseAccessError(PyIdentityModelException):
     """Raised when accessing data fields on a failed response."""
 
@@ -303,6 +318,7 @@ class SuccessfulResponseAccessError(PyIdentityModelException):
 __all__ = [
     "AmbiguousKeyException",
     "AuthorizeCallbackException",
+    "AzpRequiresClientIdError",
     "CertificateBindingError",
     "ConfigurationException",
     "DiscoveryException",

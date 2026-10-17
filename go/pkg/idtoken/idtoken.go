@@ -26,8 +26,13 @@ import (
 // It returns the validated [jwt.Claims] on success. Base-validation failures
 // surface the jwt package's error types; profile failures surface a
 // *[ProfileError] (matched by errors.Is against [ErrIDTokenProfile]).
+// [WithAZPValidation] without [WithClientID] returns [ErrAZPRequiresClientID]
+// before the token is parsed.
 func ValidateIDToken(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, opts ...Option) (*jwt.Claims, error) {
 	cfg := newConfig(opts...)
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 
 	claims, err := jwt.Validate(ctx, rawToken, keySet, cfg.jwtOptions()...)
 	if err != nil {
@@ -58,13 +63,19 @@ func ValidateIDToken(ctx context.Context, rawToken string, keySet *jwks.JSONWebK
 // claims is the decoded claim set (as produced by json.Unmarshal into a
 // map[string]any: JSON numbers are float64, arrays are []any). headerAlg is the
 // verified alg of the ID Token's JOSE header, used to select the SHA-2 variant
-// for at_hash/c_hash. It returns a *[ProfileError] on the first violation.
+// for at_hash/c_hash. It returns a *[ProfileError] on the first violation, or
+// [ErrAZPRequiresClientID] before any claim is read when [WithAZPValidation]
+// is set without [WithClientID].
 //
 // This is the network-free entry point the cross-language conformance vectors
 // (spec/vectors/id-token.json) drive; it is the Go analog of the reference
 // validate_id_token_claims.
 func ValidateClaims(claims map[string]any, headerAlg string, opts ...Option) error {
-	return validateProfile(claims, headerAlg, newConfig(opts...))
+	cfg := newConfig(opts...)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	return validateProfile(claims, headerAlg, cfg)
 }
 
 // validateProfile is the shared core enforcing the ID-Token-specific rules, in
@@ -213,7 +224,7 @@ func validateAZP(claims map[string]any, clientID string) error {
 	}
 
 	// Errata 2 step 5: a present azp identifies this client.
-	if azpPresent && azpRaw != nil && clientID != "" && azpStr != clientID {
+	if azpPresent && azpRaw != nil && azpStr != clientID {
 		return profileErr(ReasonAZPMismatch, "ID token 'azp' claim does not match the configured client_id")
 	}
 	return nil

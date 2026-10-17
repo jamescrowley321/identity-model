@@ -553,6 +553,49 @@ func TestValidateClaims_MissingAudience(t *testing.T) {
 	}
 }
 
+// TestValidateClaims_AZPWithoutClientID pins #930: WithAZPValidation without
+// WithClientID is a configuration error (§3.1.3.7 step 5 compares azp with the
+// client_id), returned before any claim is read and never a ProfileError.
+func TestValidateClaims_AZPWithoutClientID(t *testing.T) {
+	cases := []struct {
+		name   string
+		claims map[string]any
+	}{
+		{"foreign azp", with(map[string]any{"azp": "android-client"})},
+		{"no azp", baseClaims()},
+		{"missing sub", with(map[string]any{"sub": nil})},
+		{"empty claims", map[string]any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := idtoken.ValidateClaims(tc.claims, "RS256",
+				idtoken.WithNow(fixedNow),
+				idtoken.WithTrustedAudiences(testClientID),
+				idtoken.WithAZPValidation(),
+			)
+			if !errors.Is(err, idtoken.ErrAZPRequiresClientID) {
+				t.Fatalf("err = %v, want ErrAZPRequiresClientID", err)
+			}
+			if errors.Is(err, idtoken.ErrIDTokenProfile) {
+				t.Fatalf("err = %v must not be an ID-Token profile violation", err)
+			}
+		})
+	}
+}
+
+// TestValidateIDToken_AZPWithoutClientID confirms the wrapper reports the
+// configuration error before touching the token: a malformed token and a nil
+// key set would otherwise fail base validation first.
+func TestValidateIDToken_AZPWithoutClientID(t *testing.T) {
+	_, err := idtoken.ValidateIDToken(context.Background(), "not-a-jwt", nil,
+		idtoken.WithIssuer(wrapperIssuer),
+		idtoken.WithAZPValidation(),
+	)
+	if !errors.Is(err, idtoken.ErrAZPRequiresClientID) {
+		t.Fatalf("err = %v, want ErrAZPRequiresClientID", err)
+	}
+}
+
 // TestValidateClaims_SubCheckedBeforeAudience pins the rule order: a missing
 // sub is reported ahead of an untrusted audience.
 func TestValidateClaims_SubCheckedBeforeAudience(t *testing.T) {

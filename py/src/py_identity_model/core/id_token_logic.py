@@ -34,6 +34,7 @@ import time
 from typing import TYPE_CHECKING
 
 from ..exceptions import (
+    AzpRequiresClientIdError,
     ConfigurationException,
     IdTokenValidationException,
     UntrustedAudienceException,
@@ -185,7 +186,23 @@ def _reject_untrusted_audiences(
         )
 
 
-def _validate_azp(claims: dict, client_id: str | None) -> None:
+def check_azp_config(client_id: str | None, validate_azp: bool) -> None:
+    """Reject ``validate_azp`` without a ``client_id`` (OIDC Core §3.1.3.7 step 5).
+
+    Step 5 compares a present ``azp`` with the client's own ``client_id``. With
+    none configured the comparison cannot run, and skipping it would leave the
+    caller believing ``azp`` was checked. Depends on the caller's inputs only,
+    so it runs before any claim (or, in the wrappers, any I/O) is touched.
+
+    Raises:
+        AzpRequiresClientIdError: If ``validate_azp`` is set and ``client_id``
+            is ``None``.
+    """
+    if validate_azp and client_id is None:
+        raise AzpRequiresClientIdError
+
+
+def _validate_azp(claims: dict, client_id: str) -> None:
     """Enforce the opt-in authorized-party (``azp``) rules.
 
     Neither rule is a MUST in OIDC Core 1.0 errata set 2, so the caller turns
@@ -200,7 +217,7 @@ def _validate_azp(claims: dict, client_id: str | None) -> None:
             "ID token with multiple audiences must contain an 'azp' claim",
             token_part="payload",
         )
-    if azp is not None and client_id is not None and azp != client_id:
+    if azp is not None and azp != client_id:
         # Errata 2 step 5: a present ``azp`` identifies this client.
         raise IdTokenValidationException(
             "ID token 'azp' claim does not match the configured client_id",
@@ -290,8 +307,9 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             ``azp`` must equal ``client_id``. OIDC Core 1.0 errata set 2
             §3.1.3.7 step 5 makes the ``client_id`` comparison a MAY/SHOULD,
             and the multiple-audience rule is the Core 1.0 (2014) step-4
-            SHOULD that errata set 2 removed. Defaults to ``False``: ``azp`` is
-            ignored, as §2 advises relying parties that use no extensions.
+            SHOULD that errata set 2 removed. Requires ``client_id``. Defaults
+            to ``False``: ``azp`` is ignored, as §2 advises relying parties
+            that use no extensions.
         nonce: When provided, the token's ``nonce`` MUST be present and equal
             this value (§3.1.3.7 step 11).
         access_token: When provided, the token's ``at_hash`` MUST match the
@@ -320,6 +338,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             Defaults to :func:`time.time` when omitted.
 
     Raises:
+        AzpRequiresClientIdError: If ``validate_azp`` is set without a
+            ``client_id``. Raised before any claim is read.
         ConfigurationException: If ``trusted_audiences`` is a bare ``str`` or
             ``bytes`` instead of an iterable of audiences.
         UntrustedAudienceException: If ``aud`` carries a value that is neither
@@ -328,6 +348,9 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             only empty strings (§2), or any other ID-Token profile rule is
             violated.
     """
+    # §3.1.3.7 step 5 needs a client_id to compare ``azp`` with.
+    check_azp_config(client_id, validate_azp)
+
     # §2 / §3.1.3.7 — ``sub`` is REQUIRED and must be non-empty.
     if not claims.get("sub"):
         raise IdTokenValidationException(
@@ -339,7 +362,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     _reject_untrusted_audiences(claims, client_id, trusted_audiences)
 
     # §3.1.3.7 steps 4-5 — authorized-party (``azp``) rules, opt-in only.
-    if validate_azp:
+    if validate_azp and client_id is not None:
         _validate_azp(claims, client_id)
 
     # §3.1.3.7 step 11 — ``nonce`` binding (only when the caller passed one).
@@ -390,4 +413,4 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
         )
 
 
-__all__ = ["validate_id_token_claims"]
+__all__ = ["check_azp_config", "validate_id_token_claims"]
