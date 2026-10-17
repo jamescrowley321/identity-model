@@ -26,12 +26,18 @@ def _decode_member(value: object) -> bytes | None:
 
     A member that doesn't decode is left for key conversion to reject.
     """
-    if not isinstance(value, str) or not value:
+    # PyJWT accepts bytes members as well as str, so both are measured.
+    if isinstance(value, str):
+        try:
+            value = value.encode("ascii")
+        except UnicodeEncodeError:
+            return None
+    if not isinstance(value, bytes) or not value:
         return None
     try:
         # Decoding ignores padding beyond what the input needs, so "==" pads
         # any unpadded base64url member (RFC 7515 §2).
-        return urlsafe_b64decode(value + "==")
+        return urlsafe_b64decode(value + b"==")
     except (binascii.Error, ValueError):
         return None
 

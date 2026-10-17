@@ -130,6 +130,17 @@ class TestEnforceKeyStrength:
             enforce_key_strength(short)
         assert exc_info.value.details["bits"] == MIN_RSA_KEY_BITS - 1
 
+    def test_bytes_members_are_measured(self, rsa_1024):
+        # PyJWT accepts bytes JWK members, so the floor must measure them too.
+        jwk, _ = rsa_1024
+        as_bytes = {**jwk, "n": jwk["n"].encode()}
+
+        with pytest.raises(WeakKeyException) as from_str:
+            enforce_key_strength(jwk)
+        with pytest.raises(WeakKeyException) as from_bytes:
+            enforce_key_strength(as_bytes)
+        assert from_bytes.value.details == from_str.value.details
+
     def test_ec_p192_is_rejected(self):
         jwk = _ec_jwk(ec.SECP192R1(), "P-192", "weak-ec")
 
@@ -163,9 +174,17 @@ class TestEnforceKeyStrength:
             {"kty": "oct", "k": "AA"},
             {"kty": "RSA"},
             {"kty": "RSA", "n": "!!not base64!!", "e": "AQAB"},
+            {"kty": "RSA", "n": "\u00e9" * 400, "e": "AQAB"},
             {"kty": "EC", "crv": "P-256", "x": 5, "y": "AA"},
         ],
-        ids=["okp", "oct", "rsa-without-n", "rsa-undecodable-n", "ec-non-string-x"],
+        ids=[
+            "okp",
+            "oct",
+            "rsa-without-n",
+            "rsa-undecodable-n",
+            "rsa-non-ascii-n",
+            "ec-non-string-x",
+        ],
     )
     def test_keys_without_a_floor_or_measurable_size_are_left_alone(self, jwk):
         # OKP keys are fixed-size and oct keys aren't asymmetric; material that
