@@ -210,7 +210,8 @@ claims = validate_token(token, validation_config, DISCO_URL, cache=cache)
 The async validators take an `AsyncValidationCache`
 (`from py_identity_model.aio import AsyncValidationCache`). Build a cache once
 and keep it: a cache built per request starts empty and has no cooldown
-history.
+history. In the FastAPI package, pass it as `cache=` to
+`TokenValidationMiddleware` or `build_ws_authenticator`.
 
 ### `ClientAuthMethod.requires_secret` is removed ([#934](https://github.com/jamescrowley321/identity-model/issues/934))
 
