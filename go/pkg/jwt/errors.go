@@ -63,6 +63,21 @@ func (e *KeyConversionError) Error() string {
 
 func (e *KeyConversionError) Unwrap() error { return e.Err }
 
+// WeakKeyError reports that the key resolved to verify the token is below the
+// strength floor: an RSA modulus under [MinRSAKeyBits] (RFC 7518 §3.3) or an EC
+// coordinate under [MinECKeyBits] (FAPI 2.0 Security Profile §5.4.1). The key
+// is not skipped and the JWK Set is not refreshed.
+type WeakKeyError struct {
+	Kid     string // the key's kid, empty when it has none
+	Kty     string // "RSA" or "EC"
+	Bits    int    // the key's size
+	MinBits int    // the floor it missed
+}
+
+func (e *WeakKeyError) Error() string {
+	return fmt.Sprintf("jwt: %s verification key %q is %d bits; at least %d required", e.Kty, e.Kid, e.Bits, e.MinBits)
+}
+
 // ClaimValidationError reports that a registered or required claim failed
 // validation (JWT-002/004/005/006/007/008/012/013, RFC 7519 §4.1). Claim names
 // the offending claim; Reason explains the failure.
@@ -87,6 +102,8 @@ var (
 	ErrSignature = errors.New("jwt: signature verification failed")
 	// ErrKeyConversion matches any [KeyConversionError].
 	ErrKeyConversion = errors.New("jwt: key conversion failed")
+	// ErrWeakKey matches any [WeakKeyError].
+	ErrWeakKey = errors.New("jwt: verification key too weak")
 	// ErrClaimValidation matches any [ClaimValidationError].
 	ErrClaimValidation = errors.New("jwt: claim validation failed")
 )
@@ -96,4 +113,5 @@ func (e *AlgNoneError) Is(target error) bool              { return target == Err
 func (e *UnsupportedAlgorithmError) Is(target error) bool { return target == ErrUnsupportedAlgorithm }
 func (e *SignatureError) Is(target error) bool            { return target == ErrSignature }
 func (e *KeyConversionError) Is(target error) bool        { return target == ErrKeyConversion }
+func (e *WeakKeyError) Is(target error) bool              { return target == ErrWeakKey }
 func (e *ClaimValidationError) Is(target error) bool      { return target == ErrClaimValidation }

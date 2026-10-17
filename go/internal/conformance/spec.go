@@ -23,6 +23,7 @@ const (
 	ErrorUnsupportedAlg  = "unsupported_alg"
 	ErrorSignature       = "signature"
 	ErrorKeyConversion   = "key_conversion"
+	ErrorWeakKey         = "weak_key"
 	ErrorClaimValidation = "claim_validation"
 )
 
@@ -71,8 +72,9 @@ type TokenSpec struct {
 	Static string `json:"static,omitempty"`
 
 	// SigningKey selects the key used to sign a minted token: "fixture"
-	// (default, the shared signing key) or "ephemeral" (a throwaway key, so
-	// the signature will not verify against the resolved public key).
+	// (default, the shared RSA signing key), "ed25519" (the shared Ed25519
+	// signing key) or "ephemeral" (a throwaway key, so the signature will not
+	// verify against the resolved public key).
 	SigningKey string `json:"signing_key,omitempty"`
 	// HeaderKid overrides the kid emitted in the JWS header. With an ephemeral
 	// key this forges a header kid that resolves to a non-matching public key.
