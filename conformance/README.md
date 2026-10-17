@@ -34,8 +34,8 @@ The local conformance suite uses a self-signed TLS certificate for `localhost.em
 A `cert-init` Docker service generates this certificate at compose-up time and shares it with
 both the nginx proxy and the RP harness via a named volume.
 
-The RP container sets `SSL_CERT_FILE=/certs/nginx-selfsigned.crt` so that py-identity-model's
-HTTP client trusts the self-signed cert when making discovery and JWKS fetches to the
+The RP container sets `SSL_CERT_FILE=/certs/nginx-selfsigned.crt`; httpx (with its default
+`trust_env=True`) reads it when the library builds its default client, so that client trusts the self-signed cert when making discovery and JWKS fetches to the
 conformance suite.
 
 No certificate files are committed to the repository — they are generated dynamically on each run.

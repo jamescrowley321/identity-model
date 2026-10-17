@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from py_identity_model import PyIdentityModelException
 from py_identity_model.aio import (
+    AsyncHTTPClient,
     DiscoveryDocumentRequest,
     RefreshTokenRequest,
     get_discovery_document,
@@ -44,6 +45,8 @@ class TokenManager:
         client_id: str,
         client_secret: str | None = None,
         refresh_before_seconds: int = 300,
+        *,
+        http_client: AsyncHTTPClient | None = None,
     ):
         """Initialize the token manager.
 
@@ -52,11 +55,15 @@ class TokenManager:
             client_id: The OAuth2 client ID.
             client_secret: The OAuth2 client secret (omit for public clients).
             refresh_before_seconds: Refresh this many seconds before expiry.
+            http_client: Managed HTTP client for discovery and the refresh
+                grant, built from your ``Config``. ``None`` uses the library
+                default client.
         """
         self.discovery_url = discovery_url
         self.client_id = client_id
         self.client_secret = client_secret
         self.refresh_before_seconds = refresh_before_seconds
+        self.http_client = http_client
 
         self._access_token: str | None = None
         self._refresh_token: str | None = None
@@ -94,6 +101,7 @@ class TokenManager:
         """Resolve the token endpoint from discovery (per-process cached by the library)."""
         disco = await get_discovery_document(
             DiscoveryDocumentRequest(address=self.discovery_url),
+            http_client=self.http_client,
         )
         if not disco.is_successful or not disco.token_endpoint:
             raise PyIdentityModelException(
@@ -130,6 +138,7 @@ class TokenManager:
                     refresh_token=self._refresh_token,
                     client_secret=self.client_secret,
                 ),
+                http_client=self.http_client,
             )
 
             if not response.is_successful or not response.token:

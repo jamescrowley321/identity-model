@@ -15,12 +15,11 @@ from urllib.parse import urlparse
 from ..exceptions import (
     ConfigurationException,
     DiscoveryException,
-    DiscoveryMissingFieldsError,
+    DiscoveryIssuerMismatchError,
     DiscoveryParseError,
 )
 from ..logging_config import logger
-from .discovery_policy import DiscoveryPolicy
-from .http_utils import get_max_jwks_keys, get_max_jwks_size
+from .discovery_policy import _WELL_KNOWN_PATH, DiscoveryPolicy
 from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
@@ -29,6 +28,7 @@ from .models import (
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from .parsers import jwks_from_dict
@@ -42,6 +42,8 @@ from .validators import (
 
 if TYPE_CHECKING:
     import httpx
+
+    from .config import Config
 
 
 def _get_url_authority(url: str) -> str:
@@ -178,9 +180,23 @@ def _validate_endpoint_authority(
         )
 
 
+def _validate_issuer_match(requested_address: str, issuer: str) -> None:
+    """Reject a document whose issuer is not the one the request was built from.
+
+    Compares against the address as the caller supplied it, not the URL httpx
+    sent: httpx normalises host case and default ports, and a redirect-following
+    client would report the redirect target.
+    """
+    requested = requested_address.rstrip("/").removesuffix(_WELL_KNOWN_PATH).rstrip("/")
+    if not requested or not isinstance(issuer, str) or issuer.rstrip("/") != requested:
+        raise DiscoveryIssuerMismatchError(requested, issuer)
+
+
 def validate_and_parse_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
+    *,
+    requested_address: str,
 ) -> dict:
     """
     Validate and parse discovery document HTTP response.
@@ -189,6 +205,8 @@ def validate_and_parse_discovery_response(
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
             When ``None``, strict defaults apply.
+        requested_address: The discovery URL as the caller supplied it; the
+            document's issuer must match it.
 
     Returns:
         dict: Parsed discovery document JSON
@@ -217,16 +235,12 @@ def validate_and_parse_discovery_response(
     # Validate issuer format (policy-aware)
     validate_issuer_with_policy(response_json.get("issuer", ""), policy)
 
+    # OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the issuer MUST be the one the
+    # discovery URL was built from. Not policy-controlled.
+    _validate_issuer_match(requested_address, response_json.get("issuer", ""))
+
     # Validate parameter values
     validate_parameter_values(response_json)
-
-    # Enforce require_key_set policy
-    if (policy is None or policy.require_key_set) and not response_json.get("jwks_uri"):
-        raise DiscoveryMissingFieldsError(
-            "Discovery document does not contain a jwks_uri, "
-            "required by policy (require_key_set=True)",
-            ("jwks_uri",),
-        )
 
     # Normalize policy for endpoint validation: treat None as strict defaults
     effective_policy = policy if policy is not None else DiscoveryPolicy()
@@ -421,6 +435,7 @@ _VALID_JWKS_CONTENT_TYPES = frozenset({"application/json", "application/jwk-set+
 
 def _extract_jwks_keys(
     response_json: object,
+    max_keys: int,
 ) -> tuple[list[dict], str | None]:
     """Extract and validate the 'keys' array from a parsed JWKS response.
 
@@ -444,7 +459,6 @@ def _extract_jwks_keys(
             f"got {type(raw_keys).__name__}"
         )
 
-    max_keys = get_max_jwks_keys()
     if len(raw_keys) > max_keys:
         return [], (
             f"JWKS response contains too many keys: {len(raw_keys)} "
@@ -503,12 +517,14 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     return keys, None
 
 
-def parse_jwks_response(response: httpx.Response) -> JwksResponse:
+def parse_jwks_response(response: httpx.Response, config: Config) -> JwksResponse:
     """
     Parse JWKS HTTP response.
 
     Args:
         response: HTTP response from JWKS endpoint
+        config: The client's configuration; supplies ``jwks_max_size`` and
+            ``jwks_max_keys``.
 
     Returns:
         JwksResponse: Parsed JWKS response with keys
@@ -516,7 +532,7 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
     if response.is_success:
         # Check response size before parsing — Content-Length first to
         # avoid materialising the body for obviously-oversized responses.
-        max_size = get_max_jwks_size()
+        max_size = config.jwks_max_size
         content_length = response.headers.get("Content-Length")
         try:
             cl_too_large = content_length is not None and int(content_length) > max_size
@@ -555,7 +571,7 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
             )
 
         response_json = response.json()
-        raw_keys, keys_error = _extract_jwks_keys(response_json)
+        raw_keys, keys_error = _extract_jwks_keys(response_json, config.jwks_max_keys)
         keys: list[JsonWebKey] = []
         if not keys_error:
             keys, keys_error = _build_jwks_keys(raw_keys)
@@ -665,7 +681,8 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
     Parse UserInfo HTTP response.
 
     Supports Content-Type detection per OIDC Core 1.0 Section 5.3.2/5.3.3:
-    - application/json: Claims extracted as dict
+    - application/json: Claims extracted as dict; a body with no non-empty string
+      ``sub`` claim is an error (Section 5.3.2)
     - application/jwt: Raw JWT string stored for caller to decode/validate
 
     Args:
@@ -695,6 +712,14 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
 
     # Default to JSON parsing (application/json or unspecified)
     claims = response.json()
+    # OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
+    sub = claims.get("sub") if isinstance(claims, dict) else None
+    if not isinstance(sub, str) or not sub:
+        return UserInfoResponse(
+            is_successful=False,
+            error="UserInfo response is missing required 'sub' claim",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
+        )
     return UserInfoResponse(
         is_successful=True,
         claims=claims,

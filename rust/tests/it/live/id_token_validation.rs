@@ -29,13 +29,11 @@
 //!   `client_id` ([`IdentityError::Validation`], `aud` mismatch);
 //! * the `nonce` sent on the authorization request binds (a wrong nonce is an
 //!   [`IdentityError::IdTokenValidation`]);
-//! * `max_age`/`auth_time` freshness holds on the real `auth_time`.
-//!
-//! node-oidc-provider, like most OPs, mints `at_hash` only for
-//! authorization-endpoint (implicit/hybrid) responses, not the code flow, so
-//! the `at_hash` binding is asserted only when the real ID Token actually
-//! carries one — that leg self-guards and documents why it is skipped
-//! otherwise.
+//! * `max_age`/`auth_time` freshness holds on the real `auth_time`;
+//! * the code-flow (token-endpoint) ID Token is accepted with the issued
+//!   access token whether or not it carries `at_hash` (§3.1.3.6). A present
+//!   `at_hash` binds (a tampered access token is rejected); an absent one is
+//!   rejected only when the access token is marked as issued with the ID Token.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -355,37 +353,57 @@ async fn validate_id_token_end_to_end() {
         eprintln!("SKIP(max_age): OP did not include auth_time in the ID Token");
     }
 
-    // --- at_hash binding (only when the OP mints an at_hash — the code flow
-    //     typically does not; asserted for correctness when present). ---
-    if payload.get("at_hash").and_then(Value::as_str).is_some() {
-        let access_token = token.access_token.as_str();
-        assert!(
-            !access_token.is_empty(),
-            "ID Token carried an at_hash but the flow returned no access_token"
-        );
-        let good = IdTokenValidationOptions::builder()
+    // --- at_hash for a token-endpoint ID Token: OPTIONAL (§3.1.3.6), so the
+    //     access token is marked as not issued with the ID Token and at_hash
+    //     binds only when present. Marked as issued with it (the default),
+    //     at_hash is required (§3.2.2.10, §3.3.2.11). ---
+    let access_token = token.access_token.as_str();
+    assert!(
+        !access_token.is_empty(),
+        "the code flow returned no access_token"
+    );
+    let at_hash_opts = |access_token: String, issued_with_id_token: bool| {
+        IdTokenValidationOptions::builder()
             .client_id(client_id.as_str())
             .access_token(access_token)
-            .build();
-        validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &good)
-            .await
-            .expect("correct access token binds to at_hash");
+            .access_token_issued_with_id_token(issued_with_id_token)
+            .build()
+    };
+    validate_id_token(
+        id_token,
+        &jwks,
+        &meta.jwks_uri,
+        &base,
+        &at_hash_opts(access_token.to_string(), false),
+    )
+    .await
+    .expect("the issued access token validates with or without an at_hash");
 
-        let bad = IdTokenValidationOptions::builder()
-            .client_id(client_id.as_str())
-            .access_token(format!("{access_token}tampered"))
-            .build();
-        let err = validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &bad)
-            .await
-            .expect_err("a tampered access token must fail the at_hash check");
+    let required = at_hash_opts(access_token.to_string(), true);
+    if payload.get("at_hash").is_some() {
+        let err = validate_id_token(
+            id_token,
+            &jwks,
+            &meta.jwks_uri,
+            &base,
+            &at_hash_opts(format!("{access_token}tampered"), false),
+        )
+        .await
+        .expect_err("a tampered access token must fail the at_hash check");
         assert!(
-            matches!(err, IdentityError::IdTokenValidation(_)),
+            matches!(&err, IdentityError::IdTokenValidation(msg) if msg.contains("'at_hash' claim does not match")),
             "err = {err:?}, want IdTokenValidation for at_hash mismatch"
         );
+        validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &required)
+            .await
+            .expect("a present, correct at_hash satisfies the presence requirement");
     } else {
-        eprintln!(
-            "SKIP(at_hash): OP's code-flow ID Token carries no at_hash \
-             (emitted only for authorization-endpoint responses)"
+        let err = validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &required)
+            .await
+            .expect_err("an absent at_hash must fail when it is required");
+        assert!(
+            matches!(&err, IdentityError::IdTokenValidation(msg) if msg.contains("missing required 'at_hash'")),
+            "err = {err:?}, want IdTokenValidation for a missing at_hash"
         );
     }
 }

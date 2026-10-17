@@ -5,7 +5,6 @@ from pathlib import Path
 from dotenv import dotenv_values, load_dotenv
 
 from py_identity_model.aio.http_client import _reset_async_http_client
-from py_identity_model.ssl_config import get_ssl_verify
 from py_identity_model.sync.http_client import _reset_http_client
 import py_identity_model.sync.token_validation as _sync_token_validation
 
@@ -29,20 +28,18 @@ def set_env_file(env_file_path: str | None) -> None:
         # Don't load .env.local - it's for local IdentityServer testing only
         load_dotenv(".env", override=True)
 
-    # Clear SSL certificate environment variables for external service testing
+    # Clear SSL certificate environment variables for external service testing.
     # These may be set in .env.local for local IdentityServer testing but should
-    # not be used when testing against external services like Ory.
-    #
-    # We clear them BEFORE clearing caches to ensure get_ssl_verify() returns
-    # the correct value (True for system certificates) on next call.
+    # not be used when testing against external services like Ory. The library
+    # itself reads none of them (its CA bundle comes from Config.ca_bundle), but
+    # httpx clients the tests build directly still honor them (trust_env).
     os.environ.pop("SSL_CERT_FILE", None)
     os.environ.pop("REQUESTS_CA_BUNDLE", None)
     os.environ.pop("CURL_CA_BUNDLE", None)
 
-    # Clear all SSL and HTTP client caches to pick up environment changes.
-    # This is safe in parallel execution because each worker has its own process
-    # and environment, and this only runs once per session during fixture initialization.
-    get_ssl_verify.cache_clear()
+    # Drop the library default clients' connections so they are rebuilt.
+    # This is safe in parallel execution because each worker has its own process,
+    # and this only runs once per session during fixture initialization.
     _reset_http_client()
     _reset_async_http_client()
 

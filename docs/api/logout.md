@@ -31,8 +31,8 @@ validate_post_logout_state(expected_state, returned_state)  # raises on mismatch
 
 `validate_logout_token` runs the standard JWT validation (signature via
 discovery/JWKS, `iss`, `aud`, `exp`) and then enforces the Logout-Token
-profile of Back-Channel Logout 1.0 §2.4: `iss`/`aud`/`iat`/`jti`/`events`
-must be present, the `events` object must contain the
+profile of Back-Channel Logout 1.0 §2.4: `iss`/`aud`/`iat`/`exp`/`jti`/`events`
+must be present (`exp` is REQUIRED as of errata set 1), the `events` object must contain the
 `http://schemas.openid.net/event/backchannel-logout` member, at least one of
 `sub` / `sid` must identify the session, and a `nonce` claim is prohibited
 (so a Logout Token can never pass as an ID Token). Set `audience` to your

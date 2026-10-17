@@ -20,15 +20,25 @@ pub enum IdentityError {
     Validation(String),
 
     /// An ID Token failed one of the OpenID Connect ID-Token *profile* rules
-    /// layered on top of standard JWT validation — the required `sub`, the
-    /// `azp` authorized-party rules, or the opt-in `nonce` / `max_age` /
-    /// `at_hash` / `c_hash` bindings (OIDC Core 1.0 §3.1.3.7 / §3.3.2.11). Kept
-    /// distinct from [`IdentityError::Validation`] (signature/iss/aud/exp) so a
-    /// caller can tell a profile violation apart from a base-JWT failure. The
-    /// profile fails **closed**: an unknown or missing header `alg` on an
+    /// layered on top of standard JWT validation — the required `sub`, or the
+    /// opt-in `azp` / `nonce` / `max_age` / `at_hash` / `c_hash` checks (OIDC
+    /// Core 1.0 §3.1.3.7 / §3.3.2.11). Kept distinct from
+    /// [`IdentityError::Validation`] (signature/iss/aud/exp) so a caller can
+    /// tell a profile violation apart from a base-JWT failure. The profile
+    /// fails **closed**: an unknown or missing header `alg` on an
     /// `at_hash`/`c_hash` check is this error, never a silently skipped check.
     #[error("id token validation error: {0}")]
     IdTokenValidation(String),
+
+    /// An ID Token's `aud` carries values the client does not trust (OIDC Core
+    /// 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if it contains
+    /// additional audiences not trusted by the Client). Carries the untrusted
+    /// `aud` values, in token order. The trusted set is the configured
+    /// `client_id` plus any
+    /// [`trusted_audiences`](crate::IdTokenValidationOptionsBuilder::trusted_audiences);
+    /// with neither configured every `aud` value is untrusted (fail closed).
+    #[error("id token validation error: ID token 'aud' contains untrusted audiences: {0:?}")]
+    IdTokenUntrustedAudience(Vec<String>),
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without
@@ -69,6 +79,36 @@ pub enum IdentityError {
     /// A signing key with the requested `kid` was not found in the JWKS.
     #[error("key not found: {0}")]
     KeyNotFound(String),
+
+    /// A token with no `kid` could be verified by more than one key in the
+    /// JWKS (JWKS-009). With no `kid`, the set is narrowed to signing keys
+    /// (`use` absent or `sig`, RFC 7517 §4.2), then to keys whose `alg` is
+    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it,
+    /// each step applied only when it leaves a key; `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
+    /// which reports a `kid` that matches no key.
+    #[error("ambiguous key: token has no kid and {count} keys could verify alg {alg:?} {kids:?}")]
+    AmbiguousKey {
+        /// The token header `alg`.
+        alg: String,
+        /// The ids of the remaining keys that have one.
+        kids: Vec<String>,
+        /// The number of remaining keys.
+        count: usize,
+    },
+
+    /// The key resolved for a token declares an `alg` (RFC 7517 §4.4) other
+    /// than the token header `alg`, so it is not used (JWKS-010). Applies
+    /// whether the key was found by `kid` or selected without one; distinct
+    /// from [`IdentityError::KeyNotFound`] and [`IdentityError::AmbiguousKey`].
+    #[error("key algorithm mismatch: key {kid:?} declares alg {key_alg:?}, token alg is {alg:?}")]
+    KeyAlgorithmMismatch {
+        /// The resolved key's `kid` (empty when it has none).
+        kid: String,
+        /// The `alg` the key declares.
+        key_alg: String,
+        /// The token header `alg`.
+        alg: String,
+    },
 
     /// The token endpoint replied with a non-2xx OAuth 2.0 error response
     /// (RFC 6749 §5.2).
@@ -111,6 +151,24 @@ mod tests {
         assert_eq!(
             IdentityError::KeyNotFound("abc".into()).to_string(),
             "key not found: abc"
+        );
+        assert_eq!(
+            IdentityError::AmbiguousKey {
+                alg: "RS256".into(),
+                kids: vec!["a".into(), "b".into()],
+                count: 2,
+            }
+            .to_string(),
+            r#"ambiguous key: token has no kid and 2 keys could verify alg "RS256" ["a", "b"]"#
+        );
+        assert_eq!(
+            IdentityError::KeyAlgorithmMismatch {
+                kid: "k1".into(),
+                key_alg: "RS384".into(),
+                alg: "RS256".into(),
+            }
+            .to_string(),
+            r#"key algorithm mismatch: key "k1" declares alg "RS384", token alg is "RS256""#
         );
         assert_eq!(
             IdentityError::Configuration("missing token_endpoint".into()).to_string(),

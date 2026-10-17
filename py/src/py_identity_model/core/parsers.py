@@ -9,7 +9,11 @@ import warnings
 
 from jwt import get_unverified_header
 
-from ..exceptions import TokenValidationException
+from ..exceptions import (
+    AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
+    TokenValidationException,
+)
 from ..logging_config import logger
 from .models import JsonWebKey, JsonWebKeyParameterNames
 
@@ -65,6 +69,7 @@ def _validate_key_alg_consistency(
     algorithm family (e.g. RS256).
 
     Raises:
+        KeyAlgorithmMismatchException: If the key declares a different alg.
         TokenValidationException: If the key type does not match the algorithm.
     """
     _reject_non_string_alg(jwt_alg)
@@ -93,7 +98,7 @@ def _validate_key_alg_consistency(
 
     # If the key declares an alg, it must match the JWT header exactly
     if key.alg and key.alg != jwt_alg:
-        raise TokenValidationException(
+        raise KeyAlgorithmMismatchException(
             f"Key algorithm '{key.alg}' does not match JWT algorithm '{jwt_alg}'",
             token_part="header",
             details={"kid": key.kid, "key_alg": key.alg, "jwt_alg": jwt_alg},
@@ -227,9 +232,12 @@ def find_key_by_kid(
 
     This is the core key lookup logic shared by sync and async implementations.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
-    contains exactly one key, the RP MUST use that key.  When JWKS has multiple
-    keys and no ``kid``, filter by ``use`` and ``kty`` to find a unique match.
+    When the JWT has no ``kid`` header (OIDC Core Section 10.1 lets the OP omit
+    it when its JWK Set holds a single key), the set is narrowed to signing
+    keys (``use`` absent or ``sig``), then, while more than one remains, to
+    keys whose ``alg`` is absent or equals the header ``alg`` and whose ``kty``
+    matches it. Exactly one remaining key is used; more than one raises
+    :class:`AmbiguousKeyException`.
 
     Args:
         kid: The key ID from the JWT header
@@ -241,6 +249,8 @@ def find_key_by_kid(
         tuple: (public_key_dict, algorithm)
 
     Raises:
+        AmbiguousKeyException: If ``kid`` is absent and more than one key
+            could verify the token
         TokenValidationException: If no keys available or no matching key found
     """
     if not keys:
@@ -257,14 +267,11 @@ def find_key_by_kid(
             _validate_key_alg_consistency(public_key, jwt_alg)
             alg = public_key.alg if public_key.alg else (jwt_alg or "RS256")
             return public_key.as_dict(), alg
-        raise TokenValidationException(
+        raise AmbiguousKeyException(
             "JWT has no kid header and JWKS contains multiple signing keys; "
             "cannot determine which key to use",
-            token_part="header",
-            details={
-                "available_kids": [k.kid for k in signing_keys if k.kid],
-                "key_count": len(signing_keys),
-            },
+            available_kids=[k.kid for k in signing_keys if k.kid],
+            key_count=len(signing_keys),
         )
 
     filtered_keys = [k for k in keys if k.kid == kid]
@@ -291,8 +298,9 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     """
     Find the public key from JWKS that matches the JWT's kid.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
-    contains exactly one key, that key is used.
+    When the JWT has no ``kid`` header, the key is chosen as in
+    :func:`find_key_by_kid`: the single key left after narrowing by ``use``,
+    ``alg`` and ``kty``.
 
     Args:
         jwt: The JWT token
@@ -302,6 +310,8 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
         JsonWebKey: The matching key
 
     Raises:
+        AmbiguousKeyException: If ``kid`` is absent and more than one key
+            could verify the token
         TokenValidationException: If no matching key is found
     """
     warnings.warn(
@@ -329,14 +339,11 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
             if not key.alg:
                 key.alg = jwt_alg
             return key
-        raise TokenValidationException(
+        raise AmbiguousKeyException(
             "JWT has no kid header and JWKS contains multiple signing keys; "
             "cannot determine which key to use",
-            token_part="header",
-            details={
-                "available_kids": [k.kid for k in signing_keys if k.kid],
-                "key_count": len(signing_keys),
-            },
+            available_kids=[k.kid for k in signing_keys if k.kid],
+            key_count=len(signing_keys),
         )
 
     filtered_keys = list(filter(lambda x: x.kid == kid, keys))
