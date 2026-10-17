@@ -20,6 +20,7 @@ from py_identity_model.core.models import JsonWebKey
 from py_identity_model.core.parsers import find_key_by_kid, get_public_key_from_jwk
 from py_identity_model.exceptions import (
     AmbiguousKeyException,
+    KeyNotFoundException,
     TokenValidationException,
 )
 
@@ -65,6 +66,20 @@ class TestKidNoMatch:
             find_key_by_kid("x", keys, jwt_alg="RS256")
         assert exc.value.details["available_kids"] == ["only"]
 
+    def test_kid_naming_enc_key_raises_key_not_found(self):
+        # RFC 7517 §4.2: a use=enc key never verifies, even when named by kid.
+        keys = [_rsa(kid="enc", alg="RS256", use="enc"), _rsa(kid="sig", use="sig")]
+        with pytest.raises(KeyNotFoundException) as exc:
+            find_key_by_kid("enc", keys, jwt_alg="RS256")
+        assert exc.value.message == "No matching kid found: enc"
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"kid": "enc", "available_kids": ["sig"]}
+
+    def test_kid_naming_key_without_use_is_selected(self):
+        target = _rsa(kid="plain", alg="RS256")
+        key_dict, _alg = find_key_by_kid("plain", [target], jwt_alg="RS256")
+        assert key_dict == target.as_dict()
+
 
 class TestKidSelection:
     def test_selects_the_kid_matched_key_among_many(self):
@@ -106,10 +121,16 @@ class TestNoKidSelection:
         key_dict, _alg = find_key_by_kid(None, keys, jwt_alg="RS256")
         assert key_dict["kid"] == "sig"
 
-    def test_falls_back_to_all_keys_when_none_marked_sig(self):
+    def test_no_signing_key_raises_key_not_found(self):
+        # RFC 7517 §4.2: no fallback to use=enc keys when none is a signing key.
         keys = [_rsa(kid="enc-only", alg="RS256", use="enc")]
-        key_dict, _alg = find_key_by_kid(None, keys, jwt_alg="RS256")
-        assert key_dict["kid"] == "enc-only"
+        with pytest.raises(KeyNotFoundException) as exc:
+            find_key_by_kid(None, keys, jwt_alg="RS256")
+        assert exc.value.message == (
+            "JWT has no kid header and JWKS contains no signing key"
+        )
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"kid": None, "available_kids": []}
 
     def test_multiple_keys_disambiguated_by_alg_kty(self):
         keys = [_rsa(kid="r", use="sig"), _ec(kid="e", use="sig")]

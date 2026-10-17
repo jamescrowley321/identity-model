@@ -78,14 +78,35 @@ class InvalidIssuerException(TokenValidationException):
         super().__init__(message, token_part="payload", details=details)
 
 
+class KeyNotFoundException(TokenValidationException):
+    """Raised when no signing key in the JWK Set can verify a token.
+
+    Only keys whose ``use`` is absent or ``sig`` are signing keys
+    (RFC 7517 §4.2); a ``use: enc`` key is never used to verify a signature.
+    Raised for a ``kid`` that names no signing key, after the forced JWKS
+    refresh a kid miss triggers, and for a token with no ``kid`` when the set
+    holds no signing key. ``details["kid"]`` is the header ``kid`` (``None``
+    when absent) and ``details["available_kids"]`` the signing keys' ids.
+    """
+
+    def __init__(self, message: str, kid: str | None, available_kids: list):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"kid": kid, "available_kids": available_kids},
+        )
+
+
 class AmbiguousKeyException(TokenValidationException):
     """Raised when a token with no ``kid`` matches more than one JWK.
 
-    With no ``kid`` in the JOSE header, the JWK Set is narrowed to signing
-    keys (``use`` absent or ``sig``, RFC 7517 §4.2), then to keys whose
+    With no ``kid`` in the JOSE header, only signing keys (``use`` absent or
+    ``sig``, RFC 7517 §4.2) are candidates; they are narrowed to keys whose
     ``alg`` is absent or equals the header ``alg`` (§4.4) and whose ``kty``
-    matches it, each step applied only when it leaves a key. More than one
-    key left means the verification key cannot be chosen. This is distinct from a ``kid`` that matches no key.
+    matches it, each of those two steps applied only when it leaves a key.
+    More than one key left means the verification key cannot be chosen. This
+    is distinct from :class:`KeyNotFoundException`, raised when no signing
+    key matches.
     ``details["available_kids"]`` lists the remaining keys' ids and
     ``details["key_count"]`` their number.
     """
@@ -333,6 +354,7 @@ __all__ = [
     "JarmValidationException",
     "JwksException",
     "KeyAlgorithmMismatchException",
+    "KeyNotFoundException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",

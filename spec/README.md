@@ -70,7 +70,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | Capability | Conformance file | Fixtures |
 |------------|-----------------|----------|
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
-| JWKS | `vectors/jwks.json` (JWKS-001..008) — **executable vectors** | `test-fixtures/jwks/` |
+| JWKS | `vectors/jwks.json` (JWKS-001..011) — **executable vectors** | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
 | ID Token | `vectors/id-token.json` (IDT-001..014) — **executable vectors** | `test-fixtures/validation/` |
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
@@ -90,7 +90,7 @@ that implements them**:
 | id-token | 14 | 72 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
 | revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
-| jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
+| jwks | 11 | 24 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | discovery | 10 | 16 | `go/internal/conformance/httpvector_test.go` (adapter: `discovery_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | introspection | 6 | 11 | `go/internal/conformance/httpvector_test.go` (adapter: `introspection_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | token-exchange | 6 | 14 | `go/internal/conformance/httpvector_test.go` (adapter: `token_exchange_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |

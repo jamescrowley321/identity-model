@@ -707,12 +707,6 @@ func TestResolveSigningKey_NoKid(t *testing.T) {
 			alg:     "RS384",
 			wantKid: "rs384",
 		},
-		{
-			name:    "only encryption keys fall back to the whole set",
-			body:    keySetJSON(`{"kty":"RSA","kid":"enc-only","use":"enc","n":"AQAB","e":"AQAB"}`),
-			alg:     "RS256",
-			wantKid: "enc-only",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -828,5 +822,130 @@ func TestResolveSigningKey_WithKid(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(hits); got != 2 {
 		t.Errorf("HTTP requests = %d, want 2 (initial + forced refresh on the miss)", got)
+	}
+}
+
+// encKeyJSON is rsaKeyJSON marked for encryption only (RFC 7517 §4.2).
+func encKeyJSON(kid string) string {
+	return `{"kty":"RSA","kid":"` + kid + `","use":"enc","alg":"RS256","n":"AQAB","e":"AQAB"}`
+}
+
+// RFC 7517 §4.2 (#888): a kid-less token is never verified by a use "enc" key.
+// A set with no signing key is key-not-found, not ambiguous, and makes no
+// forced refresh.
+func TestResolveSigningKey_NoKidEncOnlyIsKeyNotFound(t *testing.T) {
+	for _, alg := range []string{"RS256", ""} {
+		t.Run("alg="+alg, func(t *testing.T) {
+			freshCache(t)
+			srv, hits := newServer(t, http.StatusOK, keySetJSON(encKeyJSON("enc-1"), encKeyJSON("enc-2")))
+			set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			if err != nil {
+				t.Fatalf("FetchKeySet: %v", err)
+			}
+			_, err = set.ResolveSigningKey(context.Background(), "", alg)
+			var kErr *KeyNotFoundError
+			if !errors.As(err, &kErr) {
+				t.Fatalf("err = %v, want *KeyNotFoundError", err)
+			}
+			if *kErr != (KeyNotFoundError{}) {
+				t.Errorf("err = %+v, want %+v", *kErr, KeyNotFoundError{})
+			}
+			if want := "jwks: token has no kid and the key set holds no signing key"; err.Error() != want {
+				t.Errorf("Error() = %q, want %q", err.Error(), want)
+			}
+			if errors.Is(err, ErrAmbiguousKey) {
+				t.Errorf("errors.Is(ErrAmbiguousKey) = true, want key-not-found only")
+			}
+			if got := atomic.LoadInt32(hits); got != 1 {
+				t.Errorf("HTTP requests = %d, want 1 (no forced refresh)", got)
+			}
+		})
+	}
+}
+
+// RFC 7517 §4.2 (#888): a kid naming a use "enc" key names no signing key, so it
+// is a kid miss: one forced refresh, then key-not-found.
+func TestResolveSigningKey_KidNamingEncKeyIsKeyNotFound(t *testing.T) {
+	freshCache(t)
+	srv, hits := newServer(t, http.StatusOK, keySetJSON(encKeyJSON("enc-key"), rsaKeyJSON("sig-key")))
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+	_, err = set.ResolveSigningKey(context.Background(), "enc-key", "RS256")
+	var kErr *KeyNotFoundError
+	if !errors.As(err, &kErr) {
+		t.Fatalf("err = %v, want *KeyNotFoundError", err)
+	}
+	if *kErr != (KeyNotFoundError{Kid: "enc-key"}) {
+		t.Errorf("err = %+v, want %+v", *kErr, KeyNotFoundError{Kid: "enc-key"})
+	}
+	if want := `jwks: no key found for kid "enc-key"`; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+	if got := atomic.LoadInt32(hits); got != 2 {
+		t.Errorf("HTTP requests = %d, want 2 (initial + forced refresh)", got)
+	}
+
+	key, err := set.ResolveSigningKey(context.Background(), "sig-key", "RS256")
+	if err != nil {
+		t.Fatalf("ResolveSigningKey(sig-key): %v", err)
+	}
+	if key.Kid != "sig-key" {
+		t.Errorf("kid = %q, want sig-key", key.Kid)
+	}
+}
+
+// #888: the forced refresh a kid naming an enc key triggers picks up the key
+// once the provider relabels it for signing.
+func TestResolveSigningKey_EncKidResolvesAfterRelabel(t *testing.T) {
+	freshCache(t)
+	var relabelled atomic.Bool
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		if relabelled.Load() {
+			_, _ = w.Write(keySetJSON(rsaKeyJSON("k1")))
+			return
+		}
+		_, _ = w.Write(keySetJSON(encKeyJSON("k1")))
+	}))
+	t.Cleanup(srv.Close)
+
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+	relabelled.Store(true)
+	key, err := set.ResolveSigningKey(context.Background(), "k1", "RS256")
+	if err != nil {
+		t.Fatalf("ResolveSigningKey: %v", err)
+	}
+	if key.Use != "sig" {
+		t.Errorf("use = %q, want sig", key.Use)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("HTTP requests = %d, want 2 (initial + forced refresh)", got)
+	}
+}
+
+// #888: ResolveKey and ResolveKeyWithRefresh stay generic kid lookups and return
+// a use "enc" key; only ResolveSigningKey filters on use.
+func TestResolveKey_ReturnsEncKey(t *testing.T) {
+	freshCache(t)
+	srv, hits := newServer(t, http.StatusOK, keySetJSON(encKeyJSON("enc-key")))
+	set, err := FetchKeySet(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("FetchKeySet: %v", err)
+	}
+	if k, ok := set.ResolveKey("enc-key"); !ok || k.Use != "enc" {
+		t.Errorf("ResolveKey(enc-key) = %v, %v; want the enc key", k, ok)
+	}
+	k, err := set.ResolveKeyWithRefresh(context.Background(), "enc-key")
+	if err != nil || k.Use != "enc" {
+		t.Errorf("ResolveKeyWithRefresh(enc-key) = %v, %v; want the enc key", k, err)
+	}
+	if got := atomic.LoadInt32(hits); got != 1 {
+		t.Errorf("HTTP requests = %d, want 1 (no forced refresh)", got)
 	}
 }
