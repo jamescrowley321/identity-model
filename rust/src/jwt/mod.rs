@@ -4,7 +4,8 @@
 //! already-resolved [`JsonWebKey`]; [`validate_token_with_jwks`] resolves the
 //! signing key from a [`JwksClient`] by the token's `kid` — forcing one JWKS
 //! refresh on a miss (JWKS-004), or narrowing the set to a single key when
-//! there is no `kid` (JWKS-009) — before delegating to it. Both reject the
+//! there is no `kid` (JWKS-009), never using a `use` `enc` key (JWKS-011) —
+//! before delegating to it. Both reject the
 //! unsecured `none` algorithm before any cryptographic work (JWT-003) and
 //! restrict acceptance to an asymmetric algorithm allowlist to defeat
 //! algorithm-confusion attacks. Behaviour is proven against the cross-language
@@ -138,16 +139,19 @@ pub fn validate_token(
 ///
 /// The `none` algorithm is rejected and the header `alg` is checked against the
 /// allowlist before the key is resolved, so a `none`/disallowed token never
-/// triggers a JWKS fetch. Key resolution forces one JWKS refresh and retries if
-/// the `kid` is not cached (JWKS-004), supporting key rotation, before delegating
-/// to [`validate_token`]. A token with no `kid` is verified by the single key
-/// left after narrowing the set by `use`, `alg` and `kty`, with no refresh
-/// (JWKS-009, see [`JwksClient::resolve_signing_key`]).
+/// triggers a JWKS fetch. Only signing keys (`use` `sig` or absent, RFC 7517
+/// §4.2) verify; a `use` `enc` key never does (JWKS-011). Key resolution forces
+/// one JWKS refresh and retries if no cached signing key has the `kid`
+/// (JWKS-004), supporting key rotation, before delegating to
+/// [`validate_token`]. A token with no `kid` is verified by the single signing
+/// key left after narrowing by `alg` and `kty`, with no refresh (JWKS-009, see
+/// [`JwksClient::resolve_signing_key`]).
 ///
 /// # Errors
 ///
-/// [`IdentityError::KeyNotFound`] when no key matches the token's `kid` even
-/// after a refresh; [`IdentityError::AmbiguousKey`] when the token has no `kid`
+/// [`IdentityError::KeyNotFound`] when no signing key matches the token's `kid`
+/// even after a refresh, or the token has no `kid` and the set holds no signing
+/// key; [`IdentityError::AmbiguousKey`] when the token has no `kid`
 /// and more than one key could verify it; [`IdentityError::KeyAlgorithmMismatch`]
 /// when the resolved key declares an `alg` other than the token's (JWKS-010);
 /// otherwise the errors of
@@ -164,10 +168,11 @@ pub async fn validate_token_with_jwks(
     // untrusted `none`/disallowed token cannot drive an outbound JWKS fetch.
     check_algorithm(&header, options)?;
 
-    // JWT-001/010: resolve the verification key by kid, forcing one JWKS refresh
-    // and retry if the kid is not cached (RFC 7517 §4.5). With no kid, the
-    // single key left after narrowing by use, alg and kty is used, with no
-    // refresh; more than one is `AmbiguousKey` (JWKS-009).
+    // JWT-001/010: resolve the verification key among the signing keys (a
+    // `use` `enc` key never verifies, RFC 7517 §4.2) by kid, forcing one JWKS
+    // refresh and retry if no cached signing key has the kid (RFC 7517 §4.5).
+    // With no kid, the single signing key left after narrowing by alg and kty
+    // is used, with no refresh; more than one is `AmbiguousKey` (JWKS-009).
     let key = jwks
         .resolve_signing_key(jwks_uri, &header.kid, &header.alg)
         .await?;

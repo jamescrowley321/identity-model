@@ -642,3 +642,8 @@ then `*jwks.KeyNotFoundError`. A token with no `kid` against a set with no
 signing key returns `*jwks.KeyNotFoundError` with an empty `Kid`.
 `ResolveKey` and `ResolveKeyWithRefresh` are unchanged and still return any
 key by `kid`.
+In Rust, `JsonWebKeySet::resolve_signing_key` and
+`JwksClient::resolve_signing_key` (used by `validate_token_with_jwks`) behave
+the same and return `IdentityError::KeyNotFound`, with an empty `kid` for a
+kid-less token. `find`, `resolve_key` and `JwksClient::resolve_key` are
+unchanged.

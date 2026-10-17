@@ -86,16 +86,20 @@ pub enum IdentityError {
     #[error("configuration error: {0}")]
     Configuration(String),
 
-    /// A signing key with the requested `kid` was not found in the JWKS.
+    /// A signing key with the requested `kid` was not found in the JWKS. When
+    /// resolving a key to verify a signature, a `use` `enc` key never matches
+    /// (RFC 7517 §4.2); an empty `kid` means the token had no `kid` and the
+    /// set holds no signing key (JWKS-011).
     #[error("key not found: {0}")]
     KeyNotFound(String),
 
     /// A token with no `kid` could be verified by more than one key in the
-    /// JWKS (JWKS-009). With no `kid`, the set is narrowed to signing keys
-    /// (`use` absent or `sig`, RFC 7517 §4.2), then to keys whose `alg` is
-    /// absent or equals the header `alg` (§4.4) and whose `kty` matches it,
-    /// each step applied only when it leaves a key; `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
-    /// which reports a `kid` that matches no key.
+    /// JWKS (JWKS-009). With no `kid`, only signing keys (`use` absent or
+    /// `sig`, RFC 7517 §4.2) are candidates; they are narrowed to keys whose
+    /// `alg` is absent or equals the header `alg` (§4.4) and whose `kty`
+    /// matches it, each of those two steps applied only when it leaves a key;
+    /// `count` keys were left. Distinct from [`IdentityError::KeyNotFound`],
+    /// which reports that no signing key matched.
     #[error("ambiguous key: token has no kid and {count} keys could verify alg {alg:?} {kids:?}")]
     AmbiguousKey {
         /// The token header `alg`.
