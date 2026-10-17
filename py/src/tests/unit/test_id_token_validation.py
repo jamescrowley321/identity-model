@@ -28,6 +28,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.core.id_token_logic import validate_id_token_claims
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
+    AzpRequiresClientIdError,
     ConfigurationException,
     IdTokenValidationException,
     TokenValidationException,
@@ -237,15 +238,31 @@ class TestPureIdTokenClaimValidation:
                 now=_NOW,
             )
 
-    def test_azp_not_compared_without_client_id(self):
-        claims = _valid_id_claims(azp="android-client")
-        validate_id_token_claims(
-            claims,
-            "RS256",
-            trusted_audiences=[_AUDIENCE],
-            validate_azp=True,
-            now=_NOW,
-        )
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            _valid_id_claims(azp="android-client"),
+            _valid_id_claims(),
+            {},
+        ],
+        ids=["foreign-azp", "no-azp", "empty-claims"],
+    )
+    def test_azp_validation_without_client_id_is_config_error(self, claims):
+        # #930: with no client_id there is nothing to compare ``azp`` against,
+        # so turning the check on is a caller misconfiguration. It fires
+        # before any claim is read, whatever the token carries.
+        with pytest.raises(AzpRequiresClientIdError):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                trusted_audiences=[_AUDIENCE],
+                validate_azp=True,
+                now=_NOW,
+            )
+
+    def test_azp_requires_client_id_error_is_configuration_exception(self):
+        assert issubclass(AzpRequiresClientIdError, ConfigurationException)
+        assert not issubclass(AzpRequiresClientIdError, TokenValidationException)
 
     def test_nonce_match_accepted(self):
         # §3.1.3.7 step 11 (positive): matching ``nonce`` validates cleanly.
@@ -812,6 +829,17 @@ class TestSyncValidateIdToken:
         clear_jwks_cache()
 
     @respx.mock
+    def test_azp_validation_without_audience_fails_before_any_fetch(self):
+        # #930: the configuration error is raised before discovery/JWKS I/O.
+        # No route is mocked, so any request would fail with a respx error.
+        config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
+        with pytest.raises(AzpRequiresClientIdError):
+            validate_id_token(
+                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+            )
+        assert respx.calls.call_count == 0
+
+    @respx.mock
     def test_valid_signed_id_token_accepted(self, rsa_keypair):
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
@@ -1037,6 +1065,17 @@ class TestAsyncValidateIdToken:
         yield
         await aio_clear_discovery_cache()
         await aio_clear_jwks_cache()
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_azp_validation_without_audience_fails_before_any_fetch(self):
+        # #930: the configuration error is raised before discovery/JWKS I/O.
+        config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
+        with pytest.raises(AzpRequiresClientIdError):
+            await aio_validate_id_token(
+                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+            )
+        assert respx.calls.call_count == 0
 
     @pytest.mark.asyncio
     @respx.mock

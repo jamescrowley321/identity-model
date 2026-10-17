@@ -420,6 +420,33 @@ claims = validate_id_token(
 )
 ```
 
+### `validate_azp=True` requires a `client_id` ([#930](https://github.com/jamescrowley321/identity-model/issues/930))
+
+`validate_azp=True` without a `client_id` used to compare `azp` against
+nothing: a multi-audience token still needed an `azp`, but any `azp` value was
+accepted. It now raises `AzpRequiresClientIdError`, a `ConfigurationException`,
+before any discovery or JWKS request and whatever the token carries. Set
+`token_validation_config.audience` to your `client_id` (or pass `client_id=`
+to `validate_id_token_claims`).
+
+Before:
+
+```python
+config = TokenValidationConfig(perform_disco=True, issuer=ISSUER)
+claims = validate_id_token(
+    id_token, config, disco_doc_address=DISCOVERY_URL, validate_azp=True
+)
+```
+
+After:
+
+```python
+config = TokenValidationConfig(perform_disco=True, issuer=ISSUER, audience=CLIENT_ID)
+claims = validate_id_token(
+    id_token, config, disco_doc_address=DISCOVERY_URL, validate_azp=True
+)
+```
+
 ### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
 
 When you pass `access_token=` or `code=`, the matching hash claim is still
@@ -562,6 +589,7 @@ Token rules in their own major releases:
 | Trust additional audiences | `WithTrustedAudiences("https://api.example.com")` | `.trusted_audiences(["https://api.example.com"])` |
 | Keep the `azp` rules | `WithAZPValidation()` | `.validate_azp(true)` |
 | Token without `aud` | rejected (`missing_aud`) | rejected (`IdentityError::IdTokenValidation`) |
+| `azp` rules without a client id | `ErrAZPRequiresClientID` | `IdentityError::IdTokenAzpRequiresClientId` |
 
 ```go
 claims, err := idtoken.ValidateIDToken(ctx, rawToken, keySet,

@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from ..core.id_token_logic import validate_id_token_claims
+from ..core.id_token_logic import check_azp_config, validate_id_token_claims
 from ..core.parsers import extract_jwt_header_fields
 from .token_validation import validate_token
 
@@ -64,7 +64,8 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
             audiences require an ``azp``, and a present ``azp`` must equal
             ``token_validation_config.audience``. Neither is a MUST in OIDC
             Core 1.0 errata set 2 (§3.1.3.7 steps 4-5), so the default is
-            ``False`` and ``azp`` is ignored (§2).
+            ``False`` and ``azp`` is ignored (§2). Requires
+            ``token_validation_config.audience``.
         nonce: The ``nonce`` the RP sent on the authorization request. When
             provided, the token's ``nonce`` MUST match it (§3.1.3.7 step 11).
         access_token: The access token that came with the ID Token. When
@@ -96,8 +97,11 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         UntrustedAudienceException: If ``aud`` carries an audience the client
             does not trust (§3.1.3.7 step 3).
         IdTokenValidationException: If an ID-Token-profile rule fails.
+        AzpRequiresClientIdError: If ``validate_azp`` is set without
+            ``token_validation_config.audience``. Raised before any I/O.
         ConfigurationException: If the configuration is invalid.
     """
+    check_azp_config(token_validation_config.audience, validate_azp)
     claims = await validate_token(
         id_token,
         token_validation_config,
