@@ -28,10 +28,9 @@ def _decode_member(value: object) -> bytes | None:
     """
     # PyJWT accepts bytes members as well as str, so both are measured.
     if isinstance(value, str):
-        try:
-            value = value.encode("ascii")
-        except UnicodeEncodeError:
+        if not value.isascii():
             return None
+        value = value.encode()
     if not isinstance(value, bytes) or not value:
         return None
     try:
