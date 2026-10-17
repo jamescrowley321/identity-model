@@ -633,3 +633,12 @@ let options = IdTokenValidationOptions::builder()
     .validate_azp(true)
     .build();
 ```
+
+Signature key resolution also skips `use: "enc"` keys
+([#888](https://github.com/jamescrowley321/identity-model/issues/888)), as in
+Python. In Go, `jwks.JSONWebKeySet.ResolveSigningKey` (used by `jwt` and
+`idtoken`) treats a `kid` that names only an `enc` key as a miss: one refresh,
+then `*jwks.KeyNotFoundError`. A token with no `kid` against a set with no
+signing key returns `*jwks.KeyNotFoundError` with an empty `Kid`.
+`ResolveKey` and `ResolveKeyWithRefresh` are unchanged and still return any
+key by `kid`.

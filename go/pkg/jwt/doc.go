@@ -22,11 +22,15 @@
 //     256/384/512); the symmetric HS* family is excluded so an attacker cannot
 //     forge a token by signing with a provider's public key as an HMAC secret
 //     (algorithm confusion).
-//   - A kid absent from the cached key set triggers exactly one JWKS forced
-//     refresh and retry before failing, handling key rotation (RFC 7517 §4.5).
-//   - A token with no kid is verified by the single key left after narrowing
-//     the set by use, alg and kty, with no refresh; more than one candidate is
-//     a [jwks.AmbiguousKeyError], distinct from key-not-found (JWKS-009).
+//   - Only signing keys (use absent or "sig") verify a signature; a use "enc"
+//     key never does, with or without a kid (RFC 7517 §4.2, JWKS-011).
+//   - A kid that names no signing key in the cached key set triggers exactly
+//     one JWKS forced refresh and retry before failing, handling key rotation
+//     (RFC 7517 §4.5).
+//   - A token with no kid is verified by the single signing key left after
+//     narrowing by alg and kty, with no refresh; more than one candidate is a
+//     [jwks.AmbiguousKeyError], distinct from key-not-found (JWKS-009), and
+//     none is a [jwks.KeyNotFoundError].
 //   - A key that declares an alg other than the header alg is not used, with
 //     or without a kid: a [jwks.KeyAlgorithmMismatchError] (JWKS-010).
 //
