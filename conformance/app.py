@@ -1290,24 +1290,26 @@ def _fetch_userinfo(
     )
 
 
-def _id_token_validation_params(
-    session: AuthSession,
-) -> tuple[dict, list[str] | None]:
-    """Return ``(options, algorithms)`` for ID token validation.
+def _id_token_validation_config(
+    session: AuthSession, disco: DiscoveryDocumentResponse
+) -> TokenValidationConfig:
+    """ID token validation settings for a session.
 
-    FAPI 2.0 hardens validation: require ``exp``/``aud`` and restrict the
-    accepted signature algorithms to the strong asymmetric set (rejecting
-    RS256), so the library fails closed on the OIDF negative modules
+    FAPI 2.0 sessions take the profile's: PS256/ES256/EdDSA only and ``exp`` /
+    ``aud`` required, so the library fails closed on the OIDF negative modules
     (invalid-alternate-alg, invalid-missing-exp) instead of accepting the token
     and calling userinfo. Basic/Config/Form-Post profiles keep the looser
     OIDC-Core defaults.
     """
     if session.fapi_profile is not None:
-        return (
-            {"verify_exp": True, "require": ["sub", "iat", "exp", "aud"]},
-            session.fapi_profile.signing_algorithms,
-        )
-    return {"verify_exp": True, "require": ["sub", "iat"]}, None
+        return session.fapi_profile.id_token_validation_config()
+    return TokenValidationConfig(
+        perform_disco=True,
+        audience=session.client_id,
+        issuer=disco.issuer,
+        options={"verify_exp": True, "require": ["sub", "iat"]},
+        require_https=False,
+    )
 
 
 def _fetch_fapi2_resource(
@@ -1545,7 +1547,6 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # to verify, and it only works if we let the library own the HTTP client.
     claims: dict = {}
     if id_token_jwt:
-        id_token_options, id_token_algorithms = _id_token_validation_params(session)
         try:
             # validate_id_token adds the ID-Token profile on top of the base
             # checks, including the rejection of audiences other than this
@@ -1553,14 +1554,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             # invalid-secondary-aud module exercises.
             claims = validate_id_token(
                 id_token_jwt,
-                token_validation_config=TokenValidationConfig(
-                    perform_disco=True,
-                    audience=session.client_id,
-                    issuer=disco.issuer,
-                    algorithms=id_token_algorithms,
-                    options=id_token_options,
-                    require_https=False,
-                ),
+                token_validation_config=_id_token_validation_config(session, disco),
                 disco_doc_address=disco_endpoint.url,
             )
         except TokenValidationException as exc:
