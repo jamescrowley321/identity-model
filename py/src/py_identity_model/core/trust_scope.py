@@ -28,9 +28,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import itertools
-import threading
 from typing import TYPE_CHECKING
 import weakref
+
+from .jwks_cache import _ForkSafeRLock
 
 
 if TYPE_CHECKING:
@@ -51,7 +52,9 @@ class TrustScope:
 
 
 _wrapped_numbers: weakref.WeakKeyDictionary[object, int] = weakref.WeakKeyDictionary()
-_wrapped_lock = threading.Lock()
+# Replaced in a forked child: a parent thread holding it at the fork would
+# otherwise block every wrapping client the child builds.
+_wrapped_lock = _ForkSafeRLock()
 _wrapped_counter = itertools.count(1)
 
 

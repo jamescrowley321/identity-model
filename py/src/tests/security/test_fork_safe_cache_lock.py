@@ -1,9 +1,10 @@
-"""The cache structure lock is replaced in a forked child (#953).
+"""The cache locks are replaced in a forked child (#953).
 
 A parent thread may hold ``_CACHE_STRUCTURE_LOCK`` at the moment of a fork;
 the child would inherit it held, with no thread left to release it, and every
 cache write in the child would deadlock. ``_ForkSafeRLock`` registers an
-after-fork hook that gives the child a fresh lock.
+after-fork hook that gives the child a fresh lock. The trust-scope numbering
+lock uses it too, so a child can still build clients that wrap an httpx client.
 """
 
 import os
@@ -11,8 +12,9 @@ import threading
 
 import pytest
 
-from py_identity_model.core import jwks_cache
+from py_identity_model.core import jwks_cache, trust_scope
 from py_identity_model.core.jwks_cache import _ForkSafeRLock
+from py_identity_model.core.trust_scope import TrustScope, wrapped_trust_scope
 
 
 pytestmark = pytest.mark.unit
@@ -77,3 +79,34 @@ def test_context_manager_is_reentrant_and_releases():
 
 def test_module_lock_is_fork_safe():
     assert isinstance(jwks_cache._CACHE_STRUCTURE_LOCK, _ForkSafeRLock)
+
+
+class _Wrapped:
+    """Stands in for a wrapped httpx client (weak-referenceable)."""
+
+
+def test_wrapped_scope_lock_is_replaced_in_a_forked_child(monkeypatch):
+    lock = trust_scope._wrapped_lock
+    assert isinstance(lock, _ForkSafeRLock)
+    monkeypatch.setattr(lock, "_lock", lock._lock)  # restored after the test
+    parent_lock = lock._lock
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_through_fork() -> None:
+        with parent_lock:
+            held.set()
+            release.wait()
+
+    holder = threading.Thread(target=hold_through_fork)
+    holder.start()
+    try:
+        held.wait()
+        lock._reset()  # the after-fork hook, as run in the child
+        # A child wrapping an httpx client gets a scope instead of blocking.
+        scope = wrapped_trust_scope(_Wrapped())
+        assert scope == TrustScope(wrapped_client=scope.wrapped_client)
+        assert scope.wrapped_client is not None
+    finally:
+        release.set()
+        holder.join()
