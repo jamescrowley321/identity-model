@@ -213,7 +213,7 @@ Error messages name the setting and the rule, never the value you passed.
 The same settings, with their Go and Rust names and the cache rules, are on
 the cross-language
 [configuration page](https://github.com/jamescrowley321/identity-model/blob/main/spec/config.md).
-Python defines them; Go and Rust match it.
+Python defines them. Go and Rust still differ in places, as that page lists.
 
 !!! warning "Breaking change: sources and loaders removed"
     `Config.from_env`, `Config.build`, `ConfigSource`, `EnvSource`,

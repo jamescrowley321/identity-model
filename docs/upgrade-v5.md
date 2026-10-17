@@ -121,6 +121,16 @@ Also changed:
 - `get_retry_config`, `get_timeout`, `get_max_jwks_size` and
   `get_max_jwks_keys` in `py_identity_model.core.http_utils` are removed.
   `py_identity_model.ssl_config.get_ssl_verify(config)` takes a `Config`.
+- `get_max_cache_entries` and `get_kid_miss_cooldown` in
+  `py_identity_model.core.jwks_cache` are removed; read
+  `config.cache_max_entries` and `config.jwks_kid_miss_cooldown` instead.
+  `resolve_ttl(cache_control, default_ttl)` and
+  `resolve_disco_ttl(cache_control, default_ttl)` take the fallback TTL as a
+  required argument.
+- `build_mtls_client(mtls, config)` (sync and async) and
+  `build_mtls_ssl_context(mtls, config)` take a required `Config`.
+- `get_default_http_client()` and `get_default_async_http_client()` return the
+  client that every call without `http_client=` uses, built from `Config()`.
 
 httpx still honours `SSL_CERT_FILE`, `SSL_CERT_DIR` and the proxy variables
 when it builds a client with its default `trust_env=True`. To turn that off,
@@ -252,6 +262,15 @@ DiscoveryPolicy(True, True, True, True, True, ["https://login.example.com"])
 DiscoveryPolicy(additional_endpoint_base_addresses=["https://login.example.com"])
 ```
 
+### FAPI 2.0: `response_types_supported` is required ([#877](https://github.com/jamescrowley321/identity-model/pull/877))
+
+`validate_fapi_discovery` reports a violation when the document has no
+`response_types_supported`. In 4.x it assumed `["code"]`. A missing
+`id_token_signing_alg_values_supported` is still a violation, and the
+message no longer mentions an `RS256` default. Both fields are REQUIRED
+provider metadata (Discovery §3), so a document missing them also fails
+`get_discovery_document` with `DiscoveryErrorKind.MISSING_FIELDS`.
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC
@@ -379,6 +398,56 @@ claims = validate_id_token(
 )
 ```
 
+### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
+
+When you pass `access_token=` or `code=`, the matching hash claim is still
+required by default, but an absent claim now raises
+`IdTokenValidationException` with "ID token missing required 'at_hash'
+claim ..." instead of a hash-mismatch message.
+
+An ID Token from the token endpoint may omit `at_hash` (OIDC Core §3.1.3.6).
+Pass `access_token_issued_with_id_token=False` (or
+`code_issued_with_id_token=False`) when the value did not come back with the
+ID Token: an absent claim is then accepted, and a present one must still
+match.
+
+```python
+claims = validate_id_token(
+    id_token,
+    validation_config,
+    disco_doc_address=DISCOVERY_URL,
+    access_token=token_response.access_token,
+    access_token_issued_with_id_token=False,  # code flow: from the token endpoint
+)
+```
+
+See [ID Token validation](api/id-token.md).
+
+## Signing key selection
+
+### Typed exceptions for key-selection failures ([#889](https://github.com/jamescrowley321/identity-model/pull/889))
+
+Two failures that raised a plain `TokenValidationException` in 4.x now raise
+subclasses of it, with the same message and `details`:
+
+- `AmbiguousKeyException`: a token with no `kid` matches more than one key in
+  the JWK Set. `details["available_kids"]` and `details["key_count"]`
+  describe the candidates.
+- `KeyAlgorithmMismatchException`: the selected key declares an `alg` that
+  differs from the token's header `alg` (RFC 7517 §4.4).
+
+An existing `except TokenValidationException` still catches both. Catch the
+subclass to handle the case on its own:
+
+```python
+from py_identity_model import AmbiguousKeyException, validate_token
+
+try:
+    claims = validate_token(token, validation_config, DISCOVERY_URL)
+except AmbiguousKeyException as exc:
+    print(exc.details["available_kids"])
+```
+
 ## UserInfo
 
 ### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))
@@ -395,6 +464,20 @@ response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token
 if not response.is_successful:
     print(response.error)  # 5.0: also when the body has no sub
 ```
+
+The failed response's `error_kind` is `UserInfoErrorKind.MISSING_SUB`, so you
+can tell a missing `sub` from a failed request:
+
+```python
+from py_identity_model import UserInfoErrorKind
+
+if response.error_kind is UserInfoErrorKind.MISSING_SUB:
+    ...  # the provider answered, but without sub
+```
+
+The FastAPI relying-party router fails the login with `401` ("UserInfo
+response has no subject") when the UserInfo response has no `sub`. Other
+UserInfo failures are still logged and the login continues on the ID Token.
 
 ### `expected_sub` is enforced on signed UserInfo ([#882](https://github.com/jamescrowley321/identity-model/pull/882))
 

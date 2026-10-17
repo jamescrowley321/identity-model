@@ -301,6 +301,7 @@ class SuccessfulResponseAccessError(PyIdentityModelException):
 
 
 __all__ = [
+    "AmbiguousKeyException",
     "AuthorizeCallbackException",
     "CertificateBindingError",
     "ConfigurationException",
@@ -313,7 +314,9 @@ __all__ = [
     "IdTokenValidationException",
     "InvalidAudienceException",
     "InvalidIssuerException",
+    "JarmValidationException",
     "JwksException",
+    "KeyAlgorithmMismatchException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",
