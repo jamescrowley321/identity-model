@@ -60,6 +60,7 @@ from py_identity_model.core.models import (
     TokenValidationConfig,
 )
 from py_identity_model.core.parsers import jwks_from_dict
+from py_identity_model.core.trust_scope import TrustScope
 from py_identity_model.sync import token_validation as sync_tv
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.validation_cache import (
@@ -78,8 +79,6 @@ from ..token_validation_helpers import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
-
-    from py_identity_model.core.trust_scope import TrustScope
 
 
 pytestmark = pytest.mark.unit
@@ -706,3 +705,44 @@ class TestProviderMaxAgeSetsTtl:
         )
 
         assert cache[_disco_key(ORIGIN)].ttl == PROVIDER_MAX_AGE
+
+
+class TestUncacheableJwksPolicyHook:
+    """``is_uncacheable_for_jwks`` is the documented hook for a future strict
+    mode; it returns False today. When it says a response is uncacheable, the
+    write drops that scope's entry (other scopes keep theirs) and reports the
+    key as gone, and a missing entry is not an error."""
+
+    @pytest.fixture(autouse=True)
+    def _uncacheable(self, monkeypatch):
+        monkeypatch.setattr(
+            "py_identity_model.core.jwks_cache.is_uncacheable_for_jwks",
+            lambda _cache_control: True,
+        )
+
+    def _response(self) -> JwksResponse:
+        return JwksResponse(is_successful=True, keys=[jwks_from_dict(_SIGNING_KEY)])
+
+    def test_uncacheable_response_drops_only_its_scopes_entry(self):
+        other_scope = TrustScope(wrapped_client=-1)
+        cache = {
+            jwks_cache_key(JWKS_URI): _fresh_jwks_entry(),
+            jwks_cache_key(JWKS_URI, other_scope): _fresh_jwks_entry(),
+        }
+
+        gone = apply_jwks_cache_outcome(
+            cache, jwks_cache_key(JWKS_URI), self._response(), 0.0, Config()
+        )
+
+        assert gone == [jwks_cache_key(JWKS_URI)]
+        assert list(cache) == [jwks_cache_key(JWKS_URI, other_scope)]
+
+    def test_uncacheable_response_without_an_entry_is_not_an_error(self):
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
+
+        gone = apply_jwks_cache_outcome(
+            cache, jwks_cache_key(JWKS_URI), self._response(), 0.0, Config()
+        )
+
+        assert gone == [jwks_cache_key(JWKS_URI)]
+        assert cache == {}
