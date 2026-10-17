@@ -29,8 +29,11 @@ from ..core.dpop import (
 from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    FAPI2_MAX_NONCE_LENGTH,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
+    FAPI2ClientProfile,
+    FAPIProfileError,
     FAPIValidationResult,
     validate_fapi_authorization_request,
     validate_fapi_client_config,
@@ -153,6 +156,7 @@ __all__ = [
     # FAPI 2.0
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
+    "FAPI2_MAX_NONCE_LENGTH",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     # Auth Code + PKCE
@@ -190,6 +194,8 @@ __all__ = [
     "DiscoveryEndpoint",
     "DiscoveryErrorKind",
     "DiscoveryPolicy",
+    "FAPI2ClientProfile",
+    "FAPIProfileError",
     "FAPIValidationResult",
     # HTTP Client
     "HTTPClient",

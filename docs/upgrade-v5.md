@@ -412,6 +412,64 @@ when absent. A server that passed in 4.x without advertising these fields now
 reports violations until its metadata advertises them. A metadata value
 that is not an array of strings counts as advertising nothing.
 
+### FAPI 2.0: a fail-closed client profile; validators take request objects ([#951](https://github.com/jamescrowley321/identity-model/issues/951))
+
+`FAPI2ClientProfile` builds an immutable FAPI 2.0 client from
+the authorization server's discovery document. It raises `FAPIProfileError`
+(a `ValueError` with a `violations` list) when the document fails
+`validate_fapi_discovery`, when the client does not authenticate with
+`private_key_jwt` or mTLS, or when the redirect URI is not `https` (an `http`
+loopback URI is allowed with `native_app=True`). It fills
+`PrivateKeyJwt.issuer` from the discovery issuer and refuses an `audience` or
+`issuer` that names anything else, so the assertion `aud` is never the
+endpoint URL. Its request builders fix PAR, `response_type=code` and PKCE
+`S256`, require a DPoP key for a `private_key_jwt` client, cap `nonce` at 64
+characters, and raise on anything that would weaken the flow.
+`validate_callback_issuer` requires the RFC 9207 `iss` parameter, and
+`signing_algorithms` is the list to pass when validating ID Tokens and JARM
+responses.
+
+```python
+profile = FAPI2ClientProfile(
+    discovery,
+    client_id="fapi-client",
+    redirect_uri="https://client.example.com/callback",
+    client_auth=PrivateKeyJwt(private_key=pem, algorithm="ES256"),
+)
+dpop_key = generate_dpop_key("ES256")
+par = push_authorization_request(
+    profile.pushed_authorization_request(
+        state=state, nonce=nonce, code_challenge=challenge, dpop_key=dpop_key
+    )
+)
+redirect_to(profile.authorization_url(par.request_uri))
+```
+
+`validate_fapi_authorization_request` and `validate_fapi_client_config` now
+check real objects instead of booleans:
+
+```python
+# Before
+validate_fapi_authorization_request(
+    response_type="code", code_challenge=challenge,
+    code_challenge_method="S256", redirect_uri=uri, use_par=True,
+    algorithm="ES256",
+)
+validate_fapi_client_config(auth_method="private_key_jwt", use_dpop=True)
+
+# After
+validate_fapi_authorization_request(par_request)  # a PushedAuthorizationRequest
+validate_fapi_client_config(
+    issuer=discovery.issuer,
+    private_key_jwt=private_key_jwt,
+    dpop_key=dpop_key,
+)
+```
+
+The request validator now also checks the request's client authentication,
+its DPoP key algorithm and its `nonce` length. The client validator reports
+a `private_key_jwt` whose assertion `aud` would not be the issuer.
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC
