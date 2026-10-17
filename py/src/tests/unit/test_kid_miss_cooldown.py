@@ -26,8 +26,7 @@ import pytest
 import respx
 
 from py_identity_model import Config
-from py_identity_model.aio.http_client import get_default_async_http_client
-from py_identity_model.aio.managed_client import AsyncClientCaches, AsyncHTTPClient
+from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
 )
@@ -36,6 +35,10 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
+)
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
 )
 from py_identity_model.core.jwks_cache import (
     DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS,
@@ -54,8 +57,7 @@ from py_identity_model.exceptions import (
     SignatureVerificationException,
     TokenValidationException,
 )
-from py_identity_model.sync.http_client import get_default_http_client
-from py_identity_model.sync.managed_client import ClientCaches, HTTPClient
+from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks as sync_get_cached_jwks,
 )
@@ -66,6 +68,10 @@ from py_identity_model.sync.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
     validate_token,
+)
+from py_identity_model.sync.validation_cache import (
+    ValidationCache,
+    get_default_validation_cache,
 )
 
 from ..constants import DISCO_URL
@@ -92,14 +98,14 @@ async def _clear_caches():
     await async_clear_jwks_cache()
 
 
-def _sync_caches() -> ClientCaches:
-    """Caches + cooldown state of the default sync client (no ``http_client``)."""
-    return get_default_http_client().caches
+def _sync_caches() -> ValidationCache:
+    """The default sync cache + cooldown state (no ``cache=``)."""
+    return get_default_validation_cache()
 
 
-def _async_caches() -> AsyncClientCaches:
-    """Caches + cooldown state of the default async client."""
-    return get_default_async_http_client().caches
+def _async_caches() -> AsyncValidationCache:
+    """The default async cache + cooldown state (no ``cache=``)."""
+    return get_default_async_validation_cache()
 
 
 def _sign_unknown_kid_token(kid: str) -> str:
@@ -123,10 +129,10 @@ def _sign_unknown_kid_token(kid: str) -> str:
 # refresh fires, flaking the count. Pinning to the max (well above any loop
 # duration) removes the timing dependency without weakening what the test
 # proves (that the cooldown coalesces a burst into a single refresh). Tests
-# that need it validate through a client built from this config.
-HIGH_COOLDOWN_CONFIG = Config(
-    jwks_kid_miss_cooldown=MAX_KID_MISS_COOLDOWN_SECONDS, http_retry_base_delay=0
-)
+# that need it validate through a cache built from this config.
+HIGH_COOLDOWN_CONFIG = Config(jwks_kid_miss_cooldown=MAX_KID_MISS_COOLDOWN_SECONDS)
+# Transport settings for the injected HTTP clients: no retry backoff sleeps.
+NO_RETRY_DELAY_CONFIG = Config(http_retry_base_delay=0)
 
 
 # ============================================================================
@@ -232,7 +238,8 @@ class TestKidMissCooldownBoundsAmplification:
         tokens = [_sign_unknown_kid_token(kid) for kid in attacker_kids]
 
         rejections = 0
-        with HTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+        cache = ValidationCache(config=HIGH_COOLDOWN_CONFIG)
+        with HTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
             for token in tokens:
                 try:
                     validate_token(
@@ -240,6 +247,7 @@ class TestKidMissCooldownBoundsAmplification:
                         token_validation_config=config,
                         disco_doc_address=DISCO_URL,
                         http_client=client,
+                        cache=cache,
                     )
                 except TokenValidationException:
                     rejections += 1
@@ -270,7 +278,8 @@ class TestKidMissCooldownBoundsAmplification:
         attacker_kids = [f"attacker-kid-{i}" for i in range(ATTACKER_REQUEST_COUNT)]
         tokens = [_sign_unknown_kid_token(kid) for kid in attacker_kids]
 
-        async with AsyncHTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+        cache = AsyncValidationCache(config=HIGH_COOLDOWN_CONFIG)
+        async with AsyncHTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
 
             async def _try(token: str) -> bool:
                 try:
@@ -279,6 +288,7 @@ class TestKidMissCooldownBoundsAmplification:
                         token_validation_config=config,
                         disco_doc_address=DISCO_URL,
                         http_client=client,
+                        cache=cache,
                     )
                     return False
                 except TokenValidationException:
@@ -385,7 +395,7 @@ class TestCooldownDoesNotBlockLegitimateTraffic:
 
         # Simulate cooldown elapse by backdating the last-attempt timestamp
         # on the same monotonic clock the production code uses.
-        cooldown = get_default_http_client().config.jwks_kid_miss_cooldown
+        cooldown = _sync_caches().config.jwks_kid_miss_cooldown
         _sync_caches().kid_miss_last_attempt[JWKS_URL] = (
             time.monotonic() - cooldown - 1.0
         )
@@ -453,7 +463,8 @@ class TestCooldownIsolationAcrossIssuers:
             headers={"kid": "defender-kid"},
         )
 
-        with HTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+        cache = ValidationCache(config=HIGH_COOLDOWN_CONFIG)
+        with HTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
             # Saturate the attacker-side cooldown.
             for i in range(ATTACKER_REQUEST_COUNT):
                 with pytest.raises(TokenValidationException):
@@ -462,6 +473,7 @@ class TestCooldownIsolationAcrossIssuers:
                         token_validation_config=config_attacker,
                         disco_doc_address=DISCO_URL,
                         http_client=client,
+                        cache=cache,
                     )
 
             # Defender-side issuer must NOT be in cooldown — legitimate token
@@ -471,8 +483,9 @@ class TestCooldownIsolationAcrossIssuers:
                 token_validation_config=config_defender,
                 disco_doc_address=other_disco_url,
                 http_client=client,
+                cache=cache,
             )
-            cooldown_state = dict(client.caches.kid_miss_last_attempt)
+            cooldown_state = dict(cache.kid_miss_last_attempt)
         assert decoded["sub"] == "legit"
 
         # Attacker JWKS saw exactly 1 prime + 1 refresh; defender JWKS saw 1
@@ -505,15 +518,15 @@ class TestCooldownFromConfig:
     def test_environment_is_ignored(self, monkeypatch):
         """The old ``KID_MISS_REFRESH_COOLDOWN`` env var has no effect."""
         monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "0")
-        with HTTPClient() as client:
-            assert client.config.jwks_kid_miss_cooldown == (
-                DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
-            )
+        assert ValidationCache().config.jwks_kid_miss_cooldown == (
+            DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+        )
 
     @respx.mock
-    def test_client_config_cooldown_governs_refresh(self):
-        """A stamp older than the client's custom cooldown (but inside the
-        default window) no longer suppresses the kid-miss refresh."""
+    def test_cache_config_cooldown_governs_refresh(self):
+        """A stamp older than the cache's custom cooldown (but inside the
+        default window) no longer suppresses the kid-miss refresh. The
+        client's own cooldown setting is ignored: the cache's applies."""
         assert CUSTOM_COOLDOWN < STAMP_AGE_BETWEEN_COOLDOWNS
         assert STAMP_AGE_BETWEEN_COOLDOWNS < DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
         defender_key_dict, _ = generate_rsa_keypair()
@@ -527,18 +540,25 @@ class TestCooldownFromConfig:
         config = TokenValidationConfig(
             perform_disco=True, audience=None, issuer="https://example.com"
         )
-        custom = Config(jwks_kid_miss_cooldown=CUSTOM_COOLDOWN, http_retry_base_delay=0)
+        cache = ValidationCache(config=Config(jwks_kid_miss_cooldown=CUSTOM_COOLDOWN))
+        # A client-side cooldown long enough to suppress the refresh, were it
+        # read; only transport settings on the client take effect.
+        client_config = Config(
+            jwks_kid_miss_cooldown=MAX_KID_MISS_COOLDOWN_SECONDS,
+            http_retry_base_delay=0,
+        )
 
-        with HTTPClient(config=custom) as client:
+        with HTTPClient(config=client_config) as client:
             with pytest.raises(TokenValidationException):
                 validate_token(
                     jwt=_sign_unknown_kid_token("unknown-1"),
                     token_validation_config=config,
                     disco_doc_address=DISCO_URL,
                     http_client=client,
+                    cache=cache,
                 )
             assert jwks_route.call_count == EXPECTED_FETCH_COUNT
-            client.caches.kid_miss_last_attempt[JWKS_URL] = (
+            cache.kid_miss_last_attempt[JWKS_URL] = (
                 time.monotonic() - STAMP_AGE_BETWEEN_COOLDOWNS
             )
             with pytest.raises(TokenValidationException):
@@ -547,6 +567,7 @@ class TestCooldownFromConfig:
                     token_validation_config=config,
                     disco_doc_address=DISCO_URL,
                     http_client=client,
+                    cache=cache,
                 )
 
         # The second kid miss refreshed again: the custom cooldown elapsed.
@@ -602,8 +623,8 @@ class TestCooldownEvictedWithCache:
         assert list(cache) == [*surviving_urls, overflow_url]
 
     @respx.mock
-    def test_client_eviction_drops_cooldown_alongside_cache(self):
-        """End to end on the sync client: when the client's JWKS cache
+    def test_cache_eviction_drops_cooldown_alongside_cache(self):
+        """End to end on the sync path: when the cache's JWKS cache
         evicts a URI, the same URI's cooldown stamp goes with it."""
         oldest_url = "https://op-oldest.example/jwks"
         surviving_urls = ["https://op-a.example/jwks", "https://op-b.example/jwks"]
@@ -619,21 +640,20 @@ class TestCooldownEvictedWithCache:
                 )
             )
 
-        config = Config(cache_max_entries=len(urls), http_retry_base_delay=0)
-        with HTTPClient(config=config) as client:
-            caches = client.caches
+        cache = ValidationCache(config=Config(cache_max_entries=len(urls)))
+        with HTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
             for url in urls:
-                sync_get_cached_jwks(url, http_client=client)
-                caches.kid_miss_last_attempt[url] = time.monotonic()
-            assert set(caches.kid_miss_last_attempt) == set(urls)
+                sync_get_cached_jwks(url, http_client=client, cache=cache)
+                cache.kid_miss_last_attempt[url] = time.monotonic()
+            assert set(cache.kid_miss_last_attempt) == set(urls)
 
-            sync_get_cached_jwks(overflow_url, http_client=client)
+            sync_get_cached_jwks(overflow_url, http_client=client, cache=cache)
 
-            assert oldest_url not in caches.jwks
-            assert oldest_url not in caches.kid_miss_last_attempt
+            assert oldest_url not in cache.jwks
+            assert oldest_url not in cache.kid_miss_last_attempt
             # Surviving entries preserved on both sides.
-            assert list(caches.jwks) == [*surviving_urls, overflow_url]
-            assert set(caches.kid_miss_last_attempt) == set(surviving_urls)
+            assert list(cache.jwks) == [*surviving_urls, overflow_url]
+            assert set(cache.kid_miss_last_attempt) == set(surviving_urls)
 
     def test_uncacheable_response_replaces_entry_and_preserves_cooldown(self):
         """``Cache-Control: no-cache`` on JWKS is ignored (see #396); the
@@ -1225,7 +1245,8 @@ class TestEncKeyKidIsKidMiss:
             return_value=httpx.Response(200, json={"keys": [enc_key]})
         )
 
-        with HTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+        cache = ValidationCache(config=HIGH_COOLDOWN_CONFIG)
+        with HTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
             for _ in range(2):
                 with pytest.raises(KeyNotFoundException):
                     validate_token(
@@ -1233,8 +1254,9 @@ class TestEncKeyKidIsKidMiss:
                         token_validation_config=self._config(),
                         disco_doc_address=DISCO_URL,
                         http_client=client,
+                        cache=cache,
                     )
-            stamped = JWKS_URL in client.caches.kid_miss_last_attempt
+            stamped = JWKS_URL in cache.kid_miss_last_attempt
 
         assert jwks_route.call_count == EXPECTED_FETCH_COUNT
         assert stamped
@@ -1274,7 +1296,8 @@ class TestEncKeyKidIsKidMiss:
             return_value=httpx.Response(200, json={"keys": [enc_key]})
         )
 
-        async with AsyncHTTPClient(config=HIGH_COOLDOWN_CONFIG) as client:
+        cache = AsyncValidationCache(config=HIGH_COOLDOWN_CONFIG)
+        async with AsyncHTTPClient(config=NO_RETRY_DELAY_CONFIG) as client:
             for _ in range(2):
                 with pytest.raises(KeyNotFoundException):
                     await async_validate_token(
@@ -1282,8 +1305,9 @@ class TestEncKeyKidIsKidMiss:
                         token_validation_config=self._config(),
                         disco_doc_address=DISCO_URL,
                         http_client=client,
+                        cache=cache,
                     )
-            stamped = JWKS_URL in client.caches.kid_miss_last_attempt
+            stamped = JWKS_URL in cache.kid_miss_last_attempt
 
         assert jwks_route.call_count == EXPECTED_FETCH_COUNT
         assert stamped

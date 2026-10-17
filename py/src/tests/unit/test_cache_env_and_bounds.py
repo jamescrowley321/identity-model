@@ -19,7 +19,7 @@ Settings now come from :class:`~py_identity_model.Config`, which is validated
 on creation. These tests pin the fixes:
 - TTL and cooldown values outside [MIN, MAX] (or non-finite / non-numeric) are
   rejected with ``ConfigError``; in-range values are used as configured.
-- Each client's cache size is capped at ``Config.cache_max_entries``
+- Each ``ValidationCache``'s size is capped at its ``Config.cache_max_entries``
   (default 64).
 - LRU eviction targets the least recently *used* entry, not the newest or a
   random one.
@@ -30,7 +30,6 @@ on creation. These tests pin the fixes:
 """
 
 from collections import OrderedDict
-from collections.abc import Iterator
 import math
 import time
 
@@ -57,13 +56,13 @@ from py_identity_model.core.jwks_cache import (
     touch_cache_entry,
 )
 from py_identity_model.core.models import JsonWebKey, JwksResponse
-from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..token_validation_helpers import generate_rsa_keypair
 
@@ -87,10 +86,9 @@ def _reset_state():
 
 
 @pytest.fixture
-def small_cache_client() -> Iterator[HTTPClient]:
-    """An injected client whose caches hold at most ``E2E_MAX_ENTRIES``."""
-    with HTTPClient(config=Config(cache_max_entries=E2E_MAX_ENTRIES)) as client:
-        yield client
+def small_cache() -> ValidationCache:
+    """An injected cache holding at most ``E2E_MAX_ENTRIES`` per cache."""
+    return ValidationCache(config=Config(cache_max_entries=E2E_MAX_ENTRIES))
 
 
 def _setting_names(err: ConfigError) -> list[str]:
@@ -200,9 +198,9 @@ class TestKidMissCooldownConfig:
         assert _setting_names(exc_info.value) == ["jwks_kid_miss_cooldown"]
 
     @pytest.mark.parametrize("value", COOLDOWN_ACCEPTED_CASES)
-    def test_in_range_cooldown_reaches_client(self, value):
-        with HTTPClient(config=Config(jwks_kid_miss_cooldown=value)) as client:
-            assert client.config.jwks_kid_miss_cooldown == value
+    def test_in_range_cooldown_reaches_cache(self, value):
+        cache = ValidationCache(config=Config(jwks_kid_miss_cooldown=value))
+        assert cache.config.jwks_kid_miss_cooldown == value
 
     def test_default_cooldown(self):
         assert (
@@ -339,9 +337,9 @@ class TestBoundedCacheSize:
         assert set(cache.keys()) == {_op_uri(2), _op_uri(0), _op_uri(3)}
 
     @respx.mock
-    def test_end_to_end_jwks_cache_capped(self, small_cache_client):
-        """End-to-end via _get_cached_jwks on an injected client: hammering
-        N+5 unique URIs from the real call site enforces the client's
+    def test_end_to_end_jwks_cache_capped(self, small_cache):
+        """End-to-end via _get_cached_jwks on an injected cache: hammering
+        N+5 unique URIs from the real call site enforces the cache's
         ``cache_max_entries``. Catches any path that bypasses
         _enforce_size_limit."""
         urls_to_visit = [_op_uri(i) for i in range(E2E_MAX_ENTRIES + OVERFLOW_EXTRA)]
@@ -356,25 +354,23 @@ class TestBoundedCacheSize:
             )
 
         for url in urls_to_visit:
-            response = _get_cached_jwks(url, http_client=small_cache_client)
+            response = _get_cached_jwks(url, cache=small_cache)
             assert response.is_successful is True
 
         # Newest URIs are the survivors.
-        assert set(small_cache_client.caches.jwks.keys()) == set(
-            urls_to_visit[-E2E_MAX_ENTRIES:]
-        )
+        assert set(small_cache.jwks.keys()) == set(urls_to_visit[-E2E_MAX_ENTRIES:])
 
     @respx.mock
-    def test_caches_are_per_client(self, small_cache_client):
-        """A bounded injected client's eviction never touches another
-        client's cache — each client owns its caches."""
+    def test_caches_are_per_validation_cache(self, small_cache):
+        """A bounded injected cache's eviction never touches another
+        cache's entries — each ``ValidationCache`` owns its state."""
         key_dict, _ = generate_rsa_keypair()
         url = _op_uri(0)
         respx.get(url).mock(return_value=httpx.Response(200, json={"keys": [key_dict]}))
-        with HTTPClient(config=Config()) as other:
-            _get_cached_jwks(url, http_client=other)
-            assert list(other.caches.jwks.keys()) == [url]
-            assert list(small_cache_client.caches.jwks.keys()) == []
+        other = ValidationCache(config=Config())
+        _get_cached_jwks(url, cache=other)
+        assert list(other.jwks.keys()) == [url]
+        assert list(small_cache.jwks.keys()) == []
 
 
 # ============================================================================
@@ -422,14 +418,14 @@ class TestLruReadHitEviction:
         assert ("https://op-0.example", True) in cache
 
     @respx.mock
-    def test_read_hit_protects_hot_entry_from_eviction(self, small_cache_client):
+    def test_read_hit_protects_hot_entry_from_eviction(self, small_cache):
         """End-to-end via ``_get_cached_jwks``: an attacker driving distinct
         JWKS-URI reads must NOT evict a JWKS entry that was just read.
 
         Fill the cache to capacity, re-read the oldest-by-insertion entry (a
         cache hit → LRU touch), then push one more distinct URI. FIFO would
         evict the just-read entry; LRU evicts the oldest *unread* one."""
-        cache = small_cache_client.caches.jwks
+        cache = small_cache.jwks
         urls = [f"https://op-{i}.example/jwks" for i in range(E2E_MAX_ENTRIES + 1)]
         key_dict, _ = generate_rsa_keypair()
         for url in urls:
@@ -443,11 +439,11 @@ class TestLruReadHitEviction:
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
         for url in urls[:E2E_MAX_ENTRIES]:
-            _get_cached_jwks(url, http_client=small_cache_client)
+            _get_cached_jwks(url, cache=small_cache)
         assert list(cache.keys()) == urls[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
-        _get_cached_jwks(urls[0], http_client=small_cache_client)
+        _get_cached_jwks(urls[0], cache=small_cache)
         assert list(cache.keys()) == [
             urls[1],
             urls[2],
@@ -457,13 +453,13 @@ class TestLruReadHitEviction:
 
         # A fifth distinct URI overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
-        _get_cached_jwks(urls[4], http_client=small_cache_client)
+        _get_cached_jwks(urls[4], cache=small_cache)
         assert urls[0] in cache
         assert urls[1] not in cache
         assert set(cache.keys()) == {urls[0], urls[2], urls[3], urls[4]}
 
     @respx.mock
-    def test_read_hit_protects_hot_disco_entry_from_eviction(self, small_cache_client):
+    def test_read_hit_protects_hot_disco_entry_from_eviction(self, small_cache):
         """The discovery cache is LRU too (#397 calls out "same for the
         discovery cache"). End-to-end via ``_get_disco_response``: an attacker
         driving distinct ``disco_doc_address`` reads must NOT evict a discovery
@@ -473,7 +469,7 @@ class TestLruReadHitEviction:
         regression that adds the read-hit touch to only one of the two caches is
         caught. The cache key is ``(address, policy.cache_key())`` — a tuple,
         exactly the shape a multi-tenant gateway attacker influences."""
-        cache = small_cache_client.caches.disco
+        cache = small_cache.disco
         bases = [f"https://op-{i}.example" for i in range(E2E_MAX_ENTRIES + 1)]
         addresses = [f"{b}/.well-known/openid-configuration" for b in bases]
         for base, address in zip(bases, addresses, strict=True):
@@ -496,11 +492,11 @@ class TestLruReadHitEviction:
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
         for address in addresses[:E2E_MAX_ENTRIES]:
-            _get_disco_response(address, http_client=small_cache_client)
+            _get_disco_response(address, cache=small_cache)
         assert list(cache.keys()) == keys[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
-        _get_disco_response(addresses[0], http_client=small_cache_client)
+        _get_disco_response(addresses[0], cache=small_cache)
         assert list(cache.keys()) == [
             keys[1],
             keys[2],
@@ -510,7 +506,7 @@ class TestLruReadHitEviction:
 
         # A fifth distinct address overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
-        _get_disco_response(addresses[4], http_client=small_cache_client)
+        _get_disco_response(addresses[4], cache=small_cache)
         assert keys[0] in cache
         assert keys[1] not in cache
         assert set(cache.keys()) == {keys[0], keys[2], keys[3], keys[4]}

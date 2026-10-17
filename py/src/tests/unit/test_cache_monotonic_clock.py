@@ -45,6 +45,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.jwks_cache import (
     DiscoCacheEntry,
     JwksCacheEntry,
@@ -65,6 +66,7 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
     validate_token,
 )
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..constants import DISCO_URL
 from ..token_validation_helpers import (
@@ -97,7 +99,6 @@ async def _clear_caches():
 
 @pytest.fixture
 def sync_client() -> Iterator[HTTPClient]:
-    """An injected client: its caches and cooldown state are its own."""
     with HTTPClient() as client:
         yield client
 
@@ -106,6 +107,17 @@ def sync_client() -> Iterator[HTTPClient]:
 async def async_client() -> AsyncIterator[AsyncHTTPClient]:
     async with AsyncHTTPClient() as client:
         yield client
+
+
+@pytest.fixture
+def sync_cache() -> ValidationCache:
+    """An injected cache: its entries and cooldown state are its own."""
+    return ValidationCache()
+
+
+@pytest.fixture
+def async_cache() -> AsyncValidationCache:
+    return AsyncValidationCache()
 
 
 # ============================================================================
@@ -185,7 +197,9 @@ class TestCacheExpiryUsesMonotonicClock:
 
 class TestCooldownUsesMonotonicClock:
     @respx.mock
-    def test_sync_cooldown_elapses_despite_wall_clock_backstep(self, sync_client):
+    def test_sync_cooldown_elapses_despite_wall_clock_backstep(
+        self, sync_client, sync_cache
+    ):
         """Stamp the cooldown via the real refresh path; then step wall-clock
         backward and advance monotonic past the cooldown window. The next
         kid-miss must refresh — pre-fix it would have been suppressed for
@@ -216,14 +230,15 @@ class TestCooldownUsesMonotonicClock:
                 token_validation_config=config,
                 disco_doc_address=DISCO_URL,
                 http_client=sync_client,
+                cache=sync_cache,
             )
-        kid_miss_last_attempt = sync_client.caches.kid_miss_last_attempt
+        kid_miss_last_attempt = sync_cache.kid_miss_last_attempt
         assert JWKS_URL in kid_miss_last_attempt
         # 1 prime + 1 kid-miss refresh.
         baseline_fetches = 2
         assert jwks_route.call_count == baseline_fetches
 
-        cooldown = sync_client.config.jwks_kid_miss_cooldown
+        cooldown = sync_cache.config.jwks_kid_miss_cooldown
 
         # Wall-clock back-step paired with monotonic advance past cooldown.
         # The cooldown stamp itself was set with time.monotonic, so simulate
@@ -239,6 +254,7 @@ class TestCooldownUsesMonotonicClock:
                     token_validation_config=config,
                     disco_doc_address=DISCO_URL,
                     http_client=sync_client,
+                    cache=sync_cache,
                 )
 
         # A second refresh must have fired despite the wall-clock back-step,
@@ -249,7 +265,7 @@ class TestCooldownUsesMonotonicClock:
     @pytest.mark.asyncio
     @respx.mock
     async def test_async_cooldown_elapses_despite_wall_clock_backstep(
-        self, async_client
+        self, async_client, async_cache
     ):
         defender_kd, _ = generate_rsa_keypair()
         defender_kd["kid"] = "defender-kid"
@@ -275,13 +291,14 @@ class TestCooldownUsesMonotonicClock:
                 token_validation_config=config,
                 disco_doc_address=DISCO_URL,
                 http_client=async_client,
+                cache=async_cache,
             )
-        kid_miss_last_attempt = async_client.caches.kid_miss_last_attempt
+        kid_miss_last_attempt = async_cache.kid_miss_last_attempt
         assert JWKS_URL in kid_miss_last_attempt
         baseline_fetches = 2
         assert jwks_route.call_count == baseline_fetches
 
-        cooldown = async_client.config.jwks_kid_miss_cooldown
+        cooldown = async_cache.config.jwks_kid_miss_cooldown
         kid_miss_last_attempt[JWKS_URL] = time.monotonic() - cooldown - 1.0
 
         with patch("py_identity_model.aio.token_validation.time") as mock_time:
@@ -294,6 +311,7 @@ class TestCooldownUsesMonotonicClock:
                     token_validation_config=config,
                     disco_doc_address=DISCO_URL,
                     http_client=async_client,
+                    cache=async_cache,
                 )
 
         cooldown_elapsed_fetches = 3
@@ -362,7 +380,7 @@ class _TrackedAsyncLock:
 class TestRefreshJwksRequestTimeInsideLock:
     @respx.mock
     def test_sync_request_time_captured_after_lock_acquired(
-        self, monkeypatch, sync_client
+        self, monkeypatch, sync_client, sync_cache
     ):
         """The first ``time.monotonic`` call from inside ``_refresh_jwks``
         must follow lock acquisition. Pre-fix the call was emitted BEFORE
@@ -374,9 +392,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         recorder = _EventRecorder()
         tracked_lock = _TrackedSyncLock(recorder)
-        monkeypatch.setattr(
-            sync_client.caches, "jwks_fetch_lock", lambda _uri: tracked_lock
-        )
+        monkeypatch.setattr(sync_cache, "jwks_fetch_lock", lambda _uri: tracked_lock)
 
         real_monotonic = time.monotonic
 
@@ -386,7 +402,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         monkeypatch.setattr(sync_tv.time, "monotonic", recording_monotonic)
 
-        sync_refresh_jwks(JWKS_URL, http_client=sync_client)
+        sync_refresh_jwks(JWKS_URL, http_client=sync_client, cache=sync_cache)
 
         # The very first lock_acquired event must precede the first
         # monotonic_called event.
@@ -400,7 +416,7 @@ class TestRefreshJwksRequestTimeInsideLock:
     @pytest.mark.asyncio
     @respx.mock
     async def test_async_request_time_captured_after_lock_acquired(
-        self, monkeypatch, async_client
+        self, monkeypatch, async_client, async_cache
     ):
         key_dict = generate_rsa_keypair()[0]
         respx.get(JWKS_URL).mock(
@@ -409,9 +425,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         recorder = _EventRecorder()
         tracked_lock = _TrackedAsyncLock(recorder)
-        monkeypatch.setattr(
-            async_client.caches, "jwks_fetch_lock", lambda _uri: tracked_lock
-        )
+        monkeypatch.setattr(async_cache, "jwks_fetch_lock", lambda _uri: tracked_lock)
 
         real_monotonic = time.monotonic
 
@@ -421,7 +435,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         monkeypatch.setattr(aio_tv.time, "monotonic", recording_monotonic)
 
-        await async_refresh_jwks(JWKS_URL, http_client=async_client)
+        await async_refresh_jwks(JWKS_URL, http_client=async_client, cache=async_cache)
 
         first_lock = recorder.events.index("lock_acquired")
         first_monotonic = recorder.events.index("monotonic_called")

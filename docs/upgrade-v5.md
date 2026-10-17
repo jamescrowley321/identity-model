@@ -60,8 +60,11 @@ These variables are now ignored: `HTTP_TIMEOUT`, `HTTP_RETRY_MAX_ATTEMPTS`,
 `MAX_JWKS_KEYS`, `JWKS_CACHE_TTL`, `DISCO_CACHE_TTL`,
 `KID_MISS_REFRESH_COOLDOWN`, `JWKS_CACHE_MAX_ENTRIES`, `SSL_CERT_FILE`,
 `CURL_CA_BUNDLE` and `REQUESTS_CA_BUNDLE`. A `Config` takes effect only on a
-client you pass as `http_client=`. Without one, an entry point uses the
-library default client, built from `Config()`.
+client you pass as `http_client=`, or, for the cache settings, on a
+`ValidationCache` you pass as `cache=` (see
+[Caches live on a `ValidationCache`](#caches-live-on-a-validationcache-not-on-the-http-client-953)).
+Without one, an entry point uses the library default client or cache, built
+from `Config()`.
 
 Before:
 
@@ -110,14 +113,8 @@ Also changed:
 - `HTTPClient` / `AsyncHTTPClient` no longer take `timeout=` or `verify=`.
   For `verify=False` (in a test) or a proxy, wrap your own httpx client:
   `HTTPClient(httpx.Client(verify=False), config=config)`. The wrapped client
-  keeps its own timeout and TLS settings; the `Config` still sets retries,
-  JWKS limits and the caches.
-- Each client owns its discovery cache, JWKS cache and kid-miss cooldown. An
-  injected `http_client` now uses these caches instead of bypassing them. Keep
-  one long-lived client per configuration.
-- `clear_discovery_cache()` and `clear_jwks_cache()` take an optional
-  `http_client` and clear that client's caches (the default client's when it
-  is omitted).
+  keeps its own timeout and TLS settings; the `Config` still sets retries
+  and JWKS limits.
 - `get_retry_config`, `get_timeout`, `get_max_jwks_size` and
   `get_max_jwks_keys` in `py_identity_model.core.http_utils` are removed.
   `py_identity_model.ssl_config.get_ssl_verify(config)` takes a `Config`.
@@ -167,6 +164,53 @@ that wraps your own `httpx.Client` still raises `ValueError` when combined
 with `mtls=`, because that client's TLS settings (a pinned CA, a proxy, a
 custom transport) cannot be carried over to the certificate client. Set
 `ca_bundle` on the `Config` instead. See [Mutual TLS](api/mtls.md).
+
+### Caches live on a `ValidationCache`, not on the HTTP client ([#953](https://github.com/jamescrowley321/identity-model/issues/953))
+
+In 4.x the discovery and JWKS caches were module-level, and passing
+`http_client=` to `validate_token` bypassed them (and the kid-miss cooldown)
+with a warning. In 5.0 they live on a `ValidationCache` (async:
+`AsyncValidationCache`), which the token validators take as `cache=`. HTTP
+clients only send requests and hold no cache.
+
+- Without `cache=`, `validate_token`, `validate_id_token` and
+  `validate_logout_token` use the process-wide default cache, whichever
+  `http_client` you pass. An injected client is therefore cached and
+  rate-limited like the default one, and a client built per request still
+  shares the kid-miss cooldown.
+- The cache settings (`jwks_cache_ttl`, `discovery_cache_ttl`,
+  `cache_max_entries`, `jwks_kid_miss_cooldown`) are read from the cache's
+  `Config`. On a client's `Config` they have no effect.
+- `clear_discovery_cache()` and `clear_jwks_cache()` take an optional `cache`
+  and clear the default cache when it is omitted.
+- The default cache and the library default HTTP clients are rebuilt in a
+  forked child (gunicorn, uWSGI, `multiprocessing`), so workers never share
+  the parent's cache or connections. Build your own caches and clients after
+  the fork.
+- `close_async_http_client()` can be called from any event loop
+  ([#944](https://github.com/jamescrowley321/identity-model/issues/944)).
+
+Before:
+
+```python
+# JWKS_CACHE_TTL=900 set in the environment
+claims = validate_token(token, validation_config, DISCO_URL)
+```
+
+After:
+
+```python
+from py_identity_model import Config, ValidationCache, validate_token
+
+cache = ValidationCache(config=Config(jwks_cache_ttl=900.0))  # once, at startup
+
+claims = validate_token(token, validation_config, DISCO_URL, cache=cache)
+```
+
+The async validators take an `AsyncValidationCache`
+(`from py_identity_model.aio import AsyncValidationCache`). Build a cache once
+and keep it: a cache built per request starts empty and has no cooldown
+history.
 
 ### `ClientAuthMethod.requires_secret` is removed ([#934](https://github.com/jamescrowley321/identity-model/issues/934))
 

@@ -22,8 +22,6 @@ import pytest
 import respx
 
 from py_identity_model.aio import token_validation as aio_tv
-from py_identity_model.aio.http_client import get_default_async_http_client
-from py_identity_model.aio.managed_client import AsyncClientCaches
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks as async_get_cached_jwks,
 )
@@ -36,15 +34,21 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as async_clear_jwks_cache,
 )
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.sync import token_validation as sync_tv
-from py_identity_model.sync.http_client import get_default_http_client
-from py_identity_model.sync.managed_client import ClientCaches
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
     clear_discovery_cache,
     clear_jwks_cache,
+)
+from py_identity_model.sync.validation_cache import (
+    ValidationCache,
+    get_default_validation_cache,
 )
 
 from ..constants import DISCO_URL
@@ -60,14 +64,14 @@ JWKS_URL = "https://example.com/jwks"
 _STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()
 
 
-def _sync_caches() -> ClientCaches:
-    """Caches of the library default sync client (used by these tests)."""
-    return get_default_http_client().caches
+def _sync_caches() -> ValidationCache:
+    """The library default sync cache (used by these tests)."""
+    return get_default_validation_cache()
 
 
-def _async_caches() -> AsyncClientCaches:
-    """Caches of the library default async client (used by these tests)."""
-    return get_default_async_http_client().caches
+def _async_caches() -> AsyncValidationCache:
+    """The library default async cache (used by these tests)."""
+    return get_default_async_validation_cache()
 
 
 @pytest.fixture(autouse=True)

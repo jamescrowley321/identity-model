@@ -15,8 +15,6 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio.http_client import get_default_async_http_client
-from py_identity_model.aio.managed_client import AsyncClientCaches
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks as async_get_cached_jwks,
 )
@@ -35,12 +33,14 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import TokenValidationException
-from py_identity_model.sync.http_client import get_default_http_client
-from py_identity_model.sync.managed_client import ClientCaches
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
@@ -48,6 +48,10 @@ from py_identity_model.sync.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
     validate_token,
+)
+from py_identity_model.sync.validation_cache import (
+    ValidationCache,
+    get_default_validation_cache,
 )
 
 from ..constants import DISCO_URL
@@ -66,14 +70,14 @@ _STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()
 FETCH_AFTER_EXPIRY = 2
 
 
-def _sync_caches() -> ClientCaches:
-    """Caches of the library default sync client (used by these tests)."""
-    return get_default_http_client().caches
+def _sync_caches() -> ValidationCache:
+    """The library default sync cache (used by these tests)."""
+    return get_default_validation_cache()
 
 
-def _async_caches() -> AsyncClientCaches:
-    """Caches of the library default async client (used by these tests)."""
-    return get_default_async_http_client().caches
+def _async_caches() -> AsyncValidationCache:
+    """The library default async cache (used by these tests)."""
+    return get_default_async_validation_cache()
 
 
 @pytest.fixture(autouse=True)

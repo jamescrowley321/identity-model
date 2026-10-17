@@ -1,24 +1,26 @@
-"""Fail-closed controls for the client-owned caches (#753).
+"""Fail-closed controls for the validation caches (#753, #953).
 
-Each ``HTTPClient`` / ``AsyncHTTPClient`` owns its discovery cache, JWKS cache
-and kid-miss cooldown state. These paths are security-gated
-(``tools/mutation_security.py``); this module pins what a regression in them
-could silently break:
+A ``ValidationCache`` / ``AsyncValidationCache`` holds the discovery cache,
+JWKS cache and kid-miss cooldown state; the HTTP client only sends requests.
+These paths are security-gated (``tools/mutation_security.py``); this module
+pins what a regression in them could silently break:
 
 * **Routing.** Every upstream fetch, including the forced JWKS refreshes on a
   kid miss and on a signature failure, goes through the client the caller
-  passed. Falling back to the library default client would fetch with another
-  ``Config`` (CA bundle, timeouts, size limits) and fill another client's
-  caches. The injected clients below answer from an ``httpx.MockTransport``
-  while ``respx`` (which does not intercept a ``MockTransport``) rejects every
-  request the default client makes.
+  passed, and every cache write lands in the cache the caller passed.
+  Falling back to the library default client would fetch with another
+  ``Config`` (CA bundle, timeouts, size limits); falling back to the default
+  cache would fill (and read) another cache. The injected clients below
+  answer from an ``httpx.MockTransport`` while ``respx`` (which does not
+  intercept a ``MockTransport``) rejects every request the default client
+  makes, and the default cache must stay empty.
 * **Cooldown bookkeeping.** A refresh that absorbs a rotation drops the URI's
   kid-miss stamp, and an evicted URI drops its stamp (bounded sidecar).
 * **Single-flight and the cache hits.** A cache miss waits on the URI's
   fetch lock; a fresh hit takes no lock, and both it and a hit found under
   the lock refresh LRU recency (#397).
 * **TTL.** A provider's ``Cache-Control: max-age`` sets the entry TTL ahead
-  of the client's ``Config`` default.
+  of the cache's ``Config`` default.
 * **Refresh coalescing.** A kid-miss refresh that waited on the fetch lock
   while another refresh replaced the stale entry returns that entry instead
   of fetching again, and an entry written at the waiter's own lock-time
@@ -40,8 +42,11 @@ import respx
 
 from py_identity_model import Config
 from py_identity_model.aio import token_validation as aio_tv
-from py_identity_model.aio.http_client import get_default_async_http_client
 from py_identity_model.aio.managed_client import AsyncHTTPClient
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import (
     DiscoCacheEntry,
@@ -56,8 +61,11 @@ from py_identity_model.core.models import (
 )
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.sync import token_validation as sync_tv
-from py_identity_model.sync.http_client import get_default_http_client
 from py_identity_model.sync.managed_client import HTTPClient
+from py_identity_model.sync.validation_cache import (
+    ValidationCache,
+    get_default_validation_cache,
+)
 
 from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
@@ -118,18 +126,16 @@ class _Upstream:
         return httpx.Response(404)
 
     @contextmanager
-    def client(self, config: Config | None = None) -> Iterator[HTTPClient]:
+    def client(self) -> Iterator[HTTPClient]:
         transport = httpx.MockTransport(self.handler)
         with httpx.Client(transport=transport) as http:
-            yield HTTPClient(http, config=config)
+            yield HTTPClient(http)
 
     @asynccontextmanager
-    async def async_client(
-        self, config: Config | None = None
-    ) -> AsyncIterator[AsyncHTTPClient]:
+    async def async_client(self) -> AsyncIterator[AsyncHTTPClient]:
         transport = httpx.MockTransport(self.handler)
         async with httpx.AsyncClient(transport=transport) as http:
-            yield AsyncHTTPClient(http, config=config)
+            yield AsyncHTTPClient(http)
 
 
 def _disco_doc(origin: str) -> dict:
@@ -178,7 +184,7 @@ def _origin_off_the_none_stripe(lock_for: Any, none_lock: object) -> str:
 
 @pytest.fixture(autouse=True)
 def _empty_default_caches():
-    """Tests assert the default client's caches stay empty; start them so."""
+    """Tests assert the default cache stays empty; start it so."""
     sync_tv.clear_discovery_cache()
     sync_tv.clear_jwks_cache()
     yield
@@ -220,21 +226,23 @@ class TestSyncRefreshThroughInjectedClient:
     )
     def test_refresh_uses_injected_client_and_clears_stamp(self, bodies):
         upstream = _Upstream(bodies)
-        with upstream.client(NO_COOLDOWN) as client:
-            client.caches.kid_miss_last_attempt[JWKS_URI] = time.monotonic()
+        with upstream.client() as client:
+            cache = ValidationCache(config=NO_COOLDOWN)
+            cache.kid_miss_last_attempt[JWKS_URI] = time.monotonic()
 
             claims = sync_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
                 f"{ORIGIN}{DISCO_PATH}",
                 http_client=client,
+                cache=cache,
             )
 
             assert claims["sub"] == "user1"
             assert upstream.requests == ROTATION_REQUESTS
-            assert client.caches.kid_miss_last_attempt == {}
-            assert list(client.caches.jwks) == [JWKS_URI]
-        assert dict(get_default_http_client().caches.jwks) == {}
+            assert cache.kid_miss_last_attempt == {}
+            assert list(cache.jwks) == [JWKS_URI]
+        assert dict(get_default_validation_cache().jwks) == {}
 
 
 class TestAsyncRefreshThroughInjectedClient:
@@ -248,21 +256,23 @@ class TestAsyncRefreshThroughInjectedClient:
     )
     async def test_refresh_uses_injected_client_and_clears_stamp(self, bodies):
         upstream = _Upstream(bodies)
-        async with upstream.async_client(NO_COOLDOWN) as client:
-            client.caches.kid_miss_last_attempt[JWKS_URI] = time.monotonic()
+        async with upstream.async_client() as client:
+            cache = AsyncValidationCache(config=NO_COOLDOWN)
+            cache.kid_miss_last_attempt[JWKS_URI] = time.monotonic()
 
             claims = await aio_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
                 f"{ORIGIN}{DISCO_PATH}",
                 http_client=client,
+                cache=cache,
             )
 
             assert claims["sub"] == "user1"
             assert upstream.requests == ROTATION_REQUESTS
-            assert client.caches.kid_miss_last_attempt == {}
-            assert list(client.caches.jwks) == [JWKS_URI]
-        assert dict(get_default_async_http_client().caches.jwks) == {}
+            assert cache.kid_miss_last_attempt == {}
+            assert list(cache.jwks) == [JWKS_URI]
+        assert dict(get_default_async_validation_cache().jwks) == {}
 
 
 # ============================================================================
@@ -285,24 +295,25 @@ class TestSyncKidMissRefreshCoalescing:
         the fetch lock: the waiter uses it and makes no upstream request."""
         upstream = _Upstream(KID_MISS_BODIES)
         with upstream.client() as client:
-            sync_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client)
-            caches = client.caches
-            real_lock_for = caches.jwks_fetch_lock
+            cache = ValidationCache()
+            sync_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client, cache)
+            real_lock_for = cache.jwks_fetch_lock
             raced: list[str] = []
 
             def lock_after_another_refresh(uri: str) -> threading.Lock:
                 if not raced:
                     raced.append(uri)
-                    sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client)
+                    sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache)
                 return real_lock_for(uri)
 
-            monkeypatch.setattr(caches, "jwks_fetch_lock", lock_after_another_refresh)
+            monkeypatch.setattr(cache, "jwks_fetch_lock", lock_after_another_refresh)
 
             claims = sync_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
                 f"{ORIGIN}{DISCO_PATH}",
                 http_client=client,
+                cache=cache,
             )
 
             assert claims["sub"] == "user1"
@@ -312,14 +323,15 @@ class TestSyncKidMissRefreshCoalescing:
     def test_entry_cached_at_the_lock_instant_is_fresh(self, monkeypatch):
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         with upstream.client() as client:
+            cache = ValidationCache()
             entry = _fresh_jwks_entry()
-            client.caches.jwks[JWKS_URI] = JwksCacheEntry(
+            cache.jwks[JWKS_URI] = JwksCacheEntry(
                 response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
             )
             monkeypatch.setattr(sync_tv, "time", _frozen_clock())
 
             response, from_retained = sync_tv._refresh_jwks(
-                JWKS_URI, DiscoveryPolicy(), client
+                JWKS_URI, DiscoveryPolicy(), client, cache
             )
 
             assert response is entry.response
@@ -334,26 +346,27 @@ class TestAsyncKidMissRefreshCoalescing:
     ):
         upstream = _Upstream(KID_MISS_BODIES)
         async with upstream.async_client() as client:
-            await aio_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client)
-            caches = client.caches
-            real_lock_for = caches.jwks_fetch_lock
+            cache = AsyncValidationCache()
+            await aio_tv._get_cached_jwks(JWKS_URI, DiscoveryPolicy(), client, cache)
+            real_lock_for = cache.jwks_fetch_lock
             raced: list[str] = []
 
             @asynccontextmanager
             async def lock_after_another_refresh(uri: str) -> AsyncIterator[None]:
                 if not raced:
                     raced.append(uri)
-                    await aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client)
+                    await aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache)
                 async with real_lock_for(uri):
                     yield
 
-            monkeypatch.setattr(caches, "jwks_fetch_lock", lock_after_another_refresh)
+            monkeypatch.setattr(cache, "jwks_fetch_lock", lock_after_another_refresh)
 
             claims = await aio_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
                 f"{ORIGIN}{DISCO_PATH}",
                 http_client=client,
+                cache=cache,
             )
 
             assert claims["sub"] == "user1"
@@ -364,14 +377,15 @@ class TestAsyncKidMissRefreshCoalescing:
     async def test_entry_cached_at_the_lock_instant_is_fresh(self, monkeypatch):
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         async with upstream.async_client() as client:
+            cache = AsyncValidationCache()
             entry = _fresh_jwks_entry()
-            client.caches.jwks[JWKS_URI] = JwksCacheEntry(
+            cache.jwks[JWKS_URI] = JwksCacheEntry(
                 response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
             )
             monkeypatch.setattr(aio_tv, "time", _frozen_clock())
 
             response, from_retained = await aio_tv._refresh_jwks(
-                JWKS_URI, DiscoveryPolicy(), client
+                JWKS_URI, DiscoveryPolicy(), client, cache
             )
 
             assert response is entry.response
@@ -394,18 +408,19 @@ class TestSyncRefreshEviction:
         """The URI a refresh evicts loses its stamp, and an evicted URI that
         never had one is not an error."""
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
-        with upstream.client(SINGLE_ENTRY) as client:
-            client.caches.jwks[OLD_URI] = _fresh_jwks_entry()
+        with upstream.client() as client:
+            cache = ValidationCache(config=SINGLE_ENTRY)
+            cache.jwks[OLD_URI] = _fresh_jwks_entry()
             if stamped:
-                client.caches.kid_miss_last_attempt[OLD_URI] = time.monotonic()
+                cache.kid_miss_last_attempt[OLD_URI] = time.monotonic()
 
             response, from_retained = sync_tv._refresh_jwks(
-                NEW_URI, DiscoveryPolicy(), client
+                NEW_URI, DiscoveryPolicy(), client, cache
             )
 
             assert (response.is_successful, from_retained) == (True, False)
-            assert list(client.caches.jwks) == [NEW_URI]
-            assert client.caches.kid_miss_last_attempt == {}
+            assert list(cache.jwks) == [NEW_URI]
+            assert cache.kid_miss_last_attempt == {}
 
 
 class TestAsyncRefreshEviction:
@@ -413,18 +428,19 @@ class TestAsyncRefreshEviction:
     @pytest.mark.parametrize("stamped", [True, False], ids=["stamped", "unstamped"])
     async def test_refresh_eviction_drops_the_stamp(self, stamped):
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
-        async with upstream.async_client(SINGLE_ENTRY) as client:
-            client.caches.jwks[OLD_URI] = _fresh_jwks_entry()
+        async with upstream.async_client() as client:
+            cache = AsyncValidationCache(config=SINGLE_ENTRY)
+            cache.jwks[OLD_URI] = _fresh_jwks_entry()
             if stamped:
-                client.caches.kid_miss_last_attempt[OLD_URI] = time.monotonic()
+                cache.kid_miss_last_attempt[OLD_URI] = time.monotonic()
 
             response, from_retained = await aio_tv._refresh_jwks(
-                NEW_URI, DiscoveryPolicy(), client
+                NEW_URI, DiscoveryPolicy(), client, cache
             )
 
             assert (response.is_successful, from_retained) == (True, False)
-            assert list(client.caches.jwks) == [NEW_URI]
-            assert client.caches.kid_miss_last_attempt == {}
+            assert list(cache.jwks) == [NEW_URI]
+            assert cache.kid_miss_last_attempt == {}
 
 
 # ============================================================================
@@ -451,35 +467,35 @@ class TestSyncLockFreeHit:
     def test_disco_hit_takes_no_lock_and_refreshes_recency(self):
         hot, other = CANDIDATE_ORIGINS[0], CANDIDATE_ORIGINS[1]
         with HTTPClient() as client:
-            caches = client.caches
-            caches.disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
-            caches.disco[_disco_key(other)] = _fresh_disco_entry(other)
+            cache = ValidationCache()
+            cache.disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
+            cache.disco[_disco_key(other)] = _fresh_disco_entry(other)
 
             results = self._call_while_locked(
-                caches.disco_fetch_lock(_disco_key(hot)),
+                cache.disco_fetch_lock(_disco_key(hot)),
                 lambda: sync_tv._get_disco_response(
-                    f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client
+                    f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client, cache
                 ),
             )
 
             assert results == [hot_entry.response]
-            assert list(caches.disco) == [_disco_key(other), _disco_key(hot)]
+            assert list(cache.disco) == [_disco_key(other), _disco_key(hot)]
 
     def test_jwks_hit_takes_no_lock_and_refreshes_recency(self):
         hot = f"{CANDIDATE_ORIGINS[0]}{JWKS_PATH}"
         other = f"{CANDIDATE_ORIGINS[1]}{JWKS_PATH}"
         with HTTPClient() as client:
-            caches = client.caches
-            caches.jwks[hot] = hot_entry = _fresh_jwks_entry()
-            caches.jwks[other] = _fresh_jwks_entry()
+            cache = ValidationCache()
+            cache.jwks[hot] = hot_entry = _fresh_jwks_entry()
+            cache.jwks[other] = _fresh_jwks_entry()
 
             results = self._call_while_locked(
-                caches.jwks_fetch_lock(hot),
-                lambda: sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client),
+                cache.jwks_fetch_lock(hot),
+                lambda: sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client, cache),
             )
 
             assert results == [hot_entry.response]
-            assert list(caches.jwks) == [other, hot]
+            assert list(cache.jwks) == [other, hot]
 
 
 class TestSyncDoubleCheckedHit:
@@ -496,16 +512,16 @@ class TestSyncDoubleCheckedHit:
             sync_tv, "is_cache_expired", Mock(side_effect=[True, False])
         )
         with HTTPClient() as client:
-            caches = client.caches
-            caches.disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
-            caches.disco[_disco_key(other)] = _fresh_disco_entry(other)
+            cache = ValidationCache()
+            cache.disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
+            cache.disco[_disco_key(other)] = _fresh_disco_entry(other)
 
             result = sync_tv._get_disco_response(
-                f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client
+                f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client, cache
             )
 
             assert result is hot_entry.response
-            assert list(caches.disco) == [_disco_key(other), _disco_key(hot)]
+            assert list(cache.disco) == [_disco_key(other), _disco_key(hot)]
 
     @respx.mock
     def test_jwks_double_checked_hit_refreshes_recency(self, monkeypatch):
@@ -515,14 +531,14 @@ class TestSyncDoubleCheckedHit:
             sync_tv, "is_cache_expired", Mock(side_effect=[True, False])
         )
         with HTTPClient() as client:
-            caches = client.caches
-            caches.jwks[hot] = hot_entry = _fresh_jwks_entry()
-            caches.jwks[other] = _fresh_jwks_entry()
+            cache = ValidationCache()
+            cache.jwks[hot] = hot_entry = _fresh_jwks_entry()
+            cache.jwks[other] = _fresh_jwks_entry()
 
-            result = sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client)
+            result = sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client, cache)
 
             assert result is hot_entry.response
-            assert list(caches.jwks) == [other, hot]
+            assert list(cache.jwks) == [other, hot]
 
 
 # ============================================================================
@@ -546,32 +562,32 @@ class TestSyncMissWaitsOnFetchLock:
     def test_disco_miss_waits_on_the_address_lock(self):
         upstream = _Upstream([[]])
         with upstream.client() as client:
-            caches = client.caches
+            cache = ValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: caches.disco_fetch_lock(_disco_key(o)),
-                caches.disco_fetch_lock(_NO_KEY),
+                lambda o: cache.disco_fetch_lock(_disco_key(o)),
+                cache.disco_fetch_lock(_NO_KEY),
             )
             self._assert_blocked_until_released(
-                caches.disco_fetch_lock(_disco_key(origin)),
+                cache.disco_fetch_lock(_disco_key(origin)),
                 upstream,
                 lambda: sync_tv._get_disco_response(
-                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client
+                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
                 ),
             )
 
     def test_refresh_waits_on_the_uri_lock(self):
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         with upstream.client() as client:
-            caches = client.caches
+            cache = ValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: caches.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
-                caches.jwks_fetch_lock(_NO_KEY),
+                lambda o: cache.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
+                cache.jwks_fetch_lock(_NO_KEY),
             )
             uri = f"{origin}{JWKS_PATH}"
             self._assert_blocked_until_released(
-                caches.jwks_fetch_lock(uri),
+                cache.jwks_fetch_lock(uri),
                 upstream,
-                lambda: sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client),
+                lambda: sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache),
             )
 
 
@@ -592,16 +608,16 @@ class TestAsyncMissWaitsOnFetchLock:
     async def test_disco_miss_waits_on_the_address_lock(self):
         upstream = _Upstream([[]])
         async with upstream.async_client() as client:
-            caches = client.caches
+            cache = AsyncValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: caches.disco_fetch_lock(_disco_key(o)),
-                caches.disco_fetch_lock(_NO_KEY),
+                lambda o: cache.disco_fetch_lock(_disco_key(o)),
+                cache.disco_fetch_lock(_NO_KEY),
             )
             await self._assert_blocked_until_released(
-                caches.disco_fetch_lock(_disco_key(origin)),
+                cache.disco_fetch_lock(_disco_key(origin)),
                 upstream,
                 lambda: aio_tv._get_disco_response(
-                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client
+                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
                 ),
             )
 
@@ -609,16 +625,16 @@ class TestAsyncMissWaitsOnFetchLock:
     async def test_refresh_waits_on_the_uri_lock(self):
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         async with upstream.async_client() as client:
-            caches = client.caches
+            cache = AsyncValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: caches.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
-                caches.jwks_fetch_lock(_NO_KEY),
+                lambda o: cache.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
+                cache.jwks_fetch_lock(_NO_KEY),
             )
             uri = f"{origin}{JWKS_PATH}"
             await self._assert_blocked_until_released(
-                caches.jwks_fetch_lock(uri),
+                cache.jwks_fetch_lock(uri),
                 upstream,
-                lambda: aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client),
+                lambda: aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache),
             )
 
 

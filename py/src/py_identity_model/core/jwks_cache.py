@@ -23,6 +23,7 @@ based on their key rotation schedule (e.g., Google uses ``max-age=19800``).
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import re
 import threading
 import time
@@ -103,7 +104,32 @@ _NO_CACHE_RE = re.compile(r"\bno-cache\b", re.IGNORECASE)
 # :func:`_enforce_size_limit` call. It is always acquired last (inside any
 # caller-held write lock), never wraps I/O, and guards only O(1)/O(overflow)
 # dict operations, so it adds no deadlock risk and negligible contention.
-_CACHE_STRUCTURE_LOCK = threading.RLock()
+class _ForkSafeRLock:
+    """A reentrant lock that a forked child gets fresh.
+
+    A parent thread may hold the lock at the moment of the fork; the child
+    would inherit it held, with no thread left to release it. The lock is
+    replaced in the child after ``os.fork()``. The child's default caches are
+    rebuilt too (see ``core.process_local``), so nothing it uses depends on
+    the parent's lock.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        if hasattr(os, "register_at_fork"):
+            os.register_at_fork(after_in_child=self._reset)
+
+    def _reset(self) -> None:
+        self._lock = threading.RLock()
+
+    def __enter__(self) -> bool:
+        return self._lock.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+
+_CACHE_STRUCTURE_LOCK = _ForkSafeRLock()
 
 
 def touch_cache_entry(cache: OrderedDict, key: object) -> None:

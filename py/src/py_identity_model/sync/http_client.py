@@ -8,8 +8,9 @@ library reads no environment variables.
 
 The library default client (:func:`get_default_http_client`) is built from
 ``Config()`` and used by every entry point called without ``http_client=``.
-It is one process-wide :class:`HTTPClient`, so its discovery and JWKS caches
-are shared, but each thread gets its own underlying ``httpx.Client``.
+It is one :class:`HTTPClient` per process: each thread gets its own underlying
+``httpx.Client``, and a forked child gets a new default client rather than the
+parent's connections.
 """
 
 from __future__ import annotations
@@ -29,8 +30,9 @@ from ..core.http_utils import (
     should_retry_response,
 )
 from ..core.mtls import build_mtls_ssl_context
+from ..core.process_local import ProcessLocal
 from ..logging_config import logger
-from .managed_client import ClientCaches, HTTPClient, build_httpx_client
+from .managed_client import HTTPClient, build_httpx_client
 
 
 if TYPE_CHECKING:
@@ -43,16 +45,15 @@ _P = ParamSpec("_P")
 
 
 class _DefaultHTTPClient(HTTPClient):
-    """The library default client: shared caches, thread-local connections.
+    """The library default client: thread-local connections.
 
     Each thread gets its own ``httpx.Client`` built from the config, created
     on first use. :meth:`close` closes only the calling thread's client; the
-    next use in that thread builds a new one. The caches survive a close.
+    next use in that thread builds a new one.
     """
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._caches = ClientCaches()
         self._owned = True
         self._closed = False
         self._local = threading.local()
@@ -72,40 +73,33 @@ class _DefaultHTTPClient(HTTPClient):
             self._local.client = None
 
 
-_default_client_lock = threading.Lock()
-_default_state: dict[str, _DefaultHTTPClient | None] = {"client": None}
+_default_client: ProcessLocal[_DefaultHTTPClient] = ProcessLocal(
+    lambda inherited: _DefaultHTTPClient(
+        inherited.config if inherited is not None else Config()
+    )
+)
 
 
 def get_default_http_client() -> HTTPClient:
     """Return the library default client, built from ``Config()``.
 
-    Used by every sync entry point called without ``http_client=``. The
-    instance is shared by the process (one discovery cache, one JWKS cache),
-    while each thread gets its own ``httpx.Client`` connection pool.
+    Used by every sync entry point called without ``http_client=``. One
+    instance per process, while each thread gets its own ``httpx.Client``
+    connection pool. A forked child builds its own and never uses the
+    parent's connections.
     """
-    client = _default_state["client"]
-    if client is not None:
-        return client
-    with _default_client_lock:
-        client = _default_state["client"]
-        if client is None:
-            client = _DefaultHTTPClient(Config())
-            _default_state["client"] = client
-        return client
+    return _default_client.get()
 
 
 def _reset_default_http_client(config: Config | None = None) -> None:
     """Replace the default client with a fresh one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``) and
-    starts with empty caches. Closes the calling thread's connections of the
-    previous default.
+    The new default is built from *config* (``Config()`` when ``None``).
+    Closes the calling thread's connections of the previous default.
     """
-    with _default_client_lock:
-        previous = _default_state["client"]
-        _default_state["client"] = _DefaultHTTPClient(
-            config if config is not None else Config()
-        )
+    previous = _default_client.replace(
+        _DefaultHTTPClient(config if config is not None else Config())
+    )
     if previous is not None:
         previous.close()
 
@@ -301,10 +295,9 @@ def close_http_client() -> None:
 
     Note:
         This only closes the client for the current thread. Other threads
-        maintain their own clients independently. The default client's caches
-        are kept.
+        maintain their own clients independently.
     """
-    client = _default_state["client"]
+    client = _default_client.peek()
     if client is not None:
         client.close()
 

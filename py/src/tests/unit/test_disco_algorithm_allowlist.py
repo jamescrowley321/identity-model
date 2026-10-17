@@ -14,6 +14,9 @@ from py_identity_model.aio.discovery import (
     get_discovery_document as aio_get_discovery_document,
 )
 from py_identity_model.aio.http_client import get_default_async_http_client
+from py_identity_model.aio.validation_cache import (
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.models import (
     DiscoveryDocumentRequest,
     TokenValidationConfig,
@@ -22,6 +25,7 @@ from py_identity_model.exceptions import TokenValidationException
 from py_identity_model.sync import token_validation as sync_tv
 from py_identity_model.sync.discovery import get_discovery_document
 from py_identity_model.sync.http_client import get_default_http_client
+from py_identity_model.sync.validation_cache import get_default_validation_cache
 
 from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
@@ -103,7 +107,11 @@ class TestSyncDiscoAlgorithmAllowlist:
 
         with pytest.raises(TokenValidationException) as exc_info:
             sync_tv._retry_with_refreshed_jwks(
-                token, _config(allowed), disco, get_default_http_client()
+                token,
+                _config(allowed),
+                disco,
+                get_default_http_client(),
+                get_default_validation_cache(),
             )
 
         assert exc_info.value.message == (
@@ -132,7 +140,11 @@ class TestSyncDiscoAlgorithmAllowlist:
         disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         decoded = sync_tv._retry_with_refreshed_jwks(
-            token, _config(algorithms), disco, get_default_http_client()
+            token,
+            _config(algorithms),
+            disco,
+            get_default_http_client(),
+            get_default_validation_cache(),
         )
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
@@ -169,7 +181,11 @@ class TestAsyncDiscoAlgorithmAllowlist:
 
         with pytest.raises(TokenValidationException) as exc_info:
             await aio_tv._retry_with_refreshed_jwks(
-                token, _config(allowed), disco, get_default_async_http_client()
+                token,
+                _config(allowed),
+                disco,
+                get_default_async_http_client(),
+                get_default_async_validation_cache(),
             )
 
         assert exc_info.value.message == (
@@ -204,7 +220,11 @@ class TestAsyncDiscoAlgorithmAllowlist:
         )
 
         decoded = await aio_tv._retry_with_refreshed_jwks(
-            token, _config(algorithms), disco, get_default_async_http_client()
+            token,
+            _config(algorithms),
+            disco,
+            get_default_async_http_client(),
+            get_default_async_validation_cache(),
         )
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}

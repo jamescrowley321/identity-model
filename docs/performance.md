@@ -17,9 +17,10 @@ request path off the network. The cache is **not** `functools.lru_cache` /
 automatically, and concurrent misses are coalesced into a single upstream
 fetch. The cache *policy* lives in `core/jwks_cache.py`; the sync and async
 cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
-The caches themselves belong to an HTTP client (`HTTPClient` /
-`AsyncHTTPClient`): each client owns one discovery cache, one JWKS cache and
-one kid-miss cooldown map, and its `Config` sets their TTLs, size and cooldown.
+The caches live on a `ValidationCache` (sync) or `AsyncValidationCache`
+(async), never on an HTTP client: each cache object holds one discovery cache,
+one JWKS cache and one kid-miss cooldown map, and its own `Config` sets their
+TTLs, size and cooldown. HTTP clients only send requests.
 
 ### What is cached
 
@@ -36,7 +37,7 @@ Both caches share the same policy machinery:
   (`touch_cache_entry`) and eviction targets the least-recently-**used** entry.
 - **TTL resolution order.** For each entry the TTL is the first available of:
   (1) the response's `Cache-Control: max-age`, clamped to **[60s, 86400s]**
-  (`MIN_CACHE_TTL_SECONDS` … `MAX_CACHE_TTL_SECONDS`), (2) the client's
+  (`MIN_CACHE_TTL_SECONDS` … `MAX_CACHE_TTL_SECONDS`), (2) the cache's
   `Config` TTL. An out-of-range `Config` value is rejected when the `Config`
   is built.
 - **Single-flight fetch.** Per-URI striped locks (32 stripes) ensure a cache
@@ -52,10 +53,19 @@ Both caches share the same policy machinery:
   embed that creates a new loop per scope does not hit
   `RuntimeError: <Lock> is bound to a different event loop`.
 
-**Important:** caches are per client. Two clients (including a sync and an
-async one) do not share cached data, so keep one long-lived client per
-configuration. Entry points called without `http_client=` use the library
-default client, built from `Config()`; its caches are shared by the process.
+**Important:** validators called without `cache=` use the process-wide
+default cache (`get_default_validation_cache()` /
+`get_default_async_validation_cache()`, built from `Config()`), whichever
+`http_client` they are given. A client built per request therefore still
+shares the cached keys and the kid-miss cooldown. A cache you pass as `cache=`
+is shared only by the calls you pass it to; build it once, not per request.
+The sync and async defaults are separate caches.
+
+**Forking servers:** the default cache and the default HTTP clients are
+rebuilt in a forked child (gunicorn, uWSGI and `multiprocessing` workers), so
+workers never share a parent's cache state or connections. A cache or client
+you build yourself is not reset: build it after the fork, for example in the
+worker's startup hook.
 
 ### Clearing Caches
 
@@ -68,9 +78,9 @@ cache — so callers must `await` them.
 # Sync
 from py_identity_model import clear_discovery_cache, clear_jwks_cache
 
-clear_discovery_cache()  # the library default client's caches
+clear_discovery_cache()  # the default cache
 clear_jwks_cache()
-clear_jwks_cache(http_client=client)  # one injected client's caches
+clear_jwks_cache(cache)  # a ValidationCache you passed as cache=
 ```
 
 ```python
@@ -113,9 +123,8 @@ Semantics:
   stack uses the same TTL/LRU structure but is not yet instrumented.
 - Counters are **per-process**. Under `uvicorn --workers N` each worker keeps
   its own tally — aggregate snapshots across workers for a fleet-wide rate.
-- The injected-`http_client` path bypasses the caches entirely and is
-  deliberately **not** counted (it performs no caching, so a hit rate over it
-  would be meaningless).
+- Every `AsyncValidationCache` reports into the same counters, the default
+  one and any you pass as `cache=`.
 - `get_cache_counters().reset()` zeros every counter — useful for per-run
   baselines and tests.
 

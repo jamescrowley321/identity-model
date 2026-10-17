@@ -3,8 +3,9 @@ Asynchronous token validation with TTL-based JWKS and discovery caching.
 
 This module provides asynchronous token validation using discovery and JWKS,
 with automatic cache expiry and forced JWKS refresh on key rotation. The
-caches and the kid-miss cooldown state belong to the :class:`AsyncHTTPClient`
-used for the call (the library default client when none is passed).
+caches and the kid-miss cooldown state live on the :class:`AsyncValidationCache`
+passed as ``cache=`` (the process-wide default cache when none is passed),
+never on the HTTP client.
 """
 
 import time
@@ -53,6 +54,7 @@ from .discovery import get_discovery_document
 from .http_client import get_default_async_http_client
 from .jwks import get_jwks
 from .managed_client import AsyncHTTPClient
+from .validation_cache import AsyncValidationCache, get_default_async_validation_cache
 
 
 # ============================================================================
@@ -95,10 +97,15 @@ def _resolve_client(http_client: AsyncHTTPClient | None) -> AsyncHTTPClient:
     return http_client if http_client is not None else get_default_async_http_client()
 
 
+def _resolve_cache(cache: AsyncValidationCache | None) -> AsyncValidationCache:
+    return cache if cache is not None else get_default_async_validation_cache()
+
+
 async def _get_disco_response(
     disco_doc_address: str | None,
     policy: DiscoveryPolicy | None = None,
     http_client: AsyncHTTPClient | None = None,
+    cache: AsyncValidationCache | None = None,
 ) -> DiscoveryDocumentResponse:
     """Cached async discovery document fetching with TTL.
 
@@ -116,29 +123,29 @@ async def _get_disco_response(
         )
 
     client = _resolve_client(http_client)
-    caches = client.caches
+    cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (disco_doc_address, policy.cache_key())
-    entry = caches.disco.get(cache_key)
+    entry = cache.disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency — touch_cache_entry serializes the reorder against
         # _enforce_size_limit via the process-wide structure lock. The async
         # write locks are keyed per event loop, so they cannot guard reordering
-        # against an eviction on another loop sharing this client's cache;
+        # against an eviction on another loop sharing this cache;
         # the process-wide lock inside touch_cache_entry does (#397).
-        touch_cache_entry(caches.disco, cache_key)
+        touch_cache_entry(cache.disco, cache_key)
         get_cache_counters().record_disco_hit()
         return entry.response
 
-    async with caches.disco_fetch_lock(cache_key):
-        entry = caches.disco.get(cache_key)
+    async with cache.disco_fetch_lock(cache_key):
+        entry = cache.disco.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
             # Double-checked hit: another coroutine populated the entry while we
             # waited on the fetch lock. This is a genuine cache hit, not a miss —
             # counting it as a miss would inflate the miss rate under concurrent
             # warmup.
-            touch_cache_entry(caches.disco, cache_key)
+            touch_cache_entry(cache.disco, cache_key)
             get_cache_counters().record_disco_hit()
             return entry.response
 
@@ -155,28 +162,28 @@ async def _get_disco_response(
         # zero upstream volume.
         if _upstream_fetch_attempted(disco_doc_address, policy):
             get_cache_counters().record_disco_miss()
-        async with caches.disco_write_lock():
+        async with cache.disco_write_lock():
             apply_disco_cache_outcome(
-                caches.disco, cache_key, response, time.monotonic(), client.config
+                cache.disco, cache_key, response, time.monotonic(), cache.config
             )
         return response
 
 
-async def clear_discovery_cache(http_client: AsyncHTTPClient | None = None) -> None:
-    """Clear the discovery cache of *http_client* (default: the default client).
+async def clear_discovery_cache(cache: AsyncValidationCache | None = None) -> None:
+    """Clear the discovery cache of *cache* (default: the default cache).
 
     Async so it can acquire the disco-cache write lock before clearing: a
     coroutine mid-flight could otherwise write its result back *after* the
     clear, leaving the "cleared" cache holding an entry. Callers must
     ``await``.
 
-    Acquires the *current loop's* write lock. The client's cache is shared by
+    Acquires the *current loop's* write lock. The cache is shared by
     every loop, so the clear is visible to operations on any loop; in-flight
     writes on a different loop are not coordinated with this clear (#399).
     """
-    caches = _resolve_client(http_client).caches
-    async with caches.disco_write_lock():
-        clear_cache_locked(caches.disco)
+    cache = _resolve_cache(cache)
+    async with cache.disco_write_lock():
+        clear_cache_locked(cache.disco)
 
 
 # ============================================================================
@@ -188,29 +195,30 @@ async def _get_cached_jwks(
     jwks_uri: str,
     policy: DiscoveryPolicy | None = None,
     http_client: AsyncHTTPClient | None = None,
+    cache: AsyncValidationCache | None = None,
 ) -> JwksResponse:
     """Return cached JWKS response if fresh, otherwise fetch and cache.
 
     Cache-aside with per-URI single-flight (see ``_get_disco_response``).
     """
     client = _resolve_client(http_client)
-    caches = client.caches
+    cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    entry = caches.jwks.get(jwks_uri)
+    entry = cache.jwks.get(jwks_uri)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency (see _get_disco_response) — self-serializing via
         # the process-wide structure lock, no per-loop write lock needed.
-        touch_cache_entry(caches.jwks, jwks_uri)
+        touch_cache_entry(cache.jwks, jwks_uri)
         get_cache_counters().record_jwks_hit()
         return entry.response
 
-    async with caches.jwks_fetch_lock(jwks_uri):
-        entry = caches.jwks.get(jwks_uri)
+    async with cache.jwks_fetch_lock(jwks_uri):
+        entry = cache.jwks.get(jwks_uri)
         if entry is not None and not is_cache_expired(entry):
             # Double-checked hit populated by a concurrent fetch (see
             # _get_disco_response) — count as a hit, not a miss.
-            touch_cache_entry(caches.jwks, jwks_uri)
+            touch_cache_entry(cache.jwks, jwks_uri)
             get_cache_counters().record_jwks_hit()
             return entry.response
 
@@ -226,11 +234,11 @@ async def _get_cached_jwks(
         # does zero network work and is excluded; see _upstream_fetch_attempted.
         if _upstream_fetch_attempted(jwks_uri, policy):
             get_cache_counters().record_jwks_miss()
-        async with caches.jwks_write_lock():
+        async with cache.jwks_write_lock():
             for gone in apply_jwks_cache_outcome(
-                caches.jwks, jwks_uri, response, time.monotonic(), client.config
+                cache.jwks, jwks_uri, response, time.monotonic(), cache.config
             ):
-                caches.kid_miss_last_attempt.pop(gone, None)
+                cache.kid_miss_last_attempt.pop(gone, None)
         return response
 
 
@@ -238,6 +246,7 @@ async def _refresh_jwks(
     jwks_uri: str,
     policy: DiscoveryPolicy | None = None,
     http_client: AsyncHTTPClient | None = None,
+    cache: AsyncValidationCache | None = None,
     *,
     stale_response: JwksResponse | None = None,
 ) -> tuple[JwksResponse, bool]:
@@ -259,12 +268,12 @@ async def _refresh_jwks(
     flag as "no new information from upstream" (no cooldown stamp).
     """
     client = _resolve_client(http_client)
-    caches = client.caches
+    cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    async with caches.jwks_fetch_lock(jwks_uri):
+    async with cache.jwks_fetch_lock(jwks_uri):
         request_time = time.monotonic()
-        entry = caches.jwks.get(jwks_uri)
+        entry = cache.jwks.get(jwks_uri)
         # A waiter whose stale entry another refresh replaced while it was
         # blocked returns the replacement. The stale entry itself is never
         # returned: only a successful, non-empty fetch replaces an entry.
@@ -285,13 +294,13 @@ async def _refresh_jwks(
         # does zero network work and is excluded via _upstream_fetch_attempted.
         if _upstream_fetch_attempted(jwks_uri, policy):
             get_cache_counters().record_jwks_refresh()
-        async with caches.jwks_write_lock():
+        async with cache.jwks_write_lock():
             for gone in apply_jwks_cache_outcome(
-                caches.jwks, jwks_uri, response, time.monotonic(), client.config
+                cache.jwks, jwks_uri, response, time.monotonic(), cache.config
             ):
-                caches.kid_miss_last_attempt.pop(gone, None)
+                cache.kid_miss_last_attempt.pop(gone, None)
             if response.is_successful and not response.keys:
-                retained = caches.jwks.get(jwks_uri)
+                retained = cache.jwks.get(jwks_uri)
                 if retained is not None and retained.response.keys:
                     logger.info(
                         "JWKS refresh for %s returned 200 with empty keys; "
@@ -303,18 +312,18 @@ async def _refresh_jwks(
         return response, False
 
 
-async def clear_jwks_cache(http_client: AsyncHTTPClient | None = None) -> None:
-    """Clear the JWKS cache and kid-miss state of *http_client*.
+async def clear_jwks_cache(cache: AsyncValidationCache | None = None) -> None:
+    """Clear the JWKS cache and kid-miss state of *cache*.
 
-    Clears the default client's when *http_client* is ``None``. Async so it
+    Clears the default cache's when *cache* is ``None``. Async so it
     can acquire the JWKS-cache write lock before clearing (see
     ``clear_discovery_cache``); the cooldown sidecar is cleared under the same
     lock for the same reason. Callers must ``await``.
     """
-    caches = _resolve_client(http_client).caches
-    async with caches.jwks_write_lock():
-        clear_cache_locked(caches.jwks)
-        caches.kid_miss_last_attempt.clear()
+    cache = _resolve_cache(cache)
+    async with cache.jwks_write_lock():
+        clear_cache_locked(cache.jwks)
+        cache.kid_miss_last_attempt.clear()
 
 
 # ============================================================================
@@ -327,19 +336,21 @@ async def _discover_and_resolve_key(
     disco_doc_address: str | None,
     client: AsyncHTTPClient,
     policy: DiscoveryPolicy,
+    cache: AsyncValidationCache,
 ) -> tuple[dict, str, DiscoveryDocumentResponse]:
-    """Fetch discovery + JWKS through *client*'s caches and resolve the key.
+    """Fetch discovery + JWKS through *client* into *cache* and resolve the key.
 
     ``policy`` is the effective :class:`DiscoveryPolicy` resolved from the
     caller's config; it governs validation and partitions the discovery cache.
 
     Returns (key_dict, alg, disco_response).
     """
-    caches = client.caches
-    disco_doc_response = await _get_disco_response(disco_doc_address, policy, client)
+    disco_doc_response = await _get_disco_response(
+        disco_doc_address, policy, client, cache
+    )
     validate_disco_response(disco_doc_response)
     jwks_uri = validate_jwks_uri(disco_doc_response)
-    jwks_response = await _get_cached_jwks(jwks_uri, policy, client)
+    jwks_response = await _get_cached_jwks(jwks_uri, policy, client, cache)
     validate_jwks_response(jwks_response)
     kid, jwt_alg = extract_jwt_header_fields(jwt)
     # OP key rotation: if the JWT's kid names no signing key in the cached
@@ -353,11 +364,11 @@ async def _discover_and_resolve_key(
         k.kid == kid and is_signing_key(k) for k in cached_keys
     ):
         if should_attempt_kid_miss_refresh(
-            caches.kid_miss_last_attempt,
+            cache.kid_miss_last_attempt,
             jwks_uri,
             has_cached_keys=bool(cached_keys),
             now=time.monotonic(),
-            cooldown=client.config.jwks_kid_miss_cooldown,
+            cooldown=cache.config.jwks_kid_miss_cooldown,
         ):
             logger.info(
                 "kid %s not present in cached JWKS; refreshing (possible key rotation)",
@@ -365,7 +376,7 @@ async def _discover_and_resolve_key(
             )
             # See sync._discover_and_resolve_key for the rationale.
             jwks_response, from_retained_cache = await _refresh_jwks(
-                jwks_uri, policy, client, stale_response=jwks_response
+                jwks_uri, policy, client, cache, stale_response=jwks_response
             )
             if jwks_response.is_successful:
                 refreshed_keys = jwks_response.keys or []
@@ -376,11 +387,11 @@ async def _discover_and_resolve_key(
                 # retained-cache fallback (empty upstream is not
                 # attacker-amplifiable). Mirror of sync.
                 if not from_retained_cache:
-                    async with caches.jwks_write_lock():
+                    async with cache.jwks_write_lock():
                         if kid_found:
-                            caches.kid_miss_last_attempt.pop(jwks_uri, None)
+                            cache.kid_miss_last_attempt.pop(jwks_uri, None)
                         else:
-                            caches.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+                            cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
             else:
                 kid_found = False
             validate_jwks_response(jwks_response)
@@ -404,11 +415,12 @@ async def _retry_with_refreshed_jwks(
     token_validation_config: TokenValidationConfig,
     disco_doc_response: DiscoveryDocumentResponse,
     client: AsyncHTTPClient,
+    cache: AsyncValidationCache,
 ) -> dict:
     """Re-fetch JWKS and retry decode once (key rotation recovery).
 
     See sync._retry_with_refreshed_jwks for the rationale. Shares the
-    client's kid-miss cooldown state with the kid-miss path so an attacker
+    cache's kid-miss cooldown state with the kid-miss path so an attacker
     forging signatures against cached kids can't bypass the cooldown.
     """
     logger.warning("Signature verification failed; retrying with refreshed keys")
@@ -417,13 +429,12 @@ async def _retry_with_refreshed_jwks(
         token_validation_config.discovery_policy,
         token_validation_config.require_https,
     )
-    caches = client.caches
     if not should_attempt_kid_miss_refresh(
-        caches.kid_miss_last_attempt,
+        cache.kid_miss_last_attempt,
         jwks_uri,
         has_cached_keys=True,
         now=time.monotonic(),
-        cooldown=client.config.jwks_kid_miss_cooldown,
+        cooldown=cache.config.jwks_kid_miss_cooldown,
     ):
         logger.debug(
             "Signature-failure retry suppressed for %s: refresh cooldown active",
@@ -433,7 +444,9 @@ async def _retry_with_refreshed_jwks(
             "Signature verification failed; refresh cooldown active"
         )
 
-    jwks_response, from_retained_cache = await _refresh_jwks(jwks_uri, policy, client)
+    jwks_response, from_retained_cache = await _refresh_jwks(
+        jwks_uri, policy, client, cache
+    )
     # See sync._retry_with_refreshed_jwks — transient failures must not
     # stamp the cooldown.
     validate_jwks_response(jwks_response)
@@ -447,12 +460,12 @@ async def _retry_with_refreshed_jwks(
         # Skip cooldown stamp when refresh degraded to a retained-cache
         # fallback. See sync._retry_with_refreshed_jwks.
         if not from_retained_cache:
-            async with caches.jwks_write_lock():
-                caches.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+            async with cache.jwks_write_lock():
+                cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
         raise
     if not from_retained_cache:
-        async with caches.jwks_write_lock():
-            caches.kid_miss_last_attempt.pop(jwks_uri, None)
+        async with cache.jwks_write_lock():
+            cache.kid_miss_last_attempt.pop(jwks_uri, None)
     return decoded
 
 
@@ -461,6 +474,8 @@ async def validate_token(
     token_validation_config: TokenValidationConfig,
     disco_doc_address: str | None = None,
     http_client: AsyncHTTPClient | None = None,
+    *,
+    cache: AsyncValidationCache | None = None,
 ) -> dict:
     """
     Validate a JWT token (async).
@@ -470,9 +485,13 @@ async def validate_token(
         token_validation_config: Token validation configuration
         disco_doc_address: Discovery document address (required if perform_disco=True)
         http_client: Optional managed HTTP client. When ``None`` (the default),
-            the library default client is used. The discovery cache, JWKS
-            cache and kid-miss cooldown used are those of this client, and its
-            ``Config`` sets their TTLs, size and cooldown.
+            the library default client is used. It sends the discovery and
+            JWKS requests; its ``Config`` sets the timeout, retries, TLS and
+            JWKS size limits.
+        cache: Optional :class:`AsyncValidationCache` holding the discovery
+            document, the JWKS and the kid-miss cooldown. Its ``Config`` sets
+            their TTLs, size and cooldown. When ``None`` (the default), the
+            process-wide default cache is used, whichever client is passed.
 
     Returns:
         dict: Decoded token claims
@@ -494,8 +513,9 @@ async def validate_token(
         # A cache hit never touches client.client, where the closed guard
         # lives, so check here: a closed client must not keep validating.
         client.ensure_open()
+        cache = _resolve_cache(cache)
         key_dict, alg, disco_doc_response = await _discover_and_resolve_key(
-            jwt, disco_doc_address, client, policy
+            jwt, disco_doc_address, client, policy, cache
         )
         resolved_config = build_resolved_config(token_validation_config, key_dict, alg)
 
@@ -505,7 +525,7 @@ async def validate_token(
             )
         except SignatureVerificationException:
             decoded_token = await _retry_with_refreshed_jwks(
-                jwt, token_validation_config, disco_doc_response, client
+                jwt, token_validation_config, disco_doc_response, client, cache
             )
     else:
         validate_config_for_manual_validation(token_validation_config)

@@ -1,8 +1,12 @@
-"""Clients take an injected ``Config``; the library reads no environment (#753).
+"""Clients and caches take an injected ``Config``; the library reads no
+environment (#753, #953).
 
 Covers Story 25.2: ``HTTPClient`` / ``AsyncHTTPClient`` accept ``config=``,
-``None`` means ``Config()`` defaults (not the environment), and each client
-owns its discovery cache, JWKS cache and kid-miss cooldown state.
+``None`` means ``Config()`` defaults (not the environment), and the client's
+``Config`` governs transport (timeout, retries, JWKS limits). The discovery
+cache, JWKS cache and kid-miss cooldown live on a ``ValidationCache`` /
+``AsyncValidationCache`` whose own ``Config`` sets their size and cooldown;
+cache settings on a client's ``Config`` are ignored.
 """
 
 import time
@@ -18,6 +22,7 @@ from py_identity_model.aio.token_validation import (
     clear_jwks_cache as aio_clear_jwks_cache,
 )
 from py_identity_model.aio.token_validation import validate_token as aio_validate_token
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import (
     DiscoveryDocumentRequest,
     JwksRequest,
@@ -35,6 +40,7 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
     validate_token,
 )
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
@@ -49,7 +55,8 @@ CUSTOM_TIMEOUT = 7.5
 CUSTOM_RETRIES = 2
 CUSTOM_MAX_KEYS = 1
 CUSTOM_MAX_SIZE = 16
-TWO_CLIENTS = 2
+TWO_FETCHES = 2
+KID_MISS_ATTEMPTS = 3
 
 
 def _token(pem: bytes, kid: str = "test-key-1") -> str:
@@ -169,9 +176,9 @@ class TestJwksLimitsFromConfig:
 
 
 @pytest.mark.unit
-class TestCachesLiveOnTheClient:
+class TestCachesLiveOnTheValidationCache:
     @respx.mock
-    def test_injected_client_caches_discovery_and_jwks(self):
+    def test_injected_cache_caches_discovery_and_jwks(self):
         key, pem = generate_rsa_keypair()
         disco = respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
@@ -179,33 +186,21 @@ class TestCachesLiveOnTheClient:
         jwks = respx.get(JWKS_URL).mock(
             return_value=httpx.Response(200, json={"keys": [key]})
         )
+        cache = ValidationCache()
         with HTTPClient() as client:
-            for _ in range(TWO_CLIENTS):
+            for _ in range(TWO_FETCHES):
                 validate_token(
-                    _token(pem), _validation_config(), DISCO_URL, http_client=client
+                    _token(pem),
+                    _validation_config(),
+                    DISCO_URL,
+                    http_client=client,
+                    cache=cache,
                 )
         assert disco.call_count == 1
         assert jwks.call_count == 1
 
     @respx.mock
-    def test_two_clients_do_not_share_cached_documents(self):
-        key, pem = generate_rsa_keypair()
-        disco = respx.get(DISCO_URL).mock(
-            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
-        )
-        jwks = respx.get(JWKS_URL).mock(
-            return_value=httpx.Response(200, json={"keys": [key]})
-        )
-        with HTTPClient() as first, HTTPClient() as second:
-            for client in (first, second):
-                validate_token(
-                    _token(pem), _validation_config(), DISCO_URL, http_client=client
-                )
-        assert disco.call_count == TWO_CLIENTS
-        assert jwks.call_count == TWO_CLIENTS
-
-    @respx.mock
-    def test_clear_caches_targets_the_given_client(self):
+    def test_two_caches_do_not_share_cached_documents(self):
         key, pem = generate_rsa_keypair()
         disco = respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
@@ -214,12 +209,38 @@ class TestCachesLiveOnTheClient:
             return_value=httpx.Response(200, json={"keys": [key]})
         )
         with HTTPClient() as client:
-            validate_token(_token(pem), _validation_config(), DISCO_URL, client)
-            clear_discovery_cache(http_client=client)
-            clear_jwks_cache(http_client=client)
-            validate_token(_token(pem), _validation_config(), DISCO_URL, client)
-        assert disco.call_count == TWO_CLIENTS
-        assert jwks.call_count == TWO_CLIENTS
+            for cache in (ValidationCache(), ValidationCache()):
+                validate_token(
+                    _token(pem),
+                    _validation_config(),
+                    DISCO_URL,
+                    http_client=client,
+                    cache=cache,
+                )
+        assert disco.call_count == TWO_FETCHES
+        assert jwks.call_count == TWO_FETCHES
+
+    @respx.mock
+    def test_clear_caches_targets_the_given_cache(self):
+        key, pem = generate_rsa_keypair()
+        disco = respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks = respx.get(JWKS_URL).mock(
+            return_value=httpx.Response(200, json={"keys": [key]})
+        )
+        cache = ValidationCache()
+        with HTTPClient() as client:
+            validate_token(
+                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+            )
+            clear_discovery_cache(cache=cache)
+            clear_jwks_cache(cache=cache)
+            validate_token(
+                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+            )
+        assert disco.call_count == TWO_FETCHES
+        assert jwks.call_count == TWO_FETCHES
 
     @respx.mock
     def test_cache_max_entries_from_config(self):
@@ -257,11 +278,18 @@ class TestCachesLiveOnTheClient:
             },
             headers={"kid": "test-key-1"},
         )
-        with HTTPClient(config=Config(cache_max_entries=1)) as client:
-            validate_token(_token(pem), _validation_config(), DISCO_URL, client)
-            validate_token(other_token, _validation_config(), other_disco, client)
-            validate_token(_token(pem), _validation_config(), DISCO_URL, client)
-        assert jwks.call_count == TWO_CLIENTS
+        cache = ValidationCache(config=Config(cache_max_entries=1))
+        with HTTPClient() as client:
+            validate_token(
+                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+            )
+            validate_token(
+                other_token, _validation_config(), other_disco, client, cache=cache
+            )
+            validate_token(
+                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+            )
+        assert jwks.call_count == TWO_FETCHES
 
     @respx.mock
     def test_kid_miss_cooldown_from_config(self):
@@ -273,21 +301,47 @@ class TestCachesLiveOnTheClient:
         jwks = respx.get(JWKS_URL).mock(
             return_value=httpx.Response(200, json={"keys": [key]})
         )
-        attempts = 3
-        with HTTPClient(config=Config(jwks_kid_miss_cooldown=0)) as client:
-            for _ in range(attempts):
+        cache = ValidationCache(config=Config(jwks_kid_miss_cooldown=0))
+        with HTTPClient() as client:
+            for _ in range(KID_MISS_ATTEMPTS):
                 with pytest.raises(PyIdentityModelException):
                     validate_token(
                         _token(pem, kid="unknown"),
                         _validation_config(),
                         DISCO_URL,
                         client,
+                        cache=cache,
                     )
         # one initial fetch + one forced refresh per unknown-kid token
-        assert jwks.call_count == 1 + attempts
+        assert jwks.call_count == 1 + KID_MISS_ATTEMPTS
 
     @respx.mock
-    async def test_async_injected_client_caches(self):
+    def test_client_cache_settings_are_ignored(self):
+        """Cooldown 0 on the client does not reach the cache: the cache's
+        default cooldown allows one forced refresh, then suppresses the rest."""
+        key, pem = generate_rsa_keypair()
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks = respx.get(JWKS_URL).mock(
+            return_value=httpx.Response(200, json={"keys": [key]})
+        )
+        cache = ValidationCache()
+        with HTTPClient(config=Config(jwks_kid_miss_cooldown=0)) as client:
+            for _ in range(KID_MISS_ATTEMPTS):
+                with pytest.raises(PyIdentityModelException):
+                    validate_token(
+                        _token(pem, kid="unknown"),
+                        _validation_config(),
+                        DISCO_URL,
+                        client,
+                        cache=cache,
+                    )
+        # one initial fetch + the single refresh the cooldown allows
+        assert jwks.call_count == TWO_FETCHES
+
+    @respx.mock
+    async def test_async_injected_cache_caches(self):
         key, pem = generate_rsa_keypair()
         disco = respx.get(DISCO_URL).mock(
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
@@ -295,14 +349,23 @@ class TestCachesLiveOnTheClient:
         jwks = respx.get(JWKS_URL).mock(
             return_value=httpx.Response(200, json={"keys": [key]})
         )
+        cache = AsyncValidationCache()
         async with AsyncHTTPClient() as client:
-            for _ in range(TWO_CLIENTS):
+            for _ in range(TWO_FETCHES):
                 await aio_validate_token(
-                    _token(pem), _validation_config(), DISCO_URL, http_client=client
+                    _token(pem),
+                    _validation_config(),
+                    DISCO_URL,
+                    http_client=client,
+                    cache=cache,
                 )
-            await aio_clear_jwks_cache(http_client=client)
+            await aio_clear_jwks_cache(cache=cache)
             await aio_validate_token(
-                _token(pem), _validation_config(), DISCO_URL, http_client=client
+                _token(pem),
+                _validation_config(),
+                DISCO_URL,
+                http_client=client,
+                cache=cache,
             )
         assert disco.call_count == 1
-        assert jwks.call_count == TWO_CLIENTS
+        assert jwks.call_count == TWO_FETCHES

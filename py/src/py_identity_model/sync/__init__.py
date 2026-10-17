@@ -146,6 +146,7 @@ from .token_validation import (
     validate_token,
 )
 from .userinfo import UserInfoRequest, UserInfoResponse, get_userinfo
+from .validation_cache import ValidationCache, get_default_validation_cache
 
 
 __all__ = [
@@ -223,6 +224,7 @@ __all__ = [
     "UserInfoErrorKind",
     "UserInfoRequest",
     "UserInfoResponse",
+    "ValidationCache",
     "build_authorization_url",
     "build_dpop_headers",
     "build_end_session_url",
@@ -243,6 +245,7 @@ __all__ = [
     "generate_code_verifier",
     "generate_dpop_key",
     "generate_pkce_pair",
+    "get_default_validation_cache",
     "get_discovery_document",
     "get_jwks",
     "get_userinfo",

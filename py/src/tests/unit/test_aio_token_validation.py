@@ -21,6 +21,7 @@ from py_identity_model.aio.token_validation import (
     clear_jwks_cache,
     validate_token,
 )
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
@@ -693,21 +694,25 @@ class TestAsyncLruReadHitEviction:
                 )
             )
 
-        config = Config(cache_max_entries=len(capacity_urls))
-        async with AsyncHTTPClient(config=config) as client:
-            cache = client.caches.jwks
+        validation_cache = AsyncValidationCache(
+            config=Config(cache_max_entries=len(capacity_urls))
+        )
+        async with AsyncHTTPClient() as client:
+            cache = validation_cache.jwks
 
             # Fill to capacity: hot (oldest) .. op-3 (newest).
             for url in capacity_urls:
-                await _get_cached_jwks(url, http_client=client)
+                await _get_cached_jwks(url, http_client=client, cache=validation_cache)
             assert list(cache) == capacity_urls
 
             # Re-read the hot entry — a cache hit (no network) that refreshes
             # recency.
-            await _get_cached_jwks(hot_url, http_client=client)
+            await _get_cached_jwks(hot_url, http_client=client, cache=validation_cache)
             assert list(cache) == [oldest_unread_url, *warm_urls, hot_url]
 
             # A further distinct URI overflows; eviction targets op-1 (oldest
             # unread), NOT the recently-read hot entry.
-            await _get_cached_jwks(overflow_url, http_client=client)
+            await _get_cached_jwks(
+                overflow_url, http_client=client, cache=validation_cache
+            )
             assert list(cache) == [*warm_urls, hot_url, overflow_url]

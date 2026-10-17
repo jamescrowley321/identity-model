@@ -7,15 +7,13 @@ library uses for every request made through it.  Pass an ``HTTPClient``
 instance to any public sync function via the ``http_client`` parameter to
 use it instead of the library default client.
 
-Each ``HTTPClient`` owns its discovery cache, JWKS cache and kid-miss
-cooldown state, so every cache has exactly one ``Config``.  Two clients do
-not share cached documents.
+The client only sends requests.  The discovery and JWKS caches and the
+kid-miss cooldown live on a validation cache (``cache=`` on the validators),
+not on the client.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
-import threading
 from typing import TYPE_CHECKING
 
 import httpx
@@ -26,44 +24,6 @@ from ..ssl_config import get_ssl_verify
 
 if TYPE_CHECKING:
     from types import TracebackType
-
-    from ..core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
-
-
-# Per-URI fetch locks are striped: two requests for the same address coalesce
-# into one upstream fetch, while requests for different addresses rarely share
-# a stripe and so do not block each other.
-_LOCK_STRIPES = 32
-
-
-class ClientCaches:
-    """Discovery cache, JWKS cache and kid-miss cooldown state of one client.
-
-    The caches are ``OrderedDict``s so read hits can refresh LRU recency;
-    eviction targets the least recently *used* entry (#397). The discovery
-    cache is keyed by ``(address, policy.cache_key())`` so a response admitted
-    under a lax policy is never served to a caller running a stricter one.
-
-    ``write_lock`` guards only the brief cache write + eviction critical
-    section and never spans an upstream fetch; the striped fetch locks give
-    per-URI single-flight. ``kid_miss_last_attempt`` records the last forced
-    JWKS refresh per ``jwks_uri`` and is guarded by ``jwks_write_lock``.
-    """
-
-    def __init__(self) -> None:
-        self.disco: OrderedDict[tuple[str, tuple], DiscoCacheEntry] = OrderedDict()
-        self.disco_write_lock = threading.Lock()
-        self._disco_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
-        self.jwks: OrderedDict[str, JwksCacheEntry] = OrderedDict()
-        self.jwks_write_lock = threading.Lock()
-        self._jwks_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
-        self.kid_miss_last_attempt: dict[str, float] = {}
-
-    def disco_fetch_lock(self, cache_key: tuple[str, tuple]) -> threading.Lock:
-        return self._disco_fetch_locks[hash(cache_key) % _LOCK_STRIPES]
-
-    def jwks_fetch_lock(self, jwks_uri: str) -> threading.Lock:
-        return self._jwks_fetch_locks[hash(jwks_uri) % _LOCK_STRIPES]
 
 
 def build_httpx_client(config: Config) -> httpx.Client:
@@ -85,8 +45,8 @@ class HTTPClient:
 
     When an existing *client* is provided, this instance acts as a
     non-owning wrapper and :meth:`close` is a no-op.  The wrapped client
-    keeps its own timeout and TLS settings; *config* still governs retries,
-    JWKS limits and the caches.
+    keeps its own timeout and TLS settings; *config* still governs retries
+    and JWKS limits.
 
     Args:
         client: Existing ``httpx.Client`` to wrap.  If ``None``, a new
@@ -106,7 +66,6 @@ class HTTPClient:
         config: Config | None = None,
     ) -> None:
         self._config = config if config is not None else Config()
-        self._caches = ClientCaches()
         if client is not None:
             self._client = client
             self._owned = False
@@ -126,11 +85,6 @@ class HTTPClient:
         return self._owned
 
     @property
-    def caches(self) -> ClientCaches:
-        """The discovery/JWKS caches and kid-miss state owned by this client."""
-        return self._caches
-
-    @property
     def client(self) -> httpx.Client:
         """The underlying ``httpx.Client``."""
         self.ensure_open()
@@ -139,7 +93,7 @@ class HTTPClient:
     def ensure_open(self) -> None:
         """Raise ``RuntimeError`` if this client has been closed.
 
-        Entry points call this before serving from the caches, so a closed
+        The validators call this before serving from their cache, so a closed
         client fails the same way on a cache hit as on a cache miss.
         """
         if self._closed:
@@ -167,4 +121,4 @@ class HTTPClient:
         self.close()
 
 
-__all__ = ["ClientCaches", "HTTPClient", "build_httpx_client"]
+__all__ = ["HTTPClient", "build_httpx_client"]

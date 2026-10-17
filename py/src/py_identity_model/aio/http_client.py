@@ -8,7 +8,8 @@ the library reads no environment variables.
 
 The library default client (:func:`get_default_async_http_client`) is one
 process-wide :class:`AsyncHTTPClient` built from ``Config()`` and used by
-every entry point called without ``http_client=``.
+every entry point called without ``http_client=``. A forked child gets a new
+default client rather than the parent's connections.
 """
 
 from __future__ import annotations
@@ -28,12 +29,9 @@ from ..core.http_utils import (
     should_retry_response,
 )
 from ..core.mtls import build_mtls_ssl_context
+from ..core.process_local import ProcessLocal
 from ..logging_config import logger
-from .managed_client import (
-    AsyncClientCaches,
-    AsyncHTTPClient,
-    build_async_httpx_client,
-)
+from .managed_client import AsyncHTTPClient, build_async_httpx_client
 
 
 if TYPE_CHECKING:
@@ -50,21 +48,19 @@ class _DefaultAsyncHTTPClient(AsyncHTTPClient):
 
     The underlying ``httpx.AsyncClient`` is created on first use (under a
     thread lock, so concurrent first use from several threads builds one).
-    :meth:`close` closes it and the next use builds a new one; the caches
-    survive a close.
+    :meth:`close` closes it and the next use builds a new one.
+
+    Holds no ``asyncio`` primitive, so it can be closed from any event loop
+    (#944): :meth:`close` takes the client out under the thread lock, and
+    only the caller that took it closes it.
     """
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._caches = AsyncClientCaches()
         self._owned = True
         self._closed = False
         self._http: httpx.AsyncClient | None = None
         self._creation_lock = threading.Lock()
-        # Created eagerly to avoid initialization races. asyncio.Lock() is safe
-        # to create outside an event loop; it binds to the running loop on
-        # first acquire.
-        self._cleanup_lock = asyncio.Lock()
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -77,13 +73,10 @@ class _DefaultAsyncHTTPClient(AsyncHTTPClient):
             return self._http
 
     async def close(self) -> None:
-        if self._http is None:
-            return
-        async with self._cleanup_lock:
-            http = self._http
-            if http is not None:
-                await http.aclose()
-                self._http = None
+        with self._creation_lock:
+            http, self._http = self._http, None
+        if http is not None:
+            await http.aclose()
 
     def forget_connections(self) -> None:
         """Drop the underlying client without closing it (testing only)."""
@@ -91,28 +84,23 @@ class _DefaultAsyncHTTPClient(AsyncHTTPClient):
             self._http = None
 
 
-_default_client_lock = threading.Lock()
-_default_state: dict[str, _DefaultAsyncHTTPClient | None] = {"client": None}
+_default_client: ProcessLocal[_DefaultAsyncHTTPClient] = ProcessLocal(
+    lambda inherited: _DefaultAsyncHTTPClient(
+        inherited.config if inherited is not None else Config()
+    )
+)
 
 
 def _get_default() -> _DefaultAsyncHTTPClient:
-    client = _default_state["client"]
-    if client is not None:
-        return client
-    with _default_client_lock:
-        client = _default_state["client"]
-        if client is None:
-            client = _DefaultAsyncHTTPClient(Config())
-            _default_state["client"] = client
-        return client
+    return _default_client.get()
 
 
 def get_default_async_http_client() -> AsyncHTTPClient:
     """Return the library default async client, built from ``Config()``.
 
-    Used by every async entry point called without ``http_client=``. The
-    instance is shared by the process: one discovery cache, one JWKS cache,
-    one connection pool.
+    Used by every async entry point called without ``http_client=``. One
+    instance and one connection pool per process; a forked child builds its
+    own and never uses the parent's connections.
     """
     return _get_default()
 
@@ -120,14 +108,13 @@ def get_default_async_http_client() -> AsyncHTTPClient:
 def _reset_default_async_http_client(config: Config | None = None) -> None:
     """Replace the default client with a fresh one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``) and
-    starts with empty caches. Does NOT close the previous default's
-    connections; ``await close_async_http_client()`` first for that.
+    The new default is built from *config* (``Config()`` when ``None``). Does
+    NOT close the previous default's connections;
+    ``await close_async_http_client()`` first for that.
     """
-    with _default_client_lock:
-        _default_state["client"] = _DefaultAsyncHTTPClient(
-            config if config is not None else Config()
-        )
+    _default_client.replace(
+        _DefaultAsyncHTTPClient(config if config is not None else Config())
+    )
 
 
 def _log_retry(message: str, delay: float, attempt: int, retries: int) -> None:
@@ -320,9 +307,9 @@ async def close_async_http_client() -> None:
     This should be called when shutting down the application to properly
     clean up resources. Not calling this will leave connections open, but
     they will be cleaned up when the process exits. The next use builds a
-    new connection pool; the default client's caches are kept.
+    new connection pool. Safe to call from any event loop.
     """
-    client = _default_state["client"]
+    client = _default_client.peek()
     if client is not None:
         await client.close()
 
@@ -335,7 +322,7 @@ def _reset_async_http_client() -> None:
     must await close_async_http_client() first to properly release
     sockets and prevent ResourceWarning during garbage collection.
     """
-    client = _default_state["client"]
+    client = _default_client.peek()
     if client is not None:
         client.forget_connections()
 
