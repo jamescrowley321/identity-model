@@ -29,7 +29,9 @@ def _decode_member(value: object) -> bytes | None:
     if not isinstance(value, str) or not value:
         return None
     try:
-        return urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        # Decoding ignores padding beyond what the input needs, so "==" pads
+        # any unpadded base64url member (RFC 7515 §2).
+        return urlsafe_b64decode(value + "==")
     except (binascii.Error, ValueError):
         return None
 
@@ -47,7 +49,7 @@ def _key_bits(jwk: dict) -> tuple[int, int] | None:
         n = _decode_member(jwk.get("n"))
         if n is None:
             return None
-        return int.from_bytes(n, "big").bit_length(), MIN_RSA_KEY_BITS
+        return int.from_bytes(n).bit_length(), MIN_RSA_KEY_BITS
     if kty == "EC":
         x = _decode_member(jwk.get("x"))
         if x is None:

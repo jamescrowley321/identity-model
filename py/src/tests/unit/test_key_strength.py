@@ -100,6 +100,9 @@ class TestEnforceKeyStrength:
         with pytest.raises(WeakKeyException) as exc_info:
             enforce_key_strength(jwk)
 
+        assert exc_info.value.message == (
+            "RSA verification key is 1024 bits; at least 2048 required"
+        )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {
             "kid": "weak-rsa",
