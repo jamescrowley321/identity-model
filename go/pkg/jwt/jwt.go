@@ -70,6 +70,13 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 		return nil, err
 	}
 
+	// RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies.
+	// Checked on the JWK before conversion, so the rule holds whichever curves
+	// go-jose knows (JWT-014).
+	if err := checkKeyStrength(key); err != nil {
+		return nil, err
+	}
+
 	pub, err := toPublicKey(key)
 	if err != nil {
 		return nil, &KeyConversionError{Kid: header.Kid, Err: err}
@@ -141,6 +148,8 @@ func toPublicKey(k *jwks.JSONWebKey) (crypto.PublicKey, error) {
 		fields["n"], fields["e"] = k.N, k.E
 	case "EC":
 		fields["crv"], fields["x"], fields["y"] = k.Crv, k.X, k.Y
+	case "OKP":
+		fields["crv"], fields["x"] = k.Crv, k.X
 	default:
 		return nil, fmt.Errorf("unsupported key type %q", k.Kty)
 	}

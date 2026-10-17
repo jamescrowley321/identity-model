@@ -9,7 +9,8 @@
 //!
 //! Thin-executor contract: the vectors carry inputs and canonical expected
 //! outcomes; only the mapping of canonical error codes to
-//! [`IdentityError::Validation`] message shapes lives here (`assert_reject`).
+//! [`IdentityError::Validation`] message shapes (and the typed
+//! [`IdentityError::WeakKey`]) lives here (`assert_reject`).
 //!
 //! Two deliberate deviations from the Go runner, both semantics-preserving:
 //!
@@ -41,6 +42,9 @@ use serde_json::{Map, Value, json};
 const SPEC_FILE: &str = "../spec/vectors/validation.json";
 const FIXTURE_ROOT: &str = "../spec/test-fixtures";
 const SIGNING_KEY_DER: &str = "../spec/test-fixtures/validation/signing-key.pkcs1.der";
+const ED25519_SIGNING_KEY_DER: &str =
+    "../spec/test-fixtures/validation/ed25519-signing-key.pkcs8.der";
+const ED25519_KID: &str = "ed25519-key-1";
 const JWKS_FIXTURE: &str = "../spec/test-fixtures/validation/jwks.json";
 const FIXTURE_KID: &str = "test-key-1";
 
@@ -209,14 +213,27 @@ fn mint_token(spec: &TokenSpec) -> String {
     } else {
         &spec.alg
     };
-    assert_eq!(alg, "RS256", "the fixture signing key is RS256-only");
-    let key = EncodingKey::from_rsa_der(
-        &std::fs::read(SIGNING_KEY_DER).expect("read signing-key fixture"),
-    );
+    let (algorithm, key, default_kid) = if spec.signing_key == "ed25519" {
+        assert_eq!(alg, "EdDSA", "the ed25519 signing key is EdDSA-only");
+        let der = std::fs::read(ED25519_SIGNING_KEY_DER).expect("read ed25519 signing-key fixture");
+        (
+            Algorithm::EdDSA,
+            EncodingKey::from_ed_der(&der),
+            ED25519_KID,
+        )
+    } else {
+        assert_eq!(alg, "RS256", "the fixture signing key is RS256-only");
+        let der = std::fs::read(SIGNING_KEY_DER).expect("read signing-key fixture");
+        (
+            Algorithm::RS256,
+            EncodingKey::from_rsa_der(&der),
+            FIXTURE_KID,
+        )
+    };
 
-    let mut header = Header::new(Algorithm::RS256);
+    let mut header = Header::new(algorithm);
     let kid = if spec.header_kid.is_empty() {
-        FIXTURE_KID
+        default_kid
     } else {
         &spec.header_kid
     };
@@ -293,6 +310,13 @@ fn options_for(o: &VectorOptions) -> ValidationOptions {
 /// [`IdentityError::Validation`] message shapes (`rust/src/jwt/mod.rs`,
 /// `claims.rs::claim_err`).
 fn assert_reject(label: &str, err: &IdentityError, expect: &Expect) {
+    if expect.error == "weak_key" {
+        assert!(
+            matches!(err, IdentityError::WeakKey { .. }),
+            "{label}: expected IdentityError::WeakKey, got {err:?}"
+        );
+        return;
+    }
     let IdentityError::Validation(msg) = err else {
         panic!("{label}: expected IdentityError::Validation, got {err:?}");
     };

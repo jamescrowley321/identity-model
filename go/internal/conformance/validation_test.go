@@ -36,7 +36,10 @@ func TestValidationConformance(t *testing.T) {
 		t.Fatalf("load capability: %v", err)
 	}
 
-	signingKey := mustSigningKey(t)
+	signingKeys := FixtureKeys{
+		RSA:     mustSigningKey(t, "validation/signing-key.jwk.json"),
+		Ed25519: mustSigningKey(t, "validation/ed25519-signing-key.jwk.json"),
+	}
 	keySet := mustFixtureKeySet(t)
 
 	// Counted per VECTOR and only after each one passes: runVector calls
@@ -50,7 +53,7 @@ func TestValidationConformance(t *testing.T) {
 				t.Fatalf("%s: no vectors", tc.ID)
 			}
 			for i, v := range tc.Vectors {
-				runVector(t, tc.ID, i, v, signingKey, keySet)
+				runVector(t, tc.ID, i, v, signingKeys, keySet)
 				executed[tc.ID]++
 			}
 		})
@@ -65,7 +68,7 @@ func TestValidationConformance(t *testing.T) {
 
 }
 
-func runVector(t *testing.T, id string, idx int, v Vector, signingKey *jose.JSONWebKey, keySet *jwks.JSONWebKeySet) {
+func runVector(t *testing.T, id string, idx int, v Vector, signingKeys FixtureKeys, keySet *jwks.JSONWebKeySet) {
 	t.Helper()
 	label := id
 	if v.Name != "" {
@@ -78,7 +81,7 @@ func runVector(t *testing.T, id string, idx int, v Vector, signingKey *jose.JSON
 	if v.Token.Static != "" {
 		token = strings.TrimSpace(string(mustReadFixture(t, v.Token.Static)))
 	} else {
-		tok, err := MintToken(v.Token, signingKey, now)
+		tok, err := MintToken(v.Token, signingKeys, now)
 		if err != nil {
 			t.Fatalf("%s[%d]: mint token: %v", label, idx, err)
 		}
@@ -169,6 +172,8 @@ func canonicalSentinel(code string) error {
 		return jwt.ErrSignature
 	case ErrorKeyConversion:
 		return jwt.ErrKeyConversion
+	case ErrorWeakKey:
+		return jwt.ErrWeakKey
 	case ErrorClaimValidation:
 		return jwt.ErrClaimValidation
 	default:
@@ -217,11 +222,11 @@ func parseNow(t *testing.T, s string) time.Time {
 	return now.UTC()
 }
 
-func mustSigningKey(t *testing.T) *jose.JSONWebKey {
+func mustSigningKey(t *testing.T, rel string) *jose.JSONWebKey {
 	t.Helper()
-	key, err := SigningKeyFromBytes(mustReadFixture(t, "validation/signing-key.jwk.json"))
+	key, err := SigningKeyFromBytes(mustReadFixture(t, rel))
 	if err != nil {
-		t.Fatalf("load signing key: %v", err)
+		t.Fatalf("load signing key %s: %v", rel, err)
 	}
 	return key
 }

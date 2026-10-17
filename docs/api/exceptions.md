@@ -16,6 +16,7 @@ PyIdentityModelException
 │       ├── KeyNotFoundException
 │       ├── AmbiguousKeyException
 │       ├── KeyAlgorithmMismatchException
+│       ├── WeakKeyException
 │       ├── CertificateBindingError
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
@@ -63,6 +64,8 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.AmbiguousKeyException
 
 ::: py_identity_model.exceptions.KeyAlgorithmMismatchException
+
+::: py_identity_model.exceptions.WeakKeyException
 
 `CertificateBindingError`: see [Mutual TLS](mtls.md#py_identity_model.exceptions.CertificateBindingError).
 

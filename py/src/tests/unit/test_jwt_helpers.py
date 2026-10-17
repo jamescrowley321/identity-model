@@ -22,6 +22,11 @@ from py_identity_model.exceptions import (
 )
 
 
+# Never used to verify (_decode_jwt is patched), but sized at 2048 bits so it
+# clears the key-strength floor checked before decoding.
+PLACEHOLDER_RSA_KEY = {"kty": "RSA", "n": "w" + "A" * 341, "e": "AQAB"}
+
+
 class TestDecodeAndValidateJWT:
     """Test JWT decoding and validation with exception handling."""
 
@@ -41,7 +46,7 @@ class TestDecodeAndValidateJWT:
         with pytest.raises(InvalidAudienceException, match="Invalid audience"):
             decode_and_validate_jwt(
                 jwt="fake.jwt.token",
-                key={"kty": "RSA", "n": "test", "e": "AQAB"},
+                key=PLACEHOLDER_RSA_KEY,
                 algorithms=["RS256"],
                 audience="expected-audience",
                 issuer="expected-issuer",
@@ -63,7 +68,7 @@ class TestDecodeAndValidateJWT:
         with pytest.raises(InvalidIssuerException, match="Invalid issuer"):
             decode_and_validate_jwt(
                 jwt="fake.jwt.token",
-                key={"kty": "RSA", "n": "test", "e": "AQAB"},
+                key=PLACEHOLDER_RSA_KEY,
                 algorithms=["RS256"],
                 audience="expected-audience",
                 issuer="expected-issuer",
@@ -85,7 +90,7 @@ class TestDecodeAndValidateJWT:
         with pytest.raises(SignatureVerificationException, match="Invalid signature"):
             decode_and_validate_jwt(
                 jwt="fake.jwt.token",
-                key={"kty": "RSA", "n": "test", "e": "AQAB"},
+                key=PLACEHOLDER_RSA_KEY,
                 algorithms=["RS256"],
                 audience=None,
                 issuer=None,
@@ -110,7 +115,7 @@ class TestDecodeAndValidateJWT:
         ):
             decode_and_validate_jwt(
                 jwt="fake.jwt.token",
-                key={"kty": "RSA", "n": "test", "e": "AQAB"},
+                key=PLACEHOLDER_RSA_KEY,
                 algorithms=["RS256"],
                 audience=None,
                 issuer=None,
