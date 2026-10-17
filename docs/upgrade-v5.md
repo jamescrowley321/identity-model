@@ -764,3 +764,15 @@ In Rust, `JsonWebKeySet::resolve_signing_key` and
 the same and return `IdentityError::KeyNotFound`, with an empty `kid` for a
 kid-less token. `find`, `resolve_key` and `JwksClient::resolve_key` are
 unchanged.
+
+Both also refuse weak verification keys
+([#952](https://github.com/jamescrowley321/identity-model/issues/952)), as in
+Python: an RSA key under 2048 bits or an EC key under 224 bits fails
+validation without a JWK Set refresh. Go returns `*jwt.WeakKeyError`
+(`errors.Is(err, jwt.ErrWeakKey)`), with the floors in `jwt.MinRSAKeyBits` and
+`jwt.MinECKeyBits`. Rust returns `IdentityError::WeakKey { kid, kty, bits,
+min_bits }`, with the floors in `MIN_RSA_KEY_BITS` and `MIN_EC_KEY_BITS`.
+Their default algorithm allowlists now include `EdDSA`, and Ed25519 (`OKP`)
+keys verify: in Go with `jwt.Validate` and `idtoken`, in Rust with
+`validate_token` and `validate_token_with_jwks`. A caller that passes its own
+allowlist is unaffected.

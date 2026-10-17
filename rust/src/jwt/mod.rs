@@ -38,6 +38,7 @@
 mod claims;
 mod claims_validation;
 mod id_token;
+mod key_strength;
 mod options;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -60,6 +61,8 @@ pub use id_token::{
     IdTokenValidationOptions, IdTokenValidationOptionsBuilder, validate_id_token,
     validate_id_token_claims,
 };
+use key_strength::check_key_strength;
+pub use key_strength::{MIN_EC_KEY_BITS, MIN_RSA_KEY_BITS};
 pub use options::{DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder};
 
 /// The subset of the JWS protected header inspected before any cryptographic
@@ -90,7 +93,9 @@ struct JoseHeader {
 ///
 /// [`IdentityError::Validation`] for a malformed token, a rejected/unsupported
 /// algorithm, a signature that does not verify, or a claim that fails its rule;
-/// [`IdentityError::Deserialization`] for a payload that is not a JSON object.
+/// [`IdentityError::WeakKey`] for an RSA key under 2048 bits or an EC key under
+/// 224 bits; [`IdentityError::Deserialization`] for a payload that is not a JSON
+/// object.
 pub fn validate_token(
     token: &str,
     key: &JsonWebKey,
@@ -100,6 +105,9 @@ pub fn validate_token(
     let header = parse_header(token)?;
     let alg = check_algorithm(&header, options)?;
 
+    // RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies
+    // (JWT-014).
+    check_key_strength(key)?;
     let decoding_key = decoding_key_for(key)?;
 
     // Disable jsonwebtoken's built-in claim checks: we verify only the signature
@@ -260,6 +268,7 @@ fn algorithm_from_str(alg: &str) -> Result<Algorithm> {
         "PS512" => Algorithm::PS512,
         "ES256" => Algorithm::ES256,
         "ES384" => Algorithm::ES384,
+        "EdDSA" => Algorithm::EdDSA,
         _ => {
             return Err(IdentityError::Validation(format!(
                 "unsupported or disallowed algorithm {alg:?}"
@@ -278,6 +287,13 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
             .map_err(|e| IdentityError::Validation(format!("convert RSA key {:?}: {e}", key.kid))),
         "EC" => DecodingKey::from_ec_components(&key.x, &key.y)
             .map_err(|e| IdentityError::Validation(format!("convert EC key {:?}: {e}", key.kid))),
+        // jsonwebtoken's EdDSA verifier is Ed25519 only (RFC 8037 §2).
+        "OKP" if key.crv == "Ed25519" => DecodingKey::from_ed_components(&key.x)
+            .map_err(|e| IdentityError::Validation(format!("convert OKP key {:?}: {e}", key.kid))),
+        "OKP" => Err(IdentityError::Validation(format!(
+            "convert OKP key {:?}: unsupported curve {:?}",
+            key.kid, key.crv
+        ))),
         other => Err(IdentityError::Validation(format!(
             "unsupported key type {other:?}"
         ))),
@@ -615,5 +631,148 @@ mod tests {
                 "expected KeyAlgorithmMismatch, got {err:?}"
             );
         }
+    }
+
+    /// The fixture JWK with `kid`, from the shared validation JWKS.
+    fn fixture_key(kid: &str) -> JsonWebKey {
+        let set = JsonWebKeySet::parse(&read_fixture("jwks.json")).expect("parse jwks fixture");
+        set.resolve_key(kid).expect("fixture key").clone()
+    }
+
+    // #952: the default allowlist gains EdDSA (ES512 stays out: jsonwebtoken
+    // has no P-521).
+    #[test]
+    fn default_allowlist_includes_eddsa() {
+        assert_eq!(
+            DEFAULT_ALLOWED_ALGORITHMS,
+            &[
+                "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA"
+            ]
+        );
+    }
+
+    // JWT-015: an Ed25519 token verifies under the default allowlist.
+    #[test]
+    fn accepts_eddsa_token_under_default_allowlist() {
+        let key = EncodingKey::from_ed_der(&read_fixture("ed25519-signing-key.pkcs8.der"));
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some("ed25519-key-1".to_string());
+        let n = now();
+        let claims = json!({ "iss": TEST_ISSUER, "sub": "ed-user", "exp": n + 3600, "iat": n });
+        let token = jsonwebtoken::encode(&header, &claims, &key).expect("sign EdDSA");
+
+        let validated = validate_token(
+            &token,
+            &fixture_key("ed25519-key-1"),
+            &ValidationOptions::new(),
+        )
+        .expect("valid EdDSA token");
+        assert_eq!(validated.subject.as_deref(), Some("ed-user"));
+    }
+
+    // An OKP key on a curve jsonwebtoken can't verify (Ed448) is a key
+    // conversion error, not a silent Ed25519 verification.
+    #[test]
+    fn rejects_okp_key_on_unsupported_curve() {
+        let mut key = fixture_key("ed25519-key-1");
+        key.crv = "Ed448".to_string();
+        let err = decoding_key_for(&key).expect_err("Ed448 unsupported");
+        assert!(err.to_string().contains("convert OKP key"), "{err}");
+    }
+
+    // JWT-014: a token whose key is below the strength floor fails with the
+    // typed WeakKey error.
+    #[test]
+    fn rejects_weak_keys() {
+        for (fixture, kid, kty, bits, min_bits) in [
+            (
+                "weak-rsa-1024-token.txt",
+                "weak-rsa-1024",
+                "RSA",
+                1024,
+                MIN_RSA_KEY_BITS,
+            ),
+            (
+                "weak-ec-p192-token.txt",
+                "weak-ec-p192",
+                "EC",
+                192,
+                MIN_EC_KEY_BITS,
+            ),
+        ] {
+            let token = String::from_utf8(read_fixture(fixture)).expect("utf8 token");
+            let err = validate_token(token.trim(), &fixture_key(kid), &ValidationOptions::new())
+                .expect_err("weak key rejected");
+            assert!(
+                matches!(&err, IdentityError::WeakKey { kid: k, kty: t, bits: b, min_bits: m }
+                    if k == kid && t == kty && *b == bits && *m == min_bits),
+                "{fixture}: expected WeakKey, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn minimum_key_bits_match_the_specs() {
+        assert_eq!((MIN_RSA_KEY_BITS, MIN_EC_KEY_BITS), (2048, 224));
+    }
+
+    /// A key of `kty` whose `n` (RSA) or `x`/`y` (EC) is `material`.
+    fn sized_key(kty: &str, material: &[u8]) -> JsonWebKey {
+        let encoded = URL_SAFE_NO_PAD.encode(material);
+        let fields = match kty {
+            "RSA" => json!({ "kty": "RSA", "kid": "k", "n": encoded, "e": "AQAB" }),
+            "EC" => json!({ "kty": "EC", "kid": "k", "crv": "P-x", "x": encoded, "y": encoded }),
+            other => json!({ "kty": other, "kid": "k", "crv": "Ed25519", "x": encoded }),
+        };
+        serde_json::from_value(fields).expect("jwk")
+    }
+
+    /// A big-endian modulus of exactly `bits` bits, left-padded to `size` octets.
+    fn modulus(bits: usize, size: usize) -> Vec<u8> {
+        let mut n = vec![0u8; size];
+        let top = size - bits.div_ceil(8);
+        n[top] = 1 << ((bits - 1) % 8);
+        n
+    }
+
+    #[test]
+    fn key_strength_measures_rsa_modulus_and_ec_coordinate() {
+        // Octet counts don't decide RSA: a leading zero octet is ignored, and a
+        // 2047-bit modulus in 256 octets is weak.
+        assert!(check_key_strength(&sized_key("RSA", &modulus(2048, 256))).is_ok());
+        assert!(check_key_strength(&sized_key("RSA", &modulus(2048, 257))).is_ok());
+        let err = check_key_strength(&sized_key("RSA", &modulus(2047, 256))).expect_err("weak");
+        assert!(
+            matches!(
+                err,
+                IdentityError::WeakKey {
+                    bits: 2047,
+                    min_bits: MIN_RSA_KEY_BITS,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+
+        assert!(check_key_strength(&sized_key("EC", &[1u8; 28])).is_ok());
+        assert!(check_key_strength(&sized_key("EC", &[1u8; 66])).is_ok());
+        let err = check_key_strength(&sized_key("EC", &[1u8; 24])).expect_err("weak");
+        assert!(
+            matches!(
+                err,
+                IdentityError::WeakKey {
+                    bits: 192,
+                    min_bits: MIN_EC_KEY_BITS,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+
+        // OKP is fixed-size; material that doesn't decode is left to conversion.
+        assert!(check_key_strength(&sized_key("OKP", &[1u8; 1])).is_ok());
+        let mut undecodable = sized_key("RSA", &[1u8; 8]);
+        undecodable.n = "!!".to_string();
+        assert!(check_key_strength(&undecodable).is_ok());
     }
 }
