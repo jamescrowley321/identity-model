@@ -94,6 +94,7 @@ SECURITY_MODULES: list[str] = [
     "src/py_identity_model/core/token_validation_logic.py",
     "src/py_identity_model/core/claims_validation.py",
     "src/py_identity_model/core/jwt_helpers.py",
+    "src/py_identity_model/core/key_strength.py",
     "src/py_identity_model/core/parsers.py",
     "src/py_identity_model/core/mtls.py",
     "src/py_identity_model/core/dpop.py",
