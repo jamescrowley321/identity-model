@@ -366,6 +366,28 @@ message no longer mentions an `RS256` default. Both fields are REQUIRED
 provider metadata (Discovery §3), so a document missing them also fails
 `get_discovery_document` with `DiscoveryErrorKind.MISSING_FIELDS`.
 
+### FAPI 2.0: absent capability metadata is a violation ([#949](https://github.com/jamescrowley321/identity-model/issues/949))
+
+In 4.x, `validate_fapi_discovery` passed a document that did not mention a
+capability FAPI 2.0 requires. In 5.0 each of these is a violation:
+
+| Metadata | Violation when | Requirement |
+|---|---|---|
+| `code_challenge_methods_supported` | absent (RFC 8414 §2: no PKCE) or without `S256` | [FAPI 2.0 Security Profile §5.3.2.2](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.2) |
+| `pushed_authorization_request_endpoint` | absent | §5.3.2.2, RFC 9126 |
+| `authorization_response_iss_parameter_supported` | absent or `false` | §5.3.2.2, RFC 9207 §3 |
+| `dpop_signing_alg_values_supported`, `tls_client_certificate_bound_access_tokens` | neither a DPoP list with a FAPI algorithm (§5.4.1) nor `true` for MTLS | [§5.3.2.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.1) |
+| `token_endpoint_auth_signing_alg_values_supported` | `private_key_jwt` is offered and the list is absent or has no FAPI algorithm | [§5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1) |
+
+`FAPI2_ALLOWED_SIGNING_ALGORITHMS` now includes `EdDSA` (§5.4.1), for both
+`validate_fapi_discovery` and `validate_fapi_authorization_request`.
+`DiscoveryDocumentResponse` gains `dpop_signing_alg_values_supported`
+(RFC 9449 §5.1). Only `grant_types_supported` and
+`token_endpoint_auth_methods_supported` still take their RFC 8414 §2 default
+when absent. A server that passed in 4.x without advertising these fields now
+reports violations until its metadata advertises them. A metadata value
+that is not an array of strings counts as advertising nothing.
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC
