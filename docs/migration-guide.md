@@ -440,7 +440,7 @@ Both sync and async implementations manage HTTP clients differently for optimal 
 Each thread gets its own HTTP client with its own connection pool. This provides thread isolation without locks:
 
 ```python
-from py_identity_model.http_client import get_http_client, close_http_client
+from py_identity_model.sync.http_client import get_http_client, close_http_client
 
 # Each thread automatically gets its own client
 client = get_http_client()  # Thread-local client
@@ -453,10 +453,10 @@ close_http_client()  # Closes client for current thread only
 All async operations share a single HTTP client per process:
 
 ```python
-from py_identity_model.http_client import get_async_http_client, close_async_http_client
+from py_identity_model.aio.http_client import get_async_http_client, close_async_http_client
 
 # All async operations share this client
-client = await get_async_http_client()  # Singleton
+client = get_async_http_client()  # Singleton
 
 # Optional cleanup
 await close_async_http_client()  # Closes the shared client

@@ -73,6 +73,7 @@ py_identity_model/
 ## Documentation
 
 - [Getting Started](getting-started.md)
+- [Upgrading to 5.0](upgrade-v5.md): breaking changes from 4.x
 - [Migration Guide](migration-guide.md)
 - [Performance Guide](performance.md)
 - [Integration Tests](integration-tests.md)

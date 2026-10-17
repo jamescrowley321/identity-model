@@ -189,6 +189,7 @@ default is listed in the [Configuration reference](https://jamescrowley321.githu
 Full docs: **[jamescrowley321.github.io/identity-model](https://jamescrowley321.github.io/identity-model/)**
 
 - [Getting Started](https://jamescrowley321.github.io/identity-model/getting-started/)
+- [Upgrading to 5.0](https://jamescrowley321.github.io/identity-model/upgrade-v5/): breaking changes from 4.x
 - [Migration Guide](https://jamescrowley321.github.io/identity-model/migration-guide/)
 - [Performance Guide](https://jamescrowley321.github.io/identity-model/performance/)
 - [Integration Tests](https://jamescrowley321.github.io/identity-model/integration-tests/)
