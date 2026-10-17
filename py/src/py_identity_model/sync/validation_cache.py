@@ -4,6 +4,7 @@ Discovery cache, JWKS cache and kid-miss cooldown for sync token validation.
 HTTP clients only send requests. The state that token validation keeps
 between calls lives on a :class:`ValidationCache`: the discovery documents,
 the JWKS, and the time of the last forced JWKS refresh per ``jwks_uri``.
+Documents are kept per client trust scope; the cooldown is not.
 Pass one to ``validate_token`` (and the ID Token and Logout Token
 validators) as ``cache=``; without one, the process-wide default cache
 (:func:`get_default_validation_cache`) is used, whatever ``http_client`` is
@@ -26,7 +27,12 @@ from ..core.process_local import ProcessLocal
 
 
 if TYPE_CHECKING:
-    from ..core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
+    from ..core.jwks_cache import (
+        DiscoCacheEntry,
+        DiscoCacheKey,
+        JwksCacheEntry,
+        JwksCacheKey,
+    )
 
 
 # Per-URI fetch locks are striped: two requests for the same address coalesce
@@ -38,10 +44,15 @@ _LOCK_STRIPES = 32
 class ValidationCache:
     """Discovery cache, JWKS cache and kid-miss cooldown state.
 
-    The discovery cache is keyed by ``(address, policy.cache_key())``, so a
-    response admitted under a lax policy is never served to a caller running
-    a stricter one. The JWKS cache and ``kid_miss_last_attempt`` (the last
-    forced JWKS refresh) are keyed by ``jwks_uri``. Both caches are
+    The discovery cache is keyed by ``(trust scope, address,
+    policy.cache_key())``, so a response admitted under a lax policy is never
+    served to a caller running a stricter one. The JWKS cache is keyed by
+    ``(trust scope, jwks_uri)``. The trust scope is the fetching client's
+    :attr:`~py_identity_model.sync.managed_client.HTTPClient.trust_scope`, so
+    a client never reads a document fetched over a transport it does not
+    trust (for example a wrapped ``httpx.Client(verify=False)``).
+    ``kid_miss_last_attempt`` (the last forced JWKS refresh) is keyed by
+    ``jwks_uri`` alone and shared by every client (#945). Both caches are
     ``OrderedDict``s so read hits can refresh LRU recency; eviction targets the
     least recently *used* entry (#397).
 
@@ -60,10 +71,10 @@ class ValidationCache:
 
     def __init__(self, *, config: Config | None = None) -> None:
         self._config = config if config is not None else Config()
-        self.disco: OrderedDict[tuple[str, tuple], DiscoCacheEntry] = OrderedDict()
+        self.disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
         self.disco_write_lock = threading.Lock()
         self._disco_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
-        self.jwks: OrderedDict[str, JwksCacheEntry] = OrderedDict()
+        self.jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
         self.jwks_write_lock = threading.Lock()
         self._jwks_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
         self.kid_miss_last_attempt: dict[str, float] = {}
@@ -73,11 +84,11 @@ class ValidationCache:
         """The settings for this cache's TTLs, size and cooldown."""
         return self._config
 
-    def disco_fetch_lock(self, cache_key: tuple[str, tuple]) -> threading.Lock:
+    def disco_fetch_lock(self, cache_key: DiscoCacheKey) -> threading.Lock:
         return self._disco_fetch_locks[hash(cache_key) % _LOCK_STRIPES]
 
-    def jwks_fetch_lock(self, jwks_uri: str) -> threading.Lock:
-        return self._jwks_fetch_locks[hash(jwks_uri) % _LOCK_STRIPES]
+    def jwks_fetch_lock(self, cache_key: JwksCacheKey) -> threading.Lock:
+        return self._jwks_fetch_locks[hash(cache_key) % _LOCK_STRIPES]
 
 
 _default_cache: ProcessLocal[ValidationCache] = ProcessLocal(

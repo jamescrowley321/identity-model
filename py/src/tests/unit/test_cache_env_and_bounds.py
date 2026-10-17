@@ -32,13 +32,13 @@ on creation. These tests pin the fixes:
 from collections import OrderedDict
 import math
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 import respx
 
 from py_identity_model import Config, ConfigError
-from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import (
     DEFAULT_DISCO_CACHE_TTL_SECONDS,
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
@@ -64,7 +64,15 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.validation_cache import ValidationCache
 
-from ..token_validation_helpers import generate_rsa_keypair
+from ..token_validation_helpers import (
+    disco_cache_key,
+    generate_rsa_keypair,
+    jwks_cache_key,
+)
+
+
+if TYPE_CHECKING:
+    from py_identity_model.core.trust_scope import TrustScope
 
 
 MID_TTL_SECONDS = 3600.0
@@ -151,16 +159,16 @@ class TestConfigTtlBounds:
     def test_configured_jwks_ttl_applied_to_cache_entry(self):
         """A response without max-age is stored with ``Config.jwks_cache_ttl``."""
         uri = "https://op.example/jwks"
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         response = _make_jwks_response("kid-ttl", cache_control=None)
         apply_jwks_cache_outcome(
             cache,
-            uri,
+            jwks_cache_key(uri),
             response,
             time.monotonic(),
             Config(jwks_cache_ttl=MID_TTL_SECONDS),
         )
-        assert cache[uri].ttl == MID_TTL_SECONDS
+        assert cache[jwks_cache_key(uri)].ttl == MID_TTL_SECONDS
 
 
 # ============================================================================
@@ -266,75 +274,89 @@ class TestBoundedCacheSize:
         """Insert max+5 distinct URIs into the cache via the apply helper —
         post-insert the cache holds exactly ``max`` entries."""
         config = Config(cache_max_entries=OVERFLOW_MAX_ENTRIES)
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         total = OVERFLOW_MAX_ENTRIES + OVERFLOW_EXTRA
 
         for i in range(total):
             apply_jwks_cache_outcome(
                 cache,
-                jwks_uri=_op_uri(i),
+                cache_key=jwks_cache_key(_op_uri(i)),
                 response=_make_jwks_response(f"kid-{i}"),
                 now=time.monotonic(),
                 config=config,
             )
 
         # LRU eviction: the *oldest* inserts are gone, *newest* ones remain.
-        assert set(cache.keys()) == {_op_uri(i) for i in range(OVERFLOW_EXTRA, total)}
+        assert set(cache.keys()) == {
+            jwks_cache_key(_op_uri(i)) for i in range(OVERFLOW_EXTRA, total)
+        }
 
     def test_overflow_returns_evicted_uris(self):
         """apply_jwks_cache_outcome reports the URIs that left the cache so the
         caller can drop their kid-miss cooldown stamps."""
         config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
-        cache: dict[str, JwksCacheEntry] = {}
-        evicted: list[str] = []
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
+        evicted: list[tuple[TrustScope, str]] = []
         for i in range(REFRESH_MAX_ENTRIES + 1):
             evicted += apply_jwks_cache_outcome(
                 cache,
-                _op_uri(i),
+                jwks_cache_key(_op_uri(i)),
                 _make_jwks_response(f"kid-{i}"),
                 time.monotonic(),
                 config,
             )
-        assert evicted == [_op_uri(0)]
+        assert evicted == [jwks_cache_key(_op_uri(0))]
 
     def test_refresh_of_existing_uri_does_not_count_as_new_entry(self):
         """Re-storing a URI must move it to the end of insertion order so
         a subsequent overflow doesn't immediately evict a just-refreshed
         entry."""
         config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
 
         # Fill to capacity in known order.
         for i in range(REFRESH_MAX_ENTRIES):
             apply_jwks_cache_outcome(
                 cache,
-                jwks_uri=_op_uri(i),
+                cache_key=jwks_cache_key(_op_uri(i)),
                 response=_make_jwks_response(f"kid-{i}"),
                 now=time.monotonic(),
                 config=config,
             )
-        assert list(cache.keys()) == [_op_uri(0), _op_uri(1), _op_uri(2)]
+        assert list(cache.keys()) == [
+            jwks_cache_key(_op_uri(0)),
+            jwks_cache_key(_op_uri(1)),
+            jwks_cache_key(_op_uri(2)),
+        ]
 
         # Refresh op-0 (the oldest). It should move to the newest position.
         apply_jwks_cache_outcome(
             cache,
-            jwks_uri=_op_uri(0),
+            cache_key=jwks_cache_key(_op_uri(0)),
             response=_make_jwks_response("kid-0-rotated"),
             now=time.monotonic(),
             config=config,
         )
-        assert list(cache.keys()) == [_op_uri(1), _op_uri(2), _op_uri(0)]
+        assert list(cache.keys()) == [
+            jwks_cache_key(_op_uri(1)),
+            jwks_cache_key(_op_uri(2)),
+            jwks_cache_key(_op_uri(0)),
+        ]
 
         # Add a fourth distinct URI. Eviction should now target op-1 (the
         # oldest non-refreshed), not the just-refreshed op-0.
         apply_jwks_cache_outcome(
             cache,
-            jwks_uri=_op_uri(3),
+            cache_key=jwks_cache_key(_op_uri(3)),
             response=_make_jwks_response("kid-3"),
             now=time.monotonic(),
             config=config,
         )
-        assert set(cache.keys()) == {_op_uri(2), _op_uri(0), _op_uri(3)}
+        assert set(cache.keys()) == {
+            jwks_cache_key(_op_uri(2)),
+            jwks_cache_key(_op_uri(0)),
+            jwks_cache_key(_op_uri(3)),
+        }
 
     @respx.mock
     def test_end_to_end_jwks_cache_capped(self, small_cache):
@@ -358,7 +380,9 @@ class TestBoundedCacheSize:
             assert response.is_successful is True
 
         # Newest URIs are the survivors.
-        assert set(small_cache.jwks.keys()) == set(urls_to_visit[-E2E_MAX_ENTRIES:])
+        assert set(small_cache.jwks.keys()) == {
+            jwks_cache_key(url) for url in urls_to_visit[-E2E_MAX_ENTRIES:]
+        }
 
     @respx.mock
     def test_caches_are_per_validation_cache(self, small_cache):
@@ -369,7 +393,7 @@ class TestBoundedCacheSize:
         respx.get(url).mock(return_value=httpx.Response(200, json={"keys": [key_dict]}))
         other = ValidationCache(config=Config())
         _get_cached_jwks(url, cache=other)
-        assert list(other.jwks.keys()) == [url]
+        assert list(other.jwks.keys()) == [jwks_cache_key(url)]
         assert list(small_cache.jwks.keys()) == []
 
 
@@ -437,26 +461,28 @@ class TestLruReadHitEviction:
                 )
             )
 
+        keys = [jwks_cache_key(url) for url in urls]
+
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
         for url in urls[:E2E_MAX_ENTRIES]:
             _get_cached_jwks(url, cache=small_cache)
-        assert list(cache.keys()) == urls[:E2E_MAX_ENTRIES]
+        assert list(cache.keys()) == keys[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
         _get_cached_jwks(urls[0], cache=small_cache)
         assert list(cache.keys()) == [
-            urls[1],
-            urls[2],
-            urls[3],
-            urls[0],
+            keys[1],
+            keys[2],
+            keys[3],
+            keys[0],
         ]
 
         # A fifth distinct URI overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
         _get_cached_jwks(urls[4], cache=small_cache)
-        assert urls[0] in cache
-        assert urls[1] not in cache
-        assert set(cache.keys()) == {urls[0], urls[2], urls[3], urls[4]}
+        assert keys[0] in cache
+        assert keys[1] not in cache
+        assert set(cache.keys()) == {keys[0], keys[2], keys[3], keys[4]}
 
     @respx.mock
     def test_read_hit_protects_hot_disco_entry_from_eviction(self, small_cache):
@@ -467,8 +493,9 @@ class TestLruReadHitEviction:
 
         Mirrors the JWKS end-to-end test but through the disco read path, so a
         regression that adds the read-hit touch to only one of the two caches is
-        caught. The cache key is ``(address, policy.cache_key())`` — a tuple,
-        exactly the shape a multi-tenant gateway attacker influences."""
+        caught. The cache key is ``(trust_scope, address, policy.cache_key())``
+        — a tuple, exactly the shape a multi-tenant gateway attacker
+        influences."""
         cache = small_cache.disco
         bases = [f"https://op-{i}.example" for i in range(E2E_MAX_ENTRIES + 1)]
         addresses = [f"{b}/.well-known/openid-configuration" for b in bases]
@@ -488,7 +515,7 @@ class TestLruReadHitEviction:
                 )
             )
 
-        keys = [(addr, DiscoveryPolicy().cache_key()) for addr in addresses]
+        keys = [disco_cache_key(addr) for addr in addresses]
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
         for address in addresses[:E2E_MAX_ENTRIES]:

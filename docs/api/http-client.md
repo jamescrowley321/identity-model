@@ -11,13 +11,15 @@ default client gives each thread its own `httpx.Client`.
 A client only sends requests. It takes its timeout, retries, TLS and JWKS
 size limits from a [`Config`](config.md) and holds no cache: the discovery
 documents, keys and kid-miss cooldown used by token validation live on a
-[validation cache](#validation-cache). A client built per request therefore
-still shares the cached keys and the cooldown.
+[validation cache](#validation-cache). A client built per request from a
+`Config` therefore still shares the cached keys and the cooldown.
 
 To use your own httpx client (for a proxy, or `verify=False` in a test), wrap
 it: `HTTPClient(httpx.Client(verify=False), config=config)`. The wrapped client
 keeps its own timeout and TLS settings; the `Config` still sets retries and
-JWKS limits.
+JWKS limits. Documents it fetches are cached apart from every other client's
+(see [Trust scopes](#trust-scopes)), so build the httpx client once and reuse
+it.
 
 The library default clients are rebuilt in a forked child, so a pre-fork
 server's workers never share connections. `close_async_http_client()` can be
@@ -81,6 +83,28 @@ Build a cache once and keep it: a cache built per request starts empty and
 has no cooldown history. The default cache is rebuilt in a forked child; a
 cache you build yourself is not, so build it after the fork. One
 `AsyncValidationCache` can serve several event loops: its locks are per loop.
+
+### Trust scopes
+
+A discovery document or JWKS is only as trustworthy as the transport that
+fetched it. A cache is shared by every client that uses it, so each cached
+document is keyed by the fetching client's `trust_scope`, and a client only
+reads documents fetched under its own scope:
+
+- A client built from a `Config` (including the library default client) is
+  scoped by `Config.ca_bundle`. Such clients verify TLS against that bundle
+  and never follow redirects, so all of them with the same `ca_bundle` share
+  documents.
+- A client that wraps your own httpx client is scoped by that httpx client.
+  Its TLS, proxy and redirect settings cannot be read back, so its documents
+  are shared only with other wrappers of the same httpx client. A JWKS that a
+  `verify=False` client fetched is never used to validate a token for a
+  client that verifies TLS.
+
+The kid-miss cooldown is not scoped: it is kept per `jwks_uri` for every
+client using the cache, so clients built per request are still rate-limited
+together. Wrapping a new httpx client per request gives each request its own
+scope, so every request fetches the documents again; build it once instead.
 
 `clear_discovery_cache(cache=None)` and `clear_jwks_cache(cache=None)` empty a
 cache (the default one when `cache` is omitted; await the async versions).

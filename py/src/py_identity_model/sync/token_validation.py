@@ -5,7 +5,9 @@ This module provides synchronous token validation using discovery and JWKS,
 with automatic cache expiry and forced JWKS refresh on key rotation. The
 caches and the kid-miss cooldown state live on the :class:`ValidationCache`
 passed as ``cache=`` (the process-wide default cache when none is passed),
-never on the HTTP client.
+never on the HTTP client. Cached documents are keyed by the client's
+:attr:`~py_identity_model.sync.managed_client.HTTPClient.trust_scope`; the
+cooldown is keyed by ``jwks_uri`` alone.
 """
 
 import time
@@ -13,10 +15,10 @@ import time
 from ..core.discovery_policy import DiscoveryPolicy, resolve_discovery_policy
 from ..core.jwks_cache import (
     apply_disco_cache_outcome,
-    apply_jwks_cache_outcome,
     clear_cache_locked,
     is_cache_expired,
     should_attempt_kid_miss_refresh,
+    store_jwks_response,
     touch_cache_entry,
 )
 from ..core.models import (
@@ -76,7 +78,9 @@ def _get_disco_response(
 
     ``policy`` (default: strict :class:`DiscoveryPolicy`) both governs
     validation of the fetched document and partitions the cache, so callers
-    with different policies never share an entry.
+    with different policies never share an entry. The client's trust scope
+    partitions it too: a client never reads a document another client fetched
+    over a transport it does not trust.
     """
     if disco_doc_address is None:
         raise ConfigurationException(
@@ -87,7 +91,7 @@ def _get_disco_response(
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    cache_key = (disco_doc_address, policy.cache_key())
+    cache_key = (client.trust_scope, disco_doc_address, policy.cache_key())
     # Cheap atomic dict read — no lock required for a single .get() in CPython.
     entry = cache.disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
@@ -142,17 +146,18 @@ def _get_cached_jwks(
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    entry = cache.jwks.get(jwks_uri)
+    cache_key = (client.trust_scope, jwks_uri)
+    entry = cache.jwks.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency (see _get_disco_response) — self-serializing, no
         # write lock on the read hot-path.
-        touch_cache_entry(cache.jwks, jwks_uri)
+        touch_cache_entry(cache.jwks, cache_key)
         return entry.response
 
-    with cache.jwks_fetch_lock(jwks_uri):
-        entry = cache.jwks.get(jwks_uri)
+    with cache.jwks_fetch_lock(cache_key):
+        entry = cache.jwks.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
-            touch_cache_entry(cache.jwks, jwks_uri)
+            touch_cache_entry(cache.jwks, cache_key)
             return entry.response
 
         # The jwks_uri was already vetted against this policy when the
@@ -162,10 +167,13 @@ def _get_cached_jwks(
             JwksRequest(address=jwks_uri, policy=policy), http_client=client
         )
         with cache.jwks_write_lock:
-            for gone in apply_jwks_cache_outcome(
-                cache.jwks, jwks_uri, response, time.monotonic(), cache.config
-            ):
-                cache.kid_miss_last_attempt.pop(gone, None)
+            store_jwks_response(
+                cache.jwks,
+                cache.kid_miss_last_attempt,
+                cache_key,
+                response,
+                cache.config,
+            )
         return response
 
 
@@ -204,9 +212,10 @@ def _refresh_jwks(
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    with cache.jwks_fetch_lock(jwks_uri):
+    cache_key = (client.trust_scope, jwks_uri)
+    with cache.jwks_fetch_lock(cache_key):
         request_time = time.monotonic()
-        entry = cache.jwks.get(jwks_uri)
+        entry = cache.jwks.get(cache_key)
         # A waiter whose stale entry another refresh replaced while it was
         # blocked returns the replacement. The stale entry itself is never
         # returned: only a successful, non-empty fetch replaces an entry.
@@ -221,15 +230,18 @@ def _refresh_jwks(
             JwksRequest(address=jwks_uri, policy=policy), http_client=client
         )
         with cache.jwks_write_lock:
-            for gone in apply_jwks_cache_outcome(
-                cache.jwks, jwks_uri, response, time.monotonic(), cache.config
-            ):
-                cache.kid_miss_last_attempt.pop(gone, None)
+            store_jwks_response(
+                cache.jwks,
+                cache.kid_miss_last_attempt,
+                cache_key,
+                response,
+                cache.config,
+            )
             # apply_jwks_cache_outcome retains the existing entry on an
             # empty-successful response. Surface that retained entry so
             # the in-flight validation has usable keys to work with.
             if response.is_successful and not response.keys:
-                retained = cache.jwks.get(jwks_uri)
+                retained = cache.jwks.get(cache_key)
                 if retained is not None and retained.response.keys:
                     logger.info(
                         "JWKS refresh for %s returned 200 with empty keys; "

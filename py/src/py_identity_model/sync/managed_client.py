@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ..core.config import Config
+from ..core.trust_scope import TrustScope, owned_trust_scope, wrapped_trust_scope
 from ..ssl_config import get_ssl_verify
 
 
@@ -46,7 +47,8 @@ class HTTPClient:
     When an existing *client* is provided, this instance acts as a
     non-owning wrapper and :meth:`close` is a no-op.  The wrapped client
     keeps its own timeout and TLS settings; *config* still governs retries
-    and JWKS limits.
+    and JWKS limits.  The validation caches keep the documents it fetches
+    apart from every other client's (see :attr:`trust_scope`).
 
     Args:
         client: Existing ``httpx.Client`` to wrap.  If ``None``, a new
@@ -69,15 +71,27 @@ class HTTPClient:
         if client is not None:
             self._client = client
             self._owned = False
+            self._trust_scope = wrapped_trust_scope(client)
         else:
             self._client = build_httpx_client(self._config)
             self._owned = True
+            self._trust_scope = owned_trust_scope(self._config)
         self._closed = False
 
     @property
     def config(self) -> Config:
         """The settings used for requests through this client."""
         return self._config
+
+    @property
+    def trust_scope(self) -> TrustScope:
+        """The scope of the cached documents this client may read.
+
+        Built from ``Config.ca_bundle`` for an owned client, and from the
+        identity of the wrapped ``httpx.Client`` otherwise (see
+        :mod:`py_identity_model.core.trust_scope`).
+        """
+        return self._trust_scope
 
     @property
     def owns_client(self) -> bool:

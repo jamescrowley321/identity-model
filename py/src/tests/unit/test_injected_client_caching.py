@@ -32,6 +32,7 @@ default-config behavior of the injected client and cache.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -65,9 +66,15 @@ from py_identity_model.sync.validation_cache import (
 from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
+    disco_cache_key,
     generate_rsa_keypair,
+    jwks_cache_key,
     sign_jwt,
 )
+
+
+if TYPE_CHECKING:
+    from py_identity_model.core.trust_scope import TrustScope
 
 
 JWKS_URL = DISCO_RESPONSE_WITH_JWKS["jwks_uri"]
@@ -83,10 +90,10 @@ def _validation_config() -> TokenValidationConfig:
     return TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
 
 
-def _disco_cache_key() -> tuple[str, tuple]:
+def _disco_cache_key() -> tuple[TrustScope, str, tuple]:
     config = _validation_config()
     policy = resolve_discovery_policy(config.discovery_policy, config.require_https)
-    return (DISCO_URL, policy.cache_key())
+    return disco_cache_key(DISCO_URL, policy)
 
 
 def _signed_token(pem: bytes, kid: str = KID) -> str:
@@ -147,13 +154,13 @@ class TestSyncInjectedClientCaching:
                     http_client=client,
                     cache=cache,
                 )
-            assert list(cache.jwks) == [JWKS_URL]
+            assert list(cache.jwks) == [jwks_cache_key(JWKS_URL)]
             assert list(cache.disco) == [cache_key]
 
         assert disco.call_count == 1
         assert jwks.call_count == 1
         default_caches = get_default_validation_cache()
-        assert JWKS_URL not in default_caches.jwks
+        assert jwks_cache_key(JWKS_URL) not in default_caches.jwks
         assert cache_key not in default_caches.disco
 
     @respx.mock
@@ -195,7 +202,7 @@ class TestSyncInjectedClientCaching:
 
         default_cache = get_default_validation_cache()
         assert list(default_cache.kid_miss_last_attempt) == [JWKS_URL]
-        assert list(default_cache.jwks) == [JWKS_URL]
+        assert list(default_cache.jwks) == [jwks_cache_key(JWKS_URL)]
         assert list(default_cache.disco) == [_disco_cache_key()]
         assert disco.call_count == 1
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
@@ -283,13 +290,13 @@ class TestAsyncInjectedClientCaching:
                     http_client=client,
                     cache=cache,
                 )
-            assert list(cache.jwks) == [JWKS_URL]
+            assert list(cache.jwks) == [jwks_cache_key(JWKS_URL)]
             assert list(cache.disco) == [cache_key]
 
         assert disco.call_count == 1
         assert jwks.call_count == 1
         default_caches = get_default_async_validation_cache()
-        assert JWKS_URL not in default_caches.jwks
+        assert jwks_cache_key(JWKS_URL) not in default_caches.jwks
         assert cache_key not in default_caches.disco
 
     @pytest.mark.asyncio
@@ -333,7 +340,7 @@ class TestAsyncInjectedClientCaching:
 
         default_cache = get_default_async_validation_cache()
         assert list(default_cache.kid_miss_last_attempt) == [JWKS_URL]
-        assert list(default_cache.jwks) == [JWKS_URL]
+        assert list(default_cache.jwks) == [jwks_cache_key(JWKS_URL)]
         assert list(default_cache.disco) == [_disco_cache_key()]
         assert disco.call_count == 1
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH

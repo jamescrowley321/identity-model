@@ -20,6 +20,7 @@ These tests pin the contract:
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
@@ -78,8 +79,13 @@ from ..constants import DISCO_URL
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
+    jwks_cache_key,
     sign_jwt,
 )
+
+
+if TYPE_CHECKING:
+    from py_identity_model.core.trust_scope import TrustScope
 
 
 JWKS_URL = "https://example.com/jwks"
@@ -604,23 +610,33 @@ class TestCooldownEvictedWithCache:
         so the caller can drop their cooldown stamps — otherwise the
         cooldown dict outgrows the cache."""
         config = Config(cache_max_entries=CACHE_CAPACITY)
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         oldest_url = "https://op-oldest.example/jwks"
         surviving_urls = ["https://op-a.example/jwks", "https://op-b.example/jwks"]
         overflow_url = "https://overflow.example/jwks"
 
         for url in [oldest_url, *surviving_urls]:
             gone = apply_jwks_cache_outcome(
-                cache, url, _jwks_response(f"kid-{url}"), time.monotonic(), config
+                cache,
+                jwks_cache_key(url),
+                _jwks_response(f"kid-{url}"),
+                time.monotonic(),
+                config,
             )
             assert gone == []
 
         gone = apply_jwks_cache_outcome(
-            cache, overflow_url, _jwks_response("overflow"), time.monotonic(), config
+            cache,
+            jwks_cache_key(overflow_url),
+            _jwks_response("overflow"),
+            time.monotonic(),
+            config,
         )
 
-        assert gone == [oldest_url]
-        assert list(cache) == [*surviving_urls, overflow_url]
+        assert gone == [jwks_cache_key(oldest_url)]
+        assert list(cache) == [
+            jwks_cache_key(url) for url in [*surviving_urls, overflow_url]
+        ]
 
     @respx.mock
     def test_cache_eviction_drops_cooldown_alongside_cache(self):
@@ -649,10 +665,13 @@ class TestCooldownEvictedWithCache:
 
             sync_get_cached_jwks(overflow_url, http_client=client, cache=cache)
 
-            assert oldest_url not in cache.jwks
+            assert jwks_cache_key(oldest_url, client.trust_scope) not in cache.jwks
             assert oldest_url not in cache.kid_miss_last_attempt
             # Surviving entries preserved on both sides.
-            assert list(cache.jwks) == [*surviving_urls, overflow_url]
+            assert list(cache.jwks) == [
+                jwks_cache_key(url, client.trust_scope)
+                for url in [*surviving_urls, overflow_url]
+            ]
             assert set(cache.kid_miss_last_attempt) == set(surviving_urls)
 
     def test_uncacheable_response_replaces_entry_and_preserves_cooldown(self):
@@ -663,24 +682,30 @@ class TestCooldownEvictedWithCache:
         """
         url = "https://op.example/jwks"
         config = Config()
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
 
         apply_jwks_cache_outcome(
-            cache, url, _jwks_response("primed"), time.monotonic(), config
+            cache,
+            jwks_cache_key(url),
+            _jwks_response("primed"),
+            time.monotonic(),
+            config,
         )
-        assert url in cache
+        assert jwks_cache_key(url) in cache
 
         # An uncacheable response with non-empty keys replaces the entry
         # with the rotated key and reports nothing gone.
         gone = apply_jwks_cache_outcome(
             cache,
-            url,
+            jwks_cache_key(url),
             _jwks_response("rotated", cache_control="no-cache"),
             time.monotonic(),
             config,
         )
         assert gone == []
-        assert {k.kid for k in (cache[url].response.keys or [])} == {"rotated"}
+        assert {k.kid for k in (cache[jwks_cache_key(url)].response.keys or [])} == {
+            "rotated"
+        }
 
 
 # Async cooldown state covered for symmetry — most of the integration
@@ -1084,8 +1109,11 @@ class TestEmptyRefreshDoesNotStampCooldown:
 
         # The cache MUST still hold the primed working keys (apply_jwks_cache_outcome
         # retains the entry on an empty-successful response).
-        assert JWKS_URL in _sync_caches().jwks
-        cached_kids = {k.kid for k in _sync_caches().jwks[JWKS_URL].response.keys or []}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        cached_kids = {
+            k.kid
+            for k in _sync_caches().jwks[jwks_cache_key(JWKS_URL)].response.keys or []
+        }
         assert cached_kids == {"old-kid"}
 
         # And the cooldown stamp must NOT be set — the empty refresh is
@@ -1124,9 +1152,10 @@ class TestEmptyRefreshDoesNotStampCooldown:
                 disco_doc_address=DISCO_URL,
             )
 
-        assert JWKS_URL in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
         cached_kids = {
-            k.kid for k in _async_caches().jwks[JWKS_URL].response.keys or []
+            k.kid
+            for k in _async_caches().jwks[jwks_cache_key(JWKS_URL)].response.keys or []
         }
         assert cached_kids == {"old-kid"}
         assert JWKS_URL not in _async_caches().kid_miss_last_attempt
@@ -1168,7 +1197,7 @@ class TestEmptyRefreshDoesNotStampCooldown:
             alg=cached_key_dict.get("alg"),
             use=cached_key_dict.get("use", "sig"),
         )
-        _sync_caches().jwks[JWKS_URL] = JwksCacheEntry(
+        _sync_caches().jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
             response=JwksResponse(is_successful=True, keys=[cached_jwk]),
             cached_at=time.monotonic() - 10.0,  # stale enough to trigger refresh
             ttl=0.001,

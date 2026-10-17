@@ -38,6 +38,7 @@ from ..token_validation_helpers import (
     JWKS_FETCH_AFTER_EXPIRY,
     JWKS_FETCH_WITH_RETRY,
     generate_rsa_keypair,
+    jwks_cache_key,
     sign_jwt,
 )
 
@@ -703,16 +704,20 @@ class TestAsyncLruReadHitEviction:
             # Fill to capacity: hot (oldest) .. op-3 (newest).
             for url in capacity_urls:
                 await _get_cached_jwks(url, http_client=client, cache=validation_cache)
-            assert list(cache) == capacity_urls
+            assert list(cache) == [jwks_cache_key(url) for url in capacity_urls]
 
             # Re-read the hot entry — a cache hit (no network) that refreshes
             # recency.
             await _get_cached_jwks(hot_url, http_client=client, cache=validation_cache)
-            assert list(cache) == [oldest_unread_url, *warm_urls, hot_url]
+            assert list(cache) == [
+                jwks_cache_key(url) for url in [oldest_unread_url, *warm_urls, hot_url]
+            ]
 
             # A further distinct URI overflows; eviction targets op-1 (oldest
             # unread), NOT the recently-read hot entry.
             await _get_cached_jwks(
                 overflow_url, http_client=client, cache=validation_cache
             )
-            assert list(cache) == [*warm_urls, hot_url, overflow_url]
+            assert list(cache) == [
+                jwks_cache_key(url) for url in [*warm_urls, hot_url, overflow_url]
+            ]

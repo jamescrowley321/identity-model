@@ -56,6 +56,7 @@ from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
+    jwks_cache_key,
     sign_jwt,
 )
 
@@ -184,8 +185,10 @@ class TestInjectedCache:
             validate_token(
                 token, VALIDATION, DISCO_URL, http_client=client, cache=cache
             )
-        assert cache.jwks[JWKS_URL].ttl == CACHE_JWKS_TTL
-        assert JWKS_URL not in get_default_validation_cache().jwks
+        assert cache.jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
+            CACHE_JWKS_TTL
+        )
+        assert jwks_cache_key(JWKS_URL) not in get_default_validation_cache().jwks
 
     @respx.mock
     async def test_async_cache_config_sets_ttl_not_client_config(self):
@@ -199,8 +202,10 @@ class TestInjectedCache:
                 await async_validate_token(
                     token, VALIDATION, DISCO_URL, http_client=client, cache=cache
                 )
-        assert cache.jwks[JWKS_URL].ttl == CACHE_JWKS_TTL
-        assert JWKS_URL not in get_default_async_validation_cache().jwks
+        assert cache.jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
+            CACHE_JWKS_TTL
+        )
+        assert jwks_cache_key(JWKS_URL) not in get_default_async_validation_cache().jwks
 
     def test_config_defaults_to_config_defaults(self):
         assert ValidationCache().config == Config()
@@ -349,7 +354,7 @@ class TestJwksFallbackTtl:
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
             validate_token(token, VALIDATION, DISCO_URL, cache=cache)
-        assert cache.jwks[JWKS_URL].ttl == ONE_HOUR_SECONDS
+        assert cache.jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS
 
     @respx.mock
     async def test_async_jwks_without_cache_control_is_kept_one_hour(self):
@@ -358,4 +363,4 @@ class TestJwksFallbackTtl:
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
             await async_validate_token(token, VALIDATION, DISCO_URL, cache=cache)
-        assert cache.jwks[JWKS_URL].ttl == ONE_HOUR_SECONDS
+        assert cache.jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS

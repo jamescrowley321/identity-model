@@ -40,6 +40,8 @@ from py_identity_model.aio import token_validation as aio_tv
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.validation_cache import AsyncValidationCache
 
+from ..token_validation_helpers import disco_cache_key, jwks_cache_key
+
 
 JWKS_URL = "https://issuer.example/jwks"
 
@@ -117,9 +119,9 @@ class TestPerLoopLocksAreIndependent:
         async def grab_locks():
             return (
                 cache.jwks_write_lock(),
-                cache.jwks_fetch_lock(JWKS_URL),
+                cache.jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
                 cache.disco_write_lock(),
-                cache.disco_fetch_lock((JWKS_URL, ())),
+                cache.disco_fetch_lock(disco_cache_key(JWKS_URL)),
             )
 
         loop_a = asyncio.new_event_loop()
@@ -149,9 +151,9 @@ class TestPerLoopLocksAreIndependent:
         async def grab_locks():
             return (
                 cache.jwks_write_lock(),
-                cache.jwks_fetch_lock(JWKS_URL),
+                cache.jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
                 cache.disco_write_lock(),
-                cache.disco_fetch_lock((JWKS_URL, ())),
+                cache.disco_fetch_lock(disco_cache_key(JWKS_URL)),
             )
 
         async def grab_twice():
@@ -222,9 +224,9 @@ class TestPerLoopLocksAreIndependent:
         async def touch():
             # Register the loop in every per-loop dict.
             cache.jwks_write_lock()
-            cache.jwks_fetch_lock("x")
+            cache.jwks_fetch_lock(jwks_cache_key("x"))
             cache.disco_write_lock()
-            cache.disco_fetch_lock(("x", ()))
+            cache.disco_fetch_lock(disco_cache_key("x"))
 
         try:
             loop.run_until_complete(touch())

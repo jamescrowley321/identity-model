@@ -21,7 +21,12 @@ from ..core.process_local import ProcessLocal
 
 
 if TYPE_CHECKING:
-    from ..core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
+    from ..core.jwks_cache import (
+        DiscoCacheEntry,
+        DiscoCacheKey,
+        JwksCacheEntry,
+        JwksCacheKey,
+    )
 
 
 # See sync.validation_cache: striped per-URI fetch locks.
@@ -88,9 +93,9 @@ class AsyncValidationCache:
     def __init__(self, *, config: Config | None = None) -> None:
         self._config = config if config is not None else Config()
         creation_lock = threading.Lock()
-        self.disco: OrderedDict[tuple[str, tuple], DiscoCacheEntry] = OrderedDict()
+        self.disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
         self._disco_locks = _LoopLocks(creation_lock)
-        self.jwks: OrderedDict[str, JwksCacheEntry] = OrderedDict()
+        self.jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
         self._jwks_locks = _LoopLocks(creation_lock)
         self.kid_miss_last_attempt: dict[str, float] = {}
 
@@ -102,14 +107,14 @@ class AsyncValidationCache:
     def disco_write_lock(self) -> asyncio.Lock:
         return self._disco_locks.write_lock()
 
-    def disco_fetch_lock(self, cache_key: tuple[str, tuple]) -> asyncio.Lock:
+    def disco_fetch_lock(self, cache_key: DiscoCacheKey) -> asyncio.Lock:
         return self._disco_locks.fetch_lock(cache_key)
 
     def jwks_write_lock(self) -> asyncio.Lock:
         return self._jwks_locks.write_lock()
 
-    def jwks_fetch_lock(self, jwks_uri: str) -> asyncio.Lock:
-        return self._jwks_locks.fetch_lock(jwks_uri)
+    def jwks_fetch_lock(self, cache_key: JwksCacheKey) -> asyncio.Lock:
+        return self._jwks_locks.fetch_lock(cache_key)
 
 
 _default_cache: ProcessLocal[AsyncValidationCache] = ProcessLocal(

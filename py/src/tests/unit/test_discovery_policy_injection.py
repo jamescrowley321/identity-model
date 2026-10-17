@@ -46,7 +46,7 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.validation_cache import get_default_validation_cache
 
-from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import disco_cache_key, generate_rsa_keypair, sign_jwt
 
 
 # Discovery document whose ``jwks_uri`` lives on a *different* authority than the
@@ -75,8 +75,8 @@ CDN_POLICY = DiscoveryPolicy(
 
 # The two disco cache keys these tests reason about: the strict default and the
 # CDN-allowing policy. They MUST differ, or the cache would not be partitioned.
-STRICT_KEY = (DISCO_ADDR, DiscoveryPolicy().cache_key())
-CDN_KEY = (DISCO_ADDR, CDN_POLICY.cache_key())
+STRICT_KEY = disco_cache_key(DISCO_ADDR)
+CDN_KEY = disco_cache_key(DISCO_ADDR, CDN_POLICY)
 
 
 def _sync_disco_cache() -> dict:

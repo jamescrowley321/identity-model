@@ -31,6 +31,7 @@ from ..core.http_utils import (
 )
 from ..core.mtls import build_mtls_ssl_context
 from ..core.process_local import ProcessLocal
+from ..core.trust_scope import owned_trust_scope
 from ..logging_config import logger
 from .managed_client import HTTPClient, build_httpx_client
 
@@ -55,6 +56,7 @@ class _DefaultHTTPClient(HTTPClient):
     def __init__(self, config: Config) -> None:
         self._config = config
         self._owned = True
+        self._trust_scope = owned_trust_scope(config)
         self._closed = False
         self._local = threading.local()
 

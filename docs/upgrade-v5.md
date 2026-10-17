@@ -178,6 +178,14 @@ clients only send requests and hold no cache.
   `http_client` you pass. An injected client is therefore cached and
   rate-limited like the default one, and a client built per request still
   shares the kid-miss cooldown.
+- Cached documents are kept per transport trust scope: clients built from a
+  `Config` share them per `Config.ca_bundle`, and a client wrapping your own
+  httpx client shares them only with other wrappers of that httpx client. A
+  JWKS fetched through a `verify=False` or proxied client is never used by a
+  client that verifies TLS. The kid-miss cooldown is shared by all of them.
+  Wrap your httpx client once, not per request, or every request fetches the
+  documents again (see
+  [Trust scopes](api/http-client.md#trust-scopes)).
 - The cache settings (`jwks_cache_ttl`, `discovery_cache_ttl`,
   `cache_max_entries`, `jwks_kid_miss_cooldown`) are read from the cache's
   `Config`. On a client's `Config` they have no effect.

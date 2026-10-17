@@ -67,11 +67,19 @@ from py_identity_model.sync.validation_cache import (
     get_default_validation_cache,
 )
 
-from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import (
+    DEFAULT_TRUST_SCOPE,
+    disco_cache_key,
+    generate_rsa_keypair,
+    jwks_cache_key,
+    sign_jwt,
+)
 
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
+
+    from py_identity_model.core.trust_scope import TrustScope
 
 
 pytestmark = pytest.mark.unit
@@ -154,8 +162,10 @@ def _token(origin: str) -> str:
     return sign_jwt(_SIGNING_PEM, {"sub": "user1", "iss": origin}, headers={"kid": KID})
 
 
-def _disco_key(origin: str) -> tuple[str, tuple]:
-    return (f"{origin}{DISCO_PATH}", DiscoveryPolicy().cache_key())
+def _disco_key(
+    origin: str, scope: TrustScope = DEFAULT_TRUST_SCOPE
+) -> tuple[TrustScope, str, tuple]:
+    return disco_cache_key(f"{origin}{DISCO_PATH}", scope=scope)
 
 
 def _fresh_jwks_entry() -> JwksCacheEntry:
@@ -241,7 +251,7 @@ class TestSyncRefreshThroughInjectedClient:
             assert claims["sub"] == "user1"
             assert upstream.requests == ROTATION_REQUESTS
             assert cache.kid_miss_last_attempt == {}
-            assert list(cache.jwks) == [JWKS_URI]
+            assert list(cache.jwks) == [jwks_cache_key(JWKS_URI, client.trust_scope)]
         assert dict(get_default_validation_cache().jwks) == {}
 
 
@@ -271,7 +281,7 @@ class TestAsyncRefreshThroughInjectedClient:
             assert claims["sub"] == "user1"
             assert upstream.requests == ROTATION_REQUESTS
             assert cache.kid_miss_last_attempt == {}
-            assert list(cache.jwks) == [JWKS_URI]
+            assert list(cache.jwks) == [jwks_cache_key(JWKS_URI, client.trust_scope)]
         assert dict(get_default_async_validation_cache().jwks) == {}
 
 
@@ -300,11 +310,14 @@ class TestSyncKidMissRefreshCoalescing:
             real_lock_for = cache.jwks_fetch_lock
             raced: list[str] = []
 
-            def lock_after_another_refresh(uri: str) -> threading.Lock:
+            def lock_after_another_refresh(
+                cache_key: tuple[TrustScope, str],
+            ) -> threading.Lock:
+                _scope, uri = cache_key
                 if not raced:
                     raced.append(uri)
                     sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache)
-                return real_lock_for(uri)
+                return real_lock_for(cache_key)
 
             monkeypatch.setattr(cache, "jwks_fetch_lock", lock_after_another_refresh)
 
@@ -325,7 +338,7 @@ class TestSyncKidMissRefreshCoalescing:
         with upstream.client() as client:
             cache = ValidationCache()
             entry = _fresh_jwks_entry()
-            cache.jwks[JWKS_URI] = JwksCacheEntry(
+            cache.jwks[jwks_cache_key(JWKS_URI, client.trust_scope)] = JwksCacheEntry(
                 response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
             )
             monkeypatch.setattr(sync_tv, "time", _frozen_clock())
@@ -352,11 +365,14 @@ class TestAsyncKidMissRefreshCoalescing:
             raced: list[str] = []
 
             @asynccontextmanager
-            async def lock_after_another_refresh(uri: str) -> AsyncIterator[None]:
+            async def lock_after_another_refresh(
+                cache_key: tuple[TrustScope, str],
+            ) -> AsyncIterator[None]:
+                _scope, uri = cache_key
                 if not raced:
                     raced.append(uri)
                     await aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache)
-                async with real_lock_for(uri):
+                async with real_lock_for(cache_key):
                     yield
 
             monkeypatch.setattr(cache, "jwks_fetch_lock", lock_after_another_refresh)
@@ -379,7 +395,7 @@ class TestAsyncKidMissRefreshCoalescing:
         async with upstream.async_client() as client:
             cache = AsyncValidationCache()
             entry = _fresh_jwks_entry()
-            cache.jwks[JWKS_URI] = JwksCacheEntry(
+            cache.jwks[jwks_cache_key(JWKS_URI, client.trust_scope)] = JwksCacheEntry(
                 response=entry.response, cached_at=FROZEN_NOW, ttl=entry.ttl
             )
             monkeypatch.setattr(aio_tv, "time", _frozen_clock())
@@ -410,7 +426,9 @@ class TestSyncRefreshEviction:
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         with upstream.client() as client:
             cache = ValidationCache(config=SINGLE_ENTRY)
-            cache.jwks[OLD_URI] = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(OLD_URI, client.trust_scope)] = (
+                _fresh_jwks_entry()
+            )
             if stamped:
                 cache.kid_miss_last_attempt[OLD_URI] = time.monotonic()
 
@@ -419,7 +437,7 @@ class TestSyncRefreshEviction:
             )
 
             assert (response.is_successful, from_retained) == (True, False)
-            assert list(cache.jwks) == [NEW_URI]
+            assert list(cache.jwks) == [jwks_cache_key(NEW_URI, client.trust_scope)]
             assert cache.kid_miss_last_attempt == {}
 
 
@@ -430,7 +448,9 @@ class TestAsyncRefreshEviction:
         upstream = _Upstream([[_with_kid(_SIGNING_KEY, KID)]])
         async with upstream.async_client() as client:
             cache = AsyncValidationCache(config=SINGLE_ENTRY)
-            cache.jwks[OLD_URI] = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(OLD_URI, client.trust_scope)] = (
+                _fresh_jwks_entry()
+            )
             if stamped:
                 cache.kid_miss_last_attempt[OLD_URI] = time.monotonic()
 
@@ -439,7 +459,7 @@ class TestAsyncRefreshEviction:
             )
 
             assert (response.is_successful, from_retained) == (True, False)
-            assert list(cache.jwks) == [NEW_URI]
+            assert list(cache.jwks) == [jwks_cache_key(NEW_URI, client.trust_scope)]
             assert cache.kid_miss_last_attempt == {}
 
 
@@ -486,16 +506,16 @@ class TestSyncLockFreeHit:
         other = f"{CANDIDATE_ORIGINS[1]}{JWKS_PATH}"
         with HTTPClient() as client:
             cache = ValidationCache()
-            cache.jwks[hot] = hot_entry = _fresh_jwks_entry()
-            cache.jwks[other] = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(hot)] = hot_entry = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(other)] = _fresh_jwks_entry()
 
             results = self._call_while_locked(
-                cache.jwks_fetch_lock(hot),
+                cache.jwks_fetch_lock(jwks_cache_key(hot)),
                 lambda: sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client, cache),
             )
 
             assert results == [hot_entry.response]
-            assert list(cache.jwks) == [other, hot]
+            assert list(cache.jwks) == [jwks_cache_key(other), jwks_cache_key(hot)]
 
 
 class TestSyncDoubleCheckedHit:
@@ -532,13 +552,13 @@ class TestSyncDoubleCheckedHit:
         )
         with HTTPClient() as client:
             cache = ValidationCache()
-            cache.jwks[hot] = hot_entry = _fresh_jwks_entry()
-            cache.jwks[other] = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(hot)] = hot_entry = _fresh_jwks_entry()
+            cache.jwks[jwks_cache_key(other)] = _fresh_jwks_entry()
 
             result = sync_tv._get_cached_jwks(hot, DiscoveryPolicy(), client, cache)
 
             assert result is hot_entry.response
-            assert list(cache.jwks) == [other, hot]
+            assert list(cache.jwks) == [jwks_cache_key(other), jwks_cache_key(hot)]
 
 
 # ============================================================================
@@ -564,11 +584,11 @@ class TestSyncMissWaitsOnFetchLock:
         with upstream.client() as client:
             cache = ValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: cache.disco_fetch_lock(_disco_key(o)),
+                lambda o: cache.disco_fetch_lock(_disco_key(o, client.trust_scope)),
                 cache.disco_fetch_lock(_NO_KEY),
             )
             self._assert_blocked_until_released(
-                cache.disco_fetch_lock(_disco_key(origin)),
+                cache.disco_fetch_lock(_disco_key(origin, client.trust_scope)),
                 upstream,
                 lambda: sync_tv._get_disco_response(
                     f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
@@ -580,12 +600,14 @@ class TestSyncMissWaitsOnFetchLock:
         with upstream.client() as client:
             cache = ValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: cache.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
+                lambda o: cache.jwks_fetch_lock(
+                    jwks_cache_key(f"{o}{JWKS_PATH}", client.trust_scope)
+                ),
                 cache.jwks_fetch_lock(_NO_KEY),
             )
             uri = f"{origin}{JWKS_PATH}"
             self._assert_blocked_until_released(
-                cache.jwks_fetch_lock(uri),
+                cache.jwks_fetch_lock(jwks_cache_key(uri, client.trust_scope)),
                 upstream,
                 lambda: sync_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache),
             )
@@ -610,11 +632,11 @@ class TestAsyncMissWaitsOnFetchLock:
         async with upstream.async_client() as client:
             cache = AsyncValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: cache.disco_fetch_lock(_disco_key(o)),
+                lambda o: cache.disco_fetch_lock(_disco_key(o, client.trust_scope)),
                 cache.disco_fetch_lock(_NO_KEY),
             )
             await self._assert_blocked_until_released(
-                cache.disco_fetch_lock(_disco_key(origin)),
+                cache.disco_fetch_lock(_disco_key(origin, client.trust_scope)),
                 upstream,
                 lambda: aio_tv._get_disco_response(
                     f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
@@ -627,12 +649,14 @@ class TestAsyncMissWaitsOnFetchLock:
         async with upstream.async_client() as client:
             cache = AsyncValidationCache()
             origin = _origin_off_the_none_stripe(
-                lambda o: cache.jwks_fetch_lock(f"{o}{JWKS_PATH}"),
+                lambda o: cache.jwks_fetch_lock(
+                    jwks_cache_key(f"{o}{JWKS_PATH}", client.trust_scope)
+                ),
                 cache.jwks_fetch_lock(_NO_KEY),
             )
             uri = f"{origin}{JWKS_PATH}"
             await self._assert_blocked_until_released(
-                cache.jwks_fetch_lock(uri),
+                cache.jwks_fetch_lock(jwks_cache_key(uri, client.trust_scope)),
                 upstream,
                 lambda: aio_tv._refresh_jwks(uri, DiscoveryPolicy(), client, cache),
             )
@@ -648,7 +672,7 @@ CONFIG_TTL = 3600
 
 class TestProviderMaxAgeSetsTtl:
     def test_jwks_entry_ttl_follows_max_age(self):
-        cache: dict[str, JwksCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         response = JwksResponse(
             is_successful=True,
             keys=[jwks_from_dict(_SIGNING_KEY)],
@@ -656,13 +680,17 @@ class TestProviderMaxAgeSetsTtl:
         )
 
         apply_jwks_cache_outcome(
-            cache, JWKS_URI, response, 0.0, Config(jwks_cache_ttl=CONFIG_TTL)
+            cache,
+            jwks_cache_key(JWKS_URI),
+            response,
+            0.0,
+            Config(jwks_cache_ttl=CONFIG_TTL),
         )
 
-        assert cache[JWKS_URI].ttl == PROVIDER_MAX_AGE
+        assert cache[jwks_cache_key(JWKS_URI)].ttl == PROVIDER_MAX_AGE
 
     def test_disco_entry_ttl_follows_max_age(self):
-        cache: dict[tuple[str, tuple], DiscoCacheEntry] = {}
+        cache: dict[tuple[TrustScope, str, tuple], DiscoCacheEntry] = {}
         response = DiscoveryDocumentResponse(
             is_successful=True,
             issuer=ORIGIN,
