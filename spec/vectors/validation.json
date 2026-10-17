@@ -2,7 +2,7 @@
   "capability": "validation",
   "spec": "RFC 7519 (JWT), RFC 7515 (JWS), OIDC Core 1.0 §3.1.3.7",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc7519",
-  "notes": "Vectors are language-neutral: `error` values are canonical codes (malformed, alg_none, unsupported_alg, signature, key_conversion, claim_validation) that each language executor maps to its own error type. Time claims (exp/nbf/iat) are duration strings relative to options.now so minted tokens stay fresh. Expected outcomes follow the behaviour of the OIDF-certified py-identity-model reference.",
+  "notes": "Vectors are language-neutral: `error` values are canonical codes (malformed, alg_none, unsupported_alg, signature, key_conversion, weak_key, claim_validation) that each language executor maps to its own error type. Time claims (exp/nbf/iat) are duration strings relative to options.now so minted tokens stay fresh. Expected outcomes follow the behaviour of the OIDF-certified py-identity-model reference. A vector with no `allowed_algorithms` runs under each library's default allowlist: RS256/384/512, PS256/384/512, ES256/384/512 and EdDSA (Rust omits ES512).",
   "tests": [
     {
       "id": "JWT-001",
@@ -237,6 +237,48 @@
           },
           "options": {"now": "2023-11-14T22:13:20Z"},
           "expect": {"outcome": "reject", "error": "claim_validation", "claim": "iat"}
+        }
+      ]
+    },
+    {
+      "id": "JWT-014",
+      "title": "Reject a verification key below the minimum strength",
+      "given": "A JWT whose kid resolves to an RSA key under 2048 bits or an EC key under 224 bits",
+      "when": "The token is validated",
+      "then": "Validation fails with a weak-key error before the signature is checked. RSA strength is the bit length of the modulus n; EC strength is 8 times the byte length of the x coordinate",
+      "references": ["RFC 7518 §3.3", "RFC 7518 §6.2.1.2", "FAPI 2.0 Security Profile §5.4.1"],
+      "vectors": [
+        {
+          "name": "rsa-1024-key-rejected",
+          "token": {"static": "validation/weak-rsa-1024-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "weak_key"}
+        },
+        {
+          "name": "ec-p192-key-rejected",
+          "token": {"static": "validation/weak-ec-p192-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "weak_key"}
+        }
+      ]
+    },
+    {
+      "id": "JWT-015",
+      "title": "Accept EdDSA under the default algorithm allowlist",
+      "given": "A JWT signed with an Ed25519 key, validated without an explicit algorithm allowlist",
+      "when": "The token is validated",
+      "then": "The default allowlist includes EdDSA, so the signature is verified and the claims are returned",
+      "references": ["RFC 8037 §3.1", "FAPI 2.0 Security Profile §5.4.1"],
+      "vectors": [
+        {
+          "name": "ed25519-default-allowlist",
+          "token": {
+            "signing_key": "ed25519",
+            "alg": "EdDSA",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
         }
       ]
     }
