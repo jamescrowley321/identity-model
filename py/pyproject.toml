@@ -196,6 +196,13 @@ ignore = [
     # below rather than a scattered `# noqa` at the call site.
     "S603",
 ]
+# The trust-scope tests wrap an httpx client built with verify=False to stand
+# in for a permissive transport; respx answers every request, so nothing is
+# sent over the network.
+"src/tests/unit/test_trust_scope_cache.py" = [
+    "S101",    # pytest assertions
+    "S501",
+]
 "src/tests/unit/test_config_helpers.py" = [
     "S101",    # pytest assertions
     # Checks that importing the package does not load config_helpers, which

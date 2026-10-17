@@ -108,52 +108,61 @@ def config_from_settings(settings: Mapping[str, str]) -> Config:
 
 ## Passing a `Config` to the library
 
-A `Config` belongs to an HTTP client. `HTTPClient` (sync) and
-`AsyncHTTPClient` (async) take `config=`, and every entry point (discovery,
-JWKS, token validation, token requests, UserInfo and the rest) takes
-`http_client=`:
+A `Config` is passed to an HTTP client and, for the cache settings, to a
+validation cache. `HTTPClient` (sync) and `AsyncHTTPClient` (async) take
+`config=`, and every entry point (discovery, JWKS, token validation, token
+requests, UserInfo and the rest) takes `http_client=`. `ValidationCache` /
+`AsyncValidationCache` take `config=` too, and the token validators take
+`cache=`:
 
 ```python
 from py_identity_model import (
     Config,
     DiscoveryDocumentRequest,
     HTTPClient,
+    ValidationCache,
     get_discovery_document,
     validate_token,
 )
 
 config = Config(http_timeout=10.0, cache_max_entries=128)
+cache = ValidationCache(config=config)
 
 with HTTPClient(config=config) as client:
     disco = get_discovery_document(
         DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
     )
-    claims = validate_token(token, validation_config, DISCO_URL, http_client=client)
+    claims = validate_token(
+        token, validation_config, DISCO_URL, http_client=client, cache=cache
+    )
 ```
 
 ```python
-from py_identity_model.aio import AsyncHTTPClient, validate_token
+from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache, validate_token
+
+async_cache = AsyncValidationCache(config=config)
 
 async with AsyncHTTPClient(config=config) as client:
     claims = await validate_token(
-        token, validation_config, DISCO_URL, http_client=client
+        token, validation_config, DISCO_URL, http_client=client, cache=async_cache
     )
 ```
 
 - `config=None` means `Config()` defaults, not the environment.
 - Called without `http_client=`, an entry point uses the library default
   client, built from `Config()`.
-- Each client owns its discovery cache, JWKS cache and kid-miss cooldown, so
-  each cache has one `Config`. Two clients don't share cached documents: keep
-  one long-lived client per configuration rather than one per call.
-- `clear_discovery_cache(http_client=...)` and
-  `clear_jwks_cache(http_client=...)` clear one client's caches (the default
-  client's when `http_client` is omitted).
+- The cache settings (`jwks_cache_ttl`, `discovery_cache_ttl`,
+  `cache_max_entries`, `jwks_kid_miss_cooldown`) apply to a
+  [`ValidationCache`](http-client.md#validation-cache), not to a client:
+  `ValidationCache(config=config)`, passed as `cache=` to the validators.
+  Without `cache=`, the process-wide default cache, built from `Config()`, is
+  used. A cache setting on a client's `Config` has no effect.
+- `clear_discovery_cache(cache=...)` and `clear_jwks_cache(cache=...)` clear
+  one cache (the default one when `cache` is omitted).
 - To wrap your own `httpx.Client` (for a proxy, custom TLS, or
   `verify=False` in a test), pass it as the first argument:
   `HTTPClient(httpx.Client(...), config=config)`. Its own timeout and TLS
-  settings apply; the `Config` still sets retries, JWKS limits and the
-  caches. A wrapped client can't be combined with `mtls` (that raises
+  settings apply; the `Config` still sets retries and JWKS limits. A wrapped client can't be combined with `mtls` (that raises
   `ValueError`); use `HTTPClient(config=Config(ca_bundle=...))` instead.
 
 !!! warning "Breaking change (py-identity-model 5.0): no environment variables"
@@ -176,11 +185,12 @@ async with AsyncHTTPClient(config=config) as client:
 
     - `HTTPClient` / `AsyncHTTPClient` take `config=` instead of `timeout=`
       and `verify=`. For `verify=False`, wrap your own `httpx.Client`.
-    - An injected `http_client` now caches discovery documents and JWKS
-      and applies the kid-miss cooldown, like the default client. It used to
-      bypass them and log a warning.
-    - Module-level caches are gone; `clear_discovery_cache` /
-      `clear_jwks_cache` take an optional `http_client`.
+    - An injected `http_client` no longer bypasses the discovery and JWKS
+      caches or the kid-miss cooldown: they live on a `ValidationCache`
+      (`cache=`), and the process-wide default cache is used when none is
+      passed. It used to bypass them and log a warning.
+    - `clear_discovery_cache` / `clear_jwks_cache` take an optional
+      `cache`.
     - `get_retry_config`, `get_timeout`, `get_max_jwks_size` and
       `get_max_jwks_keys` are removed; `get_ssl_verify(config)` takes a
       `Config` and is no longer cached.
@@ -202,7 +212,7 @@ async with AsyncHTTPClient(config=config) as client:
 | `ca_bundle` | `str \| None` | `None` (verify TLS with httpx's default bundle) | a readable file |
 | `jwks_max_size` | `int` | `524288` bytes (512 KiB) | ≥ 1 |
 | `jwks_max_keys` | `int` | `100` | ≥ 1 |
-| `jwks_cache_ttl` | `float` | `86400.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
+| `jwks_cache_ttl` | `float` | `3600.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
 | `jwks_kid_miss_cooldown` | `float` | `5.0` s | 0 – 3600 (0 disables the cooldown) |
 | `discovery_cache_ttl` | `float` | `3600.0` s, used only when the response has no `Cache-Control: max-age` | 60 – 86400 |
 | `cache_max_entries` | `int` | `64`, applied separately to the JWKS cache and the discovery cache | ≥ 1 |

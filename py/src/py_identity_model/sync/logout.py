@@ -18,6 +18,7 @@ from .token_validation import validate_token
 if TYPE_CHECKING:
     from ..core.models import TokenValidationConfig
     from .managed_client import HTTPClient
+    from .validation_cache import ValidationCache
 
 
 def validate_logout_token(
@@ -25,6 +26,8 @@ def validate_logout_token(
     token_validation_config: TokenValidationConfig,
     disco_doc_address: str | None = None,
     http_client: HTTPClient | None = None,
+    *,
+    cache: ValidationCache | None = None,
 ) -> dict:
     """Validate a Back-Channel Logout Token (Back-Channel Logout 1.0 §2.4).
 
@@ -41,6 +44,8 @@ def validate_logout_token(
         disco_doc_address: Discovery document address (required when
             ``perform_disco`` is True).
         http_client: Optional managed HTTP client (see ``validate_token``).
+        cache: Optional :class:`ValidationCache` for the discovery document,
+            JWKS and kid-miss cooldown (see ``validate_token``).
 
     Returns:
         dict: The decoded and validated Logout Token claims.
@@ -56,6 +61,7 @@ def validate_logout_token(
         token_validation_config,
         disco_doc_address=disco_doc_address,
         http_client=http_client,
+        cache=cache,
     )
     validate_logout_token_claims(claims)
     return claims

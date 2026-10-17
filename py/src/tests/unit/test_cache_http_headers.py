@@ -22,8 +22,6 @@ import pytest
 import respx
 
 from py_identity_model.aio import token_validation as aio_tv
-from py_identity_model.aio.http_client import get_default_async_http_client
-from py_identity_model.aio.managed_client import AsyncClientCaches
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks as async_get_cached_jwks,
 )
@@ -36,38 +34,42 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as async_clear_jwks_cache,
 )
-from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
+)
 from py_identity_model.sync import token_validation as sync_tv
-from py_identity_model.sync.http_client import get_default_http_client
-from py_identity_model.sync.managed_client import ClientCaches
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.sync.validation_cache import (
+    ValidationCache,
+    get_default_validation_cache,
+)
 
 from ..constants import DISCO_URL
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
+    disco_cache_key,
     generate_rsa_keypair,
+    jwks_cache_key,
 )
 
 
 JWKS_URL = "https://example.com/jwks"
-# Second element of the disco cache key for the default (strict) policy — the
-# discovery cache keys on ``(address, policy.cache_key())``.
-_STRICT_DISCO_KEY = DiscoveryPolicy().cache_key()
 
 
-def _sync_caches() -> ClientCaches:
-    """Caches of the library default sync client (used by these tests)."""
-    return get_default_http_client().caches
+def _sync_caches() -> ValidationCache:
+    """The library default sync cache (used by these tests)."""
+    return get_default_validation_cache()
 
 
-def _async_caches() -> AsyncClientCaches:
-    """Caches of the library default async client (used by these tests)."""
-    return get_default_async_http_client().caches
+def _async_caches() -> AsyncValidationCache:
+    """The library default async cache (used by these tests)."""
+    return get_default_async_validation_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -110,12 +112,12 @@ class TestSyncFailedResponseNotCached:
 
         failed = _get_cached_jwks(JWKS_URL)
         assert failed.is_successful is False
-        assert JWKS_URL not in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _sync_caches().jwks
 
         # Next call must re-fetch and succeed.
         success = _get_cached_jwks(JWKS_URL)
         assert success.is_successful is True
-        assert JWKS_URL in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
         assert len(call_log) == 2  # noqa: PLR2004
 
     @respx.mock
@@ -133,11 +135,11 @@ class TestSyncFailedResponseNotCached:
 
         failed = _get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
 
         success = _get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert (DISCO_URL, _STRICT_DISCO_KEY) in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) in _sync_caches().disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -158,11 +160,11 @@ class TestAsyncFailedResponseNotCached:
 
         failed = await async_get_cached_jwks(JWKS_URL)
         assert failed.is_successful is False
-        assert JWKS_URL not in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _async_caches().jwks
 
         success = await async_get_cached_jwks(JWKS_URL)
         assert success.is_successful is True
-        assert JWKS_URL in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
         assert len(call_log) == 2  # noqa: PLR2004
 
     @pytest.mark.asyncio
@@ -180,11 +182,11 @@ class TestAsyncFailedResponseNotCached:
 
         failed = await async_get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
 
         success = await async_get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert (DISCO_URL, _STRICT_DISCO_KEY) in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) in _async_caches().disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -209,7 +211,7 @@ class TestSyncNoStoreCachedForJwks:
         response = _get_cached_jwks(JWKS_URL)
         assert response.is_successful is True
         assert response.keys is not None
-        assert JWKS_URL in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
 
     @respx.mock
     def test_disco_no_store_skips_cache(self):
@@ -223,7 +225,7 @@ class TestSyncNoStoreCachedForJwks:
 
         response = _get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
 
 
 class TestAsyncNoStoreCachedForJwks:
@@ -242,7 +244,7 @@ class TestAsyncNoStoreCachedForJwks:
 
         response = await async_get_cached_jwks(JWKS_URL)
         assert response.is_successful is True
-        assert JWKS_URL in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
 
     @pytest.mark.asyncio
     @respx.mock
@@ -257,7 +259,7 @@ class TestAsyncNoStoreCachedForJwks:
 
         response = await async_get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
 
 
 # ============================================================================
@@ -282,7 +284,7 @@ class TestSyncNoCacheCachedForJwks:
             response = _get_cached_jwks(JWKS_URL)
             assert response.is_successful is True
 
-        assert JWKS_URL in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
         assert jwks_route.call_count == 1
 
     @respx.mock
@@ -299,7 +301,7 @@ class TestSyncNoCacheCachedForJwks:
             response = _get_disco_response(DISCO_URL)
             assert response.is_successful is True
 
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -321,7 +323,7 @@ class TestAsyncNoCacheCachedForJwks:
             response = await async_get_cached_jwks(JWKS_URL)
             assert response.is_successful is True
 
-        assert JWKS_URL in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
         assert jwks_route.call_count == 1
 
     @pytest.mark.asyncio
@@ -338,7 +340,7 @@ class TestAsyncNoCacheCachedForJwks:
         for _ in range(3):
             await async_get_disco_response(DISCO_URL)
 
-        assert (DISCO_URL, _STRICT_DISCO_KEY) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -396,8 +398,10 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         primed = _get_cached_jwks(JWKS_URL)
         assert primed.is_successful is True
-        assert JWKS_URL in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[JWKS_URL].response) == {"old-kid"}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "old-kid"
+        }
 
         refreshed, from_retained_cache = sync_tv._refresh_jwks(JWKS_URL)
         assert refreshed.is_successful is True
@@ -406,8 +410,10 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
         # … and the cache is updated with the new key (not popped).
         # See #396: pop-on-uncacheable caused the kid-miss-refresh-loop
         # this branch was meant to prevent.
-        assert JWKS_URL in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[JWKS_URL].response) == {"new-kid"}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "new-kid"
+        }
         # Real refresh (not an empty-fallback) — see #403 contract.
         assert from_retained_cache is False
 
@@ -445,7 +451,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         primed = _get_disco_response(DISCO_URL)
         assert primed.is_successful is True
-        cache_key = (DISCO_URL, _STRICT_DISCO_KEY)
+        cache_key = disco_cache_key(DISCO_URL)
         assert cache_key in _sync_caches().disco
 
         # Manually expire the entry without removing it — this is the state
@@ -495,15 +501,19 @@ class TestAsyncRefreshReplacesStaleOnUncacheable:
 
         primed = await async_get_cached_jwks(JWKS_URL)
         assert primed.is_successful is True
-        assert JWKS_URL in _async_caches().jwks
-        assert _kids(_async_caches().jwks[JWKS_URL].response) == {"old-kid"}
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "old-kid"
+        }
 
         refreshed, from_retained_cache = await aio_tv._refresh_jwks(JWKS_URL)
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"new-kid"}
         # Cache updated with new key, not popped (see #396).
-        assert JWKS_URL in _async_caches().jwks
-        assert _kids(_async_caches().jwks[JWKS_URL].response) == {"new-kid"}
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "new-kid"
+        }
         # Real refresh (not an empty-fallback) — see #403 contract.
         assert from_retained_cache is False
 
@@ -550,8 +560,10 @@ class TestSyncEmptyKeysNotCached:
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"retained-kid"}
         assert from_retained_cache is True
-        assert JWKS_URL in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }
 
     @respx.mock
     def test_initial_fetch_with_empty_keys_not_cached(self):
@@ -568,7 +580,7 @@ class TestSyncEmptyKeysNotCached:
         assert response.keys == []
         # Empty-keys responses are never stored, so a subsequent call must
         # re-fetch rather than serve a poisoned entry.
-        assert JWKS_URL not in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _sync_caches().jwks
 
 
 class TestAsyncEmptyKeysNotCached:
@@ -600,8 +612,10 @@ class TestAsyncEmptyKeysNotCached:
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"retained-kid"}
         assert from_retained_cache is True
-        assert JWKS_URL in _async_caches().jwks
-        assert _kids(_async_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }
 
 
 # ============================================================================
@@ -646,8 +660,10 @@ class TestEmptyKeysWithUncacheableHeaderRetains:
         # Return is now a tuple — discard both halves; the test pins cache
         # state, not what _refresh_jwks surfaces to the caller.
         sync_tv._refresh_jwks(JWKS_URL)
-        assert JWKS_URL in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }
 
     @pytest.mark.asyncio
     @respx.mock
@@ -680,8 +696,10 @@ class TestEmptyKeysWithUncacheableHeaderRetains:
         # Return is now a tuple — discard both halves; the test pins cache
         # state, not what _refresh_jwks surfaces to the caller.
         await aio_tv._refresh_jwks(JWKS_URL)
-        assert JWKS_URL in _async_caches().jwks
-        assert _kids(_async_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }
 
 
 # ============================================================================
@@ -716,8 +734,10 @@ class TestRetainOnError:
         assert refreshed.is_successful is False
         # Failed refresh does not trigger the empty-keys fallback.
         assert from_retained_cache is False
-        assert JWKS_URL in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }
 
     @pytest.mark.asyncio
     @respx.mock
@@ -742,5 +762,7 @@ class TestRetainOnError:
         assert refreshed.is_successful is False
         # Failed refresh does not trigger the empty-keys fallback.
         assert from_retained_cache is False
-        assert JWKS_URL in _async_caches().jwks
-        assert _kids(_async_caches().jwks[JWKS_URL].response) == {"retained-kid"}
+        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+            "retained-kid"
+        }

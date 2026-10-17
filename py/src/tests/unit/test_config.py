@@ -40,7 +40,7 @@ EXPECTED_DEFAULTS = {
     "ca_bundle": None,
     "jwks_max_size": 524288,
     "jwks_max_keys": 100,
-    "jwks_cache_ttl": 86400.0,
+    "jwks_cache_ttl": 3600.0,
     "jwks_kid_miss_cooldown": 5.0,
     "discovery_cache_ttl": 3600.0,
     "cache_max_entries": 64,

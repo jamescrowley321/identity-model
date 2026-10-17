@@ -10,7 +10,8 @@ then they differ as listed in [Go and Rust today](#go-and-rust-today).
 
 The Python library reads no environment variables, files or any other source.
 Settings take effect only when the caller passes them in: a `Config` on an
-HTTP client in Python, options in Go, client builder methods in Rust.
+HTTP client or a validation cache in Python, options in Go, client builder
+methods in Rust.
 
 Python's `py_identity_model.config_helpers` module (`config_from_env`,
 `config_from_mapping`) converts string settings into a `Config`. It is optional:
@@ -26,7 +27,7 @@ the library never imports or calls it, so it runs only when a caller calls it.
 | `ca_bundle` | `WithCABundle` | `ca_bundle` | path | `none` | `readable file` |
 | `jwks_max_size` | `jwks.WithMaxSize` | `JwksClientBuilder::max_size` | bytes | `524288` | `≥ 1` |
 | `jwks_max_keys` | `jwks.WithMaxKeys` | `JwksClientBuilder::max_keys` | count | `100` | `≥ 1` |
-| `jwks_cache_ttl` | `jwks.WithCacheTTL` | `JwksClientBuilder::cache_ttl` | seconds | `86400` | `60 – 86400` |
+| `jwks_cache_ttl` | `jwks.WithCacheTTL` | `JwksClientBuilder::cache_ttl` | seconds | `3600` | `60 – 86400` |
 | `jwks_kid_miss_cooldown` | `jwks.WithRefreshCooldown` | `JwksClientBuilder::refresh_cooldown` | seconds | `5` | `0 – 3600` |
 | `discovery_cache_ttl` | `discovery.WithCacheTTL` | `DiscoveryClientBuilder::cache_ttl` | seconds | `3600` | `60 – 86400` |
 | `cache_max_entries` | `discovery.WithMaxCacheEntries`, `jwks.WithMaxCacheEntries` | `DiscoveryClientBuilder::max_cache_entries`, `JwksClientBuilder::max_cache_entries` | count | `64` | `≥ 1` |
@@ -63,7 +64,7 @@ land, Go and Rust differ from this page:
 - They read `JWKS_CACHE_MAX_ENTRIES` and `DISCO_CACHE_MAX_ENTRIES` from the
   environment. `0`, from the environment or the max-cache-entries option,
   means unbounded.
-- The discovery cache TTL defaults to 24 hours.
+- The discovery cache TTL and the JWKS cache TTL both default to 24 hours.
 - Values are not range-checked. A zero TTL (Go: zero or negative) falls back
   to its default, as does a negative cooldown in Go; any other value is used
   as given.
@@ -89,13 +90,17 @@ land, Go and Rust differ from this page:
 
 ## Cache ownership
 
-A cache belongs to the client that holds the settings, so every cache has
-exactly one set of settings. Two clients don't share cached documents.
+A cache belongs to the object that holds its settings, so every cache has
+exactly one set of settings.
 
-- **Python:** `HTTPClient` and `AsyncHTTPClient` take `config=` and own the
-  discovery cache, the JWKS cache and the kid-miss cooldown. Every entry point
-  takes `http_client=`; without one it uses the library default client, built
-  from `Config()`.
+- **Python:** HTTP clients only send requests and hold no cache. The discovery
+  cache, the JWKS cache and the kid-miss cooldown live on a `ValidationCache` /
+  `AsyncValidationCache`, which takes `config=` and reads `jwks_cache_ttl`,
+  `discovery_cache_ttl`, `cache_max_entries` and `jwks_kid_miss_cooldown` from
+  it. The token validators take `cache=`; without one they use the
+  process-wide default cache, built from `Config()`, whichever `http_client`
+  is passed. The default cache and the default HTTP clients are rebuilt in a
+  forked child.
 - **Go:** the `discovery` and `jwks` packages each have a client that holds its
   options and owns its cache. Package-level functions use a default client
   built from the defaults.

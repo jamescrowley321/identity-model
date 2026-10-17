@@ -30,7 +30,11 @@ from py_identity_model import (
     TokenValidationConfig,
     to_principal,
 )
-from py_identity_model.aio import AsyncHTTPClient, validate_token
+from py_identity_model.aio import (
+    AsyncHTTPClient,
+    AsyncValidationCache,
+    validate_token,
+)
 
 
 logger = logging.getLogger("fastapi_identity_model")
@@ -150,8 +154,12 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             an OP whose access tokens signal type differently. Ignored when
             ``require_access_token_marker`` is ``False``.
         http_client: Managed HTTP client for discovery and JWKS, built from
-            your ``Config``. Its caches hold this middleware's discovery
-            document and keys. ``None`` uses the library default client.
+            your ``Config`` (timeout, retries, TLS, JWKS size limits). ``None``
+            uses the library default client.
+        cache: The :class:`~py_identity_model.aio.AsyncValidationCache` that
+            holds this middleware's discovery document, keys and kid-miss
+            cooldown; its ``Config`` sets the cache TTLs, size and cooldown.
+            ``None`` uses the library default cache.
     """
 
     def __init__(  # noqa: PLR0913  # opt-in F-07 marker config + http_client
@@ -167,6 +175,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         ] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
         *,
         http_client: AsyncHTTPClient | None = None,
+        cache: AsyncValidationCache | None = None,
     ):
         super().__init__(app)
         if not audience:
@@ -195,6 +204,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         )
         self.custom_claims_validator = custom_claims_validator
         self.http_client = http_client
+        self.cache = cache
 
     def _is_excluded(self, path: str) -> bool:
         """Whether *path* is excluded from token validation.
@@ -278,6 +288,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 ),
                 disco_doc_address=self.discovery_url,
                 http_client=self.http_client,
+                cache=self.cache,
             )
             # Reject an ID token presented as an access token (token-type
             # confusion at the resource server).

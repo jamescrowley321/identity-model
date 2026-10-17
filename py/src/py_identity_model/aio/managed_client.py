@@ -7,104 +7,24 @@ library uses for every request made through it.  Pass an
 ``AsyncHTTPClient`` instance to any public async function via the
 ``http_client`` parameter to use it instead of the library default client.
 
-Each ``AsyncHTTPClient`` owns its discovery cache, JWKS cache and kid-miss
-cooldown state, so every cache has exactly one ``Config``.  Two clients do
-not share cached documents.
+The client only sends requests.  The discovery and JWKS caches and the
+kid-miss cooldown live on a validation cache (``cache=`` on the validators),
+not on the client.
 """
 
 from __future__ import annotations
 
-import asyncio
-from collections import OrderedDict
-import threading
 from typing import TYPE_CHECKING
-from weakref import WeakKeyDictionary
 
 import httpx
 
 from ..core.config import Config
+from ..core.trust_scope import TrustScope, owned_trust_scope, wrapped_trust_scope
 from ..ssl_config import get_ssl_verify
 
 
 if TYPE_CHECKING:
     from types import TracebackType
-
-    from ..core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
-
-
-# See sync.managed_client: striped per-URI fetch locks.
-_LOCK_STRIPES = 32
-
-
-class _LoopLocks:
-    """Per-event-loop asyncio locks: one write lock plus striped fetch locks.
-
-    An ``asyncio.Lock`` binds to the loop that first acquires it, so any embed
-    or test runner that creates a new loop per scope would hit
-    ``RuntimeError: <Lock> is bound to a different event loop`` with a single
-    shared lock. Keying on the running loop via ``WeakKeyDictionary`` gives
-    each loop its own lock set, reclaimed when the loop is closed (#399).
-    """
-
-    def __init__(self, creation_lock: threading.Lock) -> None:
-        self._creation_lock = creation_lock
-        self._write: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-            WeakKeyDictionary()
-        )
-        self._fetch: WeakKeyDictionary[
-            asyncio.AbstractEventLoop, list[asyncio.Lock]
-        ] = WeakKeyDictionary()
-
-    def write_lock(self) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        lock = self._write.get(loop)
-        if lock is None:
-            with self._creation_lock:
-                lock = self._write.get(loop)
-                if lock is None:
-                    lock = asyncio.Lock()
-                    self._write[loop] = lock
-        return lock
-
-    def fetch_lock(self, key: object) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        stripes = self._fetch.get(loop)
-        if stripes is None:
-            with self._creation_lock:
-                stripes = self._fetch.get(loop)
-                if stripes is None:
-                    stripes = [asyncio.Lock() for _ in range(_LOCK_STRIPES)]
-                    self._fetch[loop] = stripes
-        return stripes[hash(key) % _LOCK_STRIPES]
-
-
-class AsyncClientCaches:
-    """Discovery cache, JWKS cache and kid-miss cooldown state of one client.
-
-    Async mirror of :class:`py_identity_model.sync.managed_client.ClientCaches`;
-    the write and fetch locks are per event loop (see :class:`_LoopLocks`).
-    ``kid_miss_last_attempt`` is guarded by the JWKS write lock.
-    """
-
-    def __init__(self) -> None:
-        creation_lock = threading.Lock()
-        self.disco: OrderedDict[tuple[str, tuple], DiscoCacheEntry] = OrderedDict()
-        self._disco_locks = _LoopLocks(creation_lock)
-        self.jwks: OrderedDict[str, JwksCacheEntry] = OrderedDict()
-        self._jwks_locks = _LoopLocks(creation_lock)
-        self.kid_miss_last_attempt: dict[str, float] = {}
-
-    def disco_write_lock(self) -> asyncio.Lock:
-        return self._disco_locks.write_lock()
-
-    def disco_fetch_lock(self, cache_key: tuple[str, tuple]) -> asyncio.Lock:
-        return self._disco_locks.fetch_lock(cache_key)
-
-    def jwks_write_lock(self) -> asyncio.Lock:
-        return self._jwks_locks.write_lock()
-
-    def jwks_fetch_lock(self, jwks_uri: str) -> asyncio.Lock:
-        return self._jwks_locks.fetch_lock(jwks_uri)
 
 
 def build_async_httpx_client(config: Config) -> httpx.AsyncClient:
@@ -126,8 +46,9 @@ class AsyncHTTPClient:
 
     When an existing *client* is provided, this instance acts as a
     non-owning wrapper and :meth:`close` is a no-op.  The wrapped client
-    keeps its own timeout and TLS settings; *config* still governs retries,
-    JWKS limits and the caches.
+    keeps its own timeout and TLS settings; *config* still governs retries
+    and JWKS limits.  The validation caches keep the documents it fetches
+    apart from every other client's (see :attr:`trust_scope`).
 
     Args:
         client: Existing ``httpx.AsyncClient`` to wrap.  If ``None``, a new
@@ -147,13 +68,14 @@ class AsyncHTTPClient:
         config: Config | None = None,
     ) -> None:
         self._config = config if config is not None else Config()
-        self._caches = AsyncClientCaches()
         if client is not None:
             self._client = client
             self._owned = False
+            self._trust_scope = wrapped_trust_scope(client)
         else:
             self._client = build_async_httpx_client(self._config)
             self._owned = True
+            self._trust_scope = owned_trust_scope(self._config)
         self._closed = False
 
     @property
@@ -162,14 +84,19 @@ class AsyncHTTPClient:
         return self._config
 
     @property
+    def trust_scope(self) -> TrustScope:
+        """The scope of the cached documents this client may read.
+
+        Built from ``Config.ca_bundle`` for an owned client, and from the
+        identity of the wrapped ``httpx.AsyncClient`` otherwise (see
+        :mod:`py_identity_model.core.trust_scope`).
+        """
+        return self._trust_scope
+
+    @property
     def owns_client(self) -> bool:
         """Whether this instance built (and closes) its ``httpx.AsyncClient``."""
         return self._owned
-
-    @property
-    def caches(self) -> AsyncClientCaches:
-        """The discovery/JWKS caches and kid-miss state owned by this client."""
-        return self._caches
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -180,7 +107,7 @@ class AsyncHTTPClient:
     def ensure_open(self) -> None:
         """Raise ``RuntimeError`` if this client has been closed.
 
-        Entry points call this before serving from the caches, so a closed
+        The validators call this before serving from their cache, so a closed
         client fails the same way on a cache hit as on a cache miss.
         """
         if self._closed:
@@ -208,4 +135,4 @@ class AsyncHTTPClient:
         await self.close()
 
 
-__all__ = ["AsyncClientCaches", "AsyncHTTPClient", "build_async_httpx_client"]
+__all__ = ["AsyncHTTPClient", "build_async_httpx_client"]

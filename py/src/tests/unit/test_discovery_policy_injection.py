@@ -20,7 +20,6 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio.http_client import get_default_async_http_client
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
 )
@@ -30,10 +29,12 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
+from py_identity_model.aio.validation_cache import (
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import TokenValidationException
-from py_identity_model.sync.http_client import get_default_http_client
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
 )
@@ -43,8 +44,9 @@ from py_identity_model.sync.token_validation import (
 from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
+from py_identity_model.sync.validation_cache import get_default_validation_cache
 
-from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
+from ..token_validation_helpers import disco_cache_key, generate_rsa_keypair, sign_jwt
 
 
 # Discovery document whose ``jwks_uri`` lives on a *different* authority than the
@@ -73,18 +75,18 @@ CDN_POLICY = DiscoveryPolicy(
 
 # The two disco cache keys these tests reason about: the strict default and the
 # CDN-allowing policy. They MUST differ, or the cache would not be partitioned.
-STRICT_KEY = (DISCO_ADDR, DiscoveryPolicy().cache_key())
-CDN_KEY = (DISCO_ADDR, CDN_POLICY.cache_key())
+STRICT_KEY = disco_cache_key(DISCO_ADDR)
+CDN_KEY = disco_cache_key(DISCO_ADDR, CDN_POLICY)
 
 
 def _sync_disco_cache() -> dict:
-    """The default sync client's discovery cache (used when no client is passed)."""
-    return get_default_http_client().caches.disco
+    """The default sync validation cache's discovery entries (no ``cache=``)."""
+    return get_default_validation_cache().disco
 
 
 def _async_disco_cache() -> dict:
-    """The default async client's discovery cache."""
-    return get_default_async_http_client().caches.disco
+    """The default async validation cache's discovery entries."""
+    return get_default_async_validation_cache().disco
 
 
 @pytest.fixture(autouse=True)
