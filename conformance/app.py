@@ -1299,7 +1299,8 @@ def _fetch_userinfo(
         except PyIdentityModelException as exc:
             error_msg = exc.message
         except PyJWTError as exc:
-            error_msg = f"malformed signed UserInfo: {exc}"
+            logger.error("Malformed signed UserInfo: %s", exc)
+            error_msg = "malformed signed UserInfo"
     elif userinfo_response.is_successful and not isinstance(
         userinfo_response.claims, dict
     ):

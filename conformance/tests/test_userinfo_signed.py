@@ -132,6 +132,10 @@ def test_malformed_signed_userinfo_is_rejected() -> None:
 
     assert isinstance(result, HTMLResponse)
     assert result.status_code == 400
+    # The PyJWT exception text stays in the server log, not the response.
+    assert result.body == (
+        b"<h1>UserInfo Validation Failed</h1><p>malformed signed UserInfo</p>"
+    )
 
 
 @respx.mock
