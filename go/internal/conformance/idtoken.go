@@ -70,7 +70,8 @@ type IDTokenInput struct {
 }
 
 // IDTokenExpect is the asserted outcome. Reject carries the canonical error
-// family ("id_token_profile") and a stable reason label.
+// family ("id_token_profile", or "configuration" for inconsistent caller
+// inputs) and a stable reason label.
 type IDTokenExpect struct {
 	Outcome string `json:"outcome"`          // OutcomeAccept | OutcomeReject
 	Error   string `json:"error,omitempty"`  // canonical error family (reject)
