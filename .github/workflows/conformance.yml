@@ -154,6 +154,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed FAPI 2.0 results
+        run: rm -f conformance/results/fapi2-*-latest.json
+
       - name: Start conformance suite
         working-directory: conformance
         run: docker compose up -d --build --wait
