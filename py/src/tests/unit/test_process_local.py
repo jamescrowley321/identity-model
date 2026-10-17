@@ -67,6 +67,39 @@ def test_replace_returns_only_this_processes_value(pid):
     assert holder.replace(_Built(None)) is None
 
 
+class _RebuildAfterFirstRead(ProcessLocal[_Built]):
+    """Runs a competing ``get()`` right after the first read of the state.
+
+    This is the interleaving a forked child can hit: thread A reads the
+    inherited state, then thread B rebuilds and stamps the child's pid before
+    A checks the pid. A reader that paired B's pid with the value it read
+    first would return the parent's object.
+    """
+
+    def __init__(self) -> None:
+        self._raced = False
+        super().__init__(_Built)
+
+    def __getattribute__(self, name: str) -> object:
+        value = super().__getattribute__(name)
+        if name == "_state" and value is not None and not self._raced:
+            self._raced = True
+            ProcessLocal.get(self)  # thread B rebuilds and stamps the pid
+        return value
+
+
+def test_get_never_pairs_another_threads_pid_with_the_inherited_value(pid):
+    holder = _RebuildAfterFirstRead()
+    holder._raced = True  # no race while the parent builds
+    parent = holder.get()
+    holder._raced = False
+    pid["pid"] = CHILD_PID
+    child = holder.get()
+    assert child is not parent
+    assert child.inherited is parent
+    assert holder.get() is child
+
+
 @pytest.mark.skipif(not hasattr(os, "register_at_fork"), reason="POSIX only")
 def test_after_fork_hook_gives_a_fresh_creation_lock(monkeypatch):
     hooks = []

@@ -42,8 +42,11 @@ class ProcessLocal[T]:
     def __init__(self, factory: Callable[[T | None], T]) -> None:
         self._factory = factory
         self._lock = threading.Lock()
-        self._pid: int | None = None
-        self._value: T | None = None
+        # The pid that built the value and the value, as one tuple: a reader
+        # takes a single snapshot, so it never pairs one writer's pid with
+        # another's value (a forked child could otherwise return the parent's
+        # object after another thread stamped the child's pid).
+        self._state: tuple[int, T] | None = None
         if hasattr(os, "register_at_fork"):
             ref = weakref.ref(self)
 
@@ -57,14 +60,15 @@ class ProcessLocal[T]:
     def get(self) -> T:
         """Return this process's value, building it on first use."""
         pid = os.getpid()
-        value = self._value
-        if value is not None and self._pid == pid:
-            return value
+        state = self._state
+        if state is not None and state[0] == pid:
+            return state[1]
         with self._lock:
-            if self._value is None or self._pid != pid:
-                self._value = self._factory(self._value)
-                self._pid = pid
-            return self._value
+            state = self._state
+            if state is None or state[0] != pid:
+                state = (pid, self._factory(None if state is None else state[1]))
+                self._state = state
+            return state[1]
 
     def replace(self, value: T) -> T | None:
         """Install *value* for this process; return the previous one, if any.
@@ -74,16 +78,15 @@ class ProcessLocal[T]:
         """
         pid = os.getpid()
         with self._lock:
-            previous = self._value if self._pid == pid else None
-            self._value = value
-            self._pid = pid
-        return previous
+            state = self._state
+            self._state = (pid, value)
+        return state[1] if state is not None and state[0] == pid else None
 
     def peek(self) -> T | None:
         """Return this process's value without building one."""
-        value = self._value
-        if value is not None and self._pid == os.getpid():
-            return value
+        state = self._state
+        if state is not None and state[0] == os.getpid():
+            return state[1]
         return None
 
 
