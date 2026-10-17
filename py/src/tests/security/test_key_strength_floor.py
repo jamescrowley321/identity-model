@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from py_identity_model.core.jwt_helpers import decode_and_validate_jwt
+from py_identity_model.core.key_strength import enforce_key_strength
 from py_identity_model.exceptions import WeakKeyException
 
 
@@ -55,3 +56,26 @@ def test_weak_key_refused_even_when_its_alg_is_allowed(case):
         decode_and_validate_jwt(token, _KEYS[expected["kid"]], [alg], None, None, None)
 
     assert exc_info.value.details == expected
+
+
+def test_weak_key_with_bytes_modulus_is_refused():
+    # PyJWT accepts bytes JWK members, so a bytes `n` must not skip the floor.
+    weak = _KEYS["weak-rsa-1024"]
+    token = (_FIXTURES / "weak-rsa-1024-token.txt").read_text().strip()
+    as_bytes = {**weak, "n": weak["n"].encode("ascii")}
+
+    with pytest.raises(WeakKeyException) as exc_info:
+        decode_and_validate_jwt(token, as_bytes, ["RS256"], None, None, None)
+
+    assert exc_info.value.details == _WEAK_KEY_CASES["rsa-1024"][2]
+
+
+@pytest.mark.parametrize(
+    "n", ["é" * 400, "", b""], ids=["non-ascii", "empty-str", "empty-bytes"]
+)
+def test_unmeasurable_modulus_is_left_to_key_conversion(n):
+    # The floor only measures what decodes; key conversion rejects the rest.
+    # Measuring garbage would report a misleading WeakKeyException instead.
+    unmeasurable = {**_KEYS["weak-rsa-1024"], "n": n}
+
+    assert enforce_key_strength(unmeasurable) is None

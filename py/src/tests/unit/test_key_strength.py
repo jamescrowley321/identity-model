@@ -8,13 +8,12 @@ a weak key is a typed error, not a skipped key or a kid miss.
 
 import base64
 import json
-import warnings
+from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 import httpx
 import jwt as pyjwt
-from jwt.warnings import InsecureKeyLengthWarning
 import pytest
 import respx
 
@@ -34,6 +33,7 @@ from ..token_validation_helpers import DISCO_RESPONSE_WITH_JWKS
 
 
 JWKS_URL = DISCO_RESPONSE_WITH_JWKS["jwks_uri"]
+WEAK_RSA_KID = "weak-rsa-1024"
 CLAIMS = {"sub": "user1", "iss": ISSUER}
 
 
@@ -72,17 +72,21 @@ def _ec_jwk(curve: ec.EllipticCurve, crv: str, kid: str) -> dict:
     }
 
 
+def _fixture_dir() -> Path:
+    marker = Path("spec") / "test-fixtures" / "validation"
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).is_dir():
+            return parent / marker
+    raise FileNotFoundError(marker)
+
+
 @pytest.fixture(scope="module")
 def rsa_1024() -> tuple[dict, str]:
-    """A 1024-bit RSA JWK and an RS256 token it signed."""
-    jwk, pem = _rsa(1024, "weak-rsa")
-    # PyJWT warns when *signing* with a short key; only verification is tested.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", InsecureKeyLengthWarning)
-        token = pyjwt.encode(
-            CLAIMS, pem, algorithm="RS256", headers={"kid": "weak-rsa"}
-        )
-    return jwk, token
+    """The shared 1024-bit RSA JWK and the RS256 token it signed (JWT-014)."""
+    fixtures = _fixture_dir()
+    keys = json.loads((fixtures / "jwks.json").read_text())["keys"]
+    jwk = next(k for k in keys if k["kid"] == WEAK_RSA_KID)
+    return jwk, (fixtures / "weak-rsa-1024-token.txt").read_text().strip()
 
 
 @pytest.fixture(scope="module")
@@ -105,7 +109,7 @@ class TestEnforceKeyStrength:
         )
         assert exc_info.value.token_part == "header"
         assert exc_info.value.details == {
-            "kid": "weak-rsa",
+            "kid": WEAK_RSA_KID,
             "kty": "RSA",
             "bits": 1024,
             "min_bits": 2048,
