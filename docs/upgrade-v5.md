@@ -168,6 +168,28 @@ with `mtls=`, because that client's TLS settings (a pinned CA, a proxy, a
 custom transport) cannot be carried over to the certificate client. Set
 `ca_bundle` on the `Config` instead. See [Mutual TLS](api/mtls.md).
 
+### `ClientAuthMethod.requires_secret` is removed ([#934](https://github.com/jamescrowley321/identity-model/issues/934))
+
+The property had no reader in the library. `ClientAuthMethod` and its members
+are unchanged. There is no replacement; compare against
+`ClientAuthMethod.NONE` directly.
+
+Before:
+
+```python
+if method.requires_secret:
+    ...
+```
+
+After:
+
+```python
+from py_identity_model import ClientAuthMethod
+
+if method is not ClientAuthMethod.NONE:
+    ...
+```
+
 ### FastAPI: `OIDCSettings.from_env` is a separate helper ([#899](https://github.com/jamescrowley321/identity-model/pull/899))
 
 The FastAPI package reads no environment variables either. Use the helper,

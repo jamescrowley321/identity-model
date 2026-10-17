@@ -78,15 +78,11 @@ class ConfigError(ValueError):
 
 
 class ClientAuthMethod(Enum):
-    """Client authentication method; decides whether a client secret is required."""
+    """Client authentication method (RFC 6749 §2.3.1, OpenID Connect Core 1.0 §9)."""
 
     NONE = "none"
     CLIENT_SECRET_BASIC = "client_secret_basic"
     CLIENT_SECRET_POST = "client_secret_post"
-
-    @property
-    def requires_secret(self) -> bool:
-        return self is not ClientAuthMethod.NONE
 
 
 # --------------------------------------------------------------------------- #

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 import py_identity_model
-from py_identity_model import Config, ConfigError, ConfigIssue
+from py_identity_model import ClientAuthMethod, Config, ConfigError, ConfigIssue
 from py_identity_model.core import config as config_module
 from py_identity_model.core.http_utils import (
     DEFAULT_HTTP_TIMEOUT,
@@ -320,3 +320,15 @@ def test_source_and_registry_api_is_gone():
     assert {name for name in removed if hasattr(config_module, name)} == set()
     assert {name for name in removed if hasattr(py_identity_model, name)} == set()
     assert removed.isdisjoint(py_identity_model.__all__)
+
+
+def test_client_auth_method_has_no_requires_secret():
+    # Removed in 5.0 (#934); callers compare against ClientAuthMethod.NONE.
+    assert {
+        member.name for member in ClientAuthMethod if hasattr(member, "requires_secret")
+    } == set()
+    assert {member.value for member in ClientAuthMethod} == {
+        "none",
+        "client_secret_basic",
+        "client_secret_post",
+    }
