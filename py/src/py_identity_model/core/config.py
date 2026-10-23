@@ -1,23 +1,13 @@
-"""Typed, fail-closed configuration for py-identity-model.
+"""Plain, typed configuration for py-identity-model.
 
-Implements the cross-language configuration contract (``spec/config.md``): a
-typed ``Config`` value resolved from pluggable :class:`ConfigSource` s, validated
-once at construction, that fails closed on missing/partial/invalid input and
-redacts secrets in every representation.
+:class:`Config` is a frozen value holding the library's settings, each with
+the library's default. It is validated when it is created: every invalid
+setting is collected into one :class:`ConfigError`, and no ``Config`` value is
+returned. An invalid value is never replaced by its default.
 
-This is the opt-in, strict surface. It reads the environment only inside
-:class:`EnvSource` (never at import time) and adds no new dependencies.
-
-Design (see ``spec/config.md``):
-
-* Sources supply raw strings only; typing, defaulting, and validation happen
-  here, after resolution — no source can bypass them.
-* Precedence per key, first hit wins: explicit ``overrides`` > consumer sources
-  in the order given > :class:`EnvSource` > registry default.
-* Construction is atomic: any problem yields a :class:`ConfigError` carrying
-  *all* issues (registry-ordered) and no ``Config`` value.
-* Secret-classified values are wrapped in :class:`Secret` and never appear in
-  ``repr``/``str``/errors/serialized output.
+``Config`` has no loaders and parses no strings. Where the values come from
+(environment, files, a secrets manager) is the caller's decision; build the
+``Config`` in your own code and pass it in.
 """
 
 from __future__ import annotations
@@ -26,12 +16,30 @@ from dataclasses import dataclass, fields
 from enum import Enum
 import math
 import os
-from typing import TYPE_CHECKING, ClassVar, Protocol, runtime_checkable
-from urllib.parse import urlparse
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+from .http_utils import (
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_JWKS_KEYS,
+    DEFAULT_MAX_JWKS_SIZE,
+    DEFAULT_RETRY_BASE_DELAY,
+    DEFAULT_RETRY_MAX_ATTEMPTS,
+)
+from .jwks_cache import (
+    DEFAULT_DISCO_CACHE_TTL_SECONDS,
+    DEFAULT_JWKS_CACHE_TTL_SECONDS,
+    DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS,
+    DEFAULT_MAX_CACHE_ENTRIES,
+    MAX_CACHE_TTL_SECONDS,
+    MAX_KID_MISS_COOLDOWN_SECONDS,
+    MIN_CACHE_TTL_SECONDS,
+    MIN_KID_MISS_COOLDOWN_SECONDS,
+)
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 
 __all__ = [
@@ -39,42 +47,7 @@ __all__ = [
     "Config",
     "ConfigError",
     "ConfigIssue",
-    "ConfigSource",
-    "EnvSource",
-    "MappingSource",
-    "Secret",
 ]
-
-REDACTED = "<redacted>"
-
-
-class Secret:
-    """Wraps a secret string so it can never be printed by accident.
-
-    The raw value is reachable only through :meth:`expose`; every rendering
-    (``repr``/``str``) shows the redaction placeholder.
-    """
-
-    __slots__ = ("_value",)
-
-    def __init__(self, value: str) -> None:
-        self._value = value
-
-    def expose(self) -> str:
-        """Return the raw secret. The only way to read the value."""
-        return self._value
-
-    def __repr__(self) -> str:
-        return f"Secret('{REDACTED}')"
-
-    def __str__(self) -> str:
-        return REDACTED
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Secret) and other._value == self._value
-
-    def __hash__(self) -> int:
-        return hash(("Secret", self._value))
 
 
 # --------------------------------------------------------------------------- #
@@ -84,18 +57,17 @@ class Secret:
 
 @dataclass(frozen=True)
 class ConfigIssue:
-    """One problem found during construction. Names keys, never values."""
+    """One invalid setting. Names the setting and the rule, never the value."""
 
-    code: str  # CFG-001 (missing) | CFG-002 (group) | CFG-003 (invalid) | CFG-004 (source)
-    keys: tuple[str, ...]
+    setting: str
     message: str
 
     def __str__(self) -> str:
-        return f"{self.code}: {self.message} ({', '.join(self.keys)})"
+        return f"{self.setting}: {self.message}"
 
 
-class ConfigError(Exception):
-    """Raised when strict construction fails. Carries every issue at once."""
+class ConfigError(ValueError):
+    """Raised when a :class:`Config` is invalid. Carries every issue at once."""
 
     def __init__(self, issues: Sequence[ConfigIssue]) -> None:
         self.issues: tuple[ConfigIssue, ...] = tuple(issues)
@@ -105,27 +77,8 @@ class ConfigError(Exception):
         )
 
 
-# --------------------------------------------------------------------------- #
-# Registry                                                                     #
-# --------------------------------------------------------------------------- #
-
-
-class _Kind(Enum):
-    STR = "str"
-    INT = "int"
-    FLOAT = "float"
-    URL = "url"
-    STRLIST = "strlist"
-    # NOTE: no BOOL kind. The only boolean-typed key in the contract
-    # (spec/config.md §Test tier: TEST_REQUIRE_HTTPS) is a
-    # test-tier harness key the Python typed surface does not implement, so
-    # conformance case CFG-107 (uniform bool parsing) is out of scope here and
-    # a bool parser would be unreachable dead code. Add BOOL alongside the first
-    # bool registry row if the test tier is ever adopted.
-
-
 class ClientAuthMethod(Enum):
-    """Client authentication method — decides whether ``client.secret`` is required."""
+    """Client authentication method; decides whether a client secret is required."""
 
     NONE = "none"
     CLIENT_SECRET_BASIC = "client_secret_basic"
@@ -136,550 +89,146 @@ class ClientAuthMethod(Enum):
         return self is not ClientAuthMethod.NONE
 
 
-_SENTINEL = object()
-
-
-@dataclass(frozen=True)
-class _KeySpec:
-    logical: str
-    attr: str
-    env: tuple[str, ...]  # primary first, then aliases
-    kind: _Kind
-    # default sentinel => required within its group (no standalone default)
-    default: object = _SENTINEL
-    secret: bool = False
-    group: str | None = None
-    prefixed: bool = False  # env names take the client prefix
-    lo: float | None = None  # lower bound (numeric); inclusive unless lo_exclusive
-    hi: float | None = None  # inclusive upper bound (numeric)
-    lo_exclusive: bool = (
-        False  # when True, lo is a strict '>' bound (value must exceed lo)
-    )
-
-
-# Registry is ordered: error collection reports in this order (spec/config.md).
-# Values transcribed from the implementation as of 2026-09-03.
-_REGISTRY: tuple[_KeySpec, ...] = (
-    # HTTP transport
-    # Contract (spec/config.md HTTP transport row) mandates strictly > 0: a
-    # zero timeout is a footgun, so the lower bound is exclusive.
-    _KeySpec(
-        "http.timeout",
-        "http_timeout",
-        ("HTTP_TIMEOUT",),
-        _Kind.FLOAT,
-        30.0,
-        lo=0.0,
-        lo_exclusive=True,
-    ),
-    _KeySpec(
-        "http.retry.max_attempts",
-        "http_retry_max_attempts",
-        ("HTTP_RETRY_MAX_ATTEMPTS", "HTTP_RETRY_COUNT"),
-        _Kind.INT,
-        3,
-        lo=0,
-    ),
-    _KeySpec(
-        "http.retry.base_delay",
-        "http_retry_base_delay",
-        ("HTTP_RETRY_BASE_DELAY",),
-        _Kind.FLOAT,
-        1.0,
-        lo=0.0,
-    ),
-    # JWKS & discovery
-    _KeySpec(
-        "jwks.max_size", "jwks_max_size", ("MAX_JWKS_SIZE",), _Kind.INT, 524288, lo=1
-    ),
-    _KeySpec(
-        "jwks.max_keys", "jwks_max_keys", ("MAX_JWKS_KEYS",), _Kind.INT, 100, lo=1
-    ),
-    _KeySpec(
-        "jwks.cache.ttl",
-        "jwks_cache_ttl",
-        ("JWKS_CACHE_TTL",),
-        _Kind.FLOAT,
-        86400.0,
-        lo=60.0,
-        hi=86400.0,
-    ),
-    _KeySpec(
-        "discovery.cache.ttl",
-        "discovery_cache_ttl",
-        ("DISCO_CACHE_TTL",),
-        _Kind.FLOAT,
-        3600.0,
-        lo=60.0,
-        hi=86400.0,
-    ),
-    _KeySpec(
-        "jwks.kid_miss_cooldown",
-        "jwks_kid_miss_cooldown",
-        ("KID_MISS_REFRESH_COOLDOWN",),
-        _Kind.FLOAT,
-        5.0,
-        lo=0.0,
-        hi=3600.0,
-    ),
-    _KeySpec(
-        "jwks.cache.max_entries",
-        "jwks_cache_max_entries",
-        ("JWKS_CACHE_MAX_ENTRIES",),
-        _Kind.INT,
-        64,
-        lo=0,
-    ),
-    _KeySpec(
-        "discovery.cache.max_entries",
-        "discovery_cache_max_entries",
-        ("DISCO_CACHE_MAX_ENTRIES",),
-        _Kind.INT,
-        64,
-        lo=0,
-    ),
-    # Client settings group (env names take the client prefix)
-    _KeySpec(
-        "client.discovery_url",
-        "client_discovery_url",
-        ("DISCOVERY_URL",),
-        _Kind.URL,
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.id",
-        "client_id",
-        ("CLIENT_ID",),
-        _Kind.STR,
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.secret",
-        "client_secret",
-        ("CLIENT_SECRET",),
-        _Kind.STR,
-        default=None,
-        secret=True,
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.scope",
-        "client_scope",
-        ("SCOPE",),
-        _Kind.STR,
-        "openid profile email",
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.audience",
-        "client_audience",
-        ("AUDIENCE",),
-        _Kind.STR,
-        default=None,
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.redirect_uri",
-        "client_redirect_uri",
-        ("REDIRECT_URI",),
-        _Kind.URL,
-        "",
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.post_login_redirect",
-        "client_post_login_redirect",
-        ("POST_LOGIN_REDIRECT",),
-        _Kind.STR,
-        "/",
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.post_logout_redirect",
-        "client_post_logout_redirect",
-        ("POST_LOGOUT_REDIRECT",),
-        _Kind.STR,
-        "/",
-        group="client",
-        prefixed=True,
-    ),
-    _KeySpec(
-        "client.excluded_paths",
-        "client_excluded_paths",
-        ("EXCLUDED_PATHS",),
-        _Kind.STRLIST,
-        ("/docs", "/openapi.json", "/health"),
-        group="client",
-        prefixed=True,
-    ),
-)
-
-_BY_LOGICAL: dict[str, _KeySpec] = {spec.logical: spec for spec in _REGISTRY}
-# Required client keys (no standalone default) validated when the group is requested.
-_CLIENT_REQUIRED = ("client.discovery_url", "client.id")
-
-
-# --------------------------------------------------------------------------- #
-# Sources                                                                      #
-# --------------------------------------------------------------------------- #
-
-
-@runtime_checkable
-class ConfigSource(Protocol):
-    """Supplies raw string values for the requested logical keys.
-
-    Implementations return only the subset they can supply, keyed by logical
-    key id. They MUST NOT type, default, clamp, or validate — the library does
-    that. A source that raises fails construction closed (``CFG-004``).
-    """
-
-    def resolve(self, keys: Sequence[str]) -> Mapping[str, str]: ...
-
-
-class MappingSource:
-    """A source backed by an in-process mapping keyed by logical key id."""
-
-    def __init__(self, values: Mapping[str, str], *, name: str = "mapping") -> None:
-        self._values = dict(values)
-        self.name = name
-
-    def resolve(self, keys: Sequence[str]) -> Mapping[str, str]:
-        requested = set(keys)
-        return {k: v for k, v in self._values.items() if k in requested}
-
-
-class EnvSource:
-    """The default source: resolves logical keys from environment variables.
-
-    Client-group keys take ``prefix`` (default ``OIDC_``). Reads happen here,
-    at :meth:`resolve` time — never at import.
-    """
-
-    def __init__(self, *, prefix: str = "OIDC_", name: str = "env") -> None:
-        self.prefix = prefix
-        self.name = name
-
-    def _env_names(self, spec: _KeySpec) -> tuple[str, ...]:
-        if spec.prefixed:
-            return tuple(f"{self.prefix}{name}" for name in spec.env)
-        return spec.env
-
-    def resolve(self, keys: Sequence[str]) -> Mapping[str, str]:
-        environ = os.environ
-        out: dict[str, str] = {}
-        for logical in keys:
-            spec = _BY_LOGICAL.get(logical)
-            if spec is None:
-                continue
-            for env_name in self._env_names(spec):  # primary first, then aliases
-                if env_name in environ:
-                    out[logical] = environ[env_name]
-                    break
-        return out
-
-
 # --------------------------------------------------------------------------- #
 # Config                                                                       #
 # --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True)
-class Config:
-    """A validated, immutable configuration value.
+class _Range:
+    """The valid range of one numeric setting."""
 
-    Construct via :meth:`from_env` (zero-config) or :meth:`build` (custom
-    sources / overrides). Never construct the dataclass directly — the fields
-    below are the *result* of validated resolution.
+    integer: bool
+    lo: float
+    lo_exclusive: bool = False
+    hi: float | None = None
+
+
+# Error messages name the rule, never the value (a path or number the caller
+# supplied stays out of logs). Bounds are library constants, safe to state.
+_RANGES: dict[str, _Range] = {
+    "http_timeout": _Range(integer=False, lo=0, lo_exclusive=True),
+    "http_retry_max_attempts": _Range(integer=True, lo=0),
+    "http_retry_base_delay": _Range(integer=False, lo=0),
+    "jwks_max_size": _Range(integer=True, lo=1),
+    "jwks_max_keys": _Range(integer=True, lo=1),
+    "jwks_cache_ttl": _Range(
+        integer=False, lo=MIN_CACHE_TTL_SECONDS, hi=MAX_CACHE_TTL_SECONDS
+    ),
+    "jwks_kid_miss_cooldown": _Range(
+        integer=False,
+        lo=MIN_KID_MISS_COOLDOWN_SECONDS,
+        hi=MAX_KID_MISS_COOLDOWN_SECONDS,
+    ),
+    "discovery_cache_ttl": _Range(
+        integer=False, lo=MIN_CACHE_TTL_SECONDS, hi=MAX_CACHE_TTL_SECONDS
+    ),
+    "cache_max_entries": _Range(integer=True, lo=1),
+}
+
+
+def _bound(value: float) -> str:
+    return f"{value:g}"
+
+
+def _check_type(value: object, rule: _Range) -> str | None:
+    """Return why ``value`` is not a number of ``rule``'s kind, or None."""
+    # bool is an int subclass, but True is not a timeout or a count.
+    if rule.integer:
+        ok = isinstance(value, int) and not isinstance(value, bool)
+        return None if ok else "must be an integer"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "must be a number"
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:  # an int too large to convert to a float
+        finite = False
+    return None if finite else "must be a finite number"
+
+
+def _check_number(value: object, rule: _Range) -> str | None:
+    """Return why ``value`` breaks ``rule``, or None when it is valid."""
+    problem = _check_type(value, rule)
+    if problem is not None:
+        return problem
+    num = cast("float", value)
+    if rule.lo_exclusive and num <= rule.lo:
+        problem = f"must be greater than {_bound(rule.lo)}"
+    elif not rule.lo_exclusive and num < rule.lo:
+        problem = f"must be at least {_bound(rule.lo)}"
+    elif rule.hi is not None and num > rule.hi:
+        problem = f"must be at most {_bound(rule.hi)}"
+    return problem
+
+
+def _check_ca_bundle(value: object) -> str | None:
+    if value is None:
+        return None
+    problem = "must be a path to a readable file"
+    if not isinstance(value, str):
+        return problem
+    try:
+        readable = Path(value).is_file() and os.access(value, os.R_OK)
+    except (OSError, ValueError):  # e.g. a name too long, an embedded NUL
+        readable = False
+    return None if readable else problem
+
+
+@dataclass(frozen=True, kw_only=True)
+class Config:
+    """The library's settings, validated on creation.
+
+    Every field has the library's default, so ``Config()`` is a complete,
+    valid configuration. Pass typed values (``Config(http_timeout=5.0)``);
+    strings are not parsed. Fields are keyword-only.
+
+    Attributes:
+        http_timeout: Request timeout in seconds. Must be greater than 0.
+        http_retry_max_attempts: Retries for a rate-limited or failed request.
+            0 disables retries.
+        http_retry_base_delay: Base delay in seconds for exponential backoff.
+            Each retry's delay is capped at 120 seconds.
+        ca_bundle: Path to a CA bundle file used to verify TLS. ``None``
+            verifies with the HTTP stack's default bundle. Must be a readable
+            file.
+        jwks_max_size: Largest JWKS response accepted, in bytes.
+        jwks_max_keys: Most keys accepted in one JWKS.
+        jwks_cache_ttl: JWKS cache lifetime in seconds, used only when the
+            response has no ``Cache-Control: max-age``. 60 to 86400.
+        jwks_kid_miss_cooldown: Minimum seconds between JWKS refreshes
+            triggered by an unknown ``kid``. 0 to 3600; 0 disables the
+            cooldown.
+        discovery_cache_ttl: Discovery cache lifetime in seconds, used only
+            when the response has no ``Cache-Control: max-age``. 60 to 86400.
+        cache_max_entries: Most providers held by each of the JWKS cache and
+            the discovery cache. At least 1.
+
+    Raises:
+        ConfigError: one error naming every invalid setting.
     """
 
-    _secret_fields: ClassVar[frozenset[str]] = frozenset({"client_secret"})
+    http_timeout: float = DEFAULT_HTTP_TIMEOUT
+    http_retry_max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS
+    http_retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY
+    ca_bundle: str | None = None
+    jwks_max_size: int = DEFAULT_MAX_JWKS_SIZE
+    jwks_max_keys: int = DEFAULT_MAX_JWKS_KEYS
+    jwks_cache_ttl: float = DEFAULT_JWKS_CACHE_TTL_SECONDS
+    jwks_kid_miss_cooldown: float = DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+    discovery_cache_ttl: float = DEFAULT_DISCO_CACHE_TTL_SECONDS
+    cache_max_entries: int = DEFAULT_MAX_CACHE_ENTRIES
 
-    # HTTP transport
-    http_timeout: float
-    http_retry_max_attempts: int
-    http_retry_base_delay: float
-    # JWKS & discovery
-    jwks_max_size: int
-    jwks_max_keys: int
-    jwks_cache_ttl: float
-    discovery_cache_ttl: float
-    jwks_kid_miss_cooldown: float
-    jwks_cache_max_entries: int
-    discovery_cache_max_entries: int
-    # Client settings group
-    client_discovery_url: str | None
-    client_id: str | None
-    client_secret: Secret | None
-    client_scope: str
-    client_audience: str | None
-    client_redirect_uri: str
-    client_post_login_redirect: str
-    client_post_logout_redirect: str
-    client_excluded_paths: tuple[str, ...]
-
-    @classmethod
-    def from_env(
-        cls,
-        *,
-        prefix: str = "OIDC_",
-        group: str | None = None,
-        client_auth_method: ClientAuthMethod = ClientAuthMethod.NONE,
-    ) -> Config:
-        """Build from environment variables (the default path)."""
-        return cls.build(
-            sources=[EnvSource(prefix=prefix)],
-            env=False,
-            group=group,
-            client_auth_method=client_auth_method,
-        )
-
-    @classmethod
-    def build(
-        cls,
-        *,
-        sources: Sequence[ConfigSource] | None = None,
-        overrides: Mapping[str, str] | None = None,
-        env: bool = True,
-        group: str | None = None,
-        client_auth_method: ClientAuthMethod = ClientAuthMethod.NONE,
-    ) -> Config:
-        """Resolve and validate a Config, failing closed with all issues.
-
-        Args:
-            sources: consumer sources, highest precedence first.
-            overrides: explicit in-code values (logical key id -> raw string);
-                highest precedence of all.
-            env: append a default-prefix :class:`EnvSource` as the lowest-
-                precedence source (the default path). Set False to exclude the
-                environment; pass an explicit ``EnvSource(prefix=...)`` in
-                ``sources`` for a non-default prefix.
-            group: which key group the construction requires ("client" or None).
-            client_auth_method: when the client group is requested, decides
-                whether ``client.secret`` is required.
-        """
-        chain: list[ConfigSource] = list(sources or [])
-        if env:
-            chain.append(EnvSource())
-
+    def __post_init__(self) -> None:
         issues: list[ConfigIssue] = []
-        raw = _resolve_raw(chain, overrides or {}, issues)
-
-        # Type + validate each present value; default the absent (registry order).
-        values: dict[str, object] = {}
-        for spec in _REGISTRY:
-            if spec.logical in raw:
-                parsed = _parse(spec, raw[spec.logical], issues)
-                if parsed is not _SENTINEL:
-                    values[spec.attr] = parsed
-            elif spec.default is not _SENTINEL:
-                values[spec.attr] = spec.default
-            # else: absent + no standalone default -> handled by group rules below
-
-        _apply_group_rules(group, client_auth_method, raw, values, issues)
-
+        for f in fields(self):  # field order: issues report in that order
+            value = getattr(self, f.name)
+            rule = _RANGES.get(f.name)
+            problem = (
+                _check_number(value, rule)
+                if rule is not None
+                else _check_ca_bundle(value)
+            )
+            if problem is not None:
+                issues.append(ConfigIssue(f.name, problem))
         if issues:
             raise ConfigError(issues)
-
-        # Fill any client fields still unset (only happens on the success path
-        # when the group was not requested and no value was supplied).
-        for spec in _REGISTRY:
-            if spec.attr not in values:
-                values[spec.attr] = None if spec.default is _SENTINEL else spec.default
-
-        # audience defaults to client id when unset
-        if values.get("client_audience") is None:
-            values["client_audience"] = values.get("client_id")
-
-        return cls(**values)  # type: ignore[arg-type]
-
-    def __repr__(self) -> str:
-        parts: list[str] = []
-        for f in fields(self):
-            val = getattr(self, f.name)
-            if f.name in self._secret_fields and val is not None:
-                parts.append(f"{f.name}={REDACTED!r}")
-            else:
-                parts.append(f"{f.name}={val!r}")
-        return f"Config({', '.join(parts)})"
-
-
-# --------------------------------------------------------------------------- #
-# Parsing & validation (strict mode)                                          #
-# --------------------------------------------------------------------------- #
-
-
-def _resolve_raw(
-    chain: Sequence[ConfigSource],
-    overrides: Mapping[str, str],
-    issues: list[ConfigIssue],
-) -> dict[str, str]:
-    """Resolve raw values by precedence: overrides > sources in order.
-
-    Sources supply raw strings only (spec/config.md §Sources). A source that
-    raises, or that misbehaves by returning a non-string value, fails closed
-    with CFG-004; it is never silently skipped and never crashes ``build()``.
-    """
-    logical_keys = tuple(spec.logical for spec in _REGISTRY)
-    raw: dict[str, str] = {k: overrides[k] for k in logical_keys if k in overrides}
-    remaining = [k for k in logical_keys if k not in raw]
-    for source in chain:
-        if not remaining:
-            break
-        name = getattr(source, "name", type(source).__name__)
-        try:
-            supplied = source.resolve(remaining)
-        except Exception:
-            issues.append(
-                ConfigIssue(
-                    "CFG-004", (f"source:{name}",), f"source {name!r} failed to resolve"
-                )
-            )
-            continue
-        for logical in list(remaining):
-            if logical not in supplied:
-                continue
-            value = supplied[logical]
-            if not isinstance(value, str):
-                # Contract violation: a source returned a non-string value.
-                # Contain it as a controlled CFG-004 (source misbehavior) rather
-                # than letting the later ``.strip()``/``.split()`` raise an
-                # uncontained AttributeError out of build().
-                issues.append(
-                    ConfigIssue(
-                        "CFG-004",
-                        (f"source:{name}", logical),
-                        f"source {name!r} returned a non-string value for {logical!r}",
-                    )
-                )
-                remaining.remove(logical)
-                continue
-            raw[logical] = value
-            remaining.remove(logical)
-    return raw
-
-
-# Error messages MUST NOT contain the configured value (spec/config.md
-# §Secret Redaction / §Error Taxonomy) — they describe the failure and name the
-# key only. Bounds/limits are contract constants, safe to state.
-
-
-def _parse_number(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> object:
-    """Parse an int/float value with finiteness + range checks."""
-    try:
-        num: float | int = int(text) if spec.kind is _Kind.INT else float(text)
-    except ValueError:
-        issues.append(
-            ConfigIssue("CFG-003", (spec.logical,), "value is not a valid number")
-        )
-        return _SENTINEL
-    if spec.kind is _Kind.FLOAT and not math.isfinite(num):
-        issues.append(
-            ConfigIssue("CFG-003", (spec.logical,), "value is not a finite number")
-        )
-        return _SENTINEL
-    if spec.lo is not None:
-        if spec.lo_exclusive and num <= spec.lo:
-            issues.append(
-                ConfigIssue(
-                    "CFG-003", (spec.logical,), f"value must be greater than {spec.lo}"
-                )
-            )
-            return _SENTINEL
-        if not spec.lo_exclusive and num < spec.lo:
-            issues.append(
-                ConfigIssue(
-                    "CFG-003", (spec.logical,), f"value is below the minimum {spec.lo}"
-                )
-            )
-            return _SENTINEL
-    if spec.hi is not None and num > spec.hi:
-        issues.append(
-            ConfigIssue(
-                "CFG-003", (spec.logical,), f"value is above the maximum {spec.hi}"
-            )
-        )
-        return _SENTINEL
-    return num
-
-
-def _parse_url(spec: _KeySpec, text: str, issues: list[ConfigIssue]) -> object:
-    parsed = urlparse(text)
-    if not parsed.scheme or not parsed.netloc:
-        issues.append(
-            ConfigIssue("CFG-003", (spec.logical,), "value is not an absolute URL")
-        )
-        return _SENTINEL
-    return text
-
-
-def _parse(spec: _KeySpec, raw: str, issues: list[ConfigIssue]) -> object:
-    """Parse+validate one raw value. Records CFG-003 and returns sentinel on failure."""
-    if spec.kind is _Kind.STRLIST:
-        return tuple(p.strip() for p in raw.split(",") if p.strip())
-
-    text = raw.strip()
-    if text == "":
-        issues.append(
-            ConfigIssue("CFG-003", (spec.logical,), "value is empty or whitespace-only")
-        )
-        return _SENTINEL
-
-    if spec.kind is _Kind.STR:
-        return raw
-    if spec.kind is _Kind.URL:
-        return _parse_url(spec, text, issues)
-    # INT / FLOAT
-    return _parse_number(spec, text, issues)
-
-
-def _apply_group_rules(
-    group: str | None,
-    client_auth_method: ClientAuthMethod,
-    raw: Mapping[str, str],
-    values: dict[str, object],
-    issues: list[ConfigIssue],
-) -> None:
-    """Client-group validation (spec/config.md §Group Rules)."""
-    client_present = any(k.startswith("client.") and k in raw for k in _BY_LOGICAL)
-
-    if group == "client":
-        # truly absent (not merely present-but-invalid, which is already CFG-003'd)
-        issues.extend(
-            ConfigIssue("CFG-001", (req,), f"required key {req!r} is missing")
-            for req in _CLIENT_REQUIRED
-            if req not in values and req not in raw
-        )
-        if client_auth_method.requires_secret and values.get("client_secret") is None:
-            issues.append(
-                ConfigIssue(
-                    "CFG-002",
-                    ("client", "client.secret"),
-                    f"client auth method {client_auth_method.value!r} requires client.secret",
-                )
-            )
-        # wrap the secret
-        _wrap_client_secret(values)
-    else:
-        # Group not requested: a stray client fragment without discovery_url is an error.
-        if client_present and "client.discovery_url" not in raw:
-            issues.append(
-                ConfigIssue(
-                    "CFG-002",
-                    ("client", "client.discovery_url"),
-                    "client-group key present without client.discovery_url",
-                )
-            )
-        _wrap_client_secret(values)
-
-
-def _wrap_client_secret(values: dict[str, object]) -> None:
-    secret = values.get("client_secret")
-    if isinstance(secret, str):
-        values["client_secret"] = Secret(secret)

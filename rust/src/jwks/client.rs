@@ -8,7 +8,7 @@ use reqwest::header::ACCEPT;
 use crate::{IdentityError, Result};
 
 use super::cache::Cache;
-use super::key::{JsonWebKey, JsonWebKeySet};
+use super::key::{JsonWebKey, JsonWebKeySet, check_declared_alg};
 
 /// Default lifetime of a cached JWK Set.
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -201,6 +201,37 @@ impl JwksClient {
         }
         let refreshed = self.force_refresh(uri).await?;
         refreshed.resolve_key(kid).cloned()
+    }
+
+    /// Resolves the key at `jwks_uri` that verifies a token whose JOSE header
+    /// carries `kid` and `alg`.
+    ///
+    /// With a `kid` it is [`JwksClient::resolve_key`], forced refresh on a miss
+    /// included. With no `kid` it selects the key as
+    /// [`JsonWebKeySet::resolve_signing_key`] does, from the cached set and
+    /// with no forced refresh (JWKS-009). Callers must reject `alg` `none`
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// - [`IdentityError::AmbiguousKey`] — no `kid` and more than one key
+    ///   could verify the token.
+    /// - [`IdentityError::KeyAlgorithmMismatch`] — the resolved key declares
+    ///   an `alg` other than `alg` (JWKS-010).
+    /// - The errors of [`JwksClient::resolve_key`].
+    pub async fn resolve_signing_key(
+        &self,
+        jwks_uri: &str,
+        kid: &str,
+        alg: &str,
+    ) -> Result<JsonWebKey> {
+        if !kid.is_empty() {
+            let key = self.resolve_key(jwks_uri, kid).await?;
+            check_declared_alg(&key, alg)?;
+            return Ok(key);
+        }
+        let key_set = self.fetch(jwks_uri).await?;
+        key_set.resolve_signing_key("", alg).cloned()
     }
 
     /// Performs the HTTP request and parses the body. Contains no caching logic.
@@ -450,6 +481,83 @@ mod tests {
         assert_eq!(key.kid, "rsa-sig-key");
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 2, "one initial fetch + one forced refresh");
+    }
+
+    // JWKS-009: a token with no kid selects the single signing key — which has
+    // a kid of its own — without forcing a refresh.
+    #[tokio::test]
+    async fn resolve_signing_key_without_kid_makes_no_refresh() {
+        let server = MockServer::start().await;
+        let single = r#"{ "keys": [
+            {"kty":"RSA","kid":"rsa-sig-key","use":"sig","alg":"RS256","n":"a","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(single)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "", "RS256")
+            .await
+            .expect("single key selected");
+
+        assert_eq!(key.kid, "rsa-sig-key");
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
+    }
+
+    // JWKS-009: an ambiguous kid-less token errors AmbiguousKey without a
+    // refresh; a kid still resolves through the refresh path.
+    #[tokio::test]
+    async fn resolve_signing_key_without_kid_ambiguous_makes_no_refresh() {
+        let server = MockServer::start().await;
+        let two = r#"{ "keys": [
+            {"kty":"RSA","kid":"a","use":"sig","n":"a","e":"AQAB"},
+            {"kty":"RSA","kid":"b","use":"sig","n":"b","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(two)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let err = client
+            .resolve_signing_key(&jwks_uri(&server), "", "RS256")
+            .await
+            .expect_err("ambiguous");
+        assert!(
+            matches!(&err, IdentityError::AmbiguousKey { count: 2, .. }),
+            "expected AmbiguousKey, got {err:?}"
+        );
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
+
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "b", "RS256")
+            .await
+            .expect("kid b");
+        assert_eq!(key.kid, "b");
+    }
+
+    // JWKS-010: a key found by kid that declares another alg is not used, and
+    // the mismatch is not answered with a refresh.
+    #[tokio::test]
+    async fn resolve_signing_key_with_kid_rejects_key_declaring_other_alg() {
+        let server = MockServer::start().await;
+        let single = r#"{ "keys": [
+            {"kty":"RSA","kid":"rs384","use":"sig","alg":"RS384","n":"a","e":"AQAB"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(single)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        for kid in ["rs384", ""] {
+            let err = client
+                .resolve_signing_key(&jwks_uri(&server), kid, "RS256")
+                .await
+                .expect_err("key declares RS384");
+            assert!(
+                matches!(&err, IdentityError::KeyAlgorithmMismatch { kid, key_alg, alg }
+                    if kid == "rs384" && key_alg == "RS384" && alg == "RS256"),
+                "kid {kid:?}: expected KeyAlgorithmMismatch, got {err:?}"
+            );
+        }
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
     }
 
     // JWKS-004: a kid that never appears errors KeyNotFound after the refresh.

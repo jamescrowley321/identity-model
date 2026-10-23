@@ -78,6 +78,37 @@ class InvalidIssuerException(TokenValidationException):
         super().__init__(message, token_part="payload", details=details)
 
 
+class AmbiguousKeyException(TokenValidationException):
+    """Raised when a token with no ``kid`` matches more than one JWK.
+
+    With no ``kid`` in the JOSE header, the JWK Set is narrowed to signing
+    keys (``use`` absent or ``sig``, RFC 7517 §4.2), then to keys whose
+    ``alg`` is absent or equals the header ``alg`` (§4.4) and whose ``kty``
+    matches it, each step applied only when it leaves a key. More than one
+    key left means the verification key cannot be chosen. This is distinct from a ``kid`` that matches no key.
+    ``details["available_kids"]`` lists the remaining keys' ids and
+    ``details["key_count"]`` their number.
+    """
+
+    def __init__(self, message: str, available_kids: list, key_count: int):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"available_kids": available_kids, "key_count": key_count},
+        )
+
+
+class KeyAlgorithmMismatchException(TokenValidationException):
+    """Raised when the key chosen to verify a token declares another ``alg``.
+
+    A JWK that declares ``alg`` is meant for that algorithm only
+    (RFC 7517 §4.4), so a token whose header ``alg`` differs is not verified
+    with it, whether the key was found by ``kid`` or selected without one.
+    ``details`` carries the key's ``kid`` and ``key_alg`` and the token's
+    ``jwt_alg``.
+    """
+
+
 class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
@@ -91,7 +122,7 @@ class IdTokenValidationException(TokenValidationException):
     """Raised when OpenID Connect ID Token profile validation fails.
 
     Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-    and §3.3.2.11 (required ``sub``, the ``azp`` authorized-party rules,
+    and §3.3.2.11 (required ``sub``, the opt-in ``azp`` authorized-party rules,
     ``nonce`` binding, ``auth_time``/``max_age`` freshness, and the
     ``at_hash``/``c_hash`` token/code binding) that sit on top of standard JWT
     validation.
@@ -102,6 +133,24 @@ class IdTokenValidationException(TokenValidationException):
     callers using the idiomatic ``except TokenValidationException`` fail
     **closed** on it. As a sibling it would escape that handler and fail open.
     """
+
+
+class UntrustedAudienceException(IdTokenValidationException):
+    """Raised when an ID Token carries an audience the client does not trust.
+
+    OpenID Connect Core 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if
+    it contains additional audiences not trusted by the Client. The trusted
+    set is the client's ``client_id`` plus any caller-supplied
+    ``trusted_audiences``. ``details["untrusted_audiences"]`` lists the
+    rejected values.
+    """
+
+    def __init__(self, message: str, untrusted_audiences: list):
+        super().__init__(
+            message,
+            token_part="payload",
+            details={"untrusted_audiences": untrusted_audiences},
+        )
 
 
 class LogoutStateValidationException(ValidationException):
@@ -194,6 +243,18 @@ class DiscoveryMissingFieldsError(DiscoveryException):
         self.fields = fields
 
 
+class DiscoveryIssuerMismatchError(DiscoveryException):
+    """The document's issuer differs from the requested issuer."""
+
+    def __init__(self, requested: str, returned: str) -> None:
+        super().__init__(
+            f"Discovery document issuer {returned!r} does not match "
+            f"the requested issuer {requested!r}"
+        )
+        self.requested = requested
+        self.returned = returned
+
+
 class JwksException(NetworkException):
     """Raised when JWKS cannot be fetched or parsed."""
 
@@ -240,18 +301,22 @@ class SuccessfulResponseAccessError(PyIdentityModelException):
 
 
 __all__ = [
+    "AmbiguousKeyException",
     "AuthorizeCallbackException",
     "CertificateBindingError",
     "ConfigurationException",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",
+    "DiscoveryIssuerMismatchError",
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
     "FailedResponseAccessError",
     "IdTokenValidationException",
     "InvalidAudienceException",
     "InvalidIssuerException",
+    "JarmValidationException",
     "JwksException",
+    "KeyAlgorithmMismatchException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",
@@ -261,6 +326,7 @@ __all__ = [
     "TokenExpiredException",
     "TokenRequestException",
     "TokenValidationException",
+    "UntrustedAudienceException",
     "UserInfoException",
     "ValidationException",
 ]

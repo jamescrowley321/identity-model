@@ -50,21 +50,24 @@ _RESERVED_END_SESSION_PARAMS = frozenset(
 )
 
 
-# Claims that MUST be present in a Logout Token (§2.4 validation step 2).
-# ``iss``/``aud``/``iat`` are also checked by standard JWT validation, but are
-# enumerated here so a rule violation produces a precise, self-contained error
-# and so the pure claim check is complete on its own.
-_REQUIRED_CLAIMS = ("iss", "aud", "iat", "jti", "events")
+# Claims that MUST be present in a Logout Token (Back-Channel Logout 1.0
+# errata set 1 §2.4; ``exp`` is REQUIRED there, and §2.6 step 4 validates it).
+# ``iss``/``aud``/``iat``/``exp`` are also checked by standard JWT validation,
+# which only verifies ``exp`` when present, so they are enumerated here so a
+# missing claim produces a precise, self-contained error and so the pure
+# claim check is complete on its own.
+_REQUIRED_CLAIMS = ("iss", "aud", "iat", "exp", "jti", "events")
 
 
 def validate_logout_token_claims(claims: dict) -> None:
     """Validate the Logout-Token-specific claim rules (Back-Channel Logout 1.0 §2.4).
 
     Assumes the JWT signature, ``iss``, ``aud``, ``iat`` and (when present)
-    ``exp`` have ALREADY been verified by the standard token-validation path.
+    ``exp`` values have ALREADY been verified by the standard token-validation path.
     This function enforces only the rules unique to Logout Tokens:
 
-    2. ``iss``, ``aud``, ``iat``, ``jti`` and ``events`` MUST be present.
+    2. ``iss``, ``aud``, ``iat``, ``exp``, ``jti`` and ``events`` MUST be
+       present (``exp`` is REQUIRED per errata set 1).
     4. ``events`` MUST be a JSON object containing the
        ``http://schemas.openid.net/event/backchannel-logout`` member.
     3. ``sub`` and/or ``sid`` MUST be present (at least one).

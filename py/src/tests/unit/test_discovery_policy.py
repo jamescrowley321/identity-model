@@ -378,7 +378,6 @@ class TestDiscoveryPolicyCacheKey:
             {"allow_http_on_loopback": False},
             {"validate_issuer": False},
             {"validate_endpoints": False},
-            {"require_key_set": False},
             {"additional_endpoint_base_addresses": ["https://cdn.example"]},
             {"authority": "https://auth.example"},
             {"allow_loopback_endpoints": True},
