@@ -886,6 +886,7 @@ def test_authorization_url_trailing_ampersand_without_query_starts_query():
 @pytest.mark.parametrize(
     "name",
     [
+        "issuer",
         "authorization_endpoint",
         "token_endpoint",
         "pushed_authorization_request_endpoint",

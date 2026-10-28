@@ -562,9 +562,10 @@ class FAPI2ClientProfile:
     with ``private_key_jwt`` (tokens DPoP-bound) or mTLS (tokens bound to the
     certificate), and the redirect URI is ``https`` (or an ``http`` loopback
     URI for a native app).  The issuer and endpoints come from the discovery
-    document, never from the caller, and must be ``https`` URLs with a host.  A ``PrivateKeyJwt`` without ``issuer``
-    or ``audience`` gets the discovery issuer; one naming anything else is
-    refused, so the assertion ``aud`` is never the endpoint URL (§5.3.3.1).
+    document, never from the caller, and must be ``https`` URLs with a
+    host.  A ``PrivateKeyJwt`` without ``issuer`` or ``audience`` gets the
+    discovery issuer; one naming anything else is refused, so the assertion
+    ``aud`` is never the endpoint URL (§5.3.3.1).
 
     The request builders fix the FAPI parameters (PAR,
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
