@@ -4,6 +4,7 @@ Pushed Authorization Request (PAR) business logic per RFC 9126.
 Pure functions for preparing PAR requests and processing responses.
 """
 
+from dataclasses import fields
 import json
 
 import httpx
@@ -15,6 +16,21 @@ from .client_auth import basic_auth_credentials
 from .dpop import create_dpop_proof
 from .models import PushedAuthorizationRequest, PushedAuthorizationResponse
 from .mtls import apply_mtls_client_auth
+
+
+# Authorization parameters; with a request object they are claims of the JWT.
+_AUTHORIZATION_FIELDS = frozenset(
+    {
+        "redirect_uri",
+        "scope",
+        "response_type",
+        "state",
+        "nonce",
+        "code_challenge",
+        "code_challenge_method",
+        "response_mode",
+    }
+)
 
 
 def log_par_request(request: PushedAuthorizationRequest) -> None:
@@ -38,29 +54,10 @@ def prepare_par_request_data(
     Returns:
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
     """
-    if bool(request.code_challenge) != bool(request.code_challenge_method):
-        raise ValueError(
-            "code_challenge and code_challenge_method must both be set or both be absent"
-        )
-
-    params: dict[str, str] = {
-        "client_id": request.client_id,
-        "redirect_uri": request.redirect_uri,
-        "scope": request.scope,
-        "response_type": request.response_type,
-    }
-    if request.state:
-        params["state"] = request.state
-    if request.nonce:
-        params["nonce"] = request.nonce
-    if request.code_challenge:
-        params["code_challenge"] = request.code_challenge
-    if request.code_challenge_method:
-        params["code_challenge_method"] = request.code_challenge_method
-    if request.response_mode:
-        # JARM (JWT-Secured Authorization Response Mode): request a signed
-        # authorization response, e.g. "jwt" / "query.jwt".
-        params["response_mode"] = request.response_mode
+    if request.request:
+        params = _request_object_params(request)
+    else:
+        params = _plain_params(request)
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
@@ -89,6 +86,54 @@ def prepare_par_request_data(
         auth = basic_auth_credentials(request.client_id, request.client_secret)
 
     return params, headers, auth
+
+
+def _request_object_params(request: PushedAuthorizationRequest) -> dict[str, str]:
+    """RFC 9126 §3: only ``request`` and client authentication go in the form.
+
+    Every authorization parameter must be a claim of the request object, so a
+    plain field set alongside it is refused rather than silently dropped.
+    """
+    for spec in fields(PushedAuthorizationRequest):
+        if spec.name not in _AUTHORIZATION_FIELDS:
+            continue
+        value = getattr(request, spec.name)
+        if value and value != spec.default:
+            raise ValueError(
+                f"{spec.name} must be a claim of the request object, not a "
+                "separate parameter (RFC 9126 §3)"
+            )
+    return {"client_id": request.client_id, "request": request.request or ""}
+
+
+def _plain_params(request: PushedAuthorizationRequest) -> dict[str, str]:
+    """The authorization parameters as form fields (RFC 9126 §2.1)."""
+    if not request.redirect_uri:
+        raise ValueError("redirect_uri is required")
+    if bool(request.code_challenge) != bool(request.code_challenge_method):
+        raise ValueError(
+            "code_challenge and code_challenge_method must both be set or both be absent"
+        )
+
+    params: dict[str, str] = {
+        "client_id": request.client_id,
+        "redirect_uri": request.redirect_uri,
+        "scope": request.scope,
+        "response_type": request.response_type,
+    }
+    if request.state:
+        params["state"] = request.state
+    if request.nonce:
+        params["nonce"] = request.nonce
+    if request.code_challenge:
+        params["code_challenge"] = request.code_challenge
+    if request.code_challenge_method:
+        params["code_challenge_method"] = request.code_challenge_method
+    if request.response_mode:
+        # JARM (JWT-Secured Authorization Response Mode): request a signed
+        # authorization response, e.g. "jwt" / "query.jwt".
+        params["response_mode"] = request.response_mode
+    return params
 
 
 def process_par_response(

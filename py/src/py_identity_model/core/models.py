@@ -910,10 +910,18 @@ class PushedAuthorizationRequest(BaseRequest):
     Pushes authorization parameters to the PAR endpoint and receives
     a ``request_uri`` for use in the authorization URL.
 
+    The parameters are sent either as plain form fields or, when ``request``
+    is set, inside a signed request object (RFC 9101).  With ``request`` the
+    form carries only ``client_id``, ``request`` and client authentication
+    (RFC 9126 §3), so the authorization fields (``redirect_uri``, ``scope``,
+    ``response_type``, ``state``, ``nonce``, PKCE, ``response_mode``) must be
+    left at their defaults; setting one raises ``ValueError``.
+
     Attributes:
         address: The pushed authorization request endpoint URL.
         client_id: The client identifier.
-        redirect_uri: The registered redirect URI.
+        redirect_uri: The registered redirect URI.  Required unless
+            ``request`` is set.
         scope: Space-delimited scopes (default ``"openid"``).
         response_type: OAuth 2.0 response type (default ``"code"``).
         state: CSRF protection value.
@@ -929,10 +937,13 @@ class PushedAuthorizationRequest(BaseRequest):
         response_mode: OAuth 2.0 ``response_mode`` to push (e.g. ``"jwt"`` /
             ``"query.jwt"`` for JWT-Secured Authorization Response Mode, JARM).
             Omitted from the pushed parameters when ``None``.
+        request: A signed request object (RFC 9101 §2.1), e.g. from
+            ``create_request_object``, carrying every authorization
+            parameter as a claim (FAPI 2.0 Message Signing §5.3.2).
     """
 
     client_id: str
-    redirect_uri: str
+    redirect_uri: str = ""
     scope: str = "openid"
     response_type: str = "code"
     state: str | None = None
@@ -944,6 +955,7 @@ class PushedAuthorizationRequest(BaseRequest):
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
     response_mode: str | None = None
+    request: str | None = None
 
 
 @dataclass(repr=False, eq=False)
