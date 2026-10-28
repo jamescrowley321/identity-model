@@ -98,6 +98,8 @@ SECURITY_MODULES: list[str] = [
     "src/py_identity_model/core/parsers.py",
     "src/py_identity_model/core/mtls.py",
     "src/py_identity_model/core/dpop.py",
+    "src/py_identity_model/core/dpop_verify.py",
+    "src/py_identity_model/core/token_binding.py",
     "src/py_identity_model/core/jarm.py",
     "src/py_identity_model/core/client_auth.py",
     "src/py_identity_model/core/jwks_logic.py",
