@@ -465,6 +465,7 @@ def drive_rp_authorize(
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
+    signed_request: bool = False,
 ) -> None:
     """Hit the RP's /authorize endpoint to start an auth flow.
 
@@ -489,6 +490,7 @@ def drive_rp_authorize(
         "fapi2": str(fapi2).lower(),
         "jarm": str(jarm).lower(),
         "mtls": str(mtls).lower(),
+        "signed_request": str(signed_request).lower(),
     }
 
     # Follow all redirects through the full auth flow
@@ -682,6 +684,7 @@ def run_test_module(
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
+    signed_request: bool = False,
 ) -> TestResult:
     """Execute a single conformance test module."""
     logger.info("=" * 60)
@@ -816,6 +819,7 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
             # Wait briefly for the suite to rotate keys
             time.sleep(1)
@@ -832,6 +836,7 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
         else:
             # Standard auth flow (with optional userinfo skip)
@@ -848,6 +853,7 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
 
     # Poll until the test finishes
@@ -922,6 +928,7 @@ def run_plan(
     fapi2 = bool(config.get("fapi2", False))
     jarm = bool(config.get("jarm", False))
     mtls = bool(config.get("mtls", False))
+    signed_request = bool(config.get("signed_request", False))
 
     logger.info("Plan: %s (%s)", plan_name, alias)
     logger.info("Variant: %s", variant)
@@ -1040,6 +1047,7 @@ def run_plan(
             fapi2=fapi2,
             jarm=jarm,
             mtls=mtls,
+            signed_request=signed_request,
         )
         results.append(result)
 

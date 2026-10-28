@@ -28,6 +28,8 @@ from py_identity_model import (
     ClientCredentialsTokenRequest,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    create_request_object,
+    generate_dpop_key,
     generate_pkce_pair,
     push_authorization_request,
     request_client_credentials_token,
@@ -216,6 +218,71 @@ class TestPrivateKeyJwtLive:
         assert response.request_uri.startswith("urn:ietf:params:oauth:request_uri:")
         assert response.expires_in is not None
         assert response.expires_in > 0
+
+    def _signed_par(
+        self, raw_discovery: dict, signing_key: str
+    ) -> PushedAuthorizationRequest:
+        _verifier, challenge = generate_pkce_pair()
+        request_object = create_request_object(
+            private_key=signing_key,
+            algorithm=PKJWT_ALGORITHM,
+            kid=PKJWT_KID,
+            client_id=PKJWT_CLIENT_ID,
+            audience=raw_discovery["issuer"],
+            redirect_uri=PKJWT_REDIRECT_URI,
+            state=secrets.token_urlsafe(32),
+            code_challenge=challenge,
+            code_challenge_method="S256",
+        )
+        return PushedAuthorizationRequest(
+            address=raw_discovery["pushed_authorization_request_endpoint"],
+            client_id=PKJWT_CLIENT_ID,
+            request=request_object,
+            private_key_jwt=_private_key_jwt(),
+        )
+
+    def test_par_with_signed_request_object(
+        self,
+        provider_capabilities,
+        raw_discovery,
+    ):
+        """PAR accepts the authorization request as a signed request object.
+
+        RFC 9126 §3: the form carries only ``request`` and client
+        authentication; the provider verifies the JWT with the client's
+        registered key.
+        """
+        _require_node_oidc(raw_discovery)
+        if "par" not in provider_capabilities:
+            pytest.skip("Provider does not support PAR")
+
+        response = push_authorization_request(
+            self._signed_par(raw_discovery, PKJWT_PRIVATE_KEY)
+        )
+
+        assert response.is_successful is True, f"PAR failed: {response.error}"
+        assert response.request_uri is not None
+        assert response.request_uri.startswith("urn:ietf:params:oauth:request_uri:")
+
+    def test_par_with_request_object_signed_by_other_key_rejected(
+        self,
+        provider_capabilities,
+        raw_discovery,
+    ):
+        """A request object the client's registered key did not sign is refused."""
+        _require_node_oidc(raw_discovery)
+        if "par" not in provider_capabilities:
+            pytest.skip("Provider does not support PAR")
+
+        response = push_authorization_request(
+            self._signed_par(
+                raw_discovery, generate_dpop_key("ES256").private_key_pem.decode()
+            )
+        )
+
+        assert response.is_successful is False
+        assert response.error is not None
+        assert "invalid_request_object" in response.error
 
     def test_authorization_code_with_private_key_jwt(
         self,

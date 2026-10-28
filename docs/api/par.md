@@ -13,3 +13,7 @@ OAuth 2.0 Pushed Authorization Requests (RFC 9126) for enhanced authorization se
 ## Functions
 
 ::: py_identity_model.sync.par.push_authorization_request
+
+## Authorization URL
+
+::: py_identity_model.core.authorize_url.build_par_authorization_url

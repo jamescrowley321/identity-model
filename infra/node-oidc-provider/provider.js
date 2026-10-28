@@ -197,8 +197,11 @@ async function startProvider() {
       clientCredentials: { enabled: true },
       dPoP: { enabled: true },
       pushedAuthorizationRequests: { enabled: true },
+      // JAR (RFC 9101): accept the `request` parameter, including a signed
+      // request object sent to PAR (RFC 9126 §3). oidc-provider v9 reads
+      // `enabled`; the older `request: true` key is ignored.
       requestObjects: {
-        request: true,
+        enabled: true,
       },
       // JARM — JWT-Secured Authorization Response Mode. Advertises
       // authorization_signing_alg_values_supported and the *.jwt response

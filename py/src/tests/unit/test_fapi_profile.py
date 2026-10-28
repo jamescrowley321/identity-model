@@ -17,6 +17,7 @@ from py_identity_model.core.authorize_response import (
 )
 from py_identity_model.core.dpop import generate_dpop_key
 from py_identity_model.core.fapi import (
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     FAPI2ClientProfile,
     FAPIProfileError,
     validate_fapi_authorization_request,
@@ -28,6 +29,7 @@ from py_identity_model.core.models import (
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    RequestObjectKey,
 )
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.core.state_validation import AuthorizeCallbackValidationResult
@@ -577,9 +579,10 @@ class TestFAPI2ClientProfileAuthorizationUrl:
             "request_uri": ["urn:x"],
         }
 
-    def test_empty_request_uri_refused(self):
+    @pytest.mark.parametrize("request_uri", ["", "   ", None, 123])
+    def test_blank_or_non_string_request_uri_refused(self, request_uri):
         with pytest.raises(FAPIProfileError) as exc_info:
-            _profile().authorization_url("")
+            _profile().authorization_url(request_uri)
         assert exc_info.value.violations == ["request_uri is required"]
 
 
@@ -963,3 +966,189 @@ class TestFAPI2ClientProfileAdvertisedDPoPAlgorithms:
                 code="code", code_verifier="verifier", dpop_key=RS256_DPOP_KEY
             )
         assert exc_info.value.violations == [_alg_violation("DPoP", "RS256")]
+
+
+REQUEST_OBJECT_KEY_PEM = DPOP_KEY.private_key_pem
+# Seconds the test may take between signing and checking the clock.
+CLOCK_SLACK_SECONDS = 5
+
+
+def _request_object_key(**overrides: Any) -> RequestObjectKey:
+    fields: dict[str, Any] = {
+        "private_key": REQUEST_OBJECT_KEY_PEM,
+        "algorithm": "ES256",
+        "kid": "ro-key",
+        **overrides,
+    }
+    return RequestObjectKey(**fields)
+
+
+def _signed_profile(**kwargs: Any) -> FAPI2ClientProfile:
+    discovery_overrides = kwargs.pop("discovery", {})
+    return _profile_from(
+        _discovery(**discovery_overrides),
+        request_object_key=kwargs.pop("request_object_key", _request_object_key()),
+        **kwargs,
+    )
+
+
+def _decode_request_object(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    claims = pyjwt.decode(
+        token,
+        pyjwt.PyJWK(DPOP_KEY.public_jwk).key,
+        algorithms=["ES256"],
+        audience=ISSUER,
+    )
+    return pyjwt.get_unverified_header(token), claims
+
+
+def _lifetime_violation(lifetime: int) -> str:
+    return (
+        f"request object lifetime must be 1 to 3600 seconds, got {lifetime} "
+        "(FAPI 2.0 Message Signing §5.3.2)"
+    )
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileSignedRequestObject:
+    """FAPI 2.0 Message Signing §5.3.2, RFC 9126 §3, RFC 9101."""
+
+    def test_par_carries_only_request_object_and_client_auth(self):
+        request = _signed_profile().pushed_authorization_request(
+            state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
+        )
+        assert request == PushedAuthorizationRequest(
+            address=PAR_ENDPOINT,
+            client_id=CLIENT_ID,
+            private_key_jwt=_pkj(issuer=ISSUER),
+            dpop_key=DPOP_KEY,
+            request=request.request,
+        )
+
+    def test_request_object_claims(self):
+        request = _signed_profile().pushed_authorization_request(
+            state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
+        )
+        assert request.request is not None
+        header, claims = _decode_request_object(request.request)
+        assert header == {"alg": "ES256", "typ": "oauth-authz-req+jwt", "kid": "ro-key"}
+        dynamic = {name: claims.pop(name) for name in ("iat", "nbf", "exp", "jti")}
+        assert claims == {
+            "iss": CLIENT_ID,
+            "aud": ISSUER,
+            "client_id": CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": REDIRECT_URI,
+            "scope": "openid",
+            "state": "state",
+            "nonce": "nonce",
+            "code_challenge": "challenge",
+            "code_challenge_method": "S256",
+        }
+        assert dynamic["nbf"] == dynamic["iat"]
+        assert dynamic["exp"] - dynamic["nbf"] == RequestObjectKey.lifetime
+        assert abs(dynamic["nbf"] - int(time.time())) <= CLOCK_SLACK_SECONDS
+
+    def test_jarm_response_mode_inside_request_object(self):
+        request = _signed_profile(jarm=True).pushed_authorization_request(
+            state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+        )
+        assert request.request is not None
+        assert request.response_mode is None
+        _, claims = _decode_request_object(request.request)
+        assert claims["response_mode"] == "jwt"
+
+    def test_mtls_client_signs_request_object(self):
+        request = _signed_profile(client_auth=_mtls()).pushed_authorization_request(
+            state="state", code_challenge="challenge"
+        )
+        assert request == PushedAuthorizationRequest(
+            address=MTLS_PAR_ENDPOINT,
+            client_id=CLIENT_ID,
+            mtls=_mtls(),
+            request=request.request,
+        )
+
+    def test_maximum_lifetime_accepted(self):
+        request = _signed_profile(
+            request_object_key=_request_object_key(
+                lifetime=FAPI2_MAX_REQUEST_OBJECT_LIFETIME
+            )
+        ).pushed_authorization_request(
+            state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+        )
+        assert request.request is not None
+        _, claims = _decode_request_object(request.request)
+        assert claims["exp"] - claims["nbf"] == FAPI2_MAX_REQUEST_OBJECT_LIFETIME
+
+    @pytest.mark.parametrize("lifetime", [3601, 0, -1])
+    def test_lifetime_outside_limit_refused(self, lifetime):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _signed_profile(request_object_key=_request_object_key(lifetime=lifetime))
+        assert exc_info.value.violations == [_lifetime_violation(lifetime)]
+
+    def test_non_fapi_algorithm_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _signed_profile(
+                request_object_key=_request_object_key(
+                    private_key=RS256_DPOP_KEY.private_key_pem, algorithm="RS256"
+                )
+            )
+        assert exc_info.value.violations == [_alg_violation("request object", "RS256")]
+
+    def test_algorithm_missing_from_advertised_list_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _signed_profile(
+                discovery={"request_object_signing_alg_values_supported": ["PS256"]}
+            )
+        assert exc_info.value.violations == [
+            "Server does not advertise request object algorithm 'ES256' in "
+            "request_object_signing_alg_values_supported"
+        ]
+
+    def test_algorithm_in_advertised_list_accepted(self):
+        profile = _signed_profile(
+            discovery={"request_object_signing_alg_values_supported": ["ES256"]}
+        )
+        assert profile.request_object_signing_algorithms == ("ES256",)
+
+    def test_unadvertised_list_not_checked(self):
+        assert _signed_profile().request_object_signing_algorithms is None
+
+    def test_caller_key_is_copied(self):
+        key = _request_object_key()
+        profile = _signed_profile(request_object_key=key)
+        key.lifetime = 7200
+        assert profile.request_object_key == _request_object_key()
+
+    @pytest.mark.parametrize(
+        ("change", "violation"),
+        [
+            ({"lifetime": 3601}, _lifetime_violation(3601)),
+            ({"algorithm": "RS256"}, _alg_violation("request object", "RS256")),
+            (
+                {"algorithm": "PS256"},
+                "Server does not advertise request object algorithm 'PS256' in "
+                "request_object_signing_alg_values_supported",
+            ),
+        ],
+    )
+    def test_key_changed_after_construction_refused(self, change, violation):
+        profile = _signed_profile(
+            discovery={"request_object_signing_alg_values_supported": ["ES256"]}
+        )
+        assert profile.request_object_key is not None
+        for name, value in change.items():
+            setattr(profile.request_object_key, name, value)
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.pushed_authorization_request(
+                state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [violation]
+
+    def test_unsigned_profile_unchanged(self):
+        request = _profile().pushed_authorization_request(
+            state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
+        )
+        assert request.request is None
+        assert request == _par()

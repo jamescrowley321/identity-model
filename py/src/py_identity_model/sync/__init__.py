@@ -4,7 +4,10 @@ from ..core.authorize_response import (
     AuthorizeCallbackResponse,
     parse_authorize_callback_response,
 )
-from ..core.authorize_url import build_authorization_url
+from ..core.authorize_url import (
+    build_authorization_url,
+    build_par_authorization_url,
+)
 from ..core.claims_validation import (
     ClaimsValidationError,
     ClaimsValidator,
@@ -30,6 +33,7 @@ from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     FAPI2_MAX_NONCE_LENGTH,
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
     FAPI2ClientProfile,
@@ -53,6 +57,7 @@ from ..core.models import (
     BaseResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
+    RequestObjectKey,
     UserInfoErrorKind,
 )
 from ..core.mtls import (
@@ -157,6 +162,7 @@ __all__ = [
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
     "FAPI2_MAX_NONCE_LENGTH",
+    "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     # Auth Code + PKCE
@@ -214,6 +220,7 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "RequestObjectKey",
     "StateValidationResult",
     # Token Exchange
     "TokenExchangeRequest",
@@ -235,6 +242,7 @@ __all__ = [
     "build_dpop_headers",
     "build_end_session_url",
     "build_jar_authorization_url",
+    "build_par_authorization_url",
     "certificate_thumbprint_from_file",
     "clear_discovery_cache",
     "clear_jwks_cache",
