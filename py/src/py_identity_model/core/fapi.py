@@ -562,13 +562,14 @@ class FAPI2ClientProfile:
     with ``private_key_jwt`` (tokens DPoP-bound) or mTLS (tokens bound to the
     certificate), and the redirect URI is ``https`` (or an ``http`` loopback
     URI for a native app).  The issuer and endpoints come from the discovery
-    document, never from the caller.  A ``PrivateKeyJwt`` without ``issuer``
+    document, never from the caller, and must be ``https`` URLs with a host.  A ``PrivateKeyJwt`` without ``issuer``
     or ``audience`` gets the discovery issuer; one naming anything else is
     refused, so the assertion ``aud`` is never the endpoint URL (§5.3.3.1).
 
     The request builders fix the FAPI parameters (PAR,
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
-    weaken them.  The profile is immutable.
+    weaken them, including a DPoP key whose algorithm the server does not
+    advertise (RFC 9449 §5.1).  The profile is immutable.
 
     Args:
         discovery: The authorization server's discovery document.
@@ -587,6 +588,9 @@ class FAPI2ClientProfile:
         pushed_authorization_request_endpoint: The PAR endpoint (the mTLS
             alias for an mTLS client, RFC 8705 §5).
         token_endpoint: The token endpoint (the mTLS alias for an mTLS client).
+        dpop_signing_algorithms: The §5.4.1 algorithms the server advertises
+            in ``dpop_signing_alg_values_supported``; a request's DPoP key
+            must use one of them.
         private_key_jwt: ``client_auth`` with ``issuer`` set, for a
             ``private_key_jwt`` client.
         mtls: ``client_auth`` for an mTLS client.
@@ -603,6 +607,7 @@ class FAPI2ClientProfile:
     authorization_endpoint: str = field(init=False)
     pushed_authorization_request_endpoint: str = field(init=False)
     token_endpoint: str = field(init=False)
+    dpop_signing_algorithms: tuple[str, ...] = field(init=False)
     private_key_jwt: PrivateKeyJwt | None = field(init=False)
     mtls: MtlsClientAuth | None = field(init=False)
 
@@ -639,6 +644,12 @@ class FAPI2ClientProfile:
                 "pushed_authorization_request_endpoint"
             ),
             "token_endpoint": endpoint("token_endpoint"),
+            "dpop_signing_algorithms": tuple(
+                sorted(
+                    _str_values(discovery.dpop_signing_alg_values_supported)
+                    & FAPI2_ALLOWED_SIGNING_ALGORITHMS
+                )
+            ),
             "private_key_jwt": private_key_jwt,
             "mtls": mtls,
         }
@@ -655,8 +666,12 @@ class FAPI2ClientProfile:
             url = derived[name]
             if not url:
                 violations.append(f"{name} is required")
-            elif urlparse(url).scheme.lower() != "https":
+                continue
+            parsed = urlparse(url)
+            if parsed.scheme.lower() != "https":
                 violations.append(f"{name} must use https, got {url!r}")
+            elif not parsed.hostname:
+                violations.append(f"{name} must have a host, got {url!r}")
         if not self.client_id:
             violations.append("client_id is required")
         violations.extend(
@@ -683,8 +698,19 @@ class FAPI2ClientProfile:
     def _request_violations(self, dpop_key: DPoPKey | None) -> list[str]:
         """Re-check the settings a request carries (they are mutable objects)."""
         violations = _assertion_audience_violations(self.private_key_jwt, self.issuer)
-        if self.mtls is not None and dpop_key is not None:
+        if dpop_key is None:
+            return violations
+        if self.mtls is not None:
             violations.append(_MTLS_WITH_DPOP)
+        elif (
+            # A non-FAPI algorithm is already reported by _client_violations.
+            dpop_key.algorithm in FAPI2_ALLOWED_SIGNING_ALGORITHMS
+            and dpop_key.algorithm not in self.dpop_signing_algorithms
+        ):
+            violations.append(
+                f"Server does not advertise DPoP algorithm '{dpop_key.algorithm}' "
+                "in dpop_signing_alg_values_supported (RFC 9449 §5.1)"
+            )
         return violations
 
     def _client_auth_copies(
@@ -767,10 +793,12 @@ class FAPI2ClientProfile:
             raise FAPIProfileError(["request_uri is required"])
         query = urlencode({"client_id": self.client_id, "request_uri": request_uri})
         endpoint = self.authorization_endpoint
-        if endpoint.endswith(("?", "&")):
+        has_query = "?" in endpoint
+        if endpoint.endswith("?") or (has_query and endpoint.endswith("&")):
             separator = ""
         else:
-            separator = "&" if urlparse(endpoint).query else "?"
+            # A trailing "&" with no "?" is part of the path, not a delimiter.
+            separator = "&" if has_query else "?"
         return f"{endpoint}{separator}{query}"
 
     def validate_callback_issuer(
