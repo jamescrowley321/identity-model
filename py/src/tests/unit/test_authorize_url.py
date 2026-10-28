@@ -228,10 +228,24 @@ class TestBuildParAuthorizationUrl:
             ("   ", "app1", REQUEST_URI, "authorization_endpoint"),
             (AUTHZ_ENDPOINT, "", REQUEST_URI, "client_id"),
             (AUTHZ_ENDPOINT, "app1", "", "request_uri"),
+            (AUTHZ_ENDPOINT, "app1", "   ", "request_uri"),
         ],
     )
     def test_empty_argument_raises(self, endpoint, client_id, request_uri, name):
         with pytest.raises(ValueError, match=f"^{name} must not be empty$"):
+            build_par_authorization_url(endpoint, client_id, request_uri)
+
+    @pytest.mark.parametrize(
+        ("endpoint", "client_id", "request_uri", "name"),
+        [
+            (None, "app1", REQUEST_URI, "authorization_endpoint"),
+            (AUTHZ_ENDPOINT, 1, REQUEST_URI, "client_id"),
+            (AUTHZ_ENDPOINT, "app1", None, "request_uri"),
+            (AUTHZ_ENDPOINT, "app1", {"uri": "urn:x"}, "request_uri"),
+        ],
+    )
+    def test_non_string_argument_raises(self, endpoint, client_id, request_uri, name):
+        with pytest.raises(ValueError, match=f"^{name} must be a string$"):
             build_par_authorization_url(endpoint, client_id, request_uri)
 
     def test_exported_from_every_api_surface(self):

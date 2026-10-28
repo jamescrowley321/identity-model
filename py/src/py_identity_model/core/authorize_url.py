@@ -139,14 +139,16 @@ def build_par_authorization_url(
         The full authorization URL ready for redirect.
 
     Raises:
-        ValueError: If any argument is empty.
+        ValueError: If any argument is not a string or is empty.
     """
     for name, value in (
         ("authorization_endpoint", authorization_endpoint),
         ("client_id", client_id),
         ("request_uri", request_uri),
     ):
-        if not value or not value.strip():
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+        if not value.strip():
             raise ValueError(f"{name} must not be empty")
 
     # Strip fragment — query params after #fragment are ignored by browsers

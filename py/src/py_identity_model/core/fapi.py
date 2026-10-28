@@ -892,8 +892,11 @@ class FAPI2ClientProfile:
 
         Carries only ``client_id`` and ``request_uri`` (RFC 9126 §4); see
         :func:`~py_identity_model.core.authorize_url.build_par_authorization_url`.
+
+        Raises:
+            FAPIProfileError: ``request_uri`` is not a non-blank string.
         """
-        if not request_uri:
+        if not isinstance(request_uri, str) or not request_uri.strip():
             raise FAPIProfileError(["request_uri is required"])
         return build_par_authorization_url(
             self.authorization_endpoint, self.client_id, request_uri

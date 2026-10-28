@@ -579,9 +579,10 @@ class TestFAPI2ClientProfileAuthorizationUrl:
             "request_uri": ["urn:x"],
         }
 
-    def test_empty_request_uri_refused(self):
+    @pytest.mark.parametrize("request_uri", ["", "   ", None, 123])
+    def test_blank_or_non_string_request_uri_refused(self, request_uri):
         with pytest.raises(FAPIProfileError) as exc_info:
-            _profile().authorization_url("")
+            _profile().authorization_url(request_uri)
         assert exc_info.value.violations == ["request_uri is required"]
 
 

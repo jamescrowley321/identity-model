@@ -1008,7 +1008,9 @@ def _authorize_fapi2(
     the OP's ``mtls_endpoint_aliases`` (RFC 8705). The chosen mode is persisted on
     the session so /callback completes the flow the same way, with RFC 9207
     ``iss`` checks throughout. With ``signed_request`` the pushed parameters
-    travel in a signed request object (FAPI 2.0 Message Signing §5.3.2).
+    travel in a signed request object (FAPI 2.0 Message Signing §5.3.2), signed
+    with the ``/fapi2-jwks`` key; an ``mtls`` client registers only the
+    ``/fapi2-mtls-jwks`` certificate key, so no plan combines the two.
     """
     redirect_uri = f"{RP_BASE_URL}/callback"
     try:

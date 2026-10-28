@@ -153,7 +153,8 @@ def process_par_response(
         expires_in = data.get("expires_in")
 
         missing: list[str] = []
-        if not request_uri:
+        # RFC 9126 §2.2: request_uri is a string.
+        if not isinstance(request_uri, str) or not request_uri.strip():
             missing.append("request_uri")
         if not isinstance(expires_in, int) or expires_in <= 0:
             missing.append("expires_in")
