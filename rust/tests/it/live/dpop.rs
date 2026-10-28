@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `dPoP: { enabled: true }`, `dPoPSigningAlgValues: ["RS256",
-//! "ES256"]`), runs the unit suite, then runs these with
+//! "ES256", "PS256", "EdDSA"]`), runs the unit suite, then runs these with
 //! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
