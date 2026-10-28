@@ -186,6 +186,26 @@ class TestDPoPBoundToken:
             is DPoPErrorKind.JKT_MISMATCH
         )
 
+    def test_overflowing_proof_iat_rejected(self, validate, signing_key, public_jwk):
+        # An integer iat too large for a float must be a typed rejection, not
+        # an OverflowError escaping validate_token.
+        key = generate_dpop_key()
+        token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
+        proof = pyjwt.encode(
+            {"jti": "big-iat", "htm": METHOD, "htu": URL, "iat": 10**400},
+            key.private_key_pem,
+            algorithm=key.algorithm,
+            headers={"typ": "dpop+jwt", "jwk": key.public_jwk},
+        )
+        presentation = TokenPresentation(
+            scheme=AuthorizationScheme.DPOP, method=METHOD, url=URL, dpop_proof=proof
+        )
+
+        assert (
+            _kind(validate, token, _config(public_jwk), presentation)
+            is DPoPErrorKind.MISSING_CLAIM
+        )
+
     def test_bound_token_as_bearer_rejected(self, validate, signing_key, public_jwk):
         key = generate_dpop_key()
         token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
@@ -431,14 +451,39 @@ class TestMtlsBinding:
             "(RFC 8705 §3)"
         )
 
-    def test_certificate_bound_token_without_certificate_unchecked(
+    def test_certificate_bound_token_without_certificate_rejected(
+        self, validate, signing_key, public_jwk, client_cert_pem
+    ):
+        # RFC 8705 §3: a certificate-bound token is only valid over mTLS with
+        # the bound certificate, as a DPoP-bound token needs its proof.
+        thumbprint = compute_certificate_thumbprint(client_cert_pem)
+        token = _access_token(signing_key, {"x5t#S256": thumbprint})
+
+        with pytest.raises(CertificateBindingError) as exc:
+            validate(token, _config(public_jwk), presentation=self._presentation(None))
+
+        assert str(exc.value) == (
+            "Certificate-bound access token was presented without a client "
+            "certificate (RFC 8705 §3)"
+        )
+
+    def test_unbound_token_without_certificate_accepted(
         self, validate, signing_key, public_jwk
     ):
-        token = _access_token(signing_key, {"x5t#S256": "A" * 43})
+        token = _access_token(signing_key)
 
         claims = validate(
             token, _config(public_jwk), presentation=self._presentation(None)
         )
+
+        assert "cnf" not in claims
+
+    def test_certificate_bound_token_without_presentation_unchanged(
+        self, validate, signing_key, public_jwk
+    ):
+        token = _access_token(signing_key, {"x5t#S256": "A" * 43})
+
+        claims = validate(token, _config(public_jwk))
 
         assert claims["cnf"] == {"x5t#S256": "A" * 43}
 

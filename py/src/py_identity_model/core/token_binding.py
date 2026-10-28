@@ -44,6 +44,10 @@ PROOF_REQUEST_MESSAGE = (
 NO_CERTIFICATE_MESSAGE = (
     "required_binding=mtls but no client certificate was presented (RFC 8705 §3)"
 )
+BOUND_WITHOUT_CERTIFICATE_MESSAGE = (
+    "Certificate-bound access token was presented without a client certificate "
+    "(RFC 8705 §3)"
+)
 
 
 class TokenBinding(enum.Enum):
@@ -148,9 +152,8 @@ def check_token_binding(
       verify for this request and token, with the bound key (RFC 9449 §7.1).
     - no ``cnf.jkt``: the ``DPoP`` scheme, or ``required_binding=DPOP``, is
       refused as ``NOT_BOUND``.
-    - ``required_binding=MTLS``: the client certificate must be present and
-      match ``cnf["x5t#S256"]`` (RFC 8705 §3). Without that requirement a
-      certificate-bound token is checked whenever a certificate is given.
+    - ``cnf["x5t#S256"]`` present, or ``required_binding=MTLS``: the client
+      certificate must be present and match ``cnf["x5t#S256"]`` (RFC 8705 §3).
 
     Args:
         claims: The decoded, signature-validated token claims.
@@ -178,16 +181,17 @@ def check_token_binding(
     ):
         raise DPoPValidationError(DPoPErrorKind.NOT_BOUND)
 
+    certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
+    if binding is not TokenBinding.MTLS and not certificate_bound:
+        return
     certificate = presentation.client_certificate
-    if binding is TokenBinding.MTLS:
-        if certificate is None:
-            raise CertificateBindingError(NO_CERTIFICATE_MESSAGE)
-        validate_certificate_binding(claims, certificate)
-    elif (
-        certificate is not None
-        and ConfirmationMethods.X509ThumbprintSha256.value in cnf
-    ):
-        validate_certificate_binding(claims, certificate)
+    if certificate is None:
+        raise CertificateBindingError(
+            NO_CERTIFICATE_MESSAGE
+            if binding is TokenBinding.MTLS
+            else BOUND_WITHOUT_CERTIFICATE_MESSAGE
+        )
+    validate_certificate_binding(claims, certificate)
 
 
 __all__ = [

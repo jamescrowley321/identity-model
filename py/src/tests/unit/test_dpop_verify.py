@@ -44,24 +44,14 @@ REPLAY_CACHE_BOUND = 2
 ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2ln"
 
 
-class FakeClock:
-    """A settable clock for the replay cache."""
-
-    def __init__(self, now: float) -> None:
-        self.now = now
-
-    def __call__(self) -> float:
-        return self.now
-
-
 class RecordingCache:
     """A replay cache that admits every jti and records each call."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, float]] = []
+        self.calls: list[tuple[str, float, float]] = []
 
-    def check_and_store(self, jti: str, expires_at: float) -> bool:
-        self.calls.append((jti, expires_at))
+    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
+        self.calls.append((jti, expires_at, now))
         return True
 
 
@@ -424,6 +414,8 @@ class TestMalformed:
             ("htu", ["x"]),
             ("iat", "1"),
             ("iat", True),
+            ("iat", 10**400),
+            ("iat", -(10**400)),
         ],
     )
     def test_ill_typed_claim_rejected(self, claim, value):
@@ -520,27 +512,61 @@ class TestReplayCache:
 
     def test_check_and_store(self):
         cache = InMemoryDPoPReplayCache()
-        now = time.time()
 
-        assert cache.check_and_store("a", now + 60) is True
-        assert cache.check_and_store("a", now + 60) is False
-        assert cache.check_and_store("b", now + 60) is True
+        assert [cache.check_and_store(j, 160.0, 100.0) for j in ("a", "a", "b")] == [
+            True,
+            False,
+            True,
+        ]
 
     def test_expired_entry_is_forgotten(self):
         cache = InMemoryDPoPReplayCache()
-        now = time.time()
-        cache.check_and_store("a", now - 1)
+        cache.check_and_store("a", 99.0, 50.0)
 
-        assert cache.check_and_store("a", now + 60) is True
+        assert cache.check_and_store("a", 160.0, 100.0) is True
 
-    def test_bounded(self):
+    def test_entry_is_live_through_its_expiry(self):
+        # The verifier accepts iat == now - max_age - leeway, so the jti must
+        # still be held at now == expires_at (RFC 9449 §11.1).
+        cache = InMemoryDPoPReplayCache()
+        cache.check_and_store("a", 100.0, 50.0)
+
+        assert [
+            cache.check_and_store("a", 200.0, 100.0),
+            cache.check_and_store("a", 200.0, 100.5),
+        ] == [False, True]
+
+    def test_purge_keeps_entries_at_their_expiry(self):
+        cache = InMemoryDPoPReplayCache()
+        cache.check_and_store("old", 100.0, 50.0)
+        cache.check_and_store("new", 300.0, 100.0)
+        at_expiry = len(cache)
+        cache.check_and_store("newer", 300.0, 100.5)
+
+        assert (at_expiry, len(cache)) == (2, 2)
+
+    def test_full_cache_refuses_new_jti(self):
+        # Evicting a live jti would let it replay (RFC 9449 §11.1): fail closed.
         cache = InMemoryDPoPReplayCache(max_entries=REPLAY_CACHE_BOUND)
-        later = time.time() + 60
-        for jti in ("a", "b", "c"):
-            cache.check_and_store(jti, later)
+        for jti in ("a", "b"):
+            cache.check_and_store(jti, 160.0, 100.0)
 
+        with pytest.raises(DPoPValidationError) as exc:
+            cache.check_and_store("c", 160.0, 100.0)
+
+        assert exc.value.kind is DPoPErrorKind.REPLAY_CACHE_FULL
+        assert [cache.check_and_store(j, 160.0, 101.0) for j in ("a", "b")] == [
+            False,
+            False,
+        ]
         assert len(cache) == REPLAY_CACHE_BOUND
-        assert cache.check_and_store("c", later) is False
+
+    def test_full_cache_admits_after_expiry(self):
+        cache = InMemoryDPoPReplayCache(max_entries=1)
+        cache.check_and_store("a", 160.0, 100.0)
+
+        assert cache.check_and_store("b", 220.0, 161.0) is True
+        assert len(cache) == 1
 
     @pytest.mark.parametrize("max_entries", [0, True, "10"])
     def test_invalid_max_entries(self, max_entries):
@@ -551,32 +577,34 @@ class TestReplayCache:
 
     def test_single_entry_cache(self):
         cache = InMemoryDPoPReplayCache(max_entries=1)
-        later = time.time() + 60
 
-        assert [cache.check_and_store(j, later) for j in ("a", "a", "b")] == [
+        assert [cache.check_and_store(j, 160.0, 100.0) for j in ("a", "a")] == [
             True,
             False,
-            True,
         ]
 
-    def test_entry_expires_at_its_expiry(self):
-        clock = FakeClock(50.0)
-        cache = InMemoryDPoPReplayCache(clock=clock)
-        cache.check_and_store("a", 100.0)
-        clock.now = 99.0
-        live = cache.check_and_store("a", 200.0)
-        clock.now = 100.0
+    def test_full_cache_rejects_proof(self):
+        key = generate_dpop_key()
+        options = _options(replay_cache=InMemoryDPoPReplayCache(max_entries=1))
+        _verify(_sign(key), options=options)
 
-        assert (live, cache.check_and_store("a", 200.0)) == (False, True)
+        assert _kind(_sign(key), options=options) is DPoPErrorKind.REPLAY_CACHE_FULL
 
-    def test_purge_drops_entries_at_their_expiry(self):
-        clock = FakeClock(50.0)
-        cache = InMemoryDPoPReplayCache(clock=clock)
-        cache.check_and_store("old", 100.0)
-        clock.now = 100.0
-        cache.check_and_store("new", 300.0)
+    def test_replay_refused_at_window_edge(self):
+        # Retention must outlive acceptance: at now == iat + max_age + leeway
+        # the proof is still in the window, so its jti must still be held.
+        # A fixed past iat: the cache must follow the verifier's clock, not
+        # the wall clock, or it forgets the jti while the window still holds.
+        key = generate_dpop_key()
+        iat = 1_700_000_000
+        options = _options(max_age=40, iat_leeway=7)
+        proof = _sign(key, payload={"jti": "edge", "iat": iat})
+        _verify(proof, options=options, now=iat)
 
-        assert len(cache) == 1
+        assert [
+            _kind(proof, options=options, now=iat + 47),
+            _kind(proof, options=options, now=iat + 48),
+        ] == [DPoPErrorKind.REPLAYED_JTI, DPoPErrorKind.IAT_OUT_OF_WINDOW]
 
     def test_distinct_proofs_share_a_cache(self):
         key = generate_dpop_key()
@@ -595,16 +623,15 @@ class TestReplayCache:
 
         _verify(proof, options=options, now=now)
 
-        assert recorder.calls == [("rec-1", now + 40 + 7)]
+        assert recorder.calls == [("rec-1", now + 40 + 7, now)]
 
     def test_concurrent_replay_admits_one(self):
         cache = InMemoryDPoPReplayCache()
-        later = time.time() + 60
         results: list[bool] = []
         lock = threading.Lock()
 
         def worker() -> None:
-            outcome = cache.check_and_store("same", later)
+            outcome = cache.check_and_store("same", 160.0, 100.0)
             with lock:
                 results.append(outcome)
 
@@ -749,6 +776,10 @@ class TestMessages:
             ),
             DPoPErrorKind.REPLAYED_JTI: (
                 "DPoP proof jti was already used (RFC 9449 §11.1)"
+            ),
+            DPoPErrorKind.REPLAY_CACHE_FULL: (
+                "DPoP replay cache is full of live jti values; the proof cannot "
+                "be recorded (RFC 9449 §11.1)"
             ),
             DPoPErrorKind.PROOF_REQUIRED: (
                 "DPoP-bound access token was sent without a DPoP proof (RFC 9449 §7.1)"

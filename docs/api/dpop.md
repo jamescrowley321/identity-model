@@ -98,7 +98,8 @@ The proof checks run in RFC 9449 §4.3 order: `typ` is `dpop+jwt`; `alg` is an
 asymmetric algorithm DPoP keys support (`none` and `HS*` are refused); the `jwk`
 header is a public key that fits `alg` and meets the RSA/EC strength floor; the
 signature verifies with it; `htm` equals the request method; `htu` equals the
-request URI, ignoring query and fragment (RFC 3986 §6.2.2–6.2.3 normalized);
+request URI, ignoring query and fragment, with scheme and host case and the
+default port normalized (RFC 3986 §6.2.2.1, §6.2.3) and the path compared as sent;
 `iat` is inside `[now - max_age - iat_leeway, now + iat_leeway]`; `nonce`
 equals `TokenPresentation.expected_nonce` when one is set; `ath` is the hash of
 the access token; the key's RFC 7638 thumbprint equals `cnf.jkt`; and last, the
@@ -112,7 +113,9 @@ What `required_binding` does:
 | any | `cnf.jkt` | `Bearer`, or `DPoP` with no proof | `WRONG_SCHEME` / `PROOF_REQUIRED` |
 | any | no `cnf.jkt` | `DPoP` | `NOT_BOUND` |
 | `DPOP` | no `cnf.jkt` | anything | `NOT_BOUND` |
-| `MTLS` | `cnf["x5t#S256"]` | the bound client certificate | accepted (RFC 8705 §3) |
+| any | `cnf["x5t#S256"]` | the bound client certificate | accepted (RFC 8705 §3) |
+| any | `cnf["x5t#S256"]` | no client certificate, or another one | `CertificateBindingError` |
+| `MTLS` | no `cnf["x5t#S256"]` | anything | `CertificateBindingError` |
 | `NONE` (default) | no `cnf` | `Bearer` | accepted |
 | `NONE` | anything | no `presentation=` | not checked (the behaviour before this option existed) |
 
@@ -124,7 +127,11 @@ typed `kind`. `kind.oauth_error` is the `WWW-Authenticate` error code:
 
 Proof algorithms, the `iat` window and the `jti` replay cache are set with
 `TokenValidationConfig(dpop=DPoPVerificationOptions(...))`. The default
-replay cache is an in-memory cache for the process. A deployment with several
+replay cache is an in-memory cache for the process. It holds each `jti` for as
+long as the window would accept its proof and never evicts a live one: when it
+is full, a new proof is refused with `REPLAY_CACHE_FULL`, so size
+`InMemoryDPoPReplayCache(max_entries=...)` above the proofs a process accepts
+in one window. A deployment with several
 processes or hosts needs a shared `DPoPReplayCache` so a proof replayed to
 another worker is refused (RFC 9449 §11.1).
 

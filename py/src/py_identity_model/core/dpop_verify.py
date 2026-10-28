@@ -23,7 +23,7 @@ import math
 import threading
 import time
 import types
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
@@ -33,10 +33,6 @@ from ..exceptions import TokenValidationException, WeakKeyException
 from .dpop import _SUPPORTED_ALGORITHMS, compute_ath, compute_jwk_thumbprint
 from .key_strength import enforce_key_strength
 from .process_local import ProcessLocal
-
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 DPOP_PROOF_TYPE = "dpop+jwt"
@@ -97,6 +93,9 @@ class DPoPErrorKind(enum.Enum):
     """The proof key thumbprint differs from ``cnf.jkt`` (§4.3 check 12b, §6.1)."""
     REPLAYED_JTI = "replayed_jti"
     """The ``jti`` was already seen within the window (§11.1)."""
+    REPLAY_CACHE_FULL = "replay_cache_full"
+    """The replay cache is full of live ``jti`` values, so the proof cannot be
+    recorded and is refused rather than risk a replay (§11.1)."""
     PROOF_REQUIRED = "proof_required"
     """A DPoP-bound token arrived without a ``DPoP`` proof (§7.1)."""
     WRONG_SCHEME = "wrong_scheme"
@@ -154,6 +153,10 @@ _ERROR_MESSAGES: types.MappingProxyType[DPoPErrorKind, str] = types.MappingProxy
             "DPoP proof key does not match the access token cnf.jkt (RFC 9449 §6.1)"
         ),
         DPoPErrorKind.REPLAYED_JTI: "DPoP proof jti was already used (RFC 9449 §11.1)",
+        DPoPErrorKind.REPLAY_CACHE_FULL: (
+            "DPoP replay cache is full of live jti values; the proof cannot be "
+            "recorded (RFC 9449 §11.1)"
+        ),
         DPoPErrorKind.PROOF_REQUIRED: (
             "DPoP-bound access token was sent without a DPoP proof (RFC 9449 §7.1)"
         ),
@@ -188,11 +191,20 @@ class DPoPReplayCache(Protocol):
 
     The verifier calls :meth:`check_and_store` once per proof, after every
     other check passed. Implementations must be atomic: two concurrent calls
-    with the same ``jti`` admit at most one.
+    with the same ``jti`` admit at most one. They must never forget a ``jti``
+    before its ``expires_at``; one that cannot record a ``jti`` refuses the
+    proof (returns ``False`` or raises :class:`DPoPValidationError`).
     """
 
-    def check_and_store(self, jti: str, expires_at: float) -> bool:
-        """Record *jti* until *expires_at* (epoch seconds).
+    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
+        """Record *jti* until *expires_at* (epoch seconds), inclusive.
+
+        Args:
+            jti: The proof identifier.
+            expires_at: The last instant the proof is inside the verifier's
+                acceptance window.
+            now: The verifier's current time; entries with
+                ``expires_at < now`` may be dropped.
 
         Returns:
             ``True`` if *jti* was unseen (or expired), ``False`` on a replay.
@@ -203,20 +215,20 @@ class DPoPReplayCache(Protocol):
 class InMemoryDPoPReplayCache:
     """Thread-safe, bounded, per-process :class:`DPoPReplayCache`.
 
-    Expired entries are dropped on every insert. When the cache is full of
-    live entries, the oldest is evicted, so *max_entries* should exceed the
-    proofs a process accepts within one window. A deployment with several
-    processes behind a load balancer needs a shared cache instead.
+    Expired entries are dropped on every insert. A live entry is never
+    evicted (that would let its proof replay): when the cache is full of live
+    entries, a new proof is refused with ``REPLAY_CACHE_FULL``, so
+    *max_entries* should exceed the proofs a process accepts within one
+    window. A deployment with several processes behind a load balancer needs a
+    shared cache instead.
 
     Args:
         max_entries: The most ``jti`` values held at once.
-        clock: Returns the current time in epoch seconds.
     """
 
     def __init__(
         self,
         max_entries: int = DEFAULT_DPOP_REPLAY_CACHE_MAX_ENTRIES,
-        clock: Callable[[], float] = time.time,
     ) -> None:
         if (
             isinstance(max_entries, bool)
@@ -225,7 +237,6 @@ class InMemoryDPoPReplayCache:
         ):
             raise ValueError(_MAX_ENTRIES_MESSAGE)
         self._max_entries = max_entries
-        self._clock = clock
         self._entries: dict[str, float] = {}
         self._lock = threading.Lock()
 
@@ -233,22 +244,27 @@ class InMemoryDPoPReplayCache:
         with self._lock:
             return len(self._entries)
 
-    def check_and_store(self, jti: str, expires_at: float) -> bool:
-        now = self._clock()
+    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
+        """Record *jti* (see :meth:`DPoPReplayCache.check_and_store`).
+
+        Raises:
+            DPoPValidationError: ``REPLAY_CACHE_FULL`` if *jti* is new and
+                every held entry is still live.
+        """
         with self._lock:
-            # An entry expires at its ``expires_at``: purging first drops an
-            # expired record of *jti*, so only a live one is a replay.
+            # Purging first drops an expired record of *jti*, so only a live
+            # one is a replay.
             self._purge(now)
             if jti in self._entries:
                 return False
-            while len(self._entries) >= self._max_entries:
-                # Dicts keep insertion order: the first key is the oldest.
-                del self._entries[next(iter(self._entries))]
+            if len(self._entries) >= self._max_entries:
+                raise DPoPValidationError(DPoPErrorKind.REPLAY_CACHE_FULL)
             self._entries[jti] = expires_at
             return True
 
     def _purge(self, now: float) -> None:
-        expired = [jti for jti, until in self._entries.items() if until <= now]
+        # Live through ``expires_at`` inclusive, as the verifier's window is.
+        expired = [jti for jti, until in self._entries.items() if until < now]
         for jti in expired:
             del self._entries[jti]
 
@@ -268,11 +284,13 @@ def get_default_dpop_replay_cache() -> InMemoryDPoPReplayCache:
 
 
 def _is_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-    )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        # An int too large for a float (JSON allows any integer).
+        return False
 
 
 @dataclass(frozen=True)
@@ -336,9 +354,10 @@ class DPoPProof:
 def _normalize_http_uri(value: object) -> str | None:
     """Normalize an absolute http(s) URI for the §4.3 check 9 comparison.
 
-    Applies RFC 3986 §6.2.2 case normalization and §6.2.3 scheme-based
-    normalization (default port, empty path) and drops the query and
-    fragment, which ``htu`` never covers (RFC 9449 §4.2). Returns ``None``
+    Lowercases the scheme and host (RFC 3986 §6.2.2.1), applies §6.2.3
+    scheme-based normalization (default port, empty path) and drops the query
+    and fragment, which ``htu`` never covers (RFC 9449 §4.2). The path is
+    compared as sent: percent-encodings are not normalized. Returns ``None``
     for anything else.
     """
     if not isinstance(value, str):
@@ -463,8 +482,9 @@ def verify_dpop_proof(
     allowed asymmetric algorithm; ``jwk`` is a public key that fits ``alg``
     and meets the key-strength floor; the signature; ``jti``/``htm``/``htu``/
     ``iat`` are present; ``htm`` equals the request method; ``htu`` equals the
-    request URI (query and fragment ignored, RFC 3986 §6.2.2-6.2.3
-    normalized); ``iat`` is within
+    request URI (query and fragment ignored; scheme and host case and
+    default port normalized, RFC 3986 §6.2.2.1, §6.2.3; the path compared
+    as sent); ``iat`` is within
     ``[now - max_age - iat_leeway, now + iat_leeway]``; ``nonce`` equals the
     expected nonce when one is set; ``ath`` is the hash of the access token
     when one is set (§7.1); the key thumbprint equals the expected ``jkt``
@@ -533,7 +553,11 @@ def verify_dpop_proof(
         if options.replay_cache is None
         else options.replay_cache
     )
-    if not cache.check_and_store(jti, iat + options.max_age + options.iat_leeway):
+    # The cache works on this call's clock, so the jti is held exactly as long
+    # as the window would accept the proof again.
+    if not cache.check_and_store(
+        jti, iat + options.max_age + options.iat_leeway, current
+    ):
         raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
 
     return DPoPProof(
