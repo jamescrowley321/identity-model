@@ -52,6 +52,7 @@ from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     FAPI2_MAX_NONCE_LENGTH,
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
     FAPI2ClientProfile,
@@ -75,6 +76,7 @@ from ..core.models import (
     BaseResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
+    RequestObjectKey,
     UserInfoErrorKind,
 )
 from ..core.mtls import (
@@ -177,6 +179,7 @@ __all__ = [
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
     "FAPI2_MAX_NONCE_LENGTH",
+    "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     # HTTP Client
@@ -235,6 +238,7 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "RequestObjectKey",
     "StateValidationResult",
     # Token Exchange
     "TokenExchangeRequest",

@@ -696,6 +696,32 @@ class PrivateKeyJwt:
 
 
 @dataclass
+class RequestObjectKey:
+    """Key for signing JAR request objects (RFC 9101).
+
+    Used by ``FAPI2ClientProfile`` to send the authorization request to the
+    PAR endpoint as a signed request object (FAPI 2.0 Message Signing
+    §5.3.2).
+
+    Attributes:
+        private_key: PEM-encoded private key used to sign the request object
+            (``bytes`` or ``str``).
+        algorithm: Asymmetric signing algorithm (default ``"PS256"``).
+            FAPI 2.0 requires ``PS256``, ``ES256`` or ``EdDSA``.
+        kid: Optional key ID placed in the request object's JWT header.
+        lifetime: Seconds between the request object's ``nbf`` and ``exp``
+            (default 300).  FAPI 2.0 Message Signing §5.3.2 allows at most
+            3600.
+    """
+
+    # repr suppressed for the same reason as ``PrivateKeyJwt.private_key``.
+    private_key: str | bytes = field(repr=False)
+    algorithm: str = "PS256"
+    kid: str | None = None
+    lifetime: int = 300
+
+
+@dataclass
 class MtlsClientAuth:
     """Mutual-TLS client authentication parameters (RFC 8705).
 
