@@ -114,7 +114,7 @@ What `required_binding` does:
 | any | no `cnf.jkt` | `DPoP` | `NOT_BOUND` |
 | `DPOP` | no `cnf.jkt` | anything | `NOT_BOUND` |
 | any | `cnf["x5t#S256"]` | the bound client certificate | accepted (RFC 8705 §3) |
-| any | `cnf["x5t#S256"]` | no client certificate, or another one | `CertificateBindingError` |
+| any | `cnf["x5t#S256"]` | no client certificate, another one, or one that is not valid PEM/DER | `CertificateBindingError` |
 | `MTLS` | no `cnf["x5t#S256"]` | anything | `CertificateBindingError` |
 | `NONE` (default) | no `cnf` | `Bearer` | accepted |
 | `NONE` | anything | no `presentation=` | not checked (the behaviour before this option existed) |

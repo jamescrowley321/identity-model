@@ -467,6 +467,20 @@ class TestMtlsBinding:
             "certificate (RFC 8705 §3)"
         )
 
+    @pytest.mark.parametrize("cert", [b"", "", b"not-a-certificate"])
+    def test_unparseable_certificate_rejected(
+        self, validate, signing_key, public_jwk, client_cert_pem, cert
+    ):
+        thumbprint = compute_certificate_thumbprint(client_cert_pem)
+        token = _access_token(signing_key, {"x5t#S256": thumbprint})
+
+        with pytest.raises(CertificateBindingError) as exc:
+            validate(token, _config(public_jwk), presentation=self._presentation(cert))
+
+        assert str(exc.value) == (
+            "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
+        )
+
     def test_unbound_token_without_certificate_accepted(
         self, validate, signing_key, public_jwk
     ):

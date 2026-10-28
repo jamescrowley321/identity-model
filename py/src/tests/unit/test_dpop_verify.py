@@ -455,6 +455,26 @@ class TestMalformed:
 
         assert _kind(proof) is DPoPErrorKind.MALFORMED
 
+    def test_signed_deeply_nested_payload_rejected(self):
+        # json.loads raises RecursionError, not ValueError, on deep nesting.
+        key = generate_dpop_key()
+        depth = 100_000
+        proof = pyjwt.PyJWS().encode(
+            ("[" * depth + "]" * depth).encode(),
+            key.private_key_pem,
+            algorithm=key.algorithm,
+            headers={"typ": "dpop+jwt", "jwk": key.public_jwk},
+        )
+
+        assert _kind(proof) is DPoPErrorKind.MALFORMED
+
+    def test_deeply_nested_header_rejected(self):
+        depth = 100_000
+        header = '{"typ": "dpop+jwt", "jwk": ' + "[" * depth + "]" * depth + "}"
+        proof = f"{_b64(header.encode())}.{_b64(b'{}')}.{_b64(b'sig')}"
+
+        assert _kind(proof) is DPoPErrorKind.MALFORMED
+
     def test_signed_non_json_payload_rejected(self):
         key = generate_dpop_key()
         proof = pyjwt.PyJWS().encode(

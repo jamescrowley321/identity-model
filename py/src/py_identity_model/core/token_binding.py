@@ -48,6 +48,9 @@ BOUND_WITHOUT_CERTIFICATE_MESSAGE = (
     "Certificate-bound access token was presented without a client certificate "
     "(RFC 8705 §3)"
 )
+INVALID_CERTIFICATE_MESSAGE = (
+    "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
+)
 
 
 class TokenBinding(enum.Enum):
@@ -163,7 +166,8 @@ def check_token_binding(
 
     Raises:
         DPoPValidationError: If the DPoP binding fails.
-        CertificateBindingError: If the certificate binding fails.
+        CertificateBindingError: If the certificate binding fails, including
+            an unparseable ``presentation.client_certificate``.
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
@@ -191,7 +195,10 @@ def check_token_binding(
             if binding is TokenBinding.MTLS
             else BOUND_WITHOUT_CERTIFICATE_MESSAGE
         )
-    validate_certificate_binding(claims, certificate)
+    try:
+        validate_certificate_binding(claims, certificate)
+    except ValueError as exc:
+        raise CertificateBindingError(INVALID_CERTIFICATE_MESSAGE) from exc
 
 
 __all__ = [

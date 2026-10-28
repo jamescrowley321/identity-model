@@ -411,7 +411,8 @@ def _verify_signature(proof: str, alg: str, jwk: dict) -> dict:
         payload = json.loads(jws.decode(proof, key, algorithms=[alg]))
     except pyjwt.InvalidSignatureError as exc:
         raise DPoPValidationError(DPoPErrorKind.INVALID_SIGNATURE) from exc
-    except (pyjwt.PyJWTError, ValueError) as exc:
+    except (pyjwt.PyJWTError, ValueError, RecursionError) as exc:
+        # RecursionError: json.loads on a deeply nested payload.
         raise DPoPValidationError(DPoPErrorKind.MALFORMED) from exc
     if not isinstance(payload, dict):
         raise DPoPValidationError(DPoPErrorKind.MALFORMED)
