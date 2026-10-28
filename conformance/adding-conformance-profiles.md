@@ -170,7 +170,9 @@ signing option (JARM / signed request objects) if we target that add-on.
 | PKCE S256, PAR, JAR request objects | ✅ present + live-tested | — |
 | `private_key_jwt` client auth (ES256/PS256) | ✅ present + tested vs node-oidc | — |
 | DPoP proof at token endpoint (client side) | ✅ `core/dpop.py` | — |
-| **RS-side sender-constraint enforcement (`cnf`/`jkt`, mTLS `x5t#S256`)** | ❌ **missing** — `core/dpop.py` is client-only, `token_validation_logic` never reads `cnf`, middleware only accepts `Bearer` | #215 |
+| RS-side DPoP proof + `cnf.jkt` enforcement in the core library | ✅ `core/dpop_verify.py`, `validate_token(..., presentation=)`, `TokenValidationConfig.required_binding` | #478 |
+| RS-side sender-constraint enforcement in the FastAPI middleware | ❌ missing — middleware only accepts `Bearer` | #1021 |
+| RS-side mTLS `x5t#S256` beyond `validate_certificate_binding` | ❌ missing | #215 |
 | **JARM** (verify signed authorization *response*) | ❌ missing (only JAR, the request side) | #218 |
 | Response `__repr__` redaction hardening | ⏳ in progress | #431 |
 | FAPI-2 plan wired into the harness | ❌ missing | #475 |
@@ -200,6 +202,12 @@ a DPoP-bound token presented as `Bearer` is accepted with zero binding check.
 That RS guarantee is verified by our integration tests + the E2E token harness
 (#462–#474), which is why #215 must ship with explicit **negative** tests
 (mismatched `jkt`, replayed `jti`, wrong `htu`, missing proof).
+
+> **The #475 client plan does not exercise the resource-server verifier.** It
+> tests token *acquisition* (client-side DPoP). The RS checks from #478 are
+> proven by `src/tests/unit/test_dpop_verify.py`, `test_token_binding.py`, the
+> `DPOP-006` spec vectors and the live node-oidc matrix in
+> `src/tests/integration/test_dpop_rs_verification_live.py`.
 
 **Steps 5–8 — plan wiring (#475):** add
 `conformance/configs/fapi2-security-profile-rp.json` (+ `fastapi-` mirror),
