@@ -45,6 +45,12 @@ response = request_client_credentials_token(
 )
 ```
 
+Requests take the endpoint `address` you give them, so resolve the alias as
+above when you build one yourself. `FAPI2ClientProfile` does it for you: with
+an `MtlsClientAuth` client, the PAR, token and refresh requests it builds use
+the advertised `mtls_endpoint_aliases` (FAPI 2.0 Security Profile §5.2.2.1,
+§5.3.3.1).
+
 The certificate is presented by a short-lived client built for the request.
 To apply your own settings to it (`ca_bundle` for a private CA, `http_timeout`,
 retries), pass an `http_client` alongside `mtls`: its `Config` configures the

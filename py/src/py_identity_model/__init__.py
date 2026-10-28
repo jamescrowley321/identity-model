@@ -99,6 +99,7 @@ from .sync import (
     RefreshTokenResponse,
     RequestObjectKey,
     StateValidationResult,
+    TokenErrorKind,
     TokenExchangeRequest,
     TokenExchangeResponse,
     TokenIntrospectionRequest,
@@ -268,6 +269,7 @@ __all__ = [
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",
+    "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
     "TokenExchangeResponse",

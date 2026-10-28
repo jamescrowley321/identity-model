@@ -7,10 +7,12 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from cryptography.hazmat.primitives.asymmetric import rsa
+import httpx
 import jwt as pyjwt
 from jwt.algorithms import RSAAlgorithm
 from jwt.exceptions import InvalidKeyError
 import pytest
+import respx
 
 from py_identity_model.core.authorize_response import (
     parse_authorize_callback_response,
@@ -29,7 +31,9 @@ from py_identity_model.core.models import (
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    RefreshTokenRequest,
     RequestObjectKey,
+    TokenErrorKind,
 )
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.core.state_validation import AuthorizeCallbackValidationResult
@@ -38,6 +42,10 @@ from py_identity_model.exceptions import (
     TokenValidationException,
 )
 from py_identity_model.sync.jarm import process_jarm_response
+from py_identity_model.sync.token_client import (
+    refresh_token,
+    request_authorization_code_token,
+)
 from py_identity_model.sync.token_validation import validate_token
 
 
@@ -623,6 +631,7 @@ class TestFAPI2ClientProfileTokenRequest:
         assert request.dpop_key is DPOP_KEY
         assert request.mtls is None
         assert request.client_secret is None
+        assert request.require_dpop_token_type is True
 
     def test_mtls_request(self):
         request = _profile(client_auth=_mtls()).authorization_code_token_request(
@@ -632,6 +641,7 @@ class TestFAPI2ClientProfileTokenRequest:
         assert request.mtls == _mtls()
         assert request.private_key_jwt is None
         assert request.dpop_key is None
+        assert request.require_dpop_token_type is False
 
     def test_private_key_jwt_without_dpop_key_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
@@ -1152,3 +1162,122 @@ class TestFAPI2ClientProfileSignedRequestObject:
         )
         assert request.request is None
         assert request == _par()
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileRefreshTokenRequest:
+    """FAPI 2.0 Security Profile §5.3.3.1, RFC 9449 §5, RFC 8705 §5."""
+
+    def test_private_key_jwt_request_is_dpop_bound(self):
+        request = _profile().refresh_token_request(
+            refresh_token="rt", dpop_key=DPOP_KEY
+        )
+        assert request == RefreshTokenRequest(
+            address=TOKEN_ENDPOINT,
+            client_id=CLIENT_ID,
+            refresh_token="rt",
+            private_key_jwt=_pkj(issuer=ISSUER),
+            dpop_key=DPOP_KEY,
+            require_dpop_token_type=True,
+        )
+
+    def test_scope_passed_through(self):
+        request = _profile().refresh_token_request(
+            refresh_token="rt", dpop_key=DPOP_KEY, scope="openid accounts"
+        )
+        assert request.scope == "openid accounts"
+
+    def test_mtls_request_uses_endpoint_alias(self):
+        request = _profile(client_auth=_mtls()).refresh_token_request(
+            refresh_token="rt"
+        )
+        assert request == RefreshTokenRequest(
+            address=MTLS_TOKEN_ENDPOINT,
+            client_id=CLIENT_ID,
+            refresh_token="rt",
+            mtls=_mtls(),
+        )
+
+    def test_private_key_jwt_without_dpop_key_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile().refresh_token_request(refresh_token="rt")
+        assert exc_info.value.violations == [NO_SENDER_CONSTRAINT]
+
+    def test_mtls_with_dpop_key_refused(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile(client_auth=_mtls()).refresh_token_request(
+                refresh_token="rt", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [MTLS_WITH_DPOP]
+
+    @pytest.mark.parametrize("refresh_token_value", ["", "  "])
+    def test_blank_refresh_token_refused(self, refresh_token_value):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile().refresh_token_request(
+                refresh_token=refresh_token_value, dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == ["refresh_token is required"]
+
+    def test_unadvertised_dpop_algorithm_refused(self):
+        profile = _profile_from(_discovery(dpop_signing_alg_values_supported=["PS256"]))
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.refresh_token_request(refresh_token="rt", dpop_key=DPOP_KEY)
+        assert exc_info.value.violations == [
+            TestFAPI2ClientProfileAdvertisedDPoPAlgorithms.NOT_ADVERTISED
+        ]
+
+    def test_weak_dpop_algorithm_refused(self):
+        discovery = _discovery(dpop_signing_alg_values_supported=["RS256", "ES256"])
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery).refresh_token_request(
+                refresh_token="rt", dpop_key=RS256_DPOP_KEY
+            )
+        assert exc_info.value.violations == [_alg_violation("DPoP", "RS256")]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("algorithm", ["PS256", "EdDSA"])
+def test_fapi_dpop_key_algorithms_accepted(algorithm):
+    """FAPI 2.0 Security Profile §5.4.1: PS256 and EdDSA DPoP keys."""
+    key = generate_dpop_key(algorithm)
+    profile = _profile_from(_discovery(dpop_signing_alg_values_supported=[algorithm]))
+    par = profile.pushed_authorization_request(
+        state="state", code_challenge="challenge", dpop_key=key
+    )
+    token = profile.authorization_code_token_request(
+        code="code", code_verifier="verifier", dpop_key=key
+    )
+    refresh = profile.refresh_token_request(refresh_token="rt", dpop_key=key)
+    assert (par.dpop_key, token.dpop_key, refresh.dpop_key) == (key, key, key)
+
+
+BEARER_RESPONSE = {"access_token": "at", "token_type": "Bearer", "expires_in": 60}
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileBearerDowngrade:
+    """A DPoP-bound profile request that comes back as Bearer fails."""
+
+    @respx.mock
+    def test_authorization_code_downgrade_fails(self):
+        respx.post(TOKEN_ENDPOINT).mock(
+            return_value=httpx.Response(200, json=BEARER_RESPONSE)
+        )
+        request = _profile().authorization_code_token_request(
+            code="code", code_verifier="verifier", dpop_key=DPOP_KEY
+        )
+        response = request_authorization_code_token(request)
+        assert response.is_successful is False
+        assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
+
+    @respx.mock
+    def test_refresh_downgrade_fails(self):
+        respx.post(TOKEN_ENDPOINT).mock(
+            return_value=httpx.Response(200, json=BEARER_RESPONSE)
+        )
+        request = _profile().refresh_token_request(
+            refresh_token="rt", dpop_key=DPOP_KEY
+        )
+        response = refresh_token(request)
+        assert response.is_successful is False
+        assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH

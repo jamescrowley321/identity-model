@@ -121,7 +121,9 @@ def request_authorization_code_token(
                 response = _request_token(
                     client, request.address, params, headers, auth
                 )
-        return process_auth_code_token_response(response)
+        return process_auth_code_token_response(
+            response, require_dpop_token_type=request.require_dpop_token_type
+        )
     except Exception as e:
         return handle_auth_code_token_error(e)
     finally:
@@ -152,7 +154,21 @@ def refresh_token(
         params, headers, auth = prepare_refresh_token_request_data(request)
         client, owned_client = resolve_http_client(request.mtls, http_client)
         response = _request_token(client, request.address, params, headers, auth)
-        return process_refresh_token_response(response)
+        if request.dpop_key is not None:
+            # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
+            # re-minting the proof with the server nonce and retrying once.
+            nonce = extract_dpop_nonce(response)
+            if nonce is not None:
+                response.close()
+                params, headers, auth = prepare_refresh_token_request_data(
+                    request, dpop_nonce=nonce
+                )
+                response = _request_token(
+                    client, request.address, params, headers, auth
+                )
+        return process_refresh_token_response(
+            response, require_dpop_token_type=request.require_dpop_token_type
+        )
     except Exception as e:
         return handle_refresh_token_error(e)
     finally:

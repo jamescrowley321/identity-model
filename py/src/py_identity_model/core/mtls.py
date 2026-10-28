@@ -221,6 +221,9 @@ def resolve_mtls_endpoint(
     Per RFC 8705 §5, an authorization server may advertise mTLS-specific
     endpoint URLs in ``mtls_endpoint_aliases``. When a matching alias exists
     for *endpoint*, it is returned; otherwise *endpoint* is returned unchanged.
+    Request models take an explicit ``address``, so call this when building
+    one for an mTLS client; ``FAPI2ClientProfile`` applies it to every PAR,
+    token and refresh request it builds for an mTLS client.
 
     Args:
         disco: The authorization server's discovery document.

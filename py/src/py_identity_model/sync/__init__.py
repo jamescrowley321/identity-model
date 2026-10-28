@@ -58,6 +58,7 @@ from ..core.models import (
     MtlsClientAuth,
     PrivateKeyJwt,
     RequestObjectKey,
+    TokenErrorKind,
     UserInfoErrorKind,
 )
 from ..core.mtls import (
@@ -222,6 +223,7 @@ __all__ = [
     "RefreshTokenResponse",
     "RequestObjectKey",
     "StateValidationResult",
+    "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
     "TokenExchangeResponse",

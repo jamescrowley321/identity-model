@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
 
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
     PrivateFormat,
+    PublicFormat,
 )
 import jwt as pyjwt
 
@@ -38,7 +39,13 @@ _EC_CURVES: types.MappingProxyType[str, ec.EllipticCurve] = types.MappingProxyTy
     }
 )
 
-_SUPPORTED_ALGORITHMS: frozenset[str] = frozenset({"ES256", "ES384", "ES512", "RS256"})
+_RSA_ALGORITHMS: frozenset[str] = frozenset({"RS256", "PS256"})
+# RFC 8037 §3.1: EdDSA with an Ed25519 key (FAPI 2.0 Security Profile §5.4.1).
+_EDDSA = "EdDSA"
+
+_SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
+    {*_EC_CURVES, *_RSA_ALGORITHMS, _EDDSA}
+)
 
 
 def _int_to_b64url(n: int, length: int) -> str:
@@ -53,7 +60,8 @@ class DPoPKey:
     and thread-safe after construction.
 
     Args:
-        algorithm: The signing algorithm (``"ES256"``, ``"RS256"``, etc.).
+        algorithm: The signing algorithm (``"ES256"``, ``"PS256"``,
+            ``"EdDSA"``, etc.).
     """
 
     __slots__ = ("_algorithm", "_private_key")
@@ -67,10 +75,14 @@ class DPoPKey:
             raise ValueError(msg)
 
         self._algorithm = algorithm
-        self._private_key: ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey
+        self._private_key: (
+            ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey | ed25519.Ed25519PrivateKey
+        )
 
         if algorithm in _EC_CURVES:
             self._private_key = ec.generate_private_key(_EC_CURVES[algorithm])
+        elif algorithm == _EDDSA:
+            self._private_key = ed25519.Ed25519PrivateKey.generate()
         else:
             self._private_key = rsa.generate_private_key(
                 public_exponent=65537, key_size=2048
@@ -92,6 +104,15 @@ class DPoPKey:
     def public_jwk(self) -> dict:
         """Public key as a JWK dict suitable for the DPoP proof ``jwk`` header."""
         pub = self._private_key.public_key()
+
+        if isinstance(pub, ed25519.Ed25519PublicKey):
+            # RFC 8037 §2: octet key pair, x is the raw public key.
+            raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+            return {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
+            }
 
         if isinstance(pub, ec.EllipticCurvePublicKey):
             numbers = pub.public_numbers()
@@ -124,7 +145,14 @@ class DPoPKey:
         """JWK Thumbprint (RFC 7638) for use as ``dpop_jkt`` parameter."""
         jwk = self.public_jwk
         # Per RFC 7638: lexicographically sorted required members
-        if jwk.get("kty") == "EC":
+        if jwk.get("kty") == "OKP":
+            # RFC 8037 §2: the required OKP members are crv, kty and x.
+            thumbprint_input = json.dumps(
+                {"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"]},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        elif jwk.get("kty") == "EC":
             thumbprint_input = json.dumps(
                 {
                     "crv": jwk["crv"],
@@ -150,7 +178,9 @@ def generate_dpop_key(algorithm: str = "ES256") -> DPoPKey:
 
     Args:
         algorithm: Signing algorithm — ``"ES256"`` (default, recommended),
-            ``"ES384"``, ``"ES512"``, or ``"RS256"``.
+            ``"ES384"``, ``"ES512"``, ``"PS256"``, ``"EdDSA"`` (Ed25519,
+            RFC 8037) or ``"RS256"``.  FAPI 2.0 (Security Profile §5.4.1)
+            allows only ``"ES256"``, ``"PS256"`` and ``"EdDSA"``.
 
     Returns:
         A :class:`DPoPKey` with a fresh key pair.
