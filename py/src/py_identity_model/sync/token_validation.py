@@ -33,6 +33,11 @@ from ..core.parsers import (
     find_key_by_kid,
     is_signing_key,
 )
+from ..core.token_binding import (
+    TokenPresentation,
+    check_token_binding,
+    require_presentation,
+)
 from ..core.token_validation_logic import (
     build_resolved_config,
     decode_with_config,
@@ -441,6 +446,7 @@ def validate_token(
     http_client: HTTPClient | None = None,
     *,
     cache: ValidationCache | None = None,
+    presentation: TokenPresentation | None = None,
 ) -> dict:
     """
     Validate a JWT token.
@@ -457,17 +463,25 @@ def validate_token(
             document, the JWKS and the kid-miss cooldown. Its ``Config`` sets
             their TTLs, size and cooldown. When ``None`` (the default), the
             process-wide default cache is used, whichever client is passed.
+        presentation: How the token arrived on the request
+            (:class:`TokenPresentation`: scheme, method, URL, ``DPoP`` proof,
+            client certificate). When given, a sender-constrained token is
+            checked against it after decoding (RFC 9449 §7.1, RFC 8705 §3);
+            required when ``required_binding`` is not ``NONE``.
 
     Returns:
         dict: Decoded token claims
 
     Raises:
-        TokenValidationException: If token validation fails
+        TokenValidationException: If token validation fails, including
+            ``DPoPValidationError`` / ``CertificateBindingError`` when the
+            sender constraint does not hold
         ConfigurationException: If configuration is invalid
         RuntimeError: If *http_client* has been closed
     """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)
+    require_presentation(token_validation_config, presentation)
 
     if token_validation_config.perform_disco:
         policy = resolve_discovery_policy(
@@ -496,6 +510,7 @@ def validate_token(
         validate_config_for_manual_validation(token_validation_config)
         decoded_token = decode_with_config(jwt, token_validation_config)
 
+    check_token_binding(decoded_token, jwt, token_validation_config, presentation)
     validate_claims(decoded_token, token_validation_config)
     log_validation_success(decoded_token)
     return decoded_token

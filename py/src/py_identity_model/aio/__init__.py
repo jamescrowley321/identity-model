@@ -44,9 +44,21 @@ from ..core.dpop import (
     DPoPKey,
     build_dpop_headers,
     compute_ath,
+    compute_jwk_thumbprint,
     create_dpop_proof,
     extract_dpop_nonce,
     generate_dpop_key,
+)
+from ..core.dpop_verify import (
+    DPoPErrorKind,
+    DPoPProof,
+    DPoPProofRequest,
+    DPoPReplayCache,
+    DPoPValidationError,
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    get_default_dpop_replay_cache,
+    verify_dpop_proof,
 )
 from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
@@ -96,6 +108,11 @@ from ..core.state_validation import (
     StateValidationResult,
     validate_authorize_callback_issuer,
     validate_authorize_callback_state,
+)
+from ..core.token_binding import (
+    AuthorizationScheme,
+    TokenBinding,
+    TokenPresentation,
 )
 from .device_auth import (
     DeviceAuthorizationRequest,
@@ -189,6 +206,7 @@ __all__ = [
     "AsyncValidationCache",
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
+    "AuthorizationScheme",
     # Authorize Callback
     "AuthorizeCallbackResponse",
     "AuthorizeCallbackValidationResult",
@@ -207,8 +225,14 @@ __all__ = [
     "ClientRegistrationRequest",
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
+    "DPoPErrorKind",
     # DPoP
     "DPoPKey",
+    "DPoPProof",
+    "DPoPProofRequest",
+    "DPoPReplayCache",
+    "DPoPValidationError",
+    "DPoPVerificationOptions",
     # Device Authorization Grant
     "DeviceAuthorizationRequest",
     "DeviceAuthorizationResponse",
@@ -224,6 +248,7 @@ __all__ = [
     "FAPI2ClientProfile",
     "FAPIProfileError",
     "FAPIValidationResult",
+    "InMemoryDPoPReplayCache",
     # JWKS
     "JsonWebAlgorithmsKeyTypes",
     "JsonWebKey",
@@ -241,6 +266,7 @@ __all__ = [
     "RefreshTokenResponse",
     "RequestObjectKey",
     "StateValidationResult",
+    "TokenBinding",
     "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
@@ -248,6 +274,7 @@ __all__ = [
     # Token Introspection
     "TokenIntrospectionRequest",
     "TokenIntrospectionResponse",
+    "TokenPresentation",
     # Token Revocation
     "TokenRevocationRequest",
     "TokenRevocationResponse",
@@ -266,6 +293,7 @@ __all__ = [
     "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
+    "compute_jwk_thumbprint",
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
@@ -277,6 +305,7 @@ __all__ = [
     "generate_dpop_key",
     "generate_pkce_pair",
     "get_default_async_validation_cache",
+    "get_default_dpop_replay_cache",
     "get_discovery_document",
     "get_jwks",
     "get_userinfo",
@@ -310,4 +339,5 @@ __all__ = [
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",
+    "verify_dpop_proof",
 ]
