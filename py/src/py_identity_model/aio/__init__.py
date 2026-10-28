@@ -23,7 +23,10 @@ from ..core.authorize_response import (
     AuthorizeCallbackResponse,
     parse_authorize_callback_response,
 )
-from ..core.authorize_url import build_authorization_url
+from ..core.authorize_url import (
+    build_authorization_url,
+    build_par_authorization_url,
+)
 from ..core.claims_validation import (
     ClaimsValidationError,
     ClaimsValidator,
@@ -252,6 +255,7 @@ __all__ = [
     "build_dpop_headers",
     "build_end_session_url",
     "build_jar_authorization_url",
+    "build_par_authorization_url",
     "certificate_thumbprint_from_file",
     "combine_claims_validators",
     "compute_ath",

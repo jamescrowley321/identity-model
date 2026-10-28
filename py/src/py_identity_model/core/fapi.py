@@ -18,8 +18,9 @@ from __future__ import annotations
 from dataclasses import InitVar, dataclass, field, replace
 from ipaddress import ip_address
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
 
+from .authorize_url import build_par_authorization_url
 from .models import (
     AuthorizationCodeTokenRequest,
     MtlsClientAuth,
@@ -788,19 +789,14 @@ class FAPI2ClientProfile:
     def authorization_url(self, request_uri: str) -> str:
         """The authorization endpoint URL for a pushed request (§5.3.3.2).
 
-        Carries only ``client_id`` and ``request_uri`` (RFC 9126 §4).
+        Carries only ``client_id`` and ``request_uri`` (RFC 9126 §4); see
+        :func:`~py_identity_model.core.authorize_url.build_par_authorization_url`.
         """
         if not request_uri:
             raise FAPIProfileError(["request_uri is required"])
-        query = urlencode({"client_id": self.client_id, "request_uri": request_uri})
-        endpoint = self.authorization_endpoint
-        has_query = "?" in endpoint
-        if endpoint.endswith("?") or (has_query and endpoint.endswith("&")):
-            separator = ""
-        else:
-            # A trailing "&" with no "?" is part of the path, not a delimiter.
-            separator = "&" if has_query else "?"
-        return f"{endpoint}{separator}{query}"
+        return build_par_authorization_url(
+            self.authorization_endpoint, self.client_id, request_uri
+        )
 
     def validate_callback_issuer(
         self, response: AuthorizeCallbackResponse
