@@ -35,7 +35,7 @@ jobs:
       matrix: ${{ steps.pick.outputs.matrix }}
     steps:
       - id: pick
-        uses: jamescrowley321/blind-peer-review@8d91e49676c9c69a8d0c207691552044368b59d3 # v3.12.0
+        uses: jamescrowley321/blind-peer-review@9d1c5036c17e4bc741c36dc8a70a8ffc2b634d41 # v3.12.1
         with:
           mode: config
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +66,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Wait for deterministic checks
-        uses: jamescrowley321/blind-peer-review@8d91e49676c9c69a8d0c207691552044368b59d3 # v3.12.0
+        uses: jamescrowley321/blind-peer-review@9d1c5036c17e4bc741c36dc8a70a8ffc2b634d41 # v3.12.1
         with:
           mode: preflight
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -84,7 +84,7 @@ jobs:
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     steps:
       - name: ${{ matrix.name }}
-        uses: jamescrowley321/blind-peer-review@8d91e49676c9c69a8d0c207691552044368b59d3 # v3.12.0
+        uses: jamescrowley321/blind-peer-review@9d1c5036c17e4bc741c36dc8a70a8ffc2b634d41 # v3.12.1
         with:
           mode: lens
           lens: ${{ matrix.lens }}
@@ -135,7 +135,7 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository &&
           github.actor != 'dependabot[bot]' &&
           needs.config.result == 'success' && needs.preflight.result == 'success' && needs.review.result == 'success'
-        uses: jamescrowley321/blind-peer-review@8d91e49676c9c69a8d0c207691552044368b59d3 # v3.12.0
+        uses: jamescrowley321/blind-peer-review@9d1c5036c17e4bc741c36dc8a70a8ffc2b634d41 # v3.12.1
         with:
           mode: gate
           lenses: ${{ needs.config.outputs.matrix }}
