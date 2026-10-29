@@ -1,8 +1,8 @@
 """
 FastAPI middleware for OAuth2/OIDC token validation.
 
-This module provides middleware components for validating Bearer tokens
-in FastAPI applications using py-identity-model.
+This module provides middleware components for validating Bearer and DPoP
+access tokens in FastAPI applications using py-identity-model.
 
 Scope: this middleware validates **HTTP** requests only. It extends Starlette's
 ``BaseHTTPMiddleware``, which forwards every non-HTTP ASGI scope (WebSocket,
@@ -16,6 +16,7 @@ import logging
 
 from fastapi import Request, status  # type: ignore[attr-defined]
 from jwt import InvalidTokenError
+from starlette.datastructures import URL  # type: ignore[attr-defined]
 from starlette.middleware.base import (
     BaseHTTPMiddleware,  # type: ignore[attr-defined]
 )
@@ -25,8 +26,15 @@ from starlette.responses import (  # type: ignore[attr-defined]
 )
 
 from py_identity_model import (
+    AuthorizationScheme,
+    CertificateBindingError,
+    DPoPErrorKind,
+    DPoPValidationError,
+    DPoPVerificationOptions,
     NetworkException,
     PyIdentityModelException,
+    TokenBinding,
+    TokenPresentation,
     TokenValidationConfig,
     to_principal,
 )
@@ -39,8 +47,12 @@ from py_identity_model.aio import (
 
 logger = logging.getLogger("fastapi_identity_model")
 
-# Expected number of parts in "Bearer <token>" authorization header
-_BEARER_HEADER_PART_COUNT = 2
+# Expected number of parts in "<scheme> <token>" authorization header
+_AUTHORIZATION_HEADER_PART_COUNT = 2
+
+# Authorization schemes accepted, keyed by their case-insensitive name
+# (RFC 9110 §11.1): Bearer (RFC 6750 §2.1) and DPoP (RFC 9449 §7.1).
+_SCHEMES = {scheme.value.lower(): scheme for scheme in AuthorizationScheme}
 
 # Claims that only ever appear in an ID token (OIDC Core 1.0 §2, §3.1.3.6).
 # Their presence means an ID token was presented where an access token is
@@ -86,6 +98,30 @@ def _is_upstream_fetch_failure(exc: Exception) -> bool:
     """Whether a library exception is a transient upstream fetch failure."""
     message = str(exc)
     return any(message.startswith(p) for p in _UPSTREAM_FETCH_FAILURE_PREFIXES)
+
+
+def parse_authorization(header: str) -> tuple[AuthorizationScheme, str] | None:
+    """The scheme and token of an ``Authorization`` header, or ``None`` when it
+    is not ``Bearer <token>`` or ``DPoP <token>`` (case-insensitive scheme)."""
+    parts = header.split()
+    scheme = _SCHEMES.get(parts[0].lower()) if parts else None
+    if len(parts) != _AUTHORIZATION_HEADER_PART_COUNT or scheme is None:
+        return None
+    return scheme, parts[1]
+
+
+def request_uri(url: URL, scope: dict) -> str:
+    """The request URI as the client sent it, for the DPoP ``htu`` check.
+
+    Starlette builds ``url`` from the percent-decoded ASGI ``path``, so
+    ``/files/a%20b`` reads as ``/files/a b`` and an encoded ``%3F`` or ``%23``
+    turns into a query or fragment delimiter. The proof covers the path as
+    sent (RFC 9449 §4.3), which is the ASGI ``raw_path``.
+    """
+    raw_path = scope.get("raw_path")
+    if not raw_path:
+        return str(url)
+    return str(url.replace(path=raw_path.decode("latin-1")))
 
 
 def evaluate_token_type(
@@ -160,6 +196,19 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             holds this middleware's discovery document, keys and kid-miss
             cooldown; its ``Config`` sets the cache TTLs, size and cooldown.
             ``None`` uses the library default cache.
+        required_binding: The sender constraint every token must carry.
+            ``TokenBinding.NONE`` (default) accepts unbound bearer tokens; a
+            bound token is checked either way (RFC 9449 §7.1, RFC 8705 §3).
+            ``DPOP`` refuses tokens without ``cnf.jkt`` and a valid proof;
+            ``MTLS`` refuses tokens without a matching client certificate.
+        dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
+            proofs (algorithms, ``iat`` window, ``jti`` replay cache). ``None``
+            uses the defaults and the process-wide replay cache. Proofs are
+            checked against ``request.url``; behind a proxy, run Starlette's
+            proxy-headers handling so it is the URI the client addressed.
+        client_certificate: Returns the request's mTLS client certificate (PEM
+            or DER) for certificate-bound tokens, or ``None``. Without it every
+            certificate-bound token is refused.
     """
 
     def __init__(  # noqa: PLR0913  # opt-in F-07 marker config + http_client
@@ -176,6 +225,9 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         *,
         http_client: AsyncHTTPClient | None = None,
         cache: AsyncValidationCache | None = None,
+        required_binding: TokenBinding = TokenBinding.NONE,
+        dpop: DPoPVerificationOptions | None = None,
+        client_certificate: Callable[[Request], str | bytes | None] | None = None,
     ):
         super().__init__(app)
         if not audience:
@@ -205,6 +257,19 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self.custom_claims_validator = custom_claims_validator
         self.http_client = http_client
         self.cache = cache
+        self.required_binding = required_binding
+        self.dpop = dpop
+        self.client_certificate = client_certificate
+        self._dpop_algs = " ".join(
+            (dpop or DPoPVerificationOptions()).accepted_algorithms
+        )
+        # The scheme a client must use; RFC 9449 §7.1 challenges a DPoP-only
+        # resource with ``DPoP``.
+        self._challenge = (
+            AuthorizationScheme.DPOP
+            if required_binding is TokenBinding.DPOP
+            else AuthorizationScheme.BEARER
+        )
 
     def _is_excluded(self, path: str) -> bool:
         """Whether *path* is excluded from token validation.
@@ -235,25 +300,59 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 return True
         return False
 
-    @staticmethod
-    def _unauthorized(detail: str) -> JSONResponse:
+    def _unauthorized(
+        self,
+        detail: str,
+        *,
+        scheme: AuthorizationScheme | None = None,
+        error: str | None = None,
+    ) -> JSONResponse:
+        scheme = scheme or self._challenge
+        params = [f'error="{error}"'] if error is not None else []
+        if scheme is AuthorizationScheme.DPOP:
+            params.append(f'algs="{self._dpop_algs}"')
+        challenge = " ".join([scheme.value, ", ".join(params)]).strip()
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
             content={"detail": detail},
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": challenge},
         )
 
-    def _extract_bearer_token(self, request: Request) -> str | JSONResponse:
-        """Return the bearer token, or an error ``JSONResponse`` if absent/malformed."""
+    def _extract_token(
+        self, request: Request
+    ) -> tuple[AuthorizationScheme, str] | JSONResponse:
+        """Return the scheme and access token, or an error ``JSONResponse``."""
         authorization = request.headers.get("Authorization")
         if not authorization:
             return self._unauthorized("Missing Authorization header")
-        parts = authorization.split()
-        if len(parts) != _BEARER_HEADER_PART_COUNT or parts[0].lower() != "bearer":
+        credentials = parse_authorization(authorization)
+        if credentials is None:
             return self._unauthorized(
-                "Invalid Authorization header format. Expected: Bearer <token>"
+                "Invalid Authorization header format. Expected: Bearer <token> "
+                "or DPoP <token>"
             )
-        return parts[1]
+        scheme, token = credentials
+        # RFC 9449 §4.3 check 1: at most one DPoP header.
+        if len(request.headers.getlist("DPoP")) > 1:
+            return self._unauthorized(
+                _GENERIC_401_DETAIL,
+                scheme=AuthorizationScheme.DPOP,
+                error=DPoPErrorKind.MALFORMED.oauth_error,
+            )
+        return scheme, token
+
+    def _presentation(
+        self, request: Request, scheme: AuthorizationScheme
+    ) -> TokenPresentation:
+        return TokenPresentation(
+            scheme=scheme,
+            method=request.method,
+            url=request_uri(request.url, request.scope),
+            dpop_proof=request.headers.get("DPoP"),
+            client_certificate=(
+                self.client_certificate(request) if self.client_certificate else None
+            ),
+        )
 
     def _wrong_token_type_error(self, claims: dict) -> str | None:
         """A 401 detail if *claims* are the wrong token type for a resource
@@ -276,7 +375,9 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             access_token_marker_claims=self.access_token_marker_claims,
         )
 
-    async def _authenticate(self, request: Request, token: str) -> JSONResponse | None:
+    async def _authenticate(
+        self, request: Request, scheme: AuthorizationScheme, token: str
+    ) -> JSONResponse | None:
         """Validate *token* and attach claims; return an error response or None."""
         try:
             claims = await validate_token(
@@ -285,10 +386,13 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                     perform_disco=True,
                     audience=self.audience,
                     claims_validator=self.custom_claims_validator,
+                    required_binding=self.required_binding,
+                    dpop=self.dpop,
                 ),
                 disco_doc_address=self.discovery_url,
                 http_client=self.http_client,
                 cache=self.cache,
+                presentation=self._presentation(request, scheme),
             )
             # Reject an ID token presented as an access token (token-type
             # confusion at the resource server).
@@ -299,15 +403,32 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             request.state.claims = claims
             request.state.token = token
             return None
-        except PyIdentityModelException as e:
+        except Exception as e:
+            return self._rejection(e)
+
+    def _rejection(self, e: Exception) -> JSONResponse:
+        """The response for a token-validation failure *e* (called while it is
+        being handled, so ``logger.exception`` records the traceback)."""
+        if isinstance(e, DPoPValidationError):
+            # RFC 9449 §7.1: challenge with the DPoP scheme and the error code
+            # (invalid_token / invalid_dpop_proof). The body stays generic (F-18).
+            logger.info("DPoP binding rejected: %s", e.kind.value)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL,
+                scheme=AuthorizationScheme.DPOP,
+                error=e.kind.oauth_error,
+            )
+        if isinstance(e, CertificateBindingError):
+            logger.info("Certificate binding rejected: %s", e)
+            return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
+        if isinstance(e, PyIdentityModelException):
             # A provider outage is a transient server fault, not an auth
             # decision: surface 503 so callers retry instead of treating it as a
             # bad token. This covers both a real NetworkException (a
             # PyIdentityModelException subclass — the clean path if the core
             # raises one) and a discovery/JWKS fetch failure the core currently
             # surfaces as a TokenValidationException (_UPSTREAM_FETCH_FAILURE_
-            # PREFIXES). Checked here rather than a separate `except
-            # NetworkException` block so both share one 503 path.
+            # PREFIXES).
             if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):
                 logger.exception("Upstream fetch failure during token validation")
                 return JSONResponse(
@@ -319,21 +440,20 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             # (F-18). Log the real cause server-side for operators.
             logger.info("Token rejected during validation: %s", e)
             return self._unauthorized(_GENERIC_401_DETAIL)
-        except InvalidTokenError as e:
+        if isinstance(e, InvalidTokenError):
             # A malformed/undecodable token (e.g. raw pyjwt DecodeError from
             # header parsing during key lookup) is a client error, not a 500 —
             # and returns the same generic body as any other rejection so the
             # response can't distinguish "malformed" from "invalid".
             logger.info("Malformed token rejected: %s", e)
             return self._unauthorized(_GENERIC_401_DETAIL)
-        except Exception:
-            # A genuinely unexpected (non-library) failure is a server fault,
-            # not an auth decision. Surface a 500 without leaking internals.
-            logger.exception("Unexpected error during token validation")
-            return JSONResponse(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                content={"detail": "Internal server error during authentication"},
-            )
+        # A genuinely unexpected (non-library) failure is a server fault,
+        # not an auth decision. Surface a 500 without leaking internals.
+        logger.exception("Unexpected error during token validation")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error during authentication"},
+        )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request and validate the token if required."""
@@ -341,11 +461,11 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS" or self._is_excluded(request.url.path):
             return await call_next(request)
 
-        token = self._extract_bearer_token(request)
-        if isinstance(token, JSONResponse):
-            return token
+        credentials = self._extract_token(request)
+        if isinstance(credentials, JSONResponse):
+            return credentials
 
-        auth_error = await self._authenticate(request, token)
+        auth_error = await self._authenticate(request, *credentials)
         if auth_error is not None:
             return auth_error
 

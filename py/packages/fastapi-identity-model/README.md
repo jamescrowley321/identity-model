@@ -8,7 +8,7 @@ It gives you two composable pieces:
 
 | Piece | Use case |
 |-------|----------|
-| **`TokenValidationMiddleware`** + `Depends` helpers | Protect an **API / resource server** that receives `Authorization: Bearer <token>` |
+| **`TokenValidationMiddleware`** + `Depends` helpers | Protect an **API / resource server** that receives `Authorization: Bearer <token>` or `Authorization: DPoP <token>` |
 | **`build_oidc_router`** | Add a browser **login flow** (authorization code + PKCE) to your app (relying party) |
 
 ## Install
@@ -19,7 +19,7 @@ pip install fastapi-identity-model
 pip install "fastapi-identity-model[server]"
 ```
 
-## Resource server — validate incoming Bearer tokens
+## Resource server — validate incoming access tokens
 
 ```python
 from fastapi import FastAPI, Depends
@@ -52,6 +52,12 @@ The middleware validates the token (signature, issuer, audience, expiry) via
 `py-identity-model` and attaches a `ClaimsPrincipal` to `request.state.user`.
 Invalid tokens → **401**; an unexpected server-side failure → **500** (never
 masked as a 401).
+
+Sender-constrained tokens are always checked: a DPoP-bound token (`cnf.jkt`)
+needs the `DPoP` scheme and a valid proof, and a certificate-bound token needs
+its client certificate. `required_binding=TokenBinding.DPOP` also refuses
+unbound tokens. See
+[DPoP resource server verification](https://jamescrowley321.github.io/identity-model/api/dpop/#fastapi).
 
 ## Relying party — browser login flow
 

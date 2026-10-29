@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from fastapi import WebSocketException
 from jwt import DecodeError
 import pytest
+from starlette.datastructures import URL, Headers
 
 from fastapi_identity_model import build_ws_authenticator, ws
 from py_identity_model import NetworkException, TokenValidationException
@@ -33,8 +34,10 @@ class _FakeWebSocket:
     """Minimal stand-in for starlette's WebSocket for the dependency under test."""
 
     def __init__(self, *, headers=None, query_params=None):
-        self.headers = headers or {}
+        self.headers = Headers(headers or {})
         self.query_params = query_params or {}
+        self.url = URL("ws://testserver/ws")
+        self.scope = {}
         self.state = SimpleNamespace()
 
 

@@ -10,6 +10,7 @@ import pytest
 import fastapi_identity_model
 from fastapi_identity_model import OIDCSettings
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
+from py_identity_model import TokenBinding
 
 
 pytestmark = pytest.mark.unit
@@ -34,6 +35,7 @@ def clean_env(monkeypatch):
         "POST_LOGIN_REDIRECT",
         "POST_LOGOUT_REDIRECT",
         "EXCLUDED_PATHS",
+        "REQUIRED_BINDING",
     ):
         monkeypatch.delenv(f"OIDC_{name}", raising=False)
         monkeypatch.delenv(f"APP_{name}", raising=False)
@@ -52,6 +54,7 @@ def test_every_setting_is_read(clean_env):
     clean_env.setenv("OIDC_POST_LOGIN_REDIRECT", "/home")
     clean_env.setenv("OIDC_POST_LOGOUT_REDIRECT", "/bye")
     clean_env.setenv("OIDC_EXCLUDED_PATHS", "/a, /b ,/c")
+    clean_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
 
     assert oidc_settings_from_env() == OIDCSettings(
         discovery_url="https://op/.well-known/openid-configuration",
@@ -63,6 +66,7 @@ def test_every_setting_is_read(clean_env):
         post_login_redirect="/home",
         post_logout_redirect="/bye",
         excluded_paths=["/a", "/b", "/c"],
+        required_binding=TokenBinding.DPOP,
     )
 
 
@@ -76,6 +80,16 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
     assert settings.redirect_uri == ""
     assert settings.audience == "cid"
     assert settings.excluded_paths == _DEFAULT_EXCLUDED_PATHS
+    assert settings.required_binding is TokenBinding.NONE
+
+
+def test_unknown_required_binding_is_rejected(clean_env):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_REQUIRED_BINDING", "bearer")
+
+    with pytest.raises(ValueError, match="'bearer' is not a valid TokenBinding"):
+        oidc_settings_from_env()
 
 
 @pytest.mark.parametrize("missing", ["DISCOVERY_URL", "CLIENT_ID"])

@@ -86,7 +86,7 @@ try:
             scheme=AuthorizationScheme.DPOP,       # from the Authorization header
             method=request.method,
             url="https://api.example.com/orders",  # the URI the client addressed
-            dpop_proof=request.headers["DPoP"],
+            dpop_proof=request.headers.get("DPoP"),  # None → PROOF_REQUIRED
         ),
     )
 except DPoPValidationError as exc:
@@ -135,8 +135,54 @@ in one window. A deployment with several
 processes or hosts needs a shared `DPoPReplayCache` so a proof replayed to
 another worker is refused (RFC 9449 §11.1).
 
-The FastAPI middleware does not build a `TokenPresentation` yet
-([#1021](https://github.com/jamescrowley321/identity-model/issues/1021)).
+### FastAPI
+
+`TokenValidationMiddleware` and `build_ws_authenticator` build the
+`TokenPresentation` for every request, so a bound token is always checked. They
+accept `Authorization: Bearer <token>` and `Authorization: DPoP <token>` (scheme
+case-insensitive):
+
+```python
+from fastapi_identity_model import TokenValidationMiddleware
+from py_identity_model import (
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    TokenBinding,
+)
+
+app.add_middleware(
+    TokenValidationMiddleware,
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    required_binding=TokenBinding.DPOP,  # or settings.required_binding
+    dpop=DPoPVerificationOptions(
+        algorithms=frozenset({"ES256", "PS256", "EdDSA"}),
+        replay_cache=InMemoryDPoPReplayCache(),
+    ),
+)
+```
+
+- A rejected binding is a `401` with
+  `WWW-Authenticate: DPoP error="<kind.oauth_error>", algs="<accepted algorithms>"`
+  (RFC 9449 §7.1). The body is the same generic detail as every other `401`.
+- With `required_binding=TokenBinding.DPOP`, every `401` challenges with `DPoP`.
+  Otherwise non-DPoP failures challenge with `Bearer`.
+- More than one `DPoP` header is refused as `invalid_dpop_proof` (§4.3).
+- The proof's `htu` is checked against `request.url`. Behind a reverse proxy,
+  run uvicorn with `--proxy-headers` (or Starlette's proxy-headers middleware)
+  so `request.url` is the URI the client addressed.
+- Certificate-bound tokens need `client_certificate=`, a callable that returns
+  the request's client certificate (PEM or DER) from wherever your TLS
+  terminator puts it. Without it, every certificate-bound token is refused.
+- `OIDCSettings.required_binding` carries the setting;
+  `oidc_settings_from_env` reads it from `OIDC_REQUIRED_BINDING`
+  (`none`, `dpop` or `mtls`).
+
+On a WebSocket, `build_ws_authenticator` takes the same `required_binding`,
+`dpop` and `client_certificate` options. A DPoP proof for the handshake has
+`htm` `GET` and `htu` the handshake URI written with `http`/`https` in place of
+`ws`/`wss`. A token from the query parameter is a bearer token, so a DPoP-bound
+token can only be used from a client that can set headers.
 
 ::: py_identity_model.core.token_binding.TokenPresentation
 
