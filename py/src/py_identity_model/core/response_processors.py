@@ -407,6 +407,10 @@ def build_discovery_response(
         authorization_encryption_enc_values_supported=response_json.get(
             "authorization_encryption_enc_values_supported",
         ),
+        # JWT introspection response signing (RFC 9701 §7)
+        introspection_signing_alg_values_supported=response_json.get(
+            "introspection_signing_alg_values_supported",
+        ),
         # Mutual-TLS support (RFC 8705 §3.3 / §5)
         mtls_endpoint_aliases=response_json.get("mtls_endpoint_aliases"),
         tls_client_certificate_bound_access_tokens=response_json.get(
