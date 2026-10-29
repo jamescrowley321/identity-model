@@ -184,7 +184,7 @@ class TestValidateTokenConfig:
         """S2: Infinite leeway must be rejected."""
         config = TokenValidationConfig(perform_disco=True, leeway=math.inf)
         with pytest.raises(
-            ConfigurationException, match="leeway must be a finite number"
+            ConfigurationException, match=r"^leeway must be a finite number$"
         ):
             validate_token_config(config)
 
@@ -192,7 +192,7 @@ class TestValidateTokenConfig:
         """S2: NaN leeway must be rejected."""
         config = TokenValidationConfig(perform_disco=True, leeway=math.nan)
         with pytest.raises(
-            ConfigurationException, match="leeway must be a finite number"
+            ConfigurationException, match=r"^leeway must be a finite number$"
         ):
             validate_token_config(config)
 
