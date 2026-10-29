@@ -401,6 +401,252 @@
           }
         }
       ]
+    },
+    {
+      "id": "INTR-007",
+      "title": "Signed JWT introspection response",
+      "given": "A client configured for signed introspection responses with the authorization server's issuer and JWKS",
+      "when": "Introspect is called",
+      "then": "The request carries Accept: application/token-introspection+jwt. An application/token-introspection+jwt response with typ token-introspection+jwt, an allowed asymmetric alg (FAPI 2.0 set by default), a valid signature, iss equal to the issuer, aud equal to the client_id and an iat is accepted, and its token_introspection claim is the introspection response. A JSON response, a wrong typ, a disallowed alg, a bad signature or a wrong aud is rejected",
+      "references": [
+        "RFC 9701 §4",
+        "RFC 9701 §5",
+        "FAPI 2.0 Message Signing §5.5.2"
+      ],
+      "vectors": [
+        {
+          "name": "signed-response",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-response.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "claims": {
+              "active": true
+            },
+            "custom_claims": {
+              "extension_field": "twenty-seven"
+            }
+          }
+        },
+        {
+          "name": "json-response",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/json"
+              },
+              "body_fixture": "introspection/active-response.json"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "malformed",
+            "status": 200
+          }
+        },
+        {
+          "name": "wrong-typ",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-wrong-typ.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "malformed",
+            "status": 200
+          }
+        },
+        {
+          "name": "alg-not-allowed",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-rs256.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "unsupported_alg",
+            "status": 200
+          }
+        },
+        {
+          "name": "tampered-signature",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-tampered.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "signature",
+            "status": 200
+          }
+        },
+        {
+          "name": "wrong-audience",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-wrong-audience.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "claim_validation",
+            "status": 200
+          }
+        }
+      ]
     }
   ],
   "notes": "HTTP vectors. Each vector gives the call `input` (`token`, optional `token_type_hint`, `client_auth: client_secret_post` to switch from the default client_secret_basic, `client_secret` to override the default, and `discover` to resolve the endpoint from discovery), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/; the literal https://server.example.com in a fixture is replaced with the mock server's base URL), the request the client must send (`expect_request`), and the outcome (`expect`). Client credentials default to client_id=cid, client_secret=secret. An empty expected header or form value means it MUST be absent. An accept may carry `claims` (standard §2.2 members, each of which MUST be a typed field with that value; `aud` is typed as a list) and `custom_claims` (non-standard members, each of which MUST be reachable in the response overflow map). A reject carries the canonical OAuth `error` code and HTTP `status`, or `error: malformed` (with the 2xx `status`) for a response that is not a valid §2.2 body, such as one whose REQUIRED `active` member is missing or not a boolean."
