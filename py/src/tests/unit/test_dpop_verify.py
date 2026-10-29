@@ -391,6 +391,18 @@ class TestKeyChecks:
         with pytest.raises(ValueError, match=field):
             DPoPVerificationOptions(**{field: value})
 
+    @pytest.mark.parametrize(
+        ("algorithms", "expected"),
+        [
+            (None, ("ES256", "ES384", "ES512", "EdDSA", "PS256", "RS256")),
+            (frozenset({"PS256", "ES256"}), ("ES256", "PS256")),
+        ],
+    )
+    def test_accepted_algorithms_sorted(self, algorithms, expected):
+        options = DPoPVerificationOptions(algorithms=algorithms)
+
+        assert options.accepted_algorithms == expected
+
 
 @pytest.mark.unit
 class TestMalformed:

@@ -327,6 +327,16 @@ class DPoPVerificationOptions:
         if not _is_number(self.iat_leeway) or self.iat_leeway < 0:
             raise ValueError("iat_leeway must be a non-negative number of seconds")
 
+    @property
+    def accepted_algorithms(self) -> tuple[str, ...]:
+        """The proof ``alg`` values accepted, sorted: the ``algs`` parameter of
+        a ``WWW-Authenticate: DPoP`` challenge (RFC 9449 §7.1)."""
+        return tuple(
+            sorted(
+                _SUPPORTED_ALGORITHMS if self.algorithms is None else self.algorithms
+            )
+        )
+
 
 @dataclass(frozen=True)
 class DPoPProof:
