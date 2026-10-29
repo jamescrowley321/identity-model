@@ -506,7 +506,7 @@ def verify_dpop_proof(
     """
     if options is None:
         options = DPoPVerificationOptions()
-    if not isinstance(proof, str) or not proof.strip():
+    if not isinstance(proof, str) or not proof.isascii() or not proof.strip():
         raise DPoPValidationError(DPoPErrorKind.MALFORMED)
 
     allowed = (

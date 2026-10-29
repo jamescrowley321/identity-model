@@ -394,7 +394,9 @@ class TestKeyChecks:
 
 @pytest.mark.unit
 class TestMalformed:
-    @pytest.mark.parametrize("proof", ["", "   ", "a.b", "not-a-jwt", 42])
+    @pytest.mark.parametrize(
+        "proof", ["", "   ", "a.b", "not-a-jwt", 42, "a\udcff.b.c", "é.b.c"]
+    )
     def test_unparseable_proof_rejected(self, proof):
         assert _kind(proof) is DPoPErrorKind.MALFORMED
 
