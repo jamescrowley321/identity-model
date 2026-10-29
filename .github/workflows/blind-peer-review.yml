@@ -12,8 +12,9 @@ name: Blind Peer Review
 
 on:
   pull_request:
-    # `edited` re-runs the policy lens after a PR-description fix, which changes no SHA.
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    # No `edited`: re-running all eight paid lenses on every title or body edit cost
+    # more than it bought. After a PR-description fix, re-run the workflow by hand.
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
 
 concurrency:
