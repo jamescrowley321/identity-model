@@ -2,6 +2,48 @@
 
 <!-- version list -->
 
+## v0.8.1 (2026-10-30)
+
+### Bug Fixes
+
+- **rust**: Bump locked deps for RUSTSEC-2026-0381/0382/0385/0386/0387
+  ([`1bdb727`](https://github.com/jamescrowley321/identity-model/commit/1bdb7270e75399317b9d533d47236def1e595518))
+
+### Chores
+
+- **rust**: Bump rustls to 0.23.46 for RUSTSEC-2026-0346..0349
+  ([#913](https://github.com/jamescrowley321/identity-model/pull/913),
+  [`1a6be5b`](https://github.com/jamescrowley321/identity-model/commit/1a6be5b2154953675a1c9e89b056db03ff667b28))
+
+### Refactoring
+
+- **rust**: Address review findings on the shared test helpers
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+- **rust**: Move the HTTP vector runner into the integration-test binary
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+- **rust**: Move the pure-logic vector runner into the integration-test binary
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+- **rust**: One integration-test binary with shared helpers
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+### Testing
+
+- **rust**: Fail on a missing live prerequisite instead of reading TEST_REQUIRE_LIVE
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+- **rust**: Update skip wording and *_or_skip helper names to match fail behaviour
+  ([#746](https://github.com/jamescrowley321/identity-model/pull/746),
+  [`9458d60`](https://github.com/jamescrowley321/identity-model/commit/9458d60f4f2f20227bddf2594fd7d10cba66ea0a))
+
+
 ## v0.8.0 (2026-10-10)
 
 ### Bug Fixes
