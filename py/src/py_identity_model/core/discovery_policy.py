@@ -10,7 +10,7 @@ development. Use a relaxed policy for testing environments.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 import ipaddress
 from urllib.parse import urlparse
 
@@ -39,8 +39,6 @@ class DiscoveryPolicy:
             discovery document.
         validate_endpoints: Validate that advertised endpoint URLs
             are well-formed.
-        require_key_set: Require a ``jwks_uri`` in the discovery
-            document.
         additional_endpoint_base_addresses: Extra base URLs that
             advertised endpoints are allowed to use (for multi-domain
             or CDN setups).
@@ -54,13 +52,17 @@ class DiscoveryPolicy:
             blocked regardless of this flag. Distinct from
             ``allow_http_on_loopback`` (which relaxes only the HTTPS scheme
             requirement, not internal-IP routing).
+
+    The fields after ``validate_endpoints`` are keyword-only, so a positional
+    call written for the removed ``require_key_set`` field raises
+    ``TypeError`` instead of binding to the wrong field.
     """
 
     require_https: bool = True
     allow_http_on_loopback: bool = True
     validate_issuer: bool = True
     validate_endpoints: bool = True
-    require_key_set: bool = True
+    _: KW_ONLY
     additional_endpoint_base_addresses: list[str] = field(default_factory=list)
     authority: str | None = None
     allow_loopback_endpoints: bool = False
@@ -82,7 +84,6 @@ class DiscoveryPolicy:
             self.allow_http_on_loopback,
             self.validate_issuer,
             self.validate_endpoints,
-            self.require_key_set,
             tuple(self.additional_endpoint_base_addresses),
             self.authority,
             self.allow_loopback_endpoints,

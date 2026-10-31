@@ -3,7 +3,8 @@
 //! [`validate_token`] verifies a compact-serialized JWT against an
 //! already-resolved [`JsonWebKey`]; [`validate_token_with_jwks`] resolves the
 //! signing key from a [`JwksClient`] by the token's `kid` — forcing one JWKS
-//! refresh on a miss (JWKS-004) — before delegating to it. Both reject the
+//! refresh on a miss (JWKS-004), or narrowing the set to a single key when
+//! there is no `kid` (JWKS-009) — before delegating to it. Both reject the
 //! unsecured `none` algorithm before any cryptographic work (JWT-003) and
 //! restrict acceptance to an asymmetric algorithm allowlist to defeat
 //! algorithm-confusion attacks. Behaviour is proven against the cross-language
@@ -139,13 +140,18 @@ pub fn validate_token(
 /// allowlist before the key is resolved, so a `none`/disallowed token never
 /// triggers a JWKS fetch. Key resolution forces one JWKS refresh and retries if
 /// the `kid` is not cached (JWKS-004), supporting key rotation, before delegating
-/// to [`validate_token`].
+/// to [`validate_token`]. A token with no `kid` is verified by the single key
+/// left after narrowing the set by `use`, `alg` and `kty`, with no refresh
+/// (JWKS-009, see [`JwksClient::resolve_signing_key`]).
 ///
 /// # Errors
 ///
 /// [`IdentityError::KeyNotFound`] when no key matches the token's `kid` even
-/// after a refresh; otherwise the errors of [`validate_token`] and
-/// [`JwksClient::resolve_key`].
+/// after a refresh; [`IdentityError::AmbiguousKey`] when the token has no `kid`
+/// and more than one key could verify it; [`IdentityError::KeyAlgorithmMismatch`]
+/// when the resolved key declares an `alg` other than the token's (JWKS-010);
+/// otherwise the errors of
+/// [`validate_token`] and [`JwksClient::resolve_signing_key`].
 pub async fn validate_token_with_jwks(
     token: &str,
     jwks: &JwksClient,
@@ -159,8 +165,12 @@ pub async fn validate_token_with_jwks(
     check_algorithm(&header, options)?;
 
     // JWT-001/010: resolve the verification key by kid, forcing one JWKS refresh
-    // and retry if the kid is not cached (RFC 7517 §4.5).
-    let key = jwks.resolve_key(jwks_uri, &header.kid).await?;
+    // and retry if the kid is not cached (RFC 7517 §4.5). With no kid, the
+    // single key left after narrowing by use, alg and kty is used, with no
+    // refresh; more than one is `AmbiguousKey` (JWKS-009).
+    let key = jwks
+        .resolve_signing_key(jwks_uri, &header.kid, &header.alg)
+        .await?;
     validate_token(token, &key, options)
 }
 
@@ -460,34 +470,145 @@ mod tests {
         validate_token(&token, &public_key(), &opts).expect("within skew passes");
     }
 
-    // OIDC Core §3.1.3.7 end-to-end: a multi-audience token missing azp is
-    // rejected after a successful signature verification, and the same token
-    // with the correct azp validates.
+    // End-to-end through signature verification: base `validate_token` checks
+    // the expected audience and ignores azp, so an access token issued to a
+    // resource server on behalf of a SPA validates. azp is enforced only by the
+    // ID-token profile (OIDC Core 1.0 §3.1.3.7 steps 4-6), matching Python and Go.
     #[test]
-    fn enforces_azp_for_multi_audience_end_to_end() {
+    fn validate_token_ignores_azp_on_access_token() {
         let n = now();
         let opts = ValidationOptions::builder()
             .issuer(TEST_ISSUER)
-            .audience(TEST_AUDIENCE)
+            .audience("api")
             .build();
 
-        let no_azp = mint(json!({
+        let token = mint(json!({
             "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
+            "sub": "user-1",
+            "aud": ["api", "https://idp.example/userinfo"],
+            "azp": "spa-client",
             "exp": n + 3600,
             "iat": n - 5,
         }));
-        let err = validate_token(&no_azp, &public_key(), &opts)
-            .expect_err("multi-aud without azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
+        let validated = validate_token(&token, &public_key(), &opts)
+            .expect("access token with foreign azp validates");
+        assert_eq!(validated.authorized_party.as_deref(), Some("spa-client"));
+        assert_eq!(validated.subject.as_deref(), Some("user-1"));
+    }
 
-        let with_azp = mint(json!({
-            "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
-            "azp": TEST_AUDIENCE,
-            "exp": n + 3600,
-            "iat": n - 5,
-        }));
-        validate_token(&with_azp, &public_key(), &opts).expect("multi-aud with correct azp passes");
+    /// Mints an RS256 token with no `kid` header carrying `claims`.
+    fn mint_without_kid(claims: Value) -> String {
+        let header = Header::new(Algorithm::RS256);
+        jsonwebtoken::encode(&header, &claims, &signing_key()).expect("sign token")
+    }
+
+    /// Serves `keys` (merged into a JWK Set) at `/jwks` and returns the server
+    /// and its `jwks_uri`.
+    async fn serve_jwks(keys: Vec<Value>) -> (wiremock::MockServer, String) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": keys })))
+            .mount(&server)
+            .await;
+        let uri = format!("{}/jwks", server.uri());
+        (server, uri)
+    }
+
+    fn fixture_jwk() -> Value {
+        let set: Value = serde_json::from_slice(&read_fixture("jwks.json")).expect("jwks fixture");
+        set["keys"][0].clone()
+    }
+
+    fn kidless_claims() -> Value {
+        let n = now();
+        json!({ "iss": TEST_ISSUER, "sub": "user-1", "aud": TEST_AUDIENCE, "exp": n + 3600, "iat": n - 5 })
+    }
+
+    // JWKS-009: a token with no kid verifies against the single key in the set,
+    // which has a kid of its own, with no forced refresh.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_uses_single_key() {
+        let (server, uri) = serve_jwks(vec![fixture_jwk()]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        let claims =
+            validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+                .await
+                .expect("kid-less token verifies");
+
+        assert_eq!(claims.subject.as_deref(), Some("user-1"));
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no forced refresh"
+        );
+    }
+
+    // JWKS-009: with no kid, an RS256 token is verified by the RSA key of an
+    // {EC, RSA} set rather than the first key.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_narrows_by_kty() {
+        let ec = json!({"kty":"EC","kid":"ec-sig-key","use":"sig","crv":"P-256",
+            "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+            "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"});
+        let (_server, uri) = serve_jwks(vec![ec, fixture_jwk()]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+            .await
+            .expect("RSA key selected");
+    }
+
+    // JWKS-009: with no kid and two RSA signing keys the key is ambiguous, a
+    // typed error distinct from KeyNotFound, with no forced refresh.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_ambiguous() {
+        let mut other = fixture_jwk();
+        other["kid"] = json!("other-key");
+        let (server, uri) = serve_jwks(vec![fixture_jwk(), other]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        let err =
+            validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+                .await
+                .expect_err("ambiguous");
+
+        assert!(
+            matches!(&err, IdentityError::AmbiguousKey { count: 2, .. }),
+            "expected AmbiguousKey, got {err:?}"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no forced refresh"
+        );
+    }
+
+    // JWKS-010: a correctly signed RS256 token is rejected when the key that
+    // verifies it declares RS384, whether the token names it by kid or not.
+    #[tokio::test]
+    async fn validate_with_jwks_rejects_key_declaring_other_alg() {
+        let mut rs384 = fixture_jwk();
+        rs384["alg"] = json!("RS384");
+        let (_server, uri) = serve_jwks(vec![rs384]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        for token in [mint(kidless_claims()), mint_without_kid(kidless_claims())] {
+            let err = validate_token_with_jwks(&token, &client, &uri, &opts)
+                .await
+                .expect_err("key declares RS384");
+            assert!(
+                matches!(&err, IdentityError::KeyAlgorithmMismatch { key_alg, alg, .. }
+                    if key_alg == "RS384" && alg == "RS256"),
+                "expected KeyAlgorithmMismatch, got {err:?}"
+            );
+        }
     }
 }

@@ -1,23 +1,26 @@
 """
-Proves the JWKS/discovery cache rejects unsafe env config and bounds memory.
+Proves the JWKS/discovery cache rejects unsafe config and bounds memory.
 
 Two pre-existing structural bugs the cache primitive shipped with:
 
-1. **Env-provided TTL was not clamped.** ``JWKS_CACHE_TTL=0`` silently
-   disabled the cache (every entry instantly expired → refetch on every
-   validation → DoS amplifier). ``JWKS_CACHE_TTL=2592000`` silently
-   disabled the documented 24h ceiling on key-rotation latency. Garbage
-   values raised ``ValueError`` at first cache access — process crash on
-   bad config rather than fail-fast at import.
+1. **Configured TTL was not bounded.** A TTL of ``0`` silently disabled the
+   cache (every entry instantly expired → refetch on every validation → DoS
+   amplifier). A month-long TTL silently disabled the documented 24h ceiling
+   on key-rotation latency. The same applied to the kid-miss cooldown
+   (``nan`` made it permanent, a huge value exceeded the rotation-latency
+   expectation).
 
 2. **Cache dicts grew without bound.** Any deployment with caller-influenced
    ``disco_doc_address`` (multi-tenant gateways, attacker-supplied issuer
    headers) could grow the dict forever. At ~5KB per entry, a few thousand
    unique addresses leaked tens of MB.
 
-These tests pin the fixes:
-- TTL env values clamped to [MIN, MAX]; garbage falls back to default.
-- Cache size capped at ``JWKS_CACHE_MAX_ENTRIES`` (default 64).
+Settings now come from :class:`~py_identity_model.Config`, which is validated
+on creation. These tests pin the fixes:
+- TTL and cooldown values outside [MIN, MAX] (or non-finite / non-numeric) are
+  rejected with ``ConfigError``; in-range values are used as configured.
+- Each client's cache size is capped at ``Config.cache_max_entries``
+  (default 64).
 - LRU eviction targets the least recently *used* entry, not the newest or a
   random one.
 - Re-storing a URI (refresh) moves it to "newest" so subsequent eviction
@@ -27,12 +30,15 @@ These tests pin the fixes:
 """
 
 from collections import OrderedDict
+from collections.abc import Iterator
+import math
 import time
 
 import httpx
 import pytest
 import respx
 
+from py_identity_model import Config, ConfigError
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import (
     DEFAULT_DISCO_CACHE_TTL_SECONDS,
@@ -45,16 +51,13 @@ from py_identity_model.core.jwks_cache import (
     MIN_KID_MISS_COOLDOWN_SECONDS,
     JwksCacheEntry,
     _enforce_size_limit,
-    _reset_env_for_testing,
     apply_jwks_cache_outcome,
-    get_kid_miss_cooldown,
-    get_max_cache_entries,
     resolve_disco_ttl,
     resolve_ttl,
     touch_cache_entry,
 )
 from py_identity_model.core.models import JsonWebKey, JwksResponse
-from py_identity_model.sync import token_validation as sync_tv
+from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
@@ -65,132 +68,146 @@ from py_identity_model.sync.token_validation import (
 from ..token_validation_helpers import generate_rsa_keypair
 
 
+MID_TTL_SECONDS = 3600.0
+MID_COOLDOWN_SECONDS = 1.0
+SMALL_MAX_ENTRIES = 8
+OVERFLOW_MAX_ENTRIES = 5
+REFRESH_MAX_ENTRIES = 3
+E2E_MAX_ENTRIES = 4
+OVERFLOW_EXTRA = 5
+
+
 @pytest.fixture(autouse=True)
 def _reset_state():
     clear_discovery_cache()
     clear_jwks_cache()
-    _reset_env_for_testing()
     yield
     clear_discovery_cache()
     clear_jwks_cache()
-    _reset_env_for_testing()
+
+
+@pytest.fixture
+def small_cache_client() -> Iterator[HTTPClient]:
+    """An injected client whose caches hold at most ``E2E_MAX_ENTRIES``."""
+    with HTTPClient(config=Config(cache_max_entries=E2E_MAX_ENTRIES)) as client:
+        yield client
+
+
+def _setting_names(err: ConfigError) -> list[str]:
+    return [issue.setting for issue in err.issues]
 
 
 # ============================================================================
-# TTL env clamping: zero, negative, overflow, and garbage must not break
-# the documented invariants.
+# TTL bounds: zero, negative, overflow, and garbage must not break the
+# documented invariants. Config rejects them instead of silently honoring.
 # ============================================================================
 
-JWKS_TTL_CLAMP_CASES = [
-    pytest.param("0", MIN_CACHE_TTL_SECONDS, id="zero-clamped-to-min"),
-    pytest.param("-5", MIN_CACHE_TTL_SECONDS, id="negative-clamped-to-min"),
-    pytest.param("30", MIN_CACHE_TTL_SECONDS, id="below-min-clamped-up"),
-    pytest.param("60", MIN_CACHE_TTL_SECONDS, id="at-min-preserved"),
-    pytest.param("3600", 3600.0, id="middle-passthrough"),
-    pytest.param("86400", MAX_CACHE_TTL_SECONDS, id="at-max-preserved"),
-    pytest.param("999999", MAX_CACHE_TTL_SECONDS, id="above-max-clamped-down"),
-    pytest.param("2592000", MAX_CACHE_TTL_SECONDS, id="month-clamped-down"),
+TTL_SETTINGS = ["jwks_cache_ttl", "discovery_cache_ttl"]
+
+TTL_REJECTED_CASES = [
+    pytest.param(0.0, id="zero"),
+    pytest.param(-5.0, id="negative"),
+    pytest.param(MIN_CACHE_TTL_SECONDS - 30, id="below-min"),
+    pytest.param(MAX_CACHE_TTL_SECONDS + 1, id="above-max"),
+    pytest.param(30 * MAX_CACHE_TTL_SECONDS, id="month"),
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="inf"),
+    pytest.param("60s", id="string-with-units"),
+    pytest.param("", id="empty-string"),
+]
+
+TTL_ACCEPTED_CASES = [
+    pytest.param(MIN_CACHE_TTL_SECONDS, id="at-min"),
+    pytest.param(MID_TTL_SECONDS, id="middle"),
+    pytest.param(MAX_CACHE_TTL_SECONDS, id="at-max"),
 ]
 
 
-class TestEnvTtlClamping:
-    @pytest.mark.parametrize(("env_value", "expected"), JWKS_TTL_CLAMP_CASES)
-    def test_jwks_ttl_env_clamped(self, env_value, expected, monkeypatch):
-        """resolve_ttl(None) reads the env path; values outside [MIN, MAX]
-        must be clamped to the documented bounds, not honored raw."""
-        monkeypatch.setenv("JWKS_CACHE_TTL", env_value)
-        _reset_env_for_testing()
-        assert resolve_ttl(None) == expected
+class TestConfigTtlBounds:
+    @pytest.mark.parametrize("setting", TTL_SETTINGS)
+    @pytest.mark.parametrize("value", TTL_REJECTED_CASES)
+    def test_out_of_range_ttl_rejected(self, setting, value):
+        """Values outside [MIN, MAX] or not finite numbers must fail fast at
+        Config creation, never be honored raw by the cache."""
+        with pytest.raises(ConfigError) as exc_info:
+            Config(**{setting: value})
+        assert _setting_names(exc_info.value) == [setting]
 
-    @pytest.mark.parametrize(("env_value", "expected"), JWKS_TTL_CLAMP_CASES)
-    def test_disco_ttl_env_clamped(self, env_value, expected, monkeypatch):
-        monkeypatch.setenv("DISCO_CACHE_TTL", env_value)
-        _reset_env_for_testing()
-        assert resolve_disco_ttl(None) == expected
+    @pytest.mark.parametrize("value", TTL_ACCEPTED_CASES)
+    def test_jwks_ttl_in_range_used_without_max_age(self, value):
+        """resolve_ttl with no Cache-Control falls back to the configured TTL."""
+        config = Config(jwks_cache_ttl=value)
+        assert resolve_ttl(None, config.jwks_cache_ttl) == value
 
-    def test_garbage_jwks_ttl_falls_back_to_default(self, monkeypatch):
-        """Malformed env must not crash the process; a warning + default is
-        the correct fail-safe."""
-        monkeypatch.setenv("JWKS_CACHE_TTL", "60s")
-        _reset_env_for_testing()
-        assert resolve_ttl(None) == DEFAULT_JWKS_CACHE_TTL_SECONDS
+    @pytest.mark.parametrize("value", TTL_ACCEPTED_CASES)
+    def test_disco_ttl_in_range_used_without_max_age(self, value):
+        config = Config(discovery_cache_ttl=value)
+        assert resolve_disco_ttl(None, config.discovery_cache_ttl) == value
 
-    def test_empty_jwks_ttl_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_TTL", "")
-        _reset_env_for_testing()
-        assert resolve_ttl(None) == DEFAULT_JWKS_CACHE_TTL_SECONDS
+    def test_default_jwks_ttl(self):
+        assert Config().jwks_cache_ttl == DEFAULT_JWKS_CACHE_TTL_SECONDS
 
-    def test_garbage_disco_ttl_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("DISCO_CACHE_TTL", "not-a-number")
-        _reset_env_for_testing()
-        assert resolve_disco_ttl(None) == DEFAULT_DISCO_CACHE_TTL_SECONDS
+    def test_default_disco_ttl(self):
+        assert Config().discovery_cache_ttl == DEFAULT_DISCO_CACHE_TTL_SECONDS
 
-    def test_unset_jwks_ttl_uses_default(self, monkeypatch):
-        monkeypatch.delenv("JWKS_CACHE_TTL", raising=False)
-        _reset_env_for_testing()
-        assert resolve_ttl(None) == DEFAULT_JWKS_CACHE_TTL_SECONDS
+    def test_configured_jwks_ttl_applied_to_cache_entry(self):
+        """A response without max-age is stored with ``Config.jwks_cache_ttl``."""
+        uri = "https://op.example/jwks"
+        cache: dict[str, JwksCacheEntry] = {}
+        response = _make_jwks_response("kid-ttl", cache_control=None)
+        apply_jwks_cache_outcome(
+            cache,
+            uri,
+            response,
+            time.monotonic(),
+            Config(jwks_cache_ttl=MID_TTL_SECONDS),
+        )
+        assert cache[uri].ttl == MID_TTL_SECONDS
 
 
 # ============================================================================
-# KID_MISS_REFRESH_COOLDOWN env parsing must apply the same fail-safe pattern
-# as JWKS_CACHE_TTL — without it, ``=abc`` crashes every kid-miss caller,
-# ``=nan`` makes the cooldown permanent (``now-last >= nan`` is False forever),
-# and ``=999999`` silently sets a multi-day cooldown that exceeds the
-# documented rotation-latency expectation.
+# Kid-miss cooldown must apply the same fail-safe pattern as the TTLs —
+# without it, garbage crashes every kid-miss caller, ``nan`` makes the
+# cooldown permanent (``now-last >= nan`` is False forever), and a huge value
+# silently sets a multi-day cooldown that exceeds the documented
+# rotation-latency expectation.
 # ============================================================================
 
 
-COOLDOWN_CLAMP_CASES = [
-    pytest.param(
-        "0", MIN_KID_MISS_COOLDOWN_SECONDS, id="zero-explicit-opt-out-honored"
-    ),
-    pytest.param("-5", MIN_KID_MISS_COOLDOWN_SECONDS, id="negative-clamped-to-min"),
-    pytest.param("1", 1.0, id="middle-passthrough"),
-    pytest.param("3600", MAX_KID_MISS_COOLDOWN_SECONDS, id="at-max-preserved"),
-    pytest.param("999999", MAX_KID_MISS_COOLDOWN_SECONDS, id="above-max-clamped-down"),
+COOLDOWN_REJECTED_CASES = [
+    pytest.param(-5.0, id="negative"),
+    pytest.param(MAX_KID_MISS_COOLDOWN_SECONDS + 1, id="above-max"),
+    pytest.param(999999.0, id="far-above-max"),
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="inf"),
+    pytest.param("abc", id="garbage-string"),
+    pytest.param("5s", id="string-with-units"),
+    pytest.param("", id="empty-string"),
+]
+
+COOLDOWN_ACCEPTED_CASES = [
+    pytest.param(MIN_KID_MISS_COOLDOWN_SECONDS, id="zero-explicit-opt-out-honored"),
+    pytest.param(MID_COOLDOWN_SECONDS, id="middle"),
+    pytest.param(MAX_KID_MISS_COOLDOWN_SECONDS, id="at-max"),
 ]
 
 
-class TestKidMissCooldownEnvParsing:
-    @pytest.mark.parametrize(("env_value", "expected"), COOLDOWN_CLAMP_CASES)
-    def test_cooldown_env_clamped(self, env_value, expected, monkeypatch):
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", env_value)
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == expected
+class TestKidMissCooldownConfig:
+    @pytest.mark.parametrize("value", COOLDOWN_REJECTED_CASES)
+    def test_invalid_cooldown_rejected(self, value):
+        with pytest.raises(ConfigError) as exc_info:
+            Config(jwks_kid_miss_cooldown=value)
+        assert _setting_names(exc_info.value) == ["jwks_kid_miss_cooldown"]
 
-    def test_garbage_falls_back_to_default(self, monkeypatch):
-        """``=abc`` must not crash with ValueError at first kid-miss caller."""
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "abc")
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+    @pytest.mark.parametrize("value", COOLDOWN_ACCEPTED_CASES)
+    def test_in_range_cooldown_reaches_client(self, value):
+        with HTTPClient(config=Config(jwks_kid_miss_cooldown=value)) as client:
+            assert client.config.jwks_kid_miss_cooldown == value
 
-    def test_units_suffix_falls_back_to_default(self, monkeypatch):
-        """``=5s`` is plausible operator config and must fail safe."""
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "5s")
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
-
-    def test_nan_falls_back_to_default(self, monkeypatch):
-        """``=nan`` must not produce a permanent cooldown — the comparison
-        ``now - last >= nan`` is False forever, silently disabling refresh."""
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "nan")
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
-
-    def test_infinity_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "inf")
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
-
-    def test_empty_falls_back_to_default(self, monkeypatch):
-        monkeypatch.setenv("KID_MISS_REFRESH_COOLDOWN", "")
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
-
-    def test_unset_uses_default(self, monkeypatch):
-        monkeypatch.delenv("KID_MISS_REFRESH_COOLDOWN", raising=False)
-        _reset_env_for_testing()
-        assert get_kid_miss_cooldown() == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+    def test_default_cooldown(self):
+        assert (
+            Config().jwks_kid_miss_cooldown == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+        )
 
 
 # ============================================================================
@@ -198,8 +215,10 @@ class TestKidMissCooldownEnvParsing:
 # ============================================================================
 
 
-def _make_jwks_response(kid: str) -> JwksResponse:
-    """Build a successful, cacheable JWKS response carrying a single key."""
+def _make_jwks_response(
+    kid: str, cache_control: str | None = "max-age=3600"
+) -> JwksResponse:
+    """Build a successful JWKS response carrying a single key."""
     key_dict, _ = generate_rsa_keypair()
     key_dict["kid"] = kid
     jwk = JsonWebKey(
@@ -213,110 +232,119 @@ def _make_jwks_response(kid: str) -> JwksResponse:
     return JwksResponse(
         is_successful=True,
         keys=[jwk],
-        cache_control="max-age=3600",
+        cache_control=cache_control,
     )
 
 
+def _op_uri(i: int) -> str:
+    return f"https://op-{i}.example/jwks"
+
+
 class TestBoundedCacheSize:
-    def test_max_entries_env_override(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "8")
-        _reset_env_for_testing()
-        assert get_max_cache_entries() == 8  # noqa: PLR2004
+    def test_max_entries_from_config(self):
+        assert (
+            Config(cache_max_entries=SMALL_MAX_ENTRIES).cache_max_entries
+            == SMALL_MAX_ENTRIES
+        )
 
-    def test_max_entries_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv("JWKS_CACHE_MAX_ENTRIES", raising=False)
-        _reset_env_for_testing()
-        assert get_max_cache_entries() == DEFAULT_MAX_CACHE_ENTRIES
+    def test_max_entries_default(self):
+        assert Config().cache_max_entries == DEFAULT_MAX_CACHE_ENTRIES
 
-    def test_max_entries_falls_back_on_garbage(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "abc")
-        _reset_env_for_testing()
-        assert get_max_cache_entries() == DEFAULT_MAX_CACHE_ENTRIES
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+            pytest.param("abc", id="garbage-string"),
+            pytest.param(1.5, id="non-integer"),
+        ],
+    )
+    def test_invalid_max_entries_rejected(self, value):
+        with pytest.raises(ConfigError) as exc_info:
+            Config(cache_max_entries=value)
+        assert _setting_names(exc_info.value) == ["cache_max_entries"]
 
-    def test_max_entries_falls_back_on_non_positive(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "0")
-        _reset_env_for_testing()
-        assert get_max_cache_entries() == DEFAULT_MAX_CACHE_ENTRIES
-
-    def test_jwks_cache_size_capped_under_overflow(self, monkeypatch):
+    def test_jwks_cache_size_capped_under_overflow(self):
         """Insert max+5 distinct URIs into the cache via the apply helper —
         post-insert the cache holds exactly ``max`` entries."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "5")
-        _reset_env_for_testing()
+        config = Config(cache_max_entries=OVERFLOW_MAX_ENTRIES)
         cache: dict[str, JwksCacheEntry] = {}
+        total = OVERFLOW_MAX_ENTRIES + OVERFLOW_EXTRA
 
-        for i in range(10):
+        for i in range(total):
             apply_jwks_cache_outcome(
                 cache,
-                jwks_uri=f"https://op-{i}.example/jwks",
+                jwks_uri=_op_uri(i),
                 response=_make_jwks_response(f"kid-{i}"),
                 now=time.monotonic(),
+                config=config,
             )
 
-        assert len(cache) == 5  # noqa: PLR2004
-        # FIFO eviction: the *oldest* 5 inserts are gone, *newest* 5 remain.
-        remaining_uris = set(cache.keys())
-        expected_uris = {f"https://op-{i}.example/jwks" for i in range(5, 10)}
-        assert remaining_uris == expected_uris
+        # LRU eviction: the *oldest* inserts are gone, *newest* ones remain.
+        assert set(cache.keys()) == {_op_uri(i) for i in range(OVERFLOW_EXTRA, total)}
 
-    def test_refresh_of_existing_uri_does_not_count_as_new_entry(self, monkeypatch):
+    def test_overflow_returns_evicted_uris(self):
+        """apply_jwks_cache_outcome reports the URIs that left the cache so the
+        caller can drop their kid-miss cooldown stamps."""
+        config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
+        cache: dict[str, JwksCacheEntry] = {}
+        evicted: list[str] = []
+        for i in range(REFRESH_MAX_ENTRIES + 1):
+            evicted += apply_jwks_cache_outcome(
+                cache,
+                _op_uri(i),
+                _make_jwks_response(f"kid-{i}"),
+                time.monotonic(),
+                config,
+            )
+        assert evicted == [_op_uri(0)]
+
+    def test_refresh_of_existing_uri_does_not_count_as_new_entry(self):
         """Re-storing a URI must move it to the end of insertion order so
         a subsequent overflow doesn't immediately evict a just-refreshed
-        entry. This is the difference between OK-FIFO and broken-FIFO."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "3")
-        _reset_env_for_testing()
+        entry."""
+        config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
         cache: dict[str, JwksCacheEntry] = {}
 
         # Fill to capacity in known order.
-        for i in range(3):
+        for i in range(REFRESH_MAX_ENTRIES):
             apply_jwks_cache_outcome(
                 cache,
-                jwks_uri=f"https://op-{i}.example/jwks",
+                jwks_uri=_op_uri(i),
                 response=_make_jwks_response(f"kid-{i}"),
                 now=time.monotonic(),
+                config=config,
             )
-        assert list(cache.keys()) == [
-            "https://op-0.example/jwks",
-            "https://op-1.example/jwks",
-            "https://op-2.example/jwks",
-        ]
+        assert list(cache.keys()) == [_op_uri(0), _op_uri(1), _op_uri(2)]
 
         # Refresh op-0 (the oldest). It should move to the newest position.
         apply_jwks_cache_outcome(
             cache,
-            jwks_uri="https://op-0.example/jwks",
+            jwks_uri=_op_uri(0),
             response=_make_jwks_response("kid-0-rotated"),
             now=time.monotonic(),
+            config=config,
         )
-        assert list(cache.keys()) == [
-            "https://op-1.example/jwks",
-            "https://op-2.example/jwks",
-            "https://op-0.example/jwks",
-        ]
+        assert list(cache.keys()) == [_op_uri(1), _op_uri(2), _op_uri(0)]
 
         # Add a fourth distinct URI. Eviction should now target op-1 (the
         # oldest non-refreshed), not the just-refreshed op-0.
         apply_jwks_cache_outcome(
             cache,
-            jwks_uri="https://op-3.example/jwks",
+            jwks_uri=_op_uri(3),
             response=_make_jwks_response("kid-3"),
             now=time.monotonic(),
+            config=config,
         )
-        assert set(cache.keys()) == {
-            "https://op-2.example/jwks",
-            "https://op-0.example/jwks",
-            "https://op-3.example/jwks",
-        }
+        assert set(cache.keys()) == {_op_uri(2), _op_uri(0), _op_uri(3)}
 
     @respx.mock
-    def test_end_to_end_jwks_cache_capped(self, monkeypatch):
-        """End-to-end via _get_cached_jwks: hammering N+5 unique URIs from
-        the real call site enforces the same bound as the apply helper
-        directly. Catches any path that bypasses _enforce_size_limit."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
-
-        urls_to_visit = [f"https://op-{i}.example/jwks" for i in range(9)]
+    def test_end_to_end_jwks_cache_capped(self, small_cache_client):
+        """End-to-end via _get_cached_jwks on an injected client: hammering
+        N+5 unique URIs from the real call site enforces the client's
+        ``cache_max_entries``. Catches any path that bypasses
+        _enforce_size_limit."""
+        urls_to_visit = [_op_uri(i) for i in range(E2E_MAX_ENTRIES + OVERFLOW_EXTRA)]
         key_dict, _ = generate_rsa_keypair()
         for url in urls_to_visit:
             respx.get(url).mock(
@@ -328,12 +356,25 @@ class TestBoundedCacheSize:
             )
 
         for url in urls_to_visit:
-            response = _get_cached_jwks(url)
+            response = _get_cached_jwks(url, http_client=small_cache_client)
             assert response.is_successful is True
 
-        assert len(sync_tv._jwks_cache) == 4  # noqa: PLR2004
-        # Newest four URIs are the survivors.
-        assert set(sync_tv._jwks_cache.keys()) == set(urls_to_visit[-4:])
+        # Newest URIs are the survivors.
+        assert set(small_cache_client.caches.jwks.keys()) == set(
+            urls_to_visit[-E2E_MAX_ENTRIES:]
+        )
+
+    @respx.mock
+    def test_caches_are_per_client(self, small_cache_client):
+        """A bounded injected client's eviction never touches another
+        client's cache — each client owns its caches."""
+        key_dict, _ = generate_rsa_keypair()
+        url = _op_uri(0)
+        respx.get(url).mock(return_value=httpx.Response(200, json={"keys": [key_dict]}))
+        with HTTPClient(config=Config()) as other:
+            _get_cached_jwks(url, http_client=other)
+            assert list(other.caches.jwks.keys()) == [url]
+            assert list(small_cache_client.caches.jwks.keys()) == []
 
 
 # ============================================================================
@@ -362,16 +403,12 @@ class TestLruReadHitEviction:
         touch_cache_entry(cache, "missing")
         assert list(cache.keys()) == ["k0", "k1"]
 
-    def test_lru_evicts_least_recently_used_not_least_recently_inserted(
-        self, monkeypatch
-    ):
+    def test_lru_evicts_least_recently_used_not_least_recently_inserted(self):
         """After a touch, ``_enforce_size_limit`` evicts the untouched-oldest
         entry, proving eviction is by *use* not by *insertion* (tuple keys,
         mirroring the discovery cache)."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
         cache: OrderedDict[tuple[str, bool], int] = OrderedDict()
-        for i in range(4):
+        for i in range(E2E_MAX_ENTRIES):
             cache[(f"https://op-{i}.example", True)] = i
 
         # op-0 is oldest by insertion; a read hit touches it to most-recent.
@@ -379,23 +416,21 @@ class TestLruReadHitEviction:
         # A fifth distinct address arrives (attacker-controlled tenant).
         cache[("https://op-4.example", True)] = 4
 
-        evicted = _enforce_size_limit(cache)
+        evicted = _enforce_size_limit(cache, E2E_MAX_ENTRIES)
         # LRU evicts op-1 (oldest *untouched*), NOT the recently-read op-0.
         assert evicted == [("https://op-1.example", True)]
         assert ("https://op-0.example", True) in cache
 
     @respx.mock
-    def test_read_hit_protects_hot_entry_from_eviction(self, monkeypatch):
+    def test_read_hit_protects_hot_entry_from_eviction(self, small_cache_client):
         """End-to-end via ``_get_cached_jwks``: an attacker driving distinct
         JWKS-URI reads must NOT evict a JWKS entry that was just read.
 
         Fill the cache to capacity, re-read the oldest-by-insertion entry (a
         cache hit → LRU touch), then push one more distinct URI. FIFO would
         evict the just-read entry; LRU evicts the oldest *unread* one."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
-
-        urls = [f"https://op-{i}.example/jwks" for i in range(5)]
+        cache = small_cache_client.caches.jwks
+        urls = [f"https://op-{i}.example/jwks" for i in range(E2E_MAX_ENTRIES + 1)]
         key_dict, _ = generate_rsa_keypair()
         for url in urls:
             respx.get(url).mock(
@@ -407,13 +442,13 @@ class TestLruReadHitEviction:
             )
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
-        for url in urls[:4]:
-            _get_cached_jwks(url)
-        assert list(sync_tv._jwks_cache.keys()) == urls[:4]
+        for url in urls[:E2E_MAX_ENTRIES]:
+            _get_cached_jwks(url, http_client=small_cache_client)
+        assert list(cache.keys()) == urls[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
-        _get_cached_jwks(urls[0])
-        assert list(sync_tv._jwks_cache.keys()) == [
+        _get_cached_jwks(urls[0], http_client=small_cache_client)
+        assert list(cache.keys()) == [
             urls[1],
             urls[2],
             urls[3],
@@ -422,13 +457,13 @@ class TestLruReadHitEviction:
 
         # A fifth distinct URI overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
-        _get_cached_jwks(urls[4])
-        assert urls[0] in sync_tv._jwks_cache
-        assert urls[1] not in sync_tv._jwks_cache
-        assert set(sync_tv._jwks_cache.keys()) == {urls[0], urls[2], urls[3], urls[4]}
+        _get_cached_jwks(urls[4], http_client=small_cache_client)
+        assert urls[0] in cache
+        assert urls[1] not in cache
+        assert set(cache.keys()) == {urls[0], urls[2], urls[3], urls[4]}
 
     @respx.mock
-    def test_read_hit_protects_hot_disco_entry_from_eviction(self, monkeypatch):
+    def test_read_hit_protects_hot_disco_entry_from_eviction(self, small_cache_client):
         """The discovery cache is LRU too (#397 calls out "same for the
         discovery cache"). End-to-end via ``_get_disco_response``: an attacker
         driving distinct ``disco_doc_address`` reads must NOT evict a discovery
@@ -438,10 +473,8 @@ class TestLruReadHitEviction:
         regression that adds the read-hit touch to only one of the two caches is
         caught. The cache key is ``(address, policy.cache_key())`` — a tuple,
         exactly the shape a multi-tenant gateway attacker influences."""
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
-
-        bases = [f"https://op-{i}.example" for i in range(5)]
+        cache = small_cache_client.caches.disco
+        bases = [f"https://op-{i}.example" for i in range(E2E_MAX_ENTRIES + 1)]
         addresses = [f"{b}/.well-known/openid-configuration" for b in bases]
         for base, address in zip(bases, addresses, strict=True):
             respx.get(address).mock(
@@ -462,13 +495,13 @@ class TestLruReadHitEviction:
         keys = [(addr, DiscoveryPolicy().cache_key()) for addr in addresses]
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
-        for address in addresses[:4]:
-            _get_disco_response(address)
-        assert list(sync_tv._disco_cache.keys()) == keys[:4]
+        for address in addresses[:E2E_MAX_ENTRIES]:
+            _get_disco_response(address, http_client=small_cache_client)
+        assert list(cache.keys()) == keys[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
-        _get_disco_response(addresses[0])
-        assert list(sync_tv._disco_cache.keys()) == [
+        _get_disco_response(addresses[0], http_client=small_cache_client)
+        assert list(cache.keys()) == [
             keys[1],
             keys[2],
             keys[3],
@@ -477,7 +510,7 @@ class TestLruReadHitEviction:
 
         # A fifth distinct address overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
-        _get_disco_response(addresses[4])
-        assert keys[0] in sync_tv._disco_cache
-        assert keys[1] not in sync_tv._disco_cache
-        assert set(sync_tv._disco_cache.keys()) == {keys[0], keys[2], keys[3], keys[4]}
+        _get_disco_response(addresses[4], http_client=small_cache_client)
+        assert keys[0] in cache
+        assert keys[1] not in cache
+        assert set(cache.keys()) == {keys[0], keys[2], keys[3], keys[4]}

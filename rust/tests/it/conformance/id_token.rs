@@ -1,6 +1,6 @@
 //! Rust executor for the shared ID-Token profile conformance vectors.
 //!
-//! Drives every vector in `spec/vectors/id-token.json` (`IDT-001`..`IDT-011`)
+//! Drives every vector in `spec/vectors/id-token.json` (`IDT-001`..`IDT-012`)
 //! through the pure [`rs_identity_model::validate_id_token_claims`] — the same
 //! language-neutral vector set the Python
 //! (`py/src/tests/unit/test_id_token_conformance.py`) and Go runners execute —
@@ -10,9 +10,10 @@
 //! `#[ignore]`-gated: it runs in every bare `cargo test`.
 //!
 //! Thin-executor contract: only the mapping of each canonical `reason` label to
-//! the crate's stable [`IdentityError::IdTokenValidation`] message shape lives
-//! here (`reason_marker`); the inputs and expected outcomes are the shared
-//! oracle.
+//! the crate's error lives here — `untrusted_audience` to the typed
+//! [`IdentityError::IdTokenUntrustedAudience`] variant, every other reason to
+//! the stable [`IdentityError::IdTokenValidation`] message shape
+//! (`reason_marker`); the inputs and expected outcomes are the shared oracle.
 
 use rs_identity_model::{
     Claims, IdTokenValidationOptions, IdentityError, validate_id_token_claims,
@@ -78,12 +79,27 @@ struct Input {
     header_alg: Option<String>,
     #[serde(default)]
     client_id: Option<String>,
+    /// Additional audiences the client trusts besides its `client_id`
+    /// (§3.1.3.7 step 3). Absent means none.
+    #[serde(default)]
+    trusted_audiences: Option<Vec<String>>,
+    /// Opts in to the `azp` rules. Absent means false.
+    #[serde(default)]
+    validate_azp: bool,
     #[serde(default)]
     nonce: Option<String>,
     #[serde(default)]
     access_token: Option<String>,
+    /// Whether the access token was issued with the ID Token, so `at_hash` is
+    /// required. Absent means true.
+    #[serde(default)]
+    access_token_issued_with_id_token: Option<bool>,
     #[serde(default)]
     code: Option<String>,
+    /// Whether the code was issued with the ID Token, so `c_hash` is required.
+    /// Absent means true.
+    #[serde(default)]
+    code_issued_with_id_token: Option<bool>,
     #[serde(default)]
     max_age: Option<i64>,
     #[serde(default)]
@@ -103,18 +119,27 @@ struct Expect {
 
 // ── Canonical-reason mapping ────────────────────────────────────────────────
 
+/// The canonical `reason` that maps to the typed
+/// [`IdentityError::IdTokenUntrustedAudience`] variant rather than a message
+/// marker.
+const UNTRUSTED_AUDIENCE: &str = "untrusted_audience";
+
 /// The distinctive substring the crate's [`IdentityError::IdTokenValidation`]
-/// message carries for each canonical `reason` in `id-token.json`. This is the
-/// only language-specific mapping in the runner.
+/// message carries for each remaining canonical `reason` in `id-token.json`.
+/// Together with [`UNTRUSTED_AUDIENCE`] this is the only language-specific
+/// mapping in the runner.
 fn reason_marker(reason: &str) -> &'static str {
     match reason {
         "missing_sub" => "required 'sub'",
+        "missing_aud" => "required 'aud'",
         "azp_required_multi_aud" => "multiple audiences must contain an 'azp'",
         "azp_mismatch" => "'azp' claim does not match",
         "nonce_mismatch" => "'nonce' claim does not match",
         "auth_time_stale" => "'auth_time' is older than",
         "auth_time_missing" => "missing required numeric 'auth_time'",
+        "at_hash_missing" => "missing required 'at_hash'",
         "at_hash_mismatch" => "'at_hash' claim does not match",
+        "c_hash_missing" => "missing required 'c_hash'",
         "c_hash_mismatch" => "'c_hash' claim does not match",
         "unsupported_alg" => "Unsupported ID token 'alg'",
         "alg_required" => "header 'alg' is required",
@@ -127,14 +152,24 @@ fn options_for(input: &Input) -> IdTokenValidationOptions {
     if let Some(client_id) = &input.client_id {
         b = b.client_id(client_id);
     }
+    if let Some(trusted) = &input.trusted_audiences {
+        b = b.trusted_audiences(trusted);
+    }
+    b = b.validate_azp(input.validate_azp);
     if let Some(nonce) = &input.nonce {
         b = b.nonce(nonce);
     }
     if let Some(access_token) = &input.access_token {
         b = b.access_token(access_token);
     }
+    if let Some(issued) = input.access_token_issued_with_id_token {
+        b = b.access_token_issued_with_id_token(issued);
+    }
     if let Some(code) = &input.code {
         b = b.code(code);
+    }
+    if let Some(issued) = input.code_issued_with_id_token {
+        b = b.code_issued_with_id_token(issued);
     }
     if let Some(max_age) = input.max_age {
         b = b.max_age(max_age);
@@ -187,15 +222,26 @@ fn spec_id_token_conformance() {
                         "{label}: unexpected canonical error family {:?}",
                         vector.expect.error
                     );
-                    let IdentityError::IdTokenValidation(msg) = &err else {
-                        panic!("{label}: expected IdTokenValidation, got {err:?}");
-                    };
-                    let marker = reason_marker(&vector.expect.reason);
-                    assert!(
-                        msg.contains(marker),
-                        "{label}: rejection {msg:?} does not match reason {:?} (marker {marker:?})",
-                        vector.expect.reason
-                    );
+                    if vector.expect.reason == UNTRUSTED_AUDIENCE {
+                        // Typed variant: matched by pattern, not by message.
+                        let IdentityError::IdTokenUntrustedAudience(untrusted) = &err else {
+                            panic!("{label}: expected IdTokenUntrustedAudience, got {err:?}");
+                        };
+                        assert!(
+                            !untrusted.is_empty(),
+                            "{label}: untrusted-audience rejection carries no values"
+                        );
+                    } else {
+                        let IdentityError::IdTokenValidation(msg) = &err else {
+                            panic!("{label}: expected IdTokenValidation, got {err:?}");
+                        };
+                        let marker = reason_marker(&vector.expect.reason);
+                        assert!(
+                            msg.contains(marker),
+                            "{label}: rejection {msg:?} does not match reason {:?} (marker {marker:?})",
+                            vector.expect.reason
+                        );
+                    }
                 }
                 other => panic!("{label}: unknown expected outcome {other:?}"),
             }

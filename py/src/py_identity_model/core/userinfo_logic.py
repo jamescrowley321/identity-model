@@ -95,11 +95,24 @@ def validate_userinfo_sub(
 
     Returns:
         The original response when validation passes or is skipped,
-        otherwise an error ``UserInfoResponse``.
+        otherwise an error ``UserInfoResponse``.  A signed or encrypted
+        (``application/jwt``) response with ``expected_sub`` set is an
+        error: this client has no keys to verify it, and comparing the
+        ``sub`` of an unverified JWT would give false assurance.
     """
-    # Skip validation when not requested, on failure, or for JWT responses
-    if expected_sub is None or not response.is_successful or response.raw is not None:
+    # Skip validation when not requested or on failure
+    if expected_sub is None or not response.is_successful:
         return response
+
+    if response.raw is not None:
+        return UserInfoResponse(
+            is_successful=False,
+            error=(
+                "UserInfo sub cannot be verified: the response is a signed or "
+                "encrypted JWT (application/jwt). Verify and decode it, then "
+                "compare its sub, or omit expected_sub."
+            ),
+        )
 
     claims = object.__getattribute__(response, "claims")
     if claims is None:

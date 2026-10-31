@@ -17,7 +17,7 @@ from ..core.models import (
     JwksResponse,
 )
 from ..core.parsers import jwks_from_dict
-from .http_client import get_async_http_client, retry_with_backoff_async
+from .http_client import get_default_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 
 
@@ -27,7 +27,7 @@ async def _fetch_jwks(client: httpx.AsyncClient, url: str) -> httpx.Response:
     Fetch JWKS with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's Config.
     """
     return await client.get(url)
 
@@ -42,7 +42,7 @@ async def get_jwks(
     Args:
         jwks_request: JWKS request configuration
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            module-level singleton.
+            library default client.
 
     Returns:
         JwksResponse: JWKS response with keys
@@ -58,9 +58,11 @@ async def get_jwks(
         policy = jwks_request.policy or DiscoveryPolicy()
         validate_url_scheme(jwks_request.address, policy)
 
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _fetch_jwks(client, jwks_request.address)
-        return process_jwks_response(response)
+        return process_jwks_response(response, client.config)
     except Exception as e:
         return handle_jwks_error(e)
     finally:

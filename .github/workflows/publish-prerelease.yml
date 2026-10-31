@@ -103,23 +103,32 @@ jobs:
           SHORT_SHA=$(echo $HEAD_SHA | cut -c1-7)
           VERSION="${MAJOR}.${MINOR}.${PATCH}-rc.${PR_NUMBER}.${SHORT_SHA}"
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION"
+          # The tag form above is not a valid PEP 440 version (the SHA can hold
+          # letters), so the wheel gets its own: 5.0.0rc915.
+          PY_VERSION="${MAJOR}.${MINOR}.${PATCH}rc${PR_NUMBER}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "py_version=$PY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Generated version: $VERSION (wheel: $PY_VERSION)"
 
       - name: Display version
         run: echo "Publishing version ${{ steps.vars.outputs.version }} to GitHub Releases"
 
       - name: Build distribution 📦
+        env:
+          PY_VERSION: ${{ steps.vars.outputs.py_version }}
         run: |
-          echo ${{ steps.vars.outputs.version }}
-          # Anchor to the project.version line: the previous unanchored
-          # `s/0.0.0/<ver>/` also matched the `0.0.0` inside any dependency
-          # pin (e.g. `cryptography>=50.0.0`), corrupting pyproject.toml.
-          sed -i -e "s/^version = \"0.0.0\"/version = \"${{ steps.vars.outputs.version }}\"/" py/pyproject.toml
+          # Anchor to the project.version line: an unanchored pattern also
+          # matches versions inside dependency pins (e.g. `cryptography>=50.0.0`).
+          # pyproject.toml holds the last released version, so match any value.
+          sed -i -e "s/^version = \".*\"/version = \"${PY_VERSION}\"/" py/pyproject.toml
+          grep -qx "version = \"${PY_VERSION}\"" py/pyproject.toml
           make build-dist
 
       - name: Get wheel filename
         id: wheel
+        env:
+          PY_VERSION: ${{ steps.vars.outputs.py_version }}
         run: |
           # `ls py/dist/*.whl | xargs -n 1 basename` silently produced a
           # MULTI-LINE step output when the dist directory held more than one
@@ -131,7 +140,12 @@ jobs:
             echo "expected exactly one wheel in py/dist, found ${#wheels[@]}: ${wheels[*]}" >&2
             exit 1
           fi
-          echo "filename=$(basename "${wheels[0]}")" >> "$GITHUB_OUTPUT"
+          filename=$(basename "${wheels[0]}")
+          if [[ "$filename" != "py_identity_model-${PY_VERSION}-"* ]]; then
+            echo "wheel $filename does not carry the prerelease version $PY_VERSION" >&2
+            exit 1
+          fi
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
 
       - name: Delete existing prerelease for this PR
         env:
