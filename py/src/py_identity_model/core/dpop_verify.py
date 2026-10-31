@@ -293,6 +293,11 @@ def _is_number(value: object) -> bool:
         return False
 
 
+def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
+    # Module-level so the mutation gate can reach it; mutmut skips @property bodies.
+    return tuple(sorted(_SUPPORTED_ALGORITHMS if algorithms is None else algorithms))
+
+
 @dataclass(frozen=True)
 class DPoPVerificationOptions:
     """Resource-server settings for :func:`verify_dpop_proof`.
@@ -331,11 +336,7 @@ class DPoPVerificationOptions:
     def accepted_algorithms(self) -> tuple[str, ...]:
         """The proof ``alg`` values accepted, sorted: the ``algs`` parameter of
         a ``WWW-Authenticate: DPoP`` challenge (RFC 9449 §7.1)."""
-        return tuple(
-            sorted(
-                _SUPPORTED_ALGORITHMS if self.algorithms is None else self.algorithms
-            )
-        )
+        return _sorted_algorithms(self.algorithms)
 
 
 @dataclass(frozen=True)
