@@ -8,8 +8,10 @@ authenticate WebSocket routes (issue #598). Browsers also cannot set an
 not transparently available for WebSockets the way it is for HTTP.
 
 :func:`build_ws_authenticator` returns a FastAPI dependency that authenticates a
-WebSocket by validating a Bearer token taken from (in order) the
-``Authorization`` header (non-browser clients) or a query parameter (browsers).
+WebSocket by validating an access token taken from (in order) the
+``Authorization`` header (``Bearer`` or ``DPoP``, non-browser clients) or a
+query parameter (a bearer token, browsers). Sender-constrained tokens are
+checked as on HTTP (RFC 9449 §7.1, RFC 8705 §3).
 It runs the **same** core ``validate_token`` path and the **same**
 ID-token-substitution guard (:func:`fastapi_identity_model.middleware.evaluate_token_type`,
 F-07) as the HTTP middleware, and closes the socket with a policy-violation code
@@ -43,8 +45,12 @@ from fastapi import WebSocket, WebSocketException, status  # type: ignore[attr-d
 from jwt import InvalidTokenError
 
 from py_identity_model import (
+    AuthorizationScheme,
+    DPoPVerificationOptions,
     NetworkException,
     PyIdentityModelException,
+    TokenBinding,
+    TokenPresentation,
     TokenValidationConfig,
     to_principal,
 )
@@ -54,6 +60,8 @@ from .middleware import (
     _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
     _is_upstream_fetch_failure,
     evaluate_token_type,
+    parse_authorization,
+    request_uri,
 )
 
 
@@ -65,8 +73,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("fastapi_identity_model")
 
-# Expected number of parts in "Bearer <token>".
-_BEARER_HEADER_PART_COUNT = 2
+# The handshake is an HTTP GET (RFC 6455 §4.1); a DPoP proof's htu is its
+# http(s) URI (RFC 9449 §4.2).
+_HANDSHAKE_METHOD = "GET"
+_HTTP_SCHEMES = {"ws": "http", "wss": "https"}
 
 # WebSocket close codes (RFC 6455 §7.4.1). Auth rejection → policy violation;
 # transient upstream (discovery/JWKS fetch) failure → try again later so the
@@ -83,21 +93,27 @@ _WS_INTERNAL_ERROR = status.WS_1011_INTERNAL_ERROR
 _GENERIC_REJECT_REASON = "Invalid or unauthorized token"
 
 
-def _extract_ws_token(websocket: WebSocket, query_param: str) -> str | None:
-    """Return the bearer token from the Authorization header or query param.
+def _extract_ws_token(
+    websocket: WebSocket, query_param: str
+) -> tuple[AuthorizationScheme, str] | None:
+    """Return the scheme and token from the Authorization header or query param.
 
-    Header wins when present (non-browser clients). A present-but-malformed
-    Authorization header returns ``None`` rather than falling through to the
-    query param, so a client cannot smuggle a second token past a broken header.
+    Header wins when present (non-browser clients): ``Bearer`` or ``DPoP``. A
+    present-but-malformed Authorization header returns ``None`` rather than
+    falling through to the query param, so a client cannot smuggle a second
+    token past a broken header. A query-param token is a bearer token.
     """
     header = websocket.headers.get("Authorization")
     if header is not None:
-        parts = header.split()
-        if len(parts) == _BEARER_HEADER_PART_COUNT and parts[0].lower() == "bearer":
-            return parts[1]
-        return None
+        return parse_authorization(header)
     token = websocket.query_params.get(query_param)
-    return token or None
+    return (AuthorizationScheme.BEARER, token) if token else None
+
+
+def _handshake_url(websocket: WebSocket) -> str:
+    url = websocket.url
+    http_url = url.replace(scheme=_HTTP_SCHEMES.get(url.scheme, url.scheme))
+    return request_uri(http_url, websocket.scope)
 
 
 def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in F-07 marker config + a WS token-source knob
@@ -110,6 +126,9 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
     access_token_marker_claims: tuple[str, ...] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
     http_client: AsyncHTTPClient | None = None,
     cache: AsyncValidationCache | None = None,
+    required_binding: TokenBinding = TokenBinding.NONE,
+    dpop: DPoPVerificationOptions | None = None,
+    client_certificate: Callable[[WebSocket], str | bytes | None] | None = None,
 ) -> Callable:
     """Build a FastAPI WebSocket dependency that validates a Bearer token.
 
@@ -135,6 +154,13 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
         cache: The :class:`~py_identity_model.aio.AsyncValidationCache` for
             the discovery document, keys and kid-miss cooldown. ``None`` uses
             the library default cache.
+        required_binding: The sender constraint every token must carry. A
+            bound token is checked either way. See :class:`TokenValidationMiddleware`.
+        dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
+            proofs. A proof's ``htm`` is ``GET`` and its ``htu`` is the
+            handshake URI with ``ws``/``wss`` written as ``http``/``https``.
+        client_certificate: Returns the handshake's mTLS client certificate,
+            or ``None``. Without it every certificate-bound token is refused.
 
     Returns:
         An async dependency ``(websocket) -> dict`` returning the validated
@@ -169,15 +195,17 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
         )
 
     async def authenticate_websocket(websocket: WebSocket) -> dict:
-        token = _extract_ws_token(websocket, query_param)
-        if not token:
-            # Structural failure (no/!bearer token) — distinct from a validation
-            # rejection, exactly as the HTTP middleware distinguishes "Missing
-            # Authorization header" from the generic 401.
+        credentials = _extract_ws_token(websocket, query_param)
+        if credentials is None or len(websocket.headers.getlist("DPoP")) > 1:
+            # Structural failure (no/!bearer token, or two DPoP proofs, RFC
+            # 9449 §4.3) — distinct from a validation rejection, exactly as the
+            # HTTP middleware distinguishes "Missing Authorization header" from
+            # the generic 401.
             raise WebSocketException(
                 code=_WS_POLICY_VIOLATION,
                 reason="Missing or malformed bearer token",
             )
+        scheme, token = credentials
         try:
             claims = await validate_token(
                 jwt=token,
@@ -185,10 +213,21 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
                     perform_disco=True,
                     audience=audience,
                     claims_validator=custom_claims_validator,
+                    required_binding=required_binding,
+                    dpop=dpop,
                 ),
                 disco_doc_address=discovery_url,
                 http_client=http_client,
                 cache=cache,
+                presentation=TokenPresentation(
+                    scheme=scheme,
+                    method=_HANDSHAKE_METHOD,
+                    url=_handshake_url(websocket),
+                    dpop_proof=websocket.headers.get("DPoP"),
+                    client_certificate=(
+                        client_certificate(websocket) if client_certificate else None
+                    ),
+                ),
             )
         except PyIdentityModelException as e:
             if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):

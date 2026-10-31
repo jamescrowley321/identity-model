@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import FastAPI
 import httpx
 import pytest
+from starlette.datastructures import URL, Headers
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import (
@@ -120,8 +121,10 @@ async def _call_ws_authenticator(monkeypatch, **kwargs) -> AsyncMock:
     monkeypatch.setattr(ws, "validate_token", validate)
     auth = build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid", **kwargs)
     sock = SimpleNamespace(
-        headers={},
+        headers=Headers({}),
         query_params={"access_token": "t"},
+        url=URL("ws://testserver/ws"),
+        scope={},
         state=SimpleNamespace(),
     )
     assert await auth(sock) == _ACCESS_CLAIMS

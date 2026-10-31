@@ -59,10 +59,8 @@ VALIDATION_FAIL_CLASSES = [
 ]
 
 # Validly signed, correct-audience tokens carrying the ``read`` scope — the
-# library AND the RS scope guard accept them (200). ``cnf_bound`` is here on
-# purpose: the cnf-bound-as-bearer token is ACCEPTED today (F-02, #478); this
-# suite asserts the *current* contract, it does not assume rejection.
-ACCEPTED_200_CLASSES = ["valid", "cnf_bound", "oversized", "multi_aud_untrusted"]
+# library AND the RS scope guard accept them (200).
+ACCEPTED_200_CLASSES = ["valid", "oversized", "multi_aud_untrusted"]
 
 # The middleware's always-on negative ID-token defense (F-07): a token carrying
 # an ID-token-only claim (``nonce``/``at_hash``/``c_hash``) is rejected before
@@ -110,7 +108,7 @@ def mock_matrix():
 
 @pytest.mark.parametrize("name", ACCEPTED_200_CLASSES)
 def test_accepted_classes_reach_protected(mock_matrix, name):
-    """Validly signed, correctly scoped tokens → 200 (F-02 contract included)."""
+    """Validly signed, correctly scoped tokens → 200."""
     response = _get_protected(mock_matrix.base_url, mock_matrix.corpus[name].jwt)
     assert response.status_code == httpx.codes.OK
 
@@ -161,15 +159,17 @@ def test_id_as_access_rejected_by_negative_defense(mock_matrix):
     assert response.json() == {"detail": ID_TOKEN_DETAIL}
 
 
-def test_f02_cnf_bound_accepted_today(mock_matrix):
-    """F-02: a cnf-bound token presented as a plain bearer → 200 TODAY.
+def test_f02_cnf_bound_as_bearer_rejected(mock_matrix):
+    """F-02: a DPoP-bound token presented as a plain bearer → 401 (RFC 9449 §7.1).
 
-    This asserts the *current* accepted-today contract, NOT desired behaviour;
-    #478 tracks rejecting sender-constrained tokens at the RS. When #478 lands
-    this expectation flips to 401 — that is intended, not a regression here.
+    The RS challenges with the DPoP scheme; the body is the generic F-18 body.
     """
     response = _get_protected(mock_matrix.base_url, mock_matrix.corpus["cnf_bound"].jwt)
-    assert response.status_code == httpx.codes.OK
+    assert (
+        response.status_code,
+        response.headers["WWW-Authenticate"].split(",")[0],
+        response.json(),
+    ) == (httpx.codes.UNAUTHORIZED, 'DPoP error="invalid_token"', GENERIC_401_BODY)
 
 
 def test_nothing_silently_accepted(mock_matrix):

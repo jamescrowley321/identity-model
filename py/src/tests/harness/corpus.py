@@ -150,8 +150,8 @@ def build_corpus(mock_op: MockOP) -> dict[str, ForgedToken]:
     add(
         "cnf_bound",
         mock_op.sign(cnf_claims),
-        "DPoP/mTLS cnf-bound token presented as a plain bearer — library "
-        "accepts (F-02 accepted-today contract; do not assume rejection)",
+        "DPoP-bound (cnf.jkt) token presented as a plain bearer — library "
+        "accepts without a presentation; the RS refuses it (F-02, RFC 9449 §7.1)",
         rejects=False,
     )
     big_claims = _base_claims(mock_op, now)

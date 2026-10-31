@@ -293,6 +293,11 @@ def _is_number(value: object) -> bool:
         return False
 
 
+def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
+    # Module-level so the mutation gate can reach it; mutmut skips @property bodies.
+    return tuple(sorted(_SUPPORTED_ALGORITHMS if algorithms is None else algorithms))
+
+
 @dataclass(frozen=True)
 class DPoPVerificationOptions:
     """Resource-server settings for :func:`verify_dpop_proof`.
@@ -326,6 +331,12 @@ class DPoPVerificationOptions:
             raise ValueError("max_age must be a positive number of seconds")
         if not _is_number(self.iat_leeway) or self.iat_leeway < 0:
             raise ValueError("iat_leeway must be a non-negative number of seconds")
+
+    @property
+    def accepted_algorithms(self) -> tuple[str, ...]:
+        """The proof ``alg`` values accepted, sorted: the ``algs`` parameter of
+        a ``WWW-Authenticate: DPoP`` challenge (RFC 9449 §7.1)."""
+        return _sorted_algorithms(self.algorithms)
 
 
 @dataclass(frozen=True)
