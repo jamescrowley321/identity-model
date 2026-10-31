@@ -111,6 +111,8 @@ from .discovery import (
 )
 from .id_token import validate_id_token
 from .introspection import (
+    IntrospectionErrorKind,
+    SignedIntrospectionOptions,
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
     introspect_token,
@@ -232,6 +234,7 @@ __all__ = [
     "HTTPClient",
     "InMemoryDPoPReplayCache",
     # JWKS
+    "IntrospectionErrorKind",
     "JsonWebAlgorithmsKeyTypes",
     "JsonWebKey",
     "JsonWebKeyParameterNames",
@@ -247,6 +250,7 @@ __all__ = [
     "RefreshTokenRequest",
     "RefreshTokenResponse",
     "RequestObjectKey",
+    "SignedIntrospectionOptions",
     "StateValidationResult",
     "TokenBinding",
     "TokenErrorKind",
