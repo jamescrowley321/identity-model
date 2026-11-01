@@ -24,7 +24,8 @@ These functions are pure (no I/O) and available identically from both sync and a
 
 Validate the authorization-response `issuer` against the expected authorization
 server to close the mix-up attack class. Drive enforcement from the discovery
-metadata flag `authorization_response_iss_parameter_supported`, or require it
+metadata flag `authorization_response_iss_parameter_supported` (passed as
+`iss_parameter_supported=`), or require it
 strictly via `require=True`.
 
 ::: py_identity_model.core.state_validation.validate_authorize_callback_issuer
