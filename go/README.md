@@ -16,7 +16,7 @@ introspection, revocation, DPoP, and UserInfo endpoints.
 | `pkg/jwks` | JWKS fetch + key resolution | RFC 7517 / 7518 |
 | `pkg/jwt` | JWT signature + claims validation | RFC 7519 / 7515 |
 | `pkg/idtoken` | ID token validation (OIDC id-token profile) | OIDC Core 1.0 §3.1.3.7 |
-| `pkg/token` | Client credentials, authorization code, PKCE | RFC 6749 / 7636 |
+| `pkg/token` | Client credentials, authorization code, PKCE, token exchange | RFC 6749 / 7636 / 8693 |
 | `pkg/introspection` | Token introspection client | RFC 7662 |
 | `pkg/revocation` | Token revocation client | RFC 7009 |
 | `pkg/dpop` | DPoP proof creation + verification | RFC 9449 |
@@ -38,7 +38,7 @@ for a runnable demo, and the cross-language behavioural contract in
 
 ## Design
 
-- HTTP via the `net/http` standard library; `sync.Pool` for client reuse.
+- HTTP via the `net/http` standard library.
 - Functional options for configuration: `WithTimeout()`, `WithCacheTTL()`, `WithHTTPClient()`.
 - `singleflight` deduplicates concurrent discovery / JWKS fetches.
 - JOSE handling via `go-jose/v4`.

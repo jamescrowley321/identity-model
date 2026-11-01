@@ -21,6 +21,8 @@ proofs (LRU, mix-up, `private_key_jwt`); this suite owns load and soak.
 | `runner.py` | Orchestration (fresh mock OP + booted RS per scenario), metric collection, and SLO gate evaluation. |
 | `resource_sampler.py` | Samples the booted RS's process tree (master + workers) RSS/FD during a soak — the memory/descriptor-leak signal (T313). |
 | `test_load_ci_short.py` | The CI-short pytest entrypoint (real Locust run over the CI_SHORT profile). |
+| `test_load_nightly.py` | The NIGHTLY soak pytest entrypoint (`make test-harness-load-nightly`). |
+| `test_load_capacity.py` | The CAPACITY ramp-to-breakpoint pytest entrypoint (`make test-harness-load-capacity`). |
 
 ## How to run
 
@@ -29,7 +31,7 @@ make test-harness-load
 ```
 
 which runs the CI-short profile through a real Locust process against the booted
-RS + mock OP:
+RS + mock OP (equivalent command, run from `py/`):
 
 ```bash
 uv run --group load --all-packages pytest src/tests/load/test_load_ci_short.py \
@@ -55,14 +57,16 @@ failure-injection state bleeds across scenarios.
 
 ### Nightly / on-demand profiles
 
-`make test-harness-load-nightly` prints the on-demand command for the NIGHTLY
-soak profile (S7/S11/S12) — a documented, not-scheduled hook (#271). The
-DIAGNOSTIC and NIGHTLY profiles are run directly via `run_profile`:
+`make test-harness-load-nightly` runs the NIGHTLY soak profile (S4/S7/S11/S12)
+via `test_load_nightly.py`; it is scheduled daily by the `load-soak` job in
+`.github/workflows/nightly.yml` (#271). The DIAGNOSTIC profile has no make
+target or test entrypoint — run it (or any profile) directly via `run_profile`
+from `py/`:
 
 ```bash
 uv run --group load --all-packages python -c \
   'from src.tests.load.runner import run_profile; from src.tests.load.scenarios import Profile; \
-   [print(r) for r in run_profile(Profile.NIGHTLY)]'
+   [print(r) for r in run_profile(Profile.DIAGNOSTIC)]'
 ```
 
 ## Profile split
@@ -74,7 +78,7 @@ in `scenarios.py`; this table mirrors it.
 |---------|-----------|---------|
 | **CI_SHORT** | S1, S2, S3, S6, S8 | The PR gate: short (~3s), deterministic, mock-OP-backed, self-contained (no Docker). |
 | **DIAGNOSTIC** | S5, S9, S10 | Head-of-line / no-store / blocking-validator probes, run on demand. |
-| **NIGHTLY** | S4, S7, S11, S12 | TTL-refresh / LRU-thrash / RSS-FD soak / multi-tenant runs, run on demand (feeds #271). |
+| **NIGHTLY** | S4, S7, S11, S12 | TTL-refresh / LRU-thrash / RSS-FD soak / multi-tenant runs, scheduled nightly (`make test-harness-load-nightly`, #271). |
 | **CAPACITY** | C1, C2 | TH-4 open-model ramp-to-breakpoint: walk arrival rate to the goodput knee. Nightly (`make test-harness-load-capacity`). Fixed-hold scenarios above never ramp. |
 
 | ID | Title | Profile | Proves |
@@ -105,8 +109,7 @@ Two placement notes:
   from the S1–S12 coverage matrix** (11 scenarios are implemented) and kept only
   as a tracked backlog marker: DIAGNOSTIC-only, never gated, drives no assertion.
   Implementing it requires a blocking-validator RS app + a scenario that asserts
-  the loop stall vs an async validator. See `sprint-change-proposal-2026-08-19.md`
-  (identity-stack-planning). Do **not** treat it as coverage.
+  the loop stall vs an async validator. Do **not** treat it as coverage.
 
 ## Capacity / breakpoint (TH-4)
 
@@ -169,7 +172,7 @@ exactly **1** discovery + **1** JWKS upstream fetch.
 
 ### Gate model: invariant (A) vs reported (B) vs isolated-runner SLO (C)
 
-Per `sprint-change-proposal-2026-08-19.md` (identity-stack-planning), the suite
+The suite
 gates on what is **mechanically stable** on the co-located shared runner and only
 *reports* what is not. Absolute p99/RPS on a box that shares cores between the
 generator, mock OP, and RS are contention noise, so they are never a shared-CI

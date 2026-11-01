@@ -1,6 +1,6 @@
 # IdentityServer Example for E2E Testing
 
-This directory contains the configuration for running Duende IdentityServer for end-to-end testing with the py-identity-model library.
+The [`py/examples/identity-server/`](https://github.com/jamescrowley321/identity-model/tree/main/py/examples/identity-server) directory contains the configuration for running Duende IdentityServer for end-to-end testing with the py-identity-model library.
 
 ## Files
 
@@ -8,16 +8,18 @@ This directory contains the configuration for running Duende IdentityServer for 
 - `startup.sh` - Startup script that waits for certificates before launching
 - `IdentityServer.csproj` - .NET project file with Duende IdentityServer dependencies
 - `Program.cs` - IdentityServer application bootstrap code
-- `Config.cs` - IdentityServer client and scope configuration (reads secrets from environment)
-- `appsettings.json` - IdentityServer application settings
+- `Config.cs` - Loads clients and scopes from `identityserver-config.json` (reads client secrets from environment)
+- `identityserver-config.json` - API scope and client definitions
+- `appsettings.json` - IdentityServer application settings (issuer URI)
+- `generate-certs.sh` - Helper for generating a local self-signed certificate outside Docker
 
 ## Usage
 
-**Recommended:** Use the complete test setup from the `examples/` directory which includes automatic certificate generation:
+**Recommended:** Use the complete test setup from the `py/examples/` directory which includes automatic certificate generation:
 
 ```bash
 # From project root
-cd examples
+cd py/examples
 docker compose -f docker-compose.test.yml up --build
 ```
 
@@ -32,7 +34,7 @@ This automatically:
 If you only need the Identity Server:
 
 ```bash
-cd examples
+cd py/examples
 docker compose -f docker-compose.test.yml up identityserver -d
 ```
 
@@ -45,7 +47,7 @@ The IdentityServer is configured with:
 - **HTTPS Port**: 5001 (HTTPS)
 - **HTTP Port**: 5000 (HTTP, for fallback)
 - **Discovery Endpoint**: https://localhost:5001/.well-known/openid-configuration
-- **JWKS Endpoint**: https://localhost:5001/.well-known/jwks.json
+- **JWKS Endpoint**: https://localhost:5001/.well-known/openid-configuration/jwks
 - **Token Endpoint**: https://localhost:5001/connect/token
 
 ### Clients
@@ -63,11 +65,11 @@ Two test clients are configured:
    - Scopes: `openid`, `profile`, `py-identity-model`
    - Redirect URI: `https://localhost:5002/signin-oidc`
 
-**Security:** Client secrets are read from environment variables. See `examples/.env.example` for configuration options.
+**Security:** Client secrets are read from environment variables (`CLIENT_SECRET`, `TEST_CLIENT_SECRET`), which `docker-compose.test.yml` passes through with the defaults above.
 
 ## Health Check
 
-The container includes a health check that verifies the discovery endpoint is accessible. Wait for the container to be healthy before running tests.
+The `identityserver` service in `docker-compose.test.yml` defines a health check that verifies the discovery endpoint is accessible. Wait for the container to be healthy before running tests.
 
 ## Testing
 

@@ -1,8 +1,7 @@
 # Token endpoint test fixtures
 
-Fixtures backing the `client-credentials` and `authorization-code` conformance
-suites (`spec/vectors/client-credentials.json`,
-`spec/vectors/authorization-code.json`).
+Fixtures backing the `client-credentials` conformance suite
+(`spec/vectors/client-credentials.json`).
 
 - `client-credentials-success.json` — a 200 RFC 6749 §5.1 token response
   (`access_token`, `token_type`, `expires_in`, `scope`). CC-001 asserts its

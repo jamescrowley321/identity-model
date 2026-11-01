@@ -2,7 +2,8 @@
 
 A local, reproducible [Keycloak](https://www.keycloak.org/) provider for
 `py-identity-model` integration tests. Mirrors the structure of the
-`node-oidc-provider` fixture: `docker compose up` builds an image that bakes the
+`node-oidc-provider` fixture: the `keycloak` service in
+[`../docker-compose.yml`](../docker-compose.yml) builds an image that bakes the
 committed realm export in and starts Keycloak with `--import-realm` — no manual
 console setup, everything is committed.
 
@@ -14,9 +15,9 @@ empty directory, so `--import-realm` silently imports nothing).
 ## Start / stop
 
 ```bash
-# from this directory
-docker compose up -d --build --wait   # build image, boot, block until realm is ready
-docker compose down                   # stop and remove the container
+# from the repo root
+docker compose -f infra/docker-compose.yml up -d --build --wait keycloak   # build image, boot, block until realm is ready
+docker compose -f infra/docker-compose.yml down                            # stop and remove the containers
 ```
 
 The `--wait` flag honours the healthcheck, which probes the imported realm's
@@ -51,7 +52,8 @@ pinning a key.
 
 Redirect URI for the interactive clients is `http://localhost:8080/callback`
 (matches the node-oidc fixture). Keycloak intercepts the callback with its own
-login page — the auth-code test login helper is wired in KC.3.
+login page, which the auth-code test login helper in
+`py/src/tests/integration/conftest.py` fills in.
 
 ## Test user
 
@@ -67,11 +69,11 @@ node-oidc `devInteractions`). The password matches the shared
 - **RP-initiated logout** — `end_session_endpoint` is advertised in discovery.
 - **Back-channel logout** — configured on `test-auth-code`
   (`backchannel.logout.url`, `backchannel.logout.session.required=true`) for the
-  BCL / RPL / KC.5 live tests.
+  logout live tests.
 - **Standard scopes** — `openid`, `profile`, `email` (plus Keycloak's built-in
   `roles`, `web-origins`, etc.) are auto-created on import; the realm export
   intentionally does not declare `clientScopes` so the built-in defaults are
-  preserved (see DEC-003).
+  preserved.
 - **Opaque tokens** — Keycloak emits JWTs, not opaque tokens, so the
   introspection / opaque-token integration tests **skip cleanly** (no
   `TEST_OPAQUE_CLIENT_ID` is configured for this provider).
@@ -84,9 +86,10 @@ node-oidc `devInteractions`). The password matches the shared
   `private_key_jwt` tests pin the static key registered only in the node-oidc
   fixture, so they **skip cleanly** against Keycloak.
 
-## Wiring (added in later stories)
+## Wiring
 
-This directory (KC.1) is the fixture only. The `.env.keycloak` config and the
-`make test-integration-keycloak` target are added in **KC.2**; `provider_matrix.py`
-picks the provider up automatically from `.env.*`. The full capability-gated
-suite runs in **KC.3**, and the CI job in **KC.6**.
+This directory is the fixture only. The repo-root `.env.keycloak` profile and the
+`make test-integration-keycloak` target run the Python integration suite against
+it; `py/src/tests/harness/provider_matrix.py` picks the provider up automatically
+from `.env.*`, and CI runs it in the `integration-tests-keycloak` job
+(`.github/workflows/ci.yml`).

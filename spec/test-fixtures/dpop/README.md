@@ -11,9 +11,10 @@ RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
   adds an `ath` claim, is carried by DPOP-003 `resource-proof` in
   `spec/vectors/dpop.json`.
 - `dpop-keypair-es256.json` — an EC P-256 (ES256) DPoP key pair in JWK form
-  (`public`, `private`) plus its RFC 7638 `thumbprint` (DPOP-005, DPOP-007).
+  (`public`, `private`) plus its RFC 7638 `thumbprint` (DPOP-001 to DPOP-005,
+  DPOP-008).
 - `dpop-keypair-rs256.json` — an RSA 2048-bit (RS256) DPoP key pair in JWK form
-  plus its RFC 7638 `thumbprint` (DPOP-005, DPOP-007).
+  plus its RFC 7638 `thumbprint` (DPOP-001, DPOP-005).
 - `dpop-bound-token.json` — a decoded DPoP-bound access token (RFC 9449 §6). Its
   `cnf.jkt` is the RFC 7638 thumbprint of the ES256 key pair above, binding the
   token to that key (DPOP-005). Its `token_type` is `DPoP`, which drives the
@@ -58,4 +59,5 @@ different `jti` values. The ath vector reads `dpop-ath-pairs.json`; the
 thumbprint vectors read the key-pair fixtures. The proof verification vectors
 (DPOP-006) carry their proofs inline, signed with the ES256 key pair, and may
 supply an expected `access_token` (for `ath`) and `nonce`. The decoded
-token-request proof fixture is read only by the Go `dpop` package unit tests.
+token-request proof fixture is read only by the Go `dpop` package unit tests
+and the Rust DPoP conformance tests (`rust/tests/it/conformance/dpop.rs`).
