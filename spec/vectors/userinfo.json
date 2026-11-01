@@ -364,7 +364,47 @@
           }
         }
       ]
+    },
+    {
+      "id": "UI-009",
+      "title": "Signed or encrypted UserInfo with subject validation fails closed",
+      "given": "A userinfo_endpoint that returns a signed or encrypted UserInfo response (Content-Type: application/jwt) whose unverified payload sub equals the expected subject",
+      "when": "Fetch is invoked with subject validation enabled",
+      "then": "The call fails rather than succeeding with an unchecked subject: the sub of a JWT cannot be compared until its signature is verified",
+      "references": [
+        "§5.3.2",
+        "§5.3.4"
+      ],
+      "vectors": [
+        {
+          "name": "jwt-with-expected-sub",
+          "input": {
+            "token": "the-token",
+            "expected_sub": "248289761001"
+          },
+          "http": {
+            "/userinfo": {
+              "status": 200,
+              "headers": {
+                "Content-Type": "application/jwt"
+              },
+              "body_fixture": "userinfo/signed-claims.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/userinfo",
+            "method": "GET",
+            "headers": {
+              "authorization": "Bearer the-token"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "unverifiable_sub"
+          }
+        }
+      ]
     }
   ],
-  "notes": "HTTP vectors. Each vector gives the call `input` (`token`, and `expected_sub` to enable subject validation), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). An accept may carry `claims` (standard §5.1 claims, each of which MUST be a typed field with that value) and `custom_claims` (non-standard claims, each of which MUST be reachable in the response claim map with that value). A reject carries `error: subject_mismatch`, `error: missing_sub` (a 200 response with no `sub` claim), or the HTTP `status` of the error response plus the `www_authenticate` challenge when the endpoint sent one. The custom HTTP client and timeout requirement is an API-shape contract, not data; see spec/capabilities.md."
+  "notes": "HTTP vectors. Each vector gives the call `input` (`token`, and `expected_sub` to enable subject validation), the canned `http` responses keyed by request path (`body_fixture` is relative to spec/test-fixtures/), the request the client must send (`expect_request`), and the outcome (`expect`). An accept may carry `claims` (standard §5.1 claims, each of which MUST be a typed field with that value) and `custom_claims` (non-standard claims, each of which MUST be reachable in the response claim map with that value). A reject carries `error: subject_mismatch`, `error: missing_sub` (a 200 response with no `sub` claim), `error: unverifiable_sub` (a signed or encrypted `application/jwt` response while subject validation is enabled; the client cannot verify it, so it must fail rather than compare an unverified `sub`), or the HTTP `status` of the error response plus the `www_authenticate` challenge when the endpoint sent one. The custom HTTP client and timeout requirement is an API-shape contract, not data; see spec/capabilities.md. UI-008 is retired (it was that contract) and is not reused."
 }

@@ -58,6 +58,7 @@ def _valid_logout_claims(**overrides) -> dict:
         "iss": _ISSUER,
         "aud": _AUDIENCE,
         "iat": int(time.time()),
+        "exp": int(time.time()) + 120,
         "jti": "logout-jti-1",
         "sub": "user-1",
         "events": {BACKCHANNEL_LOGOUT_EVENT: {}},
@@ -114,6 +115,19 @@ class TestAsyncValidateLogoutToken:
         )
 
         with pytest.raises(TokenExpiredException):
+            await validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_logout_token_without_exp_rejected(self, rsa_keypair):
+        # Back-Channel Logout 1.0 errata 1 §2.4 (async parity): ``exp`` is REQUIRED.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        claims = _valid_logout_claims()
+        del claims["exp"]
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(LogoutTokenValidationException, match=r"'exp'"):
             await validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
 
     @pytest.mark.asyncio

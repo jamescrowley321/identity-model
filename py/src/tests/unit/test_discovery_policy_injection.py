@@ -20,7 +20,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model.aio.http_client import get_default_async_http_client
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
 )
@@ -33,7 +33,7 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import TokenValidationException
-from py_identity_model.sync import token_validation as sync_tv
+from py_identity_model.sync.http_client import get_default_http_client
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
 )
@@ -75,6 +75,16 @@ CDN_POLICY = DiscoveryPolicy(
 # CDN-allowing policy. They MUST differ, or the cache would not be partitioned.
 STRICT_KEY = (DISCO_ADDR, DiscoveryPolicy().cache_key())
 CDN_KEY = (DISCO_ADDR, CDN_POLICY.cache_key())
+
+
+def _sync_disco_cache() -> dict:
+    """The default sync client's discovery cache (used when no client is passed)."""
+    return get_default_http_client().caches.disco
+
+
+def _async_disco_cache() -> dict:
+    """The default async client's discovery cache."""
+    return get_default_async_http_client().caches.disco
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +160,7 @@ class TestSyncDiscoveryPolicyInjection:
         )
         assert decoded2["sub"] == "user1"
         assert disco_route.call_count == 1
-        assert CDN_KEY in sync_tv._disco_cache
+        assert CDN_KEY in _sync_disco_cache()
 
     @respx.mock
     def test_default_policy_rejects_cross_host_jwks(self):
@@ -199,7 +209,7 @@ class TestSyncDiscoveryPolicyInjection:
             )["sub"]
             == "user1"
         )
-        assert CDN_KEY in sync_tv._disco_cache
+        assert CDN_KEY in _sync_disco_cache()
 
         strict = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
         with pytest.raises(TokenValidationException, match="authority"):
@@ -210,8 +220,8 @@ class TestSyncDiscoveryPolicyInjection:
             )
         # The strict caller never got the permissive entry, and its own
         # rejected (unsuccessful) response was not cached.
-        assert STRICT_KEY not in sync_tv._disco_cache
-        assert CDN_KEY in sync_tv._disco_cache
+        assert STRICT_KEY not in _sync_disco_cache()
+        assert CDN_KEY in _sync_disco_cache()
 
 
 class TestAsyncDiscoveryPolicyInjection:
@@ -239,7 +249,7 @@ class TestAsyncDiscoveryPolicyInjection:
         )
         assert decoded2["sub"] == "user1"
         assert disco_route.call_count == 1
-        assert CDN_KEY in aio_tv._disco_cache
+        assert CDN_KEY in _async_disco_cache()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -260,7 +270,7 @@ class TestAsyncDiscoveryPolicyInjection:
             disco_doc_address=DISCO_ADDR,
         )
         assert decoded["sub"] == "user1"
-        assert CDN_KEY in aio_tv._disco_cache
+        assert CDN_KEY in _async_disco_cache()
 
         strict = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
         with pytest.raises(TokenValidationException, match="authority"):
@@ -269,5 +279,5 @@ class TestAsyncDiscoveryPolicyInjection:
                 token_validation_config=strict,
                 disco_doc_address=DISCO_ADDR,
             )
-        assert STRICT_KEY not in aio_tv._disco_cache
-        assert CDN_KEY in aio_tv._disco_cache
+        assert STRICT_KEY not in _async_disco_cache()
+        assert CDN_KEY in _async_disco_cache()

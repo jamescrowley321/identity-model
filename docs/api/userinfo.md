@@ -8,6 +8,8 @@ OpenID Connect UserInfo endpoint (OIDC Core 1.0 Section 5.3).
 
 ::: py_identity_model.core.models.UserInfoResponse
 
+::: py_identity_model.core.models.UserInfoErrorKind
+
 ## Sync API
 
 ::: py_identity_model.sync.userinfo.get_userinfo

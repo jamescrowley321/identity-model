@@ -1,175 +1,69 @@
-"""Tests for SSL certificate environment variable compatibility."""
+"""Tests for TLS verification settings resolved from an injected Config."""
 
 import json
 import os
 import subprocess
 import sys
 import textwrap
-import threading
-from unittest.mock import patch
 
 import pytest
 
+from py_identity_model import Config, ConfigError
 from py_identity_model.ssl_config import get_ssl_verify
 
 
-# Expected concurrent thread result count
-EXPECTED_THREAD_RESULT_COUNT = 100
+# Environment variables the library used to read for its CA bundle. They must
+# now have no effect on the library's own TLS settings.
+LEGACY_CA_BUNDLE_ENV_VARS = ("SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE")
 
 
-@pytest.fixture(autouse=True)
-def clear_ssl_cache():
-    """Clear get_ssl_verify cache before and after each test."""
-    get_ssl_verify.cache_clear()
-    yield
-    get_ssl_verify.cache_clear()
+@pytest.fixture
+def ca_bundle(tmp_path) -> str:
+    """A readable file usable as Config.ca_bundle."""
+    path = tmp_path / "ca-bundle.crt"
+    path.write_text("placeholder CA bundle\n")
+    return str(path)
 
 
 class TestGetSSLVerify:
-    """Test get_ssl_verify() function for httpx integration."""
+    """Test get_ssl_verify(config) for httpx integration."""
 
-    def test_get_ssl_verify_with_ssl_cert_file(self):
-        """Test that get_ssl_verify returns SSL_CERT_FILE path when set."""
-        with patch.dict(
-            os.environ,
-            {"SSL_CERT_FILE": "/path/to/cert.crt"},
-            clear=True,
-        ):
-            # Clear cache to ensure fresh read
-            get_ssl_verify.cache_clear()
-            result = get_ssl_verify()
-            assert result == "/path/to/cert.crt"
-
-    def test_get_ssl_verify_with_curl_ca_bundle(self):
-        """Test that get_ssl_verify returns CURL_CA_BUNDLE when SSL_CERT_FILE not set."""
-        with patch.dict(
-            os.environ,
-            {"CURL_CA_BUNDLE": "/path/to/curl-bundle.crt"},
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            result = get_ssl_verify()
-            assert result == "/path/to/curl-bundle.crt"
-
-    def test_get_ssl_verify_with_requests_ca_bundle(self):
-        """Test backward compatibility: get_ssl_verify returns REQUESTS_CA_BUNDLE."""
-        with patch.dict(
-            os.environ,
-            {"REQUESTS_CA_BUNDLE": "/path/to/requests-bundle.crt"},
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            result = get_ssl_verify()
-            assert result == "/path/to/requests-bundle.crt"
-
-    def test_get_ssl_verify_priority_order(self):
-        """Test that get_ssl_verify respects priority: SSL_CERT_FILE > CURL_CA_BUNDLE > REQUESTS_CA_BUNDLE."""
-        # Test SSL_CERT_FILE wins
-        with patch.dict(
-            os.environ,
-            {
-                "SSL_CERT_FILE": "/ssl/cert.crt",
-                "CURL_CA_BUNDLE": "/curl/bundle.crt",
-                "REQUESTS_CA_BUNDLE": "/requests/bundle.crt",
-            },
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            assert get_ssl_verify() == "/ssl/cert.crt"
-
-        # Test CURL_CA_BUNDLE wins when SSL_CERT_FILE not set
-        with patch.dict(
-            os.environ,
-            {
-                "CURL_CA_BUNDLE": "/curl/bundle.crt",
-                "REQUESTS_CA_BUNDLE": "/requests/bundle.crt",
-            },
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            assert get_ssl_verify() == "/curl/bundle.crt"
+    def test_get_ssl_verify_returns_config_ca_bundle(self, ca_bundle):
+        """Test that get_ssl_verify returns Config.ca_bundle when set."""
+        assert get_ssl_verify(Config(ca_bundle=ca_bundle)) == ca_bundle
 
     def test_get_ssl_verify_default_true(self):
-        """Test that get_ssl_verify returns True when no env vars are set."""
-        with patch.dict(os.environ, {}, clear=True):
-            get_ssl_verify.cache_clear()
-            result = get_ssl_verify()
-            assert result is True
+        """Test that get_ssl_verify returns True when no CA bundle is configured."""
+        assert get_ssl_verify(Config()) is True
 
-    def test_get_ssl_verify_ignores_empty_strings(self):
-        """Test that get_ssl_verify ignores empty string env vars."""
-        with patch.dict(
-            os.environ,
-            {
-                "SSL_CERT_FILE": "",
-                "CURL_CA_BUNDLE": "",
-                "REQUESTS_CA_BUNDLE": "",
-            },
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            result = get_ssl_verify()
-            assert result is True
+    def test_empty_ca_bundle_is_rejected(self):
+        """Test that an empty CA bundle path is an invalid Config, not 'unset'."""
+        with pytest.raises(ConfigError) as exc_info:
+            Config(ca_bundle="")
 
-    def test_get_ssl_verify_thread_safety(self):
-        """Test that get_ssl_verify is thread-safe under concurrent access."""
-        with patch.dict(
-            os.environ,
-            {"REQUESTS_CA_BUNDLE": "/path/to/bundle.crt"},
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            results = []
-            errors = []
+        assert [issue.setting for issue in exc_info.value.issues] == ["ca_bundle"]
 
-            def get_ssl():
-                try:
-                    results.append(get_ssl_verify())
-                except Exception as e:
-                    errors.append(e)
+    @pytest.mark.parametrize("env_var", LEGACY_CA_BUNDLE_ENV_VARS)
+    def test_get_ssl_verify_ignores_ca_bundle_env_vars(
+        self, monkeypatch, ca_bundle, env_var
+    ):
+        """Regression: the legacy CA-bundle env vars are not read by the library."""
+        for name in LEGACY_CA_BUNDLE_ENV_VARS:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(env_var, ca_bundle)
 
-            # Create 100 threads that all call get_ssl_verify concurrently
-            threads = [threading.Thread(target=get_ssl) for _ in range(100)]
+        assert get_ssl_verify(Config()) is True
 
-            # Start all threads
-            for t in threads:
-                t.start()
+    def test_get_ssl_verify_prefers_config_over_env_vars(
+        self, monkeypatch, ca_bundle, tmp_path
+    ):
+        """Test that Config.ca_bundle is used even when legacy env vars are set."""
+        env_bundle = tmp_path / "env-bundle.crt"
+        env_bundle.write_text("other CA bundle\n")
+        for name in LEGACY_CA_BUNDLE_ENV_VARS:
+            monkeypatch.setenv(name, str(env_bundle))
 
-            # Wait for all threads to complete
-            for t in threads:
-                t.join()
-
-            # Verify no errors occurred
-            assert len(errors) == 0, f"Errors occurred: {errors}"
-
-            # All threads should get the same result
-            assert len(results) == EXPECTED_THREAD_RESULT_COUNT
-            assert all(r == "/path/to/bundle.crt" for r in results)
-
-    def test_get_ssl_verify_caching(self):
-        """Test that get_ssl_verify properly caches results."""
-        with patch.dict(
-            os.environ,
-            {"SSL_CERT_FILE": "/first/cert.crt"},
-            clear=True,
-        ):
-            get_ssl_verify.cache_clear()
-            first_result = get_ssl_verify()
-            assert first_result == "/first/cert.crt"
-
-        # Change environment variable
-        with patch.dict(
-            os.environ,
-            {"SSL_CERT_FILE": "/second/cert.crt"},
-            clear=True,
-        ):
-            # Without clearing cache, should still return cached value
-            # (this tests that caching is working - result should be cached first value)
-
-            # Clear cache and verify new value is picked up
-            get_ssl_verify.cache_clear()
-            new_result = get_ssl_verify()
-            assert new_result == "/second/cert.crt"
+        assert get_ssl_verify(Config(ca_bundle=ca_bundle)) == ca_bundle
 
 
 class TestImportHasNoEnvironmentSideEffect:
