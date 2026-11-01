@@ -12,36 +12,30 @@ Pre-releases allow you to:
 
 ## Pre-release Workflow
 
-### 1. Create a Pre-release Tag
+### 1. Open a Pull Request
 
-Pre-release tags follow semantic versioning with pre-release identifiers:
+Pre-releases are created automatically for every pull request against `main`
+(from a branch in this repository — fork PRs are skipped). No manual tagging is
+needed.
 
-```bash
-# Release candidate (recommended for final testing)
-git tag 2.0.0-rc.1
-git push origin 2.0.0-rc.1
+The pre-release version is derived from the latest stable `py-v*` tag and the
+conventional commits in the PR (`feat` → minor, `fix`/`perf` → patch, `!` →
+major), with the PR number and short commit SHA appended:
 
-# Alpha release (early testing, unstable)
-git tag 2.0.0-alpha.1
-git push origin 2.0.0-alpha.1
-
-# Beta release (feature complete, needs testing)
-git tag 2.0.0-beta.1
-git push origin 2.0.0-beta.1
+```
+X.Y.Z-rc.<PR number>.<short sha>     # e.g. 4.2.0-rc.123.abc1234
 ```
 
-**Tag Format:**
-- `X.Y.Z-rc.N` - Release candidate
-- `X.Y.Z-alpha.N` - Alpha version
-- `X.Y.Z-beta.N` - Beta version
+Each new push to the PR replaces that PR's previous pre-release.
 
 ### 2. Automatic Publishing to GitHub Releases
 
-When you push a pre-release tag, GitHub Actions automatically:
-1. Builds the distribution packages (wheel and source distribution)
-2. Creates a GitHub pre-release
-3. Attaches the distribution files as release assets
-4. Provides installation instructions in the release notes
+On each PR push, GitHub Actions automatically:
+1. Runs the CI suite (including Descope integration and example tests)
+2. Builds the distribution packages (wheel and source distribution)
+3. Creates a GitHub pre-release tagged with the generated version
+4. Attaches the distribution files as release assets
+5. Posts installation instructions in the release notes and as a PR comment
 
 **Workflow file:** `.github/workflows/publish-prerelease.yml`
 
@@ -56,26 +50,28 @@ Once published, you have several options for installing the pre-release:
 
 **Option 1: Install from GitHub Release (Recommended)**
 
-This installs the pre-built wheel directly from the GitHub release:
+This installs the pre-built wheel directly from the GitHub release. Copy the
+exact command from the PR comment or release notes; the shape is:
 
 ```bash
 # Using pip
-pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
+pip install https://github.com/jamescrowley321/identity-model/releases/download/<version>/<wheel filename>
 
 # Using uv
-uv pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
+uv pip install https://github.com/jamescrowley321/identity-model/releases/download/<version>/<wheel filename>
 ```
 
-**Option 2: Install from Git Tag**
+**Option 2: Install from the PR Branch**
 
-This builds the package from source at the specified tag:
+This builds the package from source. The Python package lives in the `py/`
+subdirectory of the repository:
 
 ```bash
 # Using pip
-pip install git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
+pip install "git+https://github.com/jamescrowley321/identity-model.git@<branch>#subdirectory=py"
 
 # Using uv
-uv pip install git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
+uv pip install "git+https://github.com/jamescrowley321/identity-model.git@<branch>#subdirectory=py"
 ```
 
 **Option 3: Install in Editable Mode for Development**
@@ -84,9 +80,9 @@ For active development and testing:
 
 ```bash
 git clone https://github.com/jamescrowley321/identity-model.git
-cd py-identity-model
-git checkout 2.0.0-rc.1
-pip install -e .
+cd identity-model
+git checkout <branch>
+pip install -e py
 ```
 
 **Finding the Wheel URL:**
@@ -94,7 +90,7 @@ pip install -e .
 1. Go to the [Releases page](https://github.com/jamescrowley321/identity-model/releases)
 2. Find the pre-release version
 3. Copy the link to the `.whl` file from the Assets section
-4. The release notes will also include the exact installation command
+4. The release notes (and the PR comment) also include the exact installation command
 
 ### 4. Testing in a Clean Environment
 
@@ -106,10 +102,10 @@ python -m venv test-env
 source test-env/bin/activate  # On Windows: test-env\Scripts\activate
 
 # Install the pre-release (Option 1 - from GitHub release)
-pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
+pip install https://github.com/jamescrowley321/identity-model/releases/download/<version>/<wheel filename>
 
-# Or Option 2 - from git tag
-pip install git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
+# Or Option 2 - from the PR branch
+pip install "git+https://github.com/jamescrowley321/identity-model.git@<branch>#subdirectory=py"
 
 # Run your tests
 python your_test_script.py
@@ -124,10 +120,10 @@ To test in an existing application:
 cd /path/to/your/app
 
 # Install pre-release (Option 1 - from GitHub release)
-pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
+pip install https://github.com/jamescrowley321/identity-model/releases/download/<version>/<wheel filename>
 
-# Or Option 2 - from git tag
-pip install git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
+# Or Option 2 - from the PR branch
+pip install "git+https://github.com/jamescrowley321/identity-model.git@<branch>#subdirectory=py"
 
 # Test your application
 pytest
@@ -142,7 +138,7 @@ pip install --force-reinstall py-identity-model
 
 ## Pre-release Checklist
 
-Before creating a pre-release:
+Before opening (or marking ready) the PR that produces a pre-release:
 
 - [ ] All tests passing locally (`make test-unit`, `make test-integration-ory`)
 - [ ] CHANGELOG updated with new features and breaking changes
@@ -179,19 +175,16 @@ If you get a 404 error when installing from GitHub:
 
 # Check the exact wheel filename in the release assets
 # The filename format is: py_identity_model-{version}-py3-none-any.whl
-# Note: Version may have dashes converted (e.g., 2.0.0-rc.1 becomes 2.0.0rc1)
-
-# Correct example:
-pip install https://github.com/jamescrowley321/identity-model/releases/download/2.0.0-rc.1/py_identity_model-2.0.0rc1-py3-none-any.whl
+# The release tag and the wheel's version can differ in spelling, so copy
+# the wheel link from the release assets (or the PR comment) rather than
+# building the URL by hand.
 ```
 
 ### Version Already Exists
 
-To create a new pre-release, increment the pre-release number:
-- `2.0.0-rc.1` → `2.0.0-rc.2`
-- `2.0.0-alpha.1` → `2.0.0-alpha.2`
-
-GitHub Releases can be deleted if needed, but it's better to create new versions.
+Pre-release versions include the PR number and commit SHA, and the workflow
+deletes the PR's previous pre-release before creating a new one, so pushing a
+new commit to the PR is enough to get a fresh pre-release.
 
 ### Git Install Fails
 
@@ -202,7 +195,7 @@ If installing from git tag fails:
 git --version
 
 # Try with verbose output to see the error
-pip install -v git+https://github.com/jamescrowley321/identity-model.git@2.0.0-rc.1
+pip install -v "git+https://github.com/jamescrowley321/identity-model.git@<branch>#subdirectory=py"
 
 # Alternative: Install from the wheel URL instead
 ```
@@ -211,21 +204,17 @@ pip install -v git+https://github.com/jamescrowley321/identity-model.git@2.0.0-r
 
 Once testing is complete:
 
-1. **Create a stable release tag:**
-   ```bash
-   git tag 2.0.0
-   git push origin 2.0.0
-   ```
+1. **Merge the PR into `main`.** Stable versions are not tagged by hand.
 
-2. **GitHub Actions will automatically:**
-   - Run all tests
-   - Build distribution
-   - Publish to PyPI (not TestPyPI)
-   - Create GitHub release
+2. **GitHub Actions will automatically** (`.github/workflows/release.yml`):
+   - Run the CI suite and the OIDF conformance regression
+   - Run `python-semantic-release`, which bumps the version from the
+     conventional commits, updates the CHANGELOG, pushes a `py-v{version}` tag
+     and creates the GitHub release with the built distribution attached
 
-3. **Update CHANGELOG:**
-   - Move "Unreleased" section to versioned release
-   - Add release date
+3. **The `py-v{version}` tag triggers `.github/workflows/publish-dist.yml`**,
+   which builds the distribution and publishes it to PyPI (not TestPyPI) via
+   trusted publishing.
 
 ## Examples
 
@@ -265,7 +254,7 @@ def validate_token_wrapper(token):
     return validate_token(
         jwt=token,
         token_validation_config=config,
-        disco_doc_address="https://auth.example.com"
+        disco_doc_address="https://auth.example.com/.well-known/openid-configuration"
     )
 
 # Test with 50 concurrent threads
