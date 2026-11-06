@@ -15,6 +15,9 @@
 
 2. **Required Metadata Parameters** (Section 3 Compliance):
    - ✅ `issuer` parameter validation enforced (required per Section 3)
+   - ✅ `authorization_endpoint` parameter validation enforced (required per Section 3)
+   - ✅ `token_endpoint` parameter validation enforced (required per Section 3 unless only the Implicit Flow is used; always required by library policy)
+   - ✅ `jwks_uri` parameter validation enforced (required per Section 3; no policy setting relaxes it)
    - ✅ `response_types_supported` parameter validation enforced (required per Section 3)
    - ✅ `subject_types_supported` parameter validation enforced (required per Section 3)
    - ✅ `id_token_signing_alg_values_supported` parameter validation enforced (required per Section 3)
@@ -57,9 +60,9 @@
 ### ✅ Previously Non-Compliant Issues - Now Fixed
 
 1. **Required Parameter Validation** ✅ **RESOLVED**:
-   - ✅ All required parameters (`issuer`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported`) are now validated
+   - ✅ All required parameters (`issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported`) are now validated
    - ✅ Missing parameter detection with detailed error messages
-   - ✅ Null value validation for required parameters
+   - ✅ Null, empty-string and empty-array values count as missing
 
 2. **Issuer Validation** ✅ **RESOLVED**:
    - ✅ HTTPS URL format validation implemented
@@ -100,7 +103,7 @@
 ### 📊 Implementation Coverage Assessment
 
 **Core Requirements**: ✅ **Implemented**
-- ✅ Required parameter validation (issuer, response_types_supported, subject_types_supported, id_token_signing_alg_values_supported)
+- ✅ Required parameter validation (all seven Section 3 fields)
 - ✅ Issuer format validation (HTTPS, no query/fragment)
 - ✅ HTTP response handling with proper error codes
 - ✅ JSON content-type validation

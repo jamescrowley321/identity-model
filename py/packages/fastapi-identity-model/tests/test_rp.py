@@ -15,7 +15,12 @@ from fastapi_identity_model import (
     oidc_public_paths,
     rp,
 )
-from py_identity_model import AuthorizeCallbackException, TokenValidationException
+from py_identity_model import (
+    AuthorizeCallbackException,
+    TokenValidationException,
+    UserInfoResponse,
+)
+from py_identity_model.core.response_processors import parse_userinfo_response
 
 
 pytestmark = pytest.mark.unit
@@ -60,7 +65,7 @@ def _patch(monkeypatch, *, disco=_DISCO, token=None, claims=None, userinfo=None)
         rp,
         "get_userinfo",
         AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=UserInfoResponse(
                 is_successful=True,
                 claims=userinfo
                 if userinfo is not None
@@ -338,8 +343,8 @@ async def test_callback_userinfo_failure_is_tolerated(monkeypatch):
     async with _client(_app()) as client:
         state, nonce = await _login(client)
         rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
-        rp.get_userinfo.return_value = SimpleNamespace(
-            is_successful=False, claims=None, error="unreachable"
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False, error="unreachable"
         )
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
         assert resp.status_code == 302
@@ -353,12 +358,33 @@ async def test_callback_userinfo_sub_mismatch_aborts(monkeypatch):
     async with _client(_app()) as client:
         state, nonce = await _login(client)
         rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
-        rp.get_userinfo.return_value = SimpleNamespace(
-            is_successful=True, claims={"sub": "someone-else"}, error=None
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=True, claims={"sub": "someone-else"}
         )
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
     assert "subject" in resp.json()["detail"].lower()
+
+
+async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
+    # A 200 UserInfo body with no sub (OIDC Core 5.3.2) is an identity
+    # failure, not a transient one: the login must fail and keep no tokens.
+    _patch(monkeypatch)
+    async with _client(_app(store_tokens=True)) as client:
+        state, nonce = await _login(client)
+        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = parse_userinfo_response(
+            httpx.Response(
+                200,
+                json={"email": "u@e"},
+                headers={"Content-Type": "application/json"},
+            )
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+        me = (await client.get("/me")).json()
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "UserInfo response has no subject"
+    assert me == {}
 
 
 async def test_callback_missing_id_token_rejected(monkeypatch):

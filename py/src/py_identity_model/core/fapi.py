@@ -32,6 +32,14 @@ FAPI2_REQUIRED_PKCE_METHOD = "S256"
 FAPI2_REQUIRED_RESPONSE_TYPE = "code"
 
 
+def _required_metadata_missing(name: str) -> str:
+    """Violation text for an absent REQUIRED OIDC Discovery 1.0 §3 field."""
+    return (
+        f"{name} not advertised; "
+        "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+    )
+
+
 @dataclass
 class FAPIValidationResult:
     """Result of a FAPI 2.0 compliance check.
@@ -145,8 +153,10 @@ def validate_fapi_discovery(
     """Validate a discovery document for FAPI 2.0 server support.
 
     Checks that the authorization server advertises capabilities
-    required by FAPI 2.0.  When optional metadata fields are absent,
-    RFC 8414 §2 and OIDC Discovery §3 defaults are assumed.
+    required by FAPI 2.0.  Absent REQUIRED metadata
+    (``response_types_supported``, ``id_token_signing_alg_values_supported``,
+    OIDC Discovery 1.0 §3) is a violation.  Absent OPTIONAL metadata takes
+    its OIDC Discovery 1.0 §3 / RFC 8414 §2 default.
 
     Args:
         discovery: A discovery document response.
@@ -162,15 +172,19 @@ def validate_fapi_discovery(
     violations: list[str] = []
 
     # Check supported grant types include authorization_code.
-    # RFC 8414 §2 default when omitted is ["authorization_code"] — compliant.
+    # OPTIONAL; OIDC Discovery 1.0 §3 and RFC 8414 §2 default when omitted is
+    # ["authorization_code", "implicit"] — compliant.
     grants = discovery.grant_types_supported
     if grants is not None and "authorization_code" not in grants:
         violations.append("Server does not support authorization_code grant type")
 
     # Check response_types_supported includes "code" (authorization code flow).
-    # OIDC Discovery §3 default when omitted is ["code"] — compliant.
+    # REQUIRED by OIDC Discovery 1.0 §3, no default.  (The ["code"] default
+    # belongs to Registration §2 client metadata, not provider metadata.)
     response_types = discovery.response_types_supported
-    if response_types is not None and "code" not in response_types:
+    if response_types is None:
+        violations.append(_required_metadata_missing("response_types_supported"))
+    elif "code" not in response_types:
         violations.append(
             "Server does not support 'code' response type "
             "(authorization code flow required)"
@@ -193,12 +207,12 @@ def validate_fapi_discovery(
             )
 
     # Check signing algorithms.
-    # OIDC Discovery §3 default when omitted is ["RS256"] — FAPI-prohibited.
+    # REQUIRED by OIDC Discovery 1.0 §3, no default.  (The RS256 default
+    # belongs to Registration §2 client metadata, not provider metadata.)
     algs = discovery.id_token_signing_alg_values_supported
     if algs is None:
         violations.append(
-            "id_token_signing_alg_values_supported not advertised; "
-            "OIDC Discovery default is RS256, which FAPI 2.0 prohibits"
+            _required_metadata_missing("id_token_signing_alg_values_supported")
         )
     else:
         fapi_algs = set(algs) & FAPI2_ALLOWED_SIGNING_ALGORITHMS

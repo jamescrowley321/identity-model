@@ -16,7 +16,10 @@ from py_identity_model.core.parsers import (
     get_public_key_from_jwk,
     jwks_from_dict,
 )
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    AmbiguousKeyException,
+    TokenValidationException,
+)
 
 
 class TestFindKeyByKid:
@@ -95,12 +98,29 @@ class TestFindKeyByKid:
             JsonWebKey(kty="RSA", kid="key2", alg="RS384", n="ghi", e="jkl"),
         ]
 
-        with pytest.raises(TokenValidationException) as exc_info:
+        with pytest.raises(AmbiguousKeyException) as exc_info:
             find_key_by_kid(None, keys)
 
         error_msg = str(exc_info.value)
         assert "no kid header" in error_msg.lower()
         assert "multiple signing keys" in error_msg.lower()
+        assert exc_info.value.details == {
+            "available_kids": ["key1", "key2"],
+            "key_count": 2,
+        }
+
+    def test_find_key_by_kid_unknown_kid_is_not_ambiguous(self):
+        """A kid that matches no key is key-not-found, not an ambiguous key."""
+        keys = [
+            JsonWebKey(kty="RSA", kid="key1", alg="RS256", n="abc", e="def"),
+            JsonWebKey(kty="RSA", kid="key2", alg="RS256", n="ghi", e="jkl"),
+        ]
+
+        with pytest.raises(TokenValidationException) as exc_info:
+            find_key_by_kid("unknown", keys)
+
+        assert not isinstance(exc_info.value, AmbiguousKeyException)
+        assert "No matching kid found" in str(exc_info.value)
 
     def test_find_key_by_kid_none_kid_filters_signing_keys(self):
         """When JWT has no kid, filter to use=sig keys and use single match."""
@@ -359,7 +379,7 @@ class TestGetPublicKeyFromJwk:
             JsonWebKey(kty="RSA", kid="key2", alg="RS256", n="ghi", e="jkl"),
         ]
 
-        with pytest.raises(TokenValidationException) as exc_info:
+        with pytest.raises(AmbiguousKeyException) as exc_info:
             get_public_key_from_jwk(jwt, keys)
 
         error_msg = str(exc_info.value)

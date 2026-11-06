@@ -1,15 +1,15 @@
 {
   "capability": "id-token",
-  "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.3.2.11",
+  "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.2.2.10, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, and the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_mismatch, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped.",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`, and the `access_token_issued_with_id_token`/`code_issued_with_id_token` switches \u2014 absent means true), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, missing_aud, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_missing, at_hash_mismatch, c_hash_missing, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512, EdDSA\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_conformance.py), Go (go/internal/conformance/idtoken_conformance_test.go) and Rust (rust/tests/it/conformance/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then a missing aud (IDT-013), then untrusted audiences (\u00a73.1.3.7 step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored. at_hash/c_hash presence is required per bound value. A supplied access token or code is taken to have come back in the same authorization response as the ID Token (\u00a73.2.2.10, \u00a73.3.2.11: `id_token token`, `code id_token`, `code id_token token`) unless the caller sets its switch (`access_token_issued_with_id_token`/`code_issued_with_id_token`) to false, so by default an absent claim rejects (`at_hash_missing`/`c_hash_missing`). With the switch false \u2014 e.g. an ID Token from the token endpoint, where at_hash is OPTIONAL (\u00a73.1.3.6, \u00a73.3.3.6) \u2014 an absent claim is accepted and a present one must still match (`*_mismatch`). Absent means the claim key is missing; the presence check runs before the hash is computed, and a switch without its access_token/code has no effect.",
   "tests": [
     {
       "id": "IDT-001",
       "title": "Valid baseline ID Token",
       "given": "A decoded ID Token carrying a non-empty sub and a single audience equal to the client_id",
       "when": "The ID-Token profile rules are applied",
-      "then": "Validation succeeds \u2014 sub present, no azp required for a single audience, no optional bindings requested",
+      "then": "Validation succeeds \u2014 sub present, the single audience is the client_id, no optional checks requested",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -88,10 +88,10 @@
     },
     {
       "id": "IDT-003",
-      "title": "Authorized-party (azp) rules for single vs multiple audiences",
-      "given": "A decoded ID Token whose aud is a single value or a list, with or without azp",
+      "title": "Authorized-party (azp) rules for multiple audiences are opt-in",
+      "given": "A decoded ID Token whose aud is a single value or a list (every additional audience trusted by the client), with or without azp, and the caller's validate_azp switch",
       "when": "The ID-Token profile rules are applied",
-      "then": "A single audience needs no azp; multiple audiences REQUIRE an azp that identifies this client (\u00a73.1.3.7 steps 4-6)",
+      "then": "By default azp is ignored (\u00a72). With validate_azp, multiple audiences require an azp (Core 1.0 (2014) \u00a73.1.3.7 step 4 SHOULD, removed in errata set 2) and a present azp must identify this client (errata 2 step 5 MAY/SHOULD)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
@@ -135,7 +135,7 @@
           }
         },
         {
-          "name": "multiple audiences, azp absent",
+          "name": "multiple audiences, azp absent, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -149,6 +149,34 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "multiple audiences, azp absent, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
@@ -158,7 +186,7 @@
           }
         },
         {
-          "name": "multiple audiences, azp is a different client",
+          "name": "multiple audiences, azp is a different client, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -173,6 +201,35 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "multiple audiences, azp is a different client, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "other-client-9x",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
@@ -182,7 +239,7 @@
           }
         },
         {
-          "name": "multiple audiences, azp identifies this client",
+          "name": "multiple audiences, azp identifies this client, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -197,6 +254,56 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "multiple audiences, azp identifies this client, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-element aud list, no azp, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
@@ -207,16 +314,16 @@
     },
     {
       "id": "IDT-004",
-      "title": "azp is validated when present even for a single audience",
-      "given": "A decoded ID Token carrying an azp claim alongside a single audience",
+      "title": "A present azp is compared with the client_id only when azp validation is on",
+      "given": "A decoded ID Token carrying an azp claim alongside a single audience equal to the client_id, and the caller's validate_azp switch",
       "when": "The ID-Token profile rules are applied",
-      "then": "When present, azp MUST equal the configured client_id (\u00a73.1.3.7 step 6)",
+      "then": "By default azp is ignored, so a cross-client token (aud is this client, azp is the presenting client) is accepted. With validate_azp, a present azp must equal the client_id (errata 2 \u00a73.1.3.7 step 5)",
       "references": [
         "OIDC Core 1.0 \u00a73.1.3.7"
       ],
       "vectors": [
         {
-          "name": "azp present and equals client_id",
+          "name": "azp present and equals client_id, azp validation off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -235,7 +342,68 @@
           }
         },
         {
-          "name": "azp present but does not match client_id",
+          "name": "azp present and equals client_id, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "cross-client azp (Google Android-to-backend), azp validation off",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "android-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "cross-client azp (Google Android-to-backend), azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "android-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "azp_mismatch"
+          }
+        },
+        {
+          "name": "azp present but does not match client_id, azp validation explicitly off",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -247,12 +415,74 @@
             },
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
+            "validate_azp": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "azp present but does not match client_id, azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "azp": "impostor-client",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
             "now": 1700000000
           },
           "expect": {
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "azp_mismatch"
+          }
+        },
+        {
+          "name": "Cognito-shaped ID token (single aud, no azp), azp validation off",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "token_use": "id",
+              "cognito:username": "jdoe",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "Cognito-shaped ID token (single aud, no azp), azp validation on",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "token_use": "id",
+              "cognito:username": "jdoe",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
           }
         }
       ]
@@ -431,10 +661,12 @@
     {
       "id": "IDT-007",
       "title": "at_hash binding under RS256 (SHA-256)",
-      "given": "A decoded ID Token and the access token from the same response",
+      "given": "A decoded ID Token and an access token, either returned in the same authorization response as the ID Token or not",
       "when": "The ID-Token profile rules are applied with the access token set",
-      "then": "at_hash MUST equal the base64url left-half SHA-256 of the access token (\u00a73.3.2.11)",
+      "then": "A present at_hash MUST equal the base64url left-half SHA-256 of the access token (\u00a73.3.2.11); an absent at_hash rejects only when the access token was issued with the ID Token (\u00a73.2.2.10, \u00a73.3.2.11), and is accepted otherwise (\u00a73.1.3.6)",
       "references": [
+        "OIDC Core 1.0 \u00a73.1.3.6",
+        "OIDC Core 1.0 \u00a73.2.2.10",
         "OIDC Core 1.0 \u00a73.3.2.11"
       ],
       "vectors": [
@@ -459,7 +691,7 @@
           }
         },
         {
-          "name": "at_hash does not match the access token",
+          "name": "access token not issued with the ID Token, at_hash does not match",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -472,6 +704,7 @@
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
             "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": false,
             "now": 1700000000
           },
           "expect": {
@@ -481,7 +714,7 @@
           }
         },
         {
-          "name": "access token supplied but at_hash absent",
+          "name": "access token not issued with the ID Token, at_hash absent",
           "input": {
             "claims": {
               "iss": "https://op.example.com",
@@ -493,6 +726,115 @@
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
             "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "access token issued with the ID Token, at_hash absent",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "at_hash_missing"
+          }
+        },
+        {
+          "name": "access token supplied without the issued-with switch (default), at_hash absent",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "at_hash_missing"
+          }
+        },
+        {
+          "name": "access token issued with the ID Token, at_hash matches",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "at_hash": "T7VF8gELfbwjUBkK04GEhg",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "access token issued with the ID Token, at_hash does not match",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "at_hash": "DyAleB7ctGQvU9M3DbMBYQ",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "at_hash_mismatch"
+          }
+        },
+        {
+          "name": "access token not issued with the ID Token, at_hash present but null",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "at_hash": null,
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": false,
             "now": 1700000000
           },
           "expect": {
@@ -524,10 +866,10 @@
     },
     {
       "id": "IDT-008",
-      "title": "at_hash binding under ES512 (SHA-512) \u2014 algorithm selects the hash",
-      "given": "A decoded ID Token whose header alg is ES512 and the access token from the same response",
+      "title": "at_hash binding under ES512 and EdDSA (SHA-512) \u2014 algorithm selects the hash",
+      "given": "A decoded ID Token whose header alg is ES512 or EdDSA and the access token from the same response",
       "when": "The ID-Token profile rules are applied with the access token set",
-      "then": "at_hash MUST equal the base64url left-half SHA-512 of the access token; an SHA-256-sized at_hash under ES512 fails closed (\u00a73.3.2.11)",
+      "then": "at_hash MUST equal the base64url left-half SHA-512 of the access token (EdDSA uses SHA-512, as for Ed25519); an SHA-256-sized at_hash under ES512 or EdDSA fails closed (\u00a73.3.2.11)",
       "references": [
         "OIDC Core 1.0 \u00a73.3.2.11"
       ],
@@ -573,15 +915,57 @@
             "error": "id_token_profile",
             "reason": "at_hash_mismatch"
           }
+        },
+        {
+          "name": "EdDSA at_hash (SHA-512) matches the access token",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "at_hash": "ov_FheqjsnLUN_mRXMDvNAmUaHq027H47oTxVIMji90",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "EdDSA",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "ZWQyNTUxOS1lZGRzYS1hY2Nlc3MtdG9rZW4tZXhhbXBsZQ",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "SHA-256-sized at_hash rejected under an EdDSA header",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "at_hash": "IoSi0aBac90f360Z8dJISA",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "EdDSA",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "ZWQyNTUxOS1lZGRzYS1hY2Nlc3MtdG9rZW4tZXhhbXBsZQ",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "at_hash_mismatch"
+          }
         }
       ]
     },
     {
       "id": "IDT-009",
       "title": "c_hash binding under RS256 (SHA-256)",
-      "given": "A decoded ID Token and the authorization code from the same response",
+      "given": "A decoded ID Token and an authorization code, either returned in the same authorization response as the ID Token or not",
       "when": "The ID-Token profile rules are applied with the code set",
-      "then": "c_hash MUST equal the base64url left-half SHA-256 of the code (\u00a73.3.2.11)",
+      "then": "A present c_hash MUST equal the base64url left-half SHA-256 of the code (\u00a73.3.2.11); an absent c_hash rejects only when the code was issued with the ID Token (\u00a73.3.2.11), and is accepted otherwise",
       "references": [
         "OIDC Core 1.0 \u00a73.3.2.11"
       ],
@@ -620,6 +1004,136 @@
             "header_alg": "RS256",
             "client_id": "s6BhdRkqt3",
             "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_mismatch"
+          }
+        },
+        {
+          "name": "code not issued with the ID Token, c_hash absent",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "code not issued with the ID Token, c_hash does not match",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "c_hash": "DyAleB7ctGQvU9M3DbMBYQ",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_mismatch"
+          }
+        },
+        {
+          "name": "code issued with the ID Token, c_hash absent",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_missing"
+          }
+        },
+        {
+          "name": "code supplied without the issued-with switch (default), c_hash absent",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "c_hash_missing"
+          }
+        },
+        {
+          "name": "code issued with the ID Token, c_hash matches",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "c_hash": "LDktKdoQak3Pk0cnXxCltA",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "code issued with the ID Token, c_hash does not match",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "c_hash": "DyAleB7ctGQvU9M3DbMBYQ",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "code": "Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk",
+            "code_issued_with_id_token": true,
             "now": 1700000000
           },
           "expect": {
@@ -755,6 +1269,382 @@
             "outcome": "reject",
             "error": "id_token_profile",
             "reason": "unsupported_alg"
+          }
+        },
+        {
+          "name": "unknown alg, at_hash absent and not required, so no hash is computed",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "UNKNOWN",
+            "client_id": "s6BhdRkqt3",
+            "access_token": "jHkWEdUXMU1BwAsC4vtUsZwnNvTIxEl0z9K3vx5KntU",
+            "access_token_issued_with_id_token": false,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
+    },
+    {
+      "id": "IDT-012",
+      "title": "Additional audiences not trusted by the client are rejected",
+      "given": "A decoded ID Token whose aud carries values other than the client_id, and the caller's list of additional audiences it trusts",
+      "when": "The ID-Token profile rules are applied",
+      "then": "Every aud value MUST be the client_id or a trusted audience; any other value rejects the token (\u00a73.1.3.7 step 3). The trusted list only adds trusted values, it cannot switch the check off, and a single audience equal to the client_id is unaffected",
+      "references": [
+        "OIDC Core 1.0 \u00a73.1.3.7"
+      ],
+      "vectors": [
+        {
+          "name": "second audience not trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "second audience not trusted, empty trusted list",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "second audience listed as trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "one of two additional audiences not trusted",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x",
+                "unknown-api-7q"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "untrusted audience rejected before the azp rule",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3",
+                "other-client-9x"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "validate_azp": true,
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "aud lacks the client_id, one trusted and one untrusted audience",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "other-client-9x",
+                "unknown-api-7q"
+              ],
+              "azp": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "untrusted_audience"
+          }
+        },
+        {
+          "name": "single-string aud equal to client_id, no trusted list",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-string aud equal to client_id, trusted list supplied",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "s6BhdRkqt3",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        },
+        {
+          "name": "single-element aud list equal to client_id",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "s6BhdRkqt3"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "accept"
+          }
+        }
+      ]
+    },
+    {
+      "id": "IDT-013",
+      "title": "An ID Token without an audience is rejected",
+      "given": "A decoded ID Token whose aud is absent, null, an empty string, an empty array, or an array of empty strings",
+      "when": "The ID-Token profile rules are applied",
+      "then": "aud is REQUIRED (\u00a72), so a token that names no audience is rejected whether or not a client_id is configured. The check runs after sub and before the untrusted-audience rule",
+      "references": [
+        "OIDC Core 1.0 \u00a72",
+        "OIDC Core 1.0 \u00a73.1.3.7"
+      ],
+      "vectors": [
+        {
+          "name": "aud absent, no client_id",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud absent, client_id set",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud null, client_id set",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": null,
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud empty string",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": "",
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud empty array",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
+          }
+        },
+        {
+          "name": "aud array of one empty string",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                ""
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "missing_aud"
           }
         }
       ]

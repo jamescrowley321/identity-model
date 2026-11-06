@@ -110,7 +110,7 @@ class JwtClaimTypes(enum.Enum):
     # Time when the End-User authentication occurred. Its value is a JSON number representing the number of seconds from 1970-01-01T0:0:0Z as measured in UTC until the date/time. When a max_age request is made or when auth_time is requested as an Essential Claim, then this Claim is REQUIRED; otherwise, its inclusion is OPTIONAL.
     AuthenticationTime = "auth_time"
 
-    # The party to which the ID Token was issued. If present, it MUST contain the OAuth 2.0 Client ID of this party. This Claim is only needed when the ID Token has a single audience value and that audience is different than the authorized party. It MAY be included even when the authorized party is the same as the sole audience. The azp value is a case sensitive string containing a StringOrURI value.
+    # Authorized party - the party to which the ID Token was issued. If present, it MUST contain the OAuth 2.0 Client ID of this party. The azp value is a case-sensitive string containing a StringOrURI value. In practice, the azp Claim only occurs when extensions beyond the scope of OIDC Core are used; implementations not using such extensions are encouraged to not use azp and to ignore it when it does occur (OIDC Core 1.0 errata set 2 §2).
     AuthorizedParty = "azp"
 
     # Access Token hash value. Its value is the base64url encoding of the left-most half of the hash of the octets of the ASCII representation of the access_token value, where the hash algorithm used is the hash algorithm used in the alg Header Parameter of the ID Token's JOSE Header. For instance, if the alg is RS256, hash the access_token value with SHA-256, then take the left-most 128 bits and base64url encode them. The at_hash value is a case sensitive string.

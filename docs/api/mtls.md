@@ -45,10 +45,24 @@ response = request_client_credentials_token(
 )
 ```
 
-An `mtls` value cannot be combined with a caller-managed `http_client` on the
-same request — a managed client cannot be guaranteed to present the
-certificate, so supplying both is rejected rather than silently sending an
-unauthenticated request.
+The certificate is presented by a short-lived client built for the request.
+To apply your own settings to it (`ca_bundle` for a private CA, `http_timeout`,
+retries), pass an `http_client` alongside `mtls`: its `Config` configures the
+certificate client, while the request itself never goes through that
+client's own connection pool, which cannot be guaranteed to present the
+certificate. Without `http_client`, the library default client's `Config()`
+is used.
+The `http_client` must be one the library built (`HTTPClient(config=...)`).
+One that wraps your own `httpx.Client` is refused with `ValueError`, because
+that client's TLS settings (a pinned CA, a proxy) can't carry over to the
+certificate client.
+
+```python
+from py_identity_model import Config, HTTPClient
+
+with HTTPClient(config=Config(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
+    response = request_client_credentials_token(request, http_client=http_client)
+```
 
 ## Certificate-bound access tokens
 

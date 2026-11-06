@@ -8,6 +8,7 @@ Demonstrates three patterns for managing HTTP client lifecycle:
 """
 
 from py_identity_model import (
+    Config,
     DiscoveryDocumentRequest,
     HTTPClient,
     JwksRequest,
@@ -83,7 +84,9 @@ def custom_timeout_example():
     print("Example 3: Custom Timeout")
     print("=" * 60)
 
-    with HTTPClient(timeout=60.0) as client:
+    # Settings come from a Config; a CA bundle is set the same way, e.g.
+    # Config(http_timeout=60.0, ca_bundle="/path/to/ca-bundle.crt").
+    with HTTPClient(config=Config(http_timeout=60.0)) as client:
         response = get_discovery_document(
             DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL),
             http_client=client,
@@ -106,13 +109,13 @@ def backward_compat_example():
     print("Example 4: Backward Compatibility")
     print("=" * 60)
 
-    # No http_client parameter — uses thread-local default
+    # No http_client parameter — uses the library default client
     response = get_discovery_document(
         DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
     )
 
     if response.is_successful:
-        print(f"  Issuer: {response.issuer} (thread-local client)")
+        print(f"  Issuer: {response.issuer} (library default client)")
 
     return response
 

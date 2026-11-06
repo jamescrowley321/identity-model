@@ -61,10 +61,14 @@ def handle_unsuccessful_response(
 def process_successful_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
+    *,
+    requested_address: str,
 ) -> DiscoveryDocumentResponse:
     """Process successful discovery response."""
     # Validate and parse response using shared logic
-    response_json = validate_and_parse_discovery_response(response, policy)
+    response_json = validate_and_parse_discovery_response(
+        response, policy, requested_address=requested_address
+    )
 
     logger.info(
         f"Discovery document fetched successfully, issuer: {response_json.get('issuer')}",
@@ -84,6 +88,8 @@ def process_successful_response(
 def process_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
+    *,
+    requested_address: str,
 ) -> DiscoveryDocumentResponse:
     """
     Process discovery document response.
@@ -91,6 +97,8 @@ def process_discovery_response(
     Args:
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
+        requested_address: The discovery URL as the caller supplied it; the
+            document's issuer must match it.
 
     Returns:
         DiscoveryDocumentResponse with parsed data or error
@@ -101,6 +109,8 @@ def process_discovery_response(
         return handle_unsuccessful_response(response)
 
     try:
-        return process_successful_response(response, policy)
+        return process_successful_response(
+            response, policy, requested_address=requested_address
+        )
     except Exception as e:
         return handle_discovery_error(e)

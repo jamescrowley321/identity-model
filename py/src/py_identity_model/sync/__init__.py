@@ -50,6 +50,7 @@ from ..core.models import (
     BaseResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
+    UserInfoErrorKind,
 )
 from ..core.mtls import (
     certificate_thumbprint_from_file,
@@ -219,6 +220,7 @@ __all__ = [
     # Token Validation
     "TokenValidationConfig",
     # UserInfo
+    "UserInfoErrorKind",
     "UserInfoRequest",
     "UserInfoResponse",
     "build_authorization_url",

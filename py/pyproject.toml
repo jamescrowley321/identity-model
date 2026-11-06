@@ -155,6 +155,7 @@ select = [
     "RSE",  # flake8-raise — exception raise improvements
     "RET",  # flake8-return — return statement improvements
     "SIM",  # flake8-simplify — code simplification suggestions
+    "TID251", # flake8-tidy-imports banned-api — the library reads no environment (see banned-api below)
     "TCH",  # flake8-type-checking — optimize type checking imports
     "ARG",  # flake8-unused-arguments — unused function arguments
     "PTH",  # flake8-use-pathlib — prefer pathlib over os.path
@@ -177,12 +178,15 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/tests/**/*.py" = ["S101"]   # 1858 assert violations — all test assertions, 0 in production code
-"src/tests/unit/test_config.py" = [
-    "S101",    # pytest assertions
-    "PLR2004", # magic values — config tests assert against the specific registry defaults/values under test
-    "ARG002",  # unused args on ConfigSource Protocol stub implementations (resolve(self, keys))
+"src/tests/**/*.py" = [
+    "S101",    # 1858 assert violations — all test assertions, 0 in production code
+    "TID251",  # tests, fixtures and the load harness set up their own environment
 ]
+# The library reads no environment: config_from_env is the one sanctioned
+# reader, and nothing in the library imports it (test_config_helpers.py).
+"src/py_identity_model/config_helpers.py" = ["TID251"]
+# Likewise oidc_settings_from_env in the FastAPI package.
+"packages/fastapi-identity-model/fastapi_identity_model/config_helpers.py" = ["TID251"]
 "src/tests/unit/test_ssl_config.py" = [
     "S101",    # pytest assertions
     # The import-side-effect regression test must import the package in a fresh
@@ -190,6 +194,13 @@ ignore = [
     # argv is fixed and literal (sys.executable + an inline source string), with
     # no shell and no untrusted input. Same reviewed-policy rationale as tools/**
     # below rather than a scattered `# noqa` at the call site.
+    "S603",
+]
+"src/tests/unit/test_config_helpers.py" = [
+    "S101",    # pytest assertions
+    # Checks that importing the package does not load config_helpers, which
+    # needs a fresh interpreter (this test module imports it). Fixed literal
+    # argv, no shell: same rationale as test_ssl_config.py above.
     "S603",
 ]
 "src/tests/harness/**/*.py" = [
@@ -202,7 +213,10 @@ ignore = [
     "PLR2004", # magic values — HTTP status codes in expected-status comparisons
     "PLR0913", # the Locust run driver is parameter-rich (users/duration/pacing)
 ]
-"examples/**/*.py" = ["S101"]    # 73 assert violations in example integration tests
+"examples/**/*.py" = [
+    "S101",    # 73 assert violations in example integration tests
+    "TID251",  # examples are applications: they build their Config from the environment
+]
 "packages/**/tests/**/*.py" = [
     "S101",    # pytest assertions
     "PLR2004", # magic values — HTTP status codes in assertions
@@ -210,6 +224,7 @@ ignore = [
     "S105",    # hardcoded "secret" — test fixtures
     "S106",
     "S107",
+    "TID251",  # tests set up their own environment
 ]
 "conformance/tests/**/*.py" = ["S101"]  # conformance harness unit tests — assert is the standard pytest assertion mechanism
 "conformance/**/*.py" = [
@@ -220,6 +235,7 @@ ignore = [
     "PLR0915", # callback handler is long but linear (one OIDC flow)
     "PLW0603", # global for singleton HTTP client
     "ARG001",  # unused args kept for API compatibility
+    "TID251",  # the conformance harness is an application, configured from the environment
 ]
 "tools/**/*.py" = [
     # These are dev/CI orchestration scripts whose whole job is to shell out to
@@ -228,7 +244,17 @@ ignore = [
     # is a false positive for this class of file — scoped here as reviewed
     # policy rather than scattered `# noqa` at each call site.
     "S603",
+    # Repository tooling, not library code: reads CI and mutmut environment.
+    "TID251",
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Library and package code takes its settings from an injected Config, never
+# from the environment (#753, #756). Exemptions are the per-file-ignores above.
+"os.environ".msg = "The library reads no environment; take the setting from Config (build one with py_identity_model.config_helpers.config_from_env)."
+"os.environb".msg = "The library reads no environment; take the setting from Config."
+"os.getenv".msg = "The library reads no environment; take the setting from Config (build one with py_identity_model.config_helpers.config_from_env)."
+"os.getenvb".msg = "The library reads no environment; take the setting from Config."
 
 [tool.ruff.lint.isort]
 known-first-party = ["py_identity_model", "fastapi_identity_model"]

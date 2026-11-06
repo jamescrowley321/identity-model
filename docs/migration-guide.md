@@ -440,7 +440,7 @@ Both sync and async implementations manage HTTP clients differently for optimal 
 Each thread gets its own HTTP client with its own connection pool. This provides thread isolation without locks:
 
 ```python
-from py_identity_model.http_client import get_http_client, close_http_client
+from py_identity_model.sync.http_client import get_http_client, close_http_client
 
 # Each thread automatically gets its own client
 client = get_http_client()  # Thread-local client
@@ -453,10 +453,10 @@ close_http_client()  # Closes client for current thread only
 All async operations share a single HTTP client per process:
 
 ```python
-from py_identity_model.http_client import get_async_http_client, close_async_http_client
+from py_identity_model.aio.http_client import get_async_http_client, close_async_http_client
 
 # All async operations share this client
-client = await get_async_http_client()  # Singleton
+client = get_async_http_client()  # Singleton
 
 # Optional cleanup
 await close_async_http_client()  # Closes the shared client
@@ -556,72 +556,43 @@ my_obj = await MyClass.create()
 
 ### SSL Certificate Configuration
 
-**Note:** py-identity-model v1.2.0+ uses `httpx` instead of `requests` for HTTP operations. This change affects SSL certificate configuration.
-
-#### Environment Variables
-
-The library supports the following SSL certificate environment variables (in priority order):
-
-1. **`SSL_CERT_FILE`** - httpx native variable (highest priority)
-2. **`CURL_CA_BUNDLE`** - also respected by httpx
-3. **`REQUESTS_CA_BUNDLE`** - legacy requests library variable (for backward compatibility)
-
-**Backward Compatibility:** If you're migrating from an older version that used `requests`, your existing `REQUESTS_CA_BUNDLE` environment variable will continue to work — the library reads all three variables itself.
-
-The resolution is cached: `get_ssl_verify()` is `lru_cache`d and its result is consumed when the HTTP client is built, so the CA bundle is fixed for the life of the process. Changing any of the three variables at runtime — including to distrust a compromised CA — requires a restart, not a config reload.
-
-Importing the library does not modify your process environment.
-
-Earlier versions copied `REQUESTS_CA_BUNDLE` into `SSL_CERT_FILE` at import, which
-changed the TLS trust store for everything else in the process. That is gone, along
-with the `ensure_ssl_compatibility()` helper that performed it.
-
-If you relied on it, do it explicitly in your own startup code, where the
-process-global write is visible to whoever reads it:
+The library reads no environment variables (py-identity-model 5.0). To verify
+TLS against a custom CA bundle, set `ca_bundle` on a `Config` and pass it on
+the client:
 
 ```python
-import os
+from py_identity_model import Config, DiscoveryDocumentRequest
+from py_identity_model.aio import AsyncHTTPClient, get_discovery_document
 
-# Only needed if OTHER libraries in this process must honour REQUESTS_CA_BUNDLE.
-# py-identity-model reads it directly and needs nothing here.
-if not os.environ.get("SSL_CERT_FILE") and os.environ.get("REQUESTS_CA_BUNDLE"):
-    os.environ["SSL_CERT_FILE"] = os.environ["REQUESTS_CA_BUNDLE"]
-```
-
-`SSL_CERT_FILE` is honoured by stdlib `ssl` (so also `aiohttp`, and anything building
-a default `SSLContext`) and by `urllib3` when it loads default certs. It is **not**
-read by `requests` — which honours `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`, and
-otherwise bundled certifi — nor by `boto3`/`botocore`, which use `AWS_CA_BUNDLE` and
-otherwise certifi. Prefer setting `SSL_CERT_FILE` in the environment directly over
-deriving it at runtime.
-
-#### Example
-
-```bash
-# Option 1: Use SSL_CERT_FILE (recommended for new deployments)
-export SSL_CERT_FILE=/path/to/ca-bundle.crt
-
-# Option 2: Use REQUESTS_CA_BUNDLE (backward compatibility)
-export REQUESTS_CA_BUNDLE=/path/to/ca-bundle.crt
-
-# Option 3: Use CURL_CA_BUNDLE
-export CURL_CA_BUNDLE=/path/to/ca-bundle.crt
-```
-
-```python
-# The library will automatically use the appropriate certificate
-from py_identity_model.aio import get_discovery_document
-from py_identity_model import DiscoveryDocumentRequest
+config = Config(ca_bundle="/path/to/ca-bundle.crt")
 
 async def main():
-    request = DiscoveryDocumentRequest(address="https://your-identity-server.com/.well-known/openid-configuration")
-    response = await get_discovery_document(request)
-    # SSL certificates will be used automatically
+    async with AsyncHTTPClient(config=config) as client:
+        request = DiscoveryDocumentRequest(
+            address="https://your-identity-server.com/.well-known/openid-configuration"
+        )
+        response = await get_discovery_document(request, http_client=client)
 ```
+
+Earlier versions read `SSL_CERT_FILE`, `CURL_CA_BUNDLE` and
+`REQUESTS_CA_BUNDLE` themselves. To keep using those variables, build the
+`Config` with the helper, which reads them in that order:
+
+```python
+from py_identity_model.config_helpers import config_from_env
+
+config = config_from_env()
+```
+
+Importing the library does not read or modify your process environment.
+httpx itself still honours `SSL_CERT_FILE` / `SSL_CERT_DIR` when it builds a
+client that verifies with its default bundle (`trust_env=True`); that is
+httpx's behavior, not the library's.
 
 #### Docker Configuration
 
-When running in Docker, ensure SSL environment variables are passed to the container:
+When running in Docker, pass the CA bundle path to your application and put
+it on the `Config` (or read it with `config_from_env()`):
 
 ```yaml
 # docker-compose.yml
@@ -629,8 +600,6 @@ services:
   app:
     environment:
       - SSL_CERT_FILE=/path/to/ca-cert.crt
-      # OR for backward compatibility:
-      - REQUESTS_CA_BUNDLE=/path/to/ca-cert.crt
     volumes:
       - ./certs:/path/to:ro
 ```

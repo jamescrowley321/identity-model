@@ -4,6 +4,7 @@
 import time
 from unittest.mock import MagicMock
 
+from py_identity_model import Config
 from py_identity_model.core.jwks_cache import (
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
     MAX_CACHE_TTL_SECONDS,
@@ -15,6 +16,12 @@ from py_identity_model.core.jwks_cache import (
     parse_max_age,
     resolve_ttl,
 )
+
+
+# A configured fallback TTL distinct from every max-age used below, so a test
+# that expects the header to win would fail if the fallback leaked through.
+CONFIGURED_TTL = 7200.0
+CONFIGURED = Config(jwks_cache_ttl=CONFIGURED_TTL)
 
 
 class TestParseMaxAge:
@@ -42,28 +49,36 @@ class TestParseMaxAge:
 
 class TestResolveTtl:
     def test_uses_cache_control_when_present(self):
-        ttl = resolve_ttl("max-age=3600")
+        ttl = resolve_ttl("max-age=3600", CONFIGURED.jwks_cache_ttl)
         assert ttl == 3600.0
 
     def test_clamps_to_minimum(self):
-        ttl = resolve_ttl("max-age=5")
+        ttl = resolve_ttl("max-age=5", CONFIGURED.jwks_cache_ttl)
         assert ttl == MIN_CACHE_TTL_SECONDS
 
     def test_clamps_to_maximum(self):
-        ttl = resolve_ttl("max-age=999999")
+        ttl = resolve_ttl("max-age=999999", CONFIGURED.jwks_cache_ttl)
         assert ttl == MAX_CACHE_TTL_SECONDS
 
-    def test_falls_back_to_env_default(self):
-        ttl = resolve_ttl(None)
+    def test_falls_back_to_config_default(self):
+        ttl = resolve_ttl(None, Config().jwks_cache_ttl)
         assert ttl == DEFAULT_JWKS_CACHE_TTL_SECONDS
+
+    def test_falls_back_to_configured_ttl(self):
+        ttl = resolve_ttl(None, CONFIGURED.jwks_cache_ttl)
+        assert ttl == CONFIGURED_TTL
+
+    def test_no_max_age_directive_falls_back_to_configured_ttl(self):
+        ttl = resolve_ttl("public, must-revalidate", CONFIGURED.jwks_cache_ttl)
+        assert ttl == CONFIGURED_TTL
 
     def test_google_typical_value(self):
         """Google JWKS uses max-age=19800 (5.5 hours)."""
-        ttl = resolve_ttl("public, max-age=19800")
+        ttl = resolve_ttl("public, max-age=19800", CONFIGURED.jwks_cache_ttl)
         assert ttl == 19800.0
 
     def test_zero_max_age_clamps_to_minimum(self):
-        ttl = resolve_ttl("max-age=0")
+        ttl = resolve_ttl("max-age=0", CONFIGURED.jwks_cache_ttl)
         assert ttl == MIN_CACHE_TTL_SECONDS
 
 
@@ -167,8 +182,8 @@ class TestMultiProviderCacheIsolation:
 
     def test_different_ttls_per_provider(self):
         """Two providers with different Cache-Control values get separate TTLs."""
-        google_ttl = resolve_ttl("max-age=19800")
-        auth0_ttl = resolve_ttl("max-age=3600")
+        google_ttl = resolve_ttl("max-age=19800", CONFIGURED.jwks_cache_ttl)
+        auth0_ttl = resolve_ttl("max-age=3600", CONFIGURED.jwks_cache_ttl)
 
         google_entry = JwksCacheEntry(
             response=MagicMock(), cached_at=time.monotonic(), ttl=google_ttl

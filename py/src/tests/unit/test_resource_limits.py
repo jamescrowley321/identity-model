@@ -13,8 +13,9 @@ from typing import ClassVar
 import httpx
 import pytest
 
+from py_identity_model import Config, ConfigError
 from py_identity_model.aio.http_client import (
-    _cleanup_lock,
+    _get_default,
     _reset_async_http_client,
     close_async_http_client,
     get_async_http_client,
@@ -24,6 +25,12 @@ from py_identity_model.core.http_utils import (
     DEFAULT_MAX_JWKS_SIZE,
 )
 from py_identity_model.core.response_processors import parse_jwks_response
+
+
+DEFAULT_CONFIG = Config()
+SMALL_MAX_JWKS_SIZE = 100
+TINY_MAX_JWKS_SIZE = 50
+SMALL_MAX_JWKS_KEYS = 5
 
 
 # ============================================================================
@@ -44,7 +51,7 @@ class TestJwksSizeLimit:
             json=self._SMALL_JWKS,
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is True
 
     def test_rejects_large_content_length(self):
@@ -56,33 +63,39 @@ class TestJwksSizeLimit:
                 "Content-Length": str(DEFAULT_MAX_JWKS_SIZE + 1),
             },
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "too large" in result.error
 
-    def test_rejects_large_body(self, monkeypatch):
+    def test_rejects_large_body(self):
         """Body larger than limit is rejected even without Content-Length."""
-        monkeypatch.setenv("MAX_JWKS_SIZE", "100")
-        big_body = json.dumps({"keys": [{"kty": "RSA", "n": "x" * 200, "e": "AQAB"}]})
+        config = Config(jwks_max_size=SMALL_MAX_JWKS_SIZE)
+        big_body = json.dumps(
+            {
+                "keys": [
+                    {"kty": "RSA", "n": "x" * (2 * SMALL_MAX_JWKS_SIZE), "e": "AQAB"}
+                ]
+            }
+        )
         response = httpx.Response(
             200,
             content=big_body.encode(),
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, config)
         assert result.is_successful is False
         assert result.error is not None
         assert "too large" in result.error
 
-    def test_respects_env_var_override(self, monkeypatch):
-        monkeypatch.setenv("MAX_JWKS_SIZE", "50")
+    def test_respects_config_max_size(self):
+        config = Config(jwks_max_size=TINY_MAX_JWKS_SIZE)
         response = httpx.Response(
             200,
             content=b'{"keys": [{"kty": "RSA", "n": "long_value", "e": "AQAB"}]}',
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, config)
         assert result.is_successful is False
         assert result.error is not None
         assert "too large" in result.error
@@ -93,7 +106,7 @@ class TestJwksSizeLimit:
             500,
             content=b"x" * (DEFAULT_MAX_JWKS_SIZE + 1),
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "500" in result.error
@@ -126,7 +139,7 @@ class TestJwksKeyCountLimit:
             json={"keys": keys},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "too many keys" in result.error
@@ -140,7 +153,7 @@ class TestJwksKeyCountLimit:
             json={"keys": keys},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "too many keys" in result.error
@@ -153,7 +166,7 @@ class TestJwksKeyCountLimit:
             json={"keys": keys},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is True
 
     def test_accepts_empty_keys_list(self):
@@ -163,24 +176,25 @@ class TestJwksKeyCountLimit:
             json={"keys": []},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is True
 
-    def test_max_keys_env_var_override(self, monkeypatch):
-        """MAX_JWKS_KEYS env var overrides the default limit."""
-        monkeypatch.setenv("MAX_JWKS_KEYS", "5")
-        keys = self._make_keys(6)
+    def test_max_keys_config_override(self):
+        """Config.jwks_max_keys overrides the default limit."""
+        config = Config(jwks_max_keys=SMALL_MAX_JWKS_KEYS)
+        key_count = SMALL_MAX_JWKS_KEYS + 1
+        keys = self._make_keys(key_count)
         response = httpx.Response(
             200,
             json={"keys": keys},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, config)
         assert result.is_successful is False
         assert result.error is not None
         assert "too many keys" in result.error
-        assert "6" in result.error
-        assert "5" in result.error
+        assert str(key_count) in result.error
+        assert str(SMALL_MAX_JWKS_KEYS) in result.error
 
 
 class TestJwksMissingKeysField:
@@ -198,7 +212,7 @@ class TestJwksMissingKeysField:
             json={"not_keys": []},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "missing required 'keys' field" in result.error
@@ -210,7 +224,7 @@ class TestJwksMissingKeysField:
             json={},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "missing required 'keys' field" in result.error
@@ -222,7 +236,7 @@ class TestJwksMissingKeysField:
             json={"keys": None},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "keys" in result.error.lower()
@@ -234,7 +248,7 @@ class TestJwksMissingKeysField:
             json=[{"kty": "RSA", "kid": "k1", "n": "n", "e": "AQAB"}],
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "expected a JSON object" in result.error
@@ -246,7 +260,7 @@ class TestJwksMissingKeysField:
             json={"keys": ["not-a-dict", 42]},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is False
         assert result.error is not None
         assert "not a JSON object" in result.error
@@ -261,30 +275,25 @@ class TestJwksMissingKeysField:
                 "Content-Length": "invalid",
             },
         )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, DEFAULT_CONFIG)
         assert result.is_successful is True
 
-    def test_zero_max_keys_env_var_clamped(self, monkeypatch):
-        """MAX_JWKS_KEYS=0 is clamped to 1, not zero (which would reject everything)."""
-        monkeypatch.setenv("MAX_JWKS_KEYS", "0")
+    @pytest.mark.parametrize("max_keys", [0, -5])
+    def test_non_positive_max_keys_is_rejected(self, max_keys):
+        """A key limit below 1 (which would reject every JWKS) is an invalid Config."""
+        with pytest.raises(ConfigError) as exc_info:
+            Config(jwks_max_keys=max_keys)
+
+        assert [issue.setting for issue in exc_info.value.issues] == ["jwks_max_keys"]
+
+    def test_max_keys_of_one_accepts_single_key(self):
+        """The smallest valid key limit still accepts a single-key JWKS."""
         response = httpx.Response(
             200,
             json={"keys": [{"kty": "RSA", "kid": "k1", "n": "n", "e": "AQAB"}]},
             headers={"Content-Type": "application/json"},
         )
-        # With clamp to 1, a single key should be accepted
-        result = parse_jwks_response(response)
-        assert result.is_successful is True
-
-    def test_negative_max_keys_env_var_clamped(self, monkeypatch):
-        """MAX_JWKS_KEYS=-5 is clamped to 1."""
-        monkeypatch.setenv("MAX_JWKS_KEYS", "-5")
-        response = httpx.Response(
-            200,
-            json={"keys": [{"kty": "RSA", "kid": "k1", "n": "n", "e": "AQAB"}]},
-            headers={"Content-Type": "application/json"},
-        )
-        result = parse_jwks_response(response)
+        result = parse_jwks_response(response, Config(jwks_max_keys=1))
         assert result.is_successful is True
 
 
@@ -296,9 +305,9 @@ class TestJwksMissingKeysField:
 class TestAsyncCleanupLock:
     """Verify the async cleanup lock is eagerly initialized."""
 
-    def test_cleanup_lock_is_module_level(self):
-        """The cleanup lock should exist at module level, not lazily created."""
-        assert isinstance(_cleanup_lock, asyncio.Lock)
+    def test_cleanup_lock_is_eagerly_created(self):
+        """The default client's cleanup lock exists before any close, not lazily."""
+        assert isinstance(_get_default()._cleanup_lock, asyncio.Lock)
 
     @pytest.mark.asyncio
     async def test_concurrent_close_does_not_race(self):

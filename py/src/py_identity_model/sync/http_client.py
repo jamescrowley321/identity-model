@@ -1,13 +1,15 @@
 """
 Synchronous HTTP client with connection pooling and retry logic.
 
-This module provides thread-local HTTP clients with connection pooling and
-automatic retry logic for transient failures like rate limiting.
+This module provides the library default client and automatic retry logic
+for transient failures like rate limiting. Timeouts, TLS and retry settings
+come from the client's :class:`~py_identity_model.core.config.Config`; the
+library reads no environment variables.
 
-Environment Variables:
-    HTTP_RETRY_MAX_ATTEMPTS: Maximum number of retry attempts (default: 3)
-    HTTP_RETRY_BASE_DELAY: Base delay in seconds for exponential backoff (default: 1.0)
-    HTTP_TIMEOUT: Request timeout in seconds (default: 30.0)
+The library default client (:func:`get_default_http_client`) is built from
+``Config()`` and used by every entry point called without ``http_client=``.
+It is one process-wide :class:`HTTPClient`, so its discovery and JWKS caches
+are shared, but each thread gets its own underlying ``httpx.Client``.
 """
 
 from __future__ import annotations
@@ -15,30 +17,97 @@ from __future__ import annotations
 from functools import wraps
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Concatenate, ParamSpec
 
 import httpx
 
+from ..core.config import Config
 from ..core.http_utils import (
     calculate_delay,
     check_no_redirect,
-    get_retry_config,
-    get_timeout,
     resolve_retry_delay,
     should_retry_response,
 )
 from ..core.mtls import build_mtls_ssl_context
 from ..logging_config import logger
-from ..ssl_config import get_ssl_verify
+from .managed_client import ClientCaches, HTTPClient, build_httpx_client
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..core.models import MtlsClientAuth
-    from .managed_client import HTTPClient
 
 
-# Thread-local storage for sync HTTP client
-_thread_local = threading.local()
+_P = ParamSpec("_P")
+
+
+class _DefaultHTTPClient(HTTPClient):
+    """The library default client: shared caches, thread-local connections.
+
+    Each thread gets its own ``httpx.Client`` built from the config, created
+    on first use. :meth:`close` closes only the calling thread's client; the
+    next use in that thread builds a new one. The caches survive a close.
+    """
+
+    def __init__(self, config: Config) -> None:
+        self._config = config
+        self._caches = ClientCaches()
+        self._owned = True
+        self._closed = False
+        self._local = threading.local()
+
+    @property
+    def client(self) -> httpx.Client:
+        client: httpx.Client | None = getattr(self._local, "client", None)
+        if client is None:
+            client = build_httpx_client(self._config)
+            self._local.client = client
+        return client
+
+    def close(self) -> None:
+        client: httpx.Client | None = getattr(self._local, "client", None)
+        if client is not None:
+            client.close()
+            self._local.client = None
+
+
+_default_client_lock = threading.Lock()
+_default_state: dict[str, _DefaultHTTPClient | None] = {"client": None}
+
+
+def get_default_http_client() -> HTTPClient:
+    """Return the library default client, built from ``Config()``.
+
+    Used by every sync entry point called without ``http_client=``. The
+    instance is shared by the process (one discovery cache, one JWKS cache),
+    while each thread gets its own ``httpx.Client`` connection pool.
+    """
+    client = _default_state["client"]
+    if client is not None:
+        return client
+    with _default_client_lock:
+        client = _default_state["client"]
+        if client is None:
+            client = _DefaultHTTPClient(Config())
+            _default_state["client"] = client
+        return client
+
+
+def _reset_default_http_client(config: Config | None = None) -> None:
+    """Replace the default client with a fresh one (testing only).
+
+    The new default is built from *config* (``Config()`` when ``None``) and
+    starts with empty caches. Closes the calling thread's connections of the
+    previous default.
+    """
+    with _default_client_lock:
+        previous = _default_state["client"]
+        _default_state["client"] = _DefaultHTTPClient(
+            config if config is not None else Config()
+        )
+    if previous is not None:
+        previous.close()
 
 
 def _log_retry(message: str, delay: float, attempt: int, retries: int) -> None:
@@ -46,52 +115,58 @@ def _log_retry(message: str, delay: float, attempt: int, retries: int) -> None:
     logger.warning(f"{message}, retrying in {delay}s (attempt {attempt + 1}/{retries})")
 
 
-def _get_retry_params(
-    max_retries: int | None, base_delay: float | None
-) -> tuple[int, float]:
-    """
-    Get retry parameters from arguments or environment.
-
-    Args:
-        max_retries: Explicit max retries or None
-        base_delay: Explicit base delay or None
-
-    Returns:
-        tuple[int, float]: (retries, delay_base)
-    """
-    env_max_retries, env_base_delay = get_retry_config()
-    retries = max_retries if max_retries is not None else env_max_retries
-    delay_base = base_delay if base_delay is not None else env_base_delay
-    return retries, delay_base
-
-
-def retry_with_backoff(max_retries: int | None = None, base_delay: float | None = None):
+def retry_with_backoff(
+    max_retries: int | None = None, base_delay: float | None = None
+) -> Callable[
+    [Callable[Concatenate[httpx.Client, _P], httpx.Response]],
+    Callable[Concatenate[HTTPClient, _P], httpx.Response],
+]:
     """
     Decorator to retry HTTP requests with exponential backoff.
 
     Retries on transient errors including rate limiting (429) and server errors (5xx).
+    The decorated function takes an ``httpx.Client`` first; the wrapper takes the
+    managed :class:`HTTPClient` instead, passes its ``httpx.Client`` through, and
+    reads the retry settings from its config.
 
     Args:
-        max_retries: Maximum number of retry attempts (default: from HTTP_RETRY_MAX_ATTEMPTS env or 3)
-        base_delay: Base delay in seconds for exponential backoff (default: from HTTP_RETRY_BASE_DELAY env or 1.0)
+        max_retries: Maximum number of retry attempts (default: the client's
+            ``Config.http_retry_max_attempts``). Must not be negative.
+        base_delay: Base delay in seconds for exponential backoff (default: the
+            client's ``Config.http_retry_base_delay``). Must not be negative.
 
     Returns:
         Decorated function that retries on 429 and 5xx errors with exponential backoff
 
-    Environment Variables:
-        HTTP_RETRY_MAX_ATTEMPTS: Default max retries if not specified
-        HTTP_RETRY_BASE_DELAY: Default base delay if not specified
+    Raises:
+        ValueError: If *max_retries* or *base_delay* is negative.
     """
+    if max_retries is not None and max_retries < 0:
+        raise ValueError("max_retries must be at least 0")
+    if base_delay is not None and base_delay < 0:
+        raise ValueError("base_delay must be at least 0")
 
-    def decorator(func):
+    def decorator(
+        func: Callable[Concatenate[httpx.Client, _P], httpx.Response],
+    ) -> Callable[Concatenate[HTTPClient, _P], httpx.Response]:
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            retries, delay_base = _get_retry_params(max_retries, base_delay)
+        def wrapper(
+            client: HTTPClient, *args: _P.args, **kwargs: _P.kwargs
+        ) -> httpx.Response:
+            config = client.config
+            retries = (
+                max_retries
+                if max_retries is not None
+                else config.http_retry_max_attempts
+            )
+            delay_base = (
+                base_delay if base_delay is not None else config.http_retry_base_delay
+            )
             last_exception: httpx.RequestError | None = None
 
             for attempt in range(retries + 1):
                 try:
-                    response = func(*args, **kwargs)
+                    response = func(client.client, *args, **kwargs)
 
                     # Check if response needs retry (429 or 5xx with retries remaining)
                     if should_retry_response(response, attempt, retries):
@@ -129,18 +204,10 @@ def retry_with_backoff(max_retries: int | None = None, base_delay: float | None 
 
 def get_http_client() -> httpx.Client:
     """
-    Get a thread-local HTTP client with connection pooling.
-
-    Returns a thread-local httpx.Client that reuses connections within the
-    same thread, improving performance for multiple HTTP requests. Each thread
-    gets its own client instance, making this thread-safe for concurrent use
-    in web applications (FastAPI, Flask) and messaging systems.
+    Get the calling thread's ``httpx.Client`` of the library default client.
 
     Returns:
-        httpx.Client: Configured HTTP client with connection pooling
-
-    Environment Variables:
-        HTTP_TIMEOUT: Request timeout in seconds (default: 30.0)
+        httpx.Client: Connection-pooled client built from ``Config()``
 
     Note:
         - Thread-safe: Each thread gets its own client instance
@@ -148,21 +215,11 @@ def get_http_client() -> httpx.Client:
           - max_connections: 100
           - max_keepalive_connections: 20
           - keepalive_expiry: 5.0 seconds
-        - Ideal for web frameworks and messaging applications where each
-          request/message is handled in a separate thread
     """
-    # Check if current thread already has a client
-    if not hasattr(_thread_local, "client") or _thread_local.client is None:
-        timeout = get_timeout()
-        _thread_local.client = httpx.Client(
-            verify=get_ssl_verify(),
-            timeout=timeout,
-            follow_redirects=False,
-        )
-    return _thread_local.client
+    return get_default_http_client().client
 
 
-def build_mtls_client(mtls: MtlsClientAuth) -> httpx.Client:
+def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.Client:
     """Build a short-lived HTTP client presenting a client certificate (mTLS).
 
     Used for RFC 8705 mutual-TLS client authentication: the certificate is
@@ -172,63 +229,71 @@ def build_mtls_client(mtls: MtlsClientAuth) -> httpx.Client:
 
     Args:
         mtls: The mTLS client-authentication configuration.
+        config: Supplies the timeout and the server CA bundle.
 
     Returns:
         A new ``httpx.Client`` configured with the client certificate.
     """
     return httpx.Client(
-        verify=build_mtls_ssl_context(mtls),
-        timeout=get_timeout(),
+        verify=build_mtls_ssl_context(mtls, config),
+        timeout=config.http_timeout,
         follow_redirects=False,
     )
+
+
+_WRAPPED_CLIENT_MTLS_ERROR = (
+    "mtls cannot be combined with a wrapped httpx client: its own TLS "
+    "settings cannot be carried over to the certificate client. Pass "
+    "HTTPClient(config=Config(ca_bundle=...)) instead."
+)
 
 
 def resolve_http_client(
     mtls: MtlsClientAuth | None,
     http_client: HTTPClient | None,
-) -> tuple[httpx.Client, httpx.Client | None]:
+) -> tuple[HTTPClient, httpx.Client | None]:
     """Resolve the HTTP client to use for a client-authenticating request.
 
-    At most one of *mtls* / *http_client* may be supplied. When *mtls* is
-    configured, a short-lived cert-configured client is built (RFC 8705); a
-    managed *http_client* is used as-is; otherwise the shared thread-local
-    client is used.
-
-    A managed *http_client* cannot be guaranteed to present the requested
-    client certificate at the TLS layer, and the ``prepare_*`` body branch has
-    already dropped ``client_secret``/Basic auth for the mTLS case — so
-    supplying both would silently emit an unauthenticated request. Reject that
-    combination explicitly rather than downgrading.
+    When *mtls* is configured, a short-lived cert-configured client is built
+    (RFC 8705) and wrapped with the ``Config`` of *http_client* when one is
+    given, else of the library default client. The request then goes through
+    that cert client, never through *http_client*'s own connection pool,
+    which cannot be guaranteed to present the certificate; *http_client*
+    supplies only its settings (``ca_bundle``, ``http_timeout``, retries).
+    Without *mtls*, *http_client* is used as-is, else the default client.
 
     Args:
         mtls: The request's mTLS configuration, or ``None``.
         http_client: An optional managed ``HTTPClient`` wrapper.
 
     Returns:
-        ``(client, owned)`` — *client* is the client to use; *owned* is the
-        same object when the caller must close it afterwards (mTLS), else
+        ``(client, owned)`` — *client* is the managed client to use; *owned*
+        is the ``httpx.Client`` the caller must close afterwards (mTLS), else
         ``None`` for shared/managed clients that must not be closed here.
 
     Raises:
-        ValueError: If both *mtls* and *http_client* are supplied.
+        RuntimeError: If *http_client* has been closed.
+        ValueError: If *mtls* is combined with an *http_client* that wraps a
+            caller's own httpx client, whose TLS settings would be lost.
     """
-    if mtls is not None and http_client is not None:
-        raise ValueError(
-            "Cannot combine a managed http_client with mtls: a managed client "
-            "cannot be guaranteed to present the mTLS client certificate. Pass "
-            "one or the other."
-        )
+    if mtls is None:
+        if http_client is not None:
+            return http_client, None
+        return get_default_http_client(), None
     if http_client is not None:
-        return http_client.client, None
-    if mtls is not None:
-        client = build_mtls_client(mtls)
-        return client, client
-    return get_http_client(), None
+        http_client.ensure_open()
+        if not http_client.owns_client:
+            raise ValueError(_WRAPPED_CLIENT_MTLS_ERROR)
+        config = http_client.config
+    else:
+        config = get_default_http_client().config
+    owned = build_mtls_client(mtls, config)
+    return HTTPClient(owned, config=config), owned
 
 
 def close_http_client() -> None:
     """
-    Close the HTTP client for the current thread.
+    Close the default client's ``httpx.Client`` for the current thread.
 
     This should be called when shutting down the application or cleaning up
     after request processing to properly release resources. In web frameworks,
@@ -236,29 +301,28 @@ def close_http_client() -> None:
 
     Note:
         This only closes the client for the current thread. Other threads
-        maintain their own clients independently.
+        maintain their own clients independently. The default client's caches
+        are kept.
     """
-    if hasattr(_thread_local, "client") and _thread_local.client is not None:
-        _thread_local.client.close()
-        _thread_local.client = None
+    client = _default_state["client"]
+    if client is not None:
+        client.close()
 
 
 def _reset_http_client() -> None:
     """
     Reset the HTTP client for the current thread (for testing purposes only).
 
-    This function is intended for use in tests to clear the thread-local
-    HTTP client instance. It should not be called in production code.
+    Closes the calling thread's ``httpx.Client`` of the default client; the
+    next use builds a new one.
     """
-    if hasattr(_thread_local, "client"):
-        if _thread_local.client is not None:
-            _thread_local.client.close()
-        _thread_local.client = None
+    close_http_client()
 
 
 __all__ = [
     "build_mtls_client",
     "close_http_client",
+    "get_default_http_client",
     "get_http_client",
     "resolve_http_client",
     "retry_with_backoff",

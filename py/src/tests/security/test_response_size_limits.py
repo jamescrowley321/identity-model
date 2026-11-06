@@ -1,6 +1,6 @@
 """Adversarial response-body size-cap tests (F-09).
 
-Only ``parse_jwks_response`` enforces a size cap (``get_max_jwks_size``). The
+Only ``parse_jwks_response`` enforces a size cap (``Config.jwks_max_size``). The
 token / auth-code / refresh / introspection / userinfo / discovery / PAR /
 device-authorization parsers all call ``.json()``/``.content``/``.text`` on an
 attacker-influenced response with NO size gate and NO streaming read-limit, so

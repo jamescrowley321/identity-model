@@ -58,8 +58,12 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 
 	// JWT-001/010: resolve the verification key by kid, forcing one JWKS refresh
 	// and retry if the kid is not cached (RFC 7515 §4.1, RFC 7517 §4.5). A
-	// genuine miss surfaces the descriptive jwks key-not-found error.
-	key, err := keySet.ResolveKeyWithRefresh(ctx, header.Kid)
+	// genuine miss surfaces the descriptive jwks key-not-found error. With no
+	// kid, the single key left after narrowing by use, alg and kty is used, with
+	// no refresh; more than one is a jwks ambiguous-key error (JWKS-009). Either
+	// way, a key declaring an alg other than the header alg is a jwks
+	// key-alg-mismatch error (JWKS-010).
+	key, err := keySet.ResolveSigningKey(ctx, header.Kid, header.Alg)
 	if err != nil {
 		return nil, err
 	}

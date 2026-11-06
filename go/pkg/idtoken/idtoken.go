@@ -18,8 +18,9 @@ import (
 // §3.3.2.11). It runs the standard JWT validation via [jwt.Validate]
 // (signature, iss, aud, iat and exp) — supply [WithClientID] so the aud check
 // binds the token to the RP and [WithIssuer] for the OP issuer — then applies
-// the ID-Token profile: required sub, the azp authorized-party rules, and the
-// opt-in nonce / max_age / at_hash / c_hash bindings checked only when the
+// the ID-Token profile: required sub, rejection of any aud value that is neither
+// the client_id nor listed via [WithTrustedAudiences], and the opt-in azp /
+// nonce / max_age / at_hash / c_hash checks, each run only when the
 // corresponding option is supplied.
 //
 // It returns the validated [jwt.Claims] on success. Base-validation failures
@@ -75,9 +76,16 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 		return profileErr(ReasonMissingSub, "ID token is missing the required non-empty 'sub' claim")
 	}
 
-	// §3.1.3.7 steps 4-6 — authorized-party (azp) rules.
-	if err := validateAZP(claims, cfg.clientID); err != nil {
+	// §3.1.3.7 step 3 — every audience must be one the client trusts.
+	if err := validateAudiences(claims, cfg); err != nil {
 		return err
+	}
+
+	// §3.1.3.7 steps 4-5 — authorized-party (azp) rules, opt-in only.
+	if cfg.validateAZP {
+		if err := validateAZP(claims, cfg.clientID); err != nil {
+			return err
+		}
 	}
 
 	// §3.1.3.7 step 11 — nonce binding (only when the caller supplied one).
@@ -97,31 +105,98 @@ func validateProfile(claims map[string]any, headerAlg string, cfg *config) error
 
 	// §3.3.2.11 — at_hash binding (only when an access token was supplied).
 	if cfg.accessTokenSet {
-		expected, err := leftHalfHash(cfg.accessToken, headerAlg)
-		if err != nil {
+		if err := validateHashBinding(claims, headerAlg, atHashBinding, cfg.accessToken, cfg.accessTokenWithIDToken); err != nil {
 			return err
-		}
-		if atHash, ok := claims["at_hash"].(string); !ok || !constantTimeEqual(atHash, expected) {
-			return profileErr(ReasonAtHashMismatch, "ID token 'at_hash' claim does not match the access token")
 		}
 	}
 
 	// §3.3.2.11 — c_hash binding (only when an authorization code was supplied).
 	if cfg.codeSet {
-		expected, err := leftHalfHash(cfg.code, headerAlg)
-		if err != nil {
+		if err := validateHashBinding(claims, headerAlg, cHashBinding, cfg.code, cfg.codeWithIDToken); err != nil {
 			return err
-		}
-		if cHash, ok := claims["c_hash"].(string); !ok || !constantTimeEqual(cHash, expected) {
-			return profileErr(ReasonCHashMismatch, "ID token 'c_hash' claim does not match the authorization code")
 		}
 	}
 
 	return nil
 }
 
-// validateAZP enforces §3.1.3.7 steps 4-6. A JSON null azp is treated as absent,
-// matching the reference (claims.get("azp") is None).
+// hashBinding describes one §3.3.2.11 hash claim and the value it binds to.
+type hashBinding struct {
+	claim          string
+	subject        string
+	missingReason  string
+	mismatchReason string
+}
+
+var (
+	atHashBinding = hashBinding{"at_hash", "the access token", ReasonAtHashMissing, ReasonAtHashMismatch}
+	cHashBinding  = hashBinding{"c_hash", "the authorization code", ReasonCHashMissing, ReasonCHashMismatch}
+)
+
+// validateHashBinding checks that b.claim binds to value (§3.3.2.11). Presence
+// is required only when value came in the same authorization response as the
+// ID Token (required, §3.2.2.10 / §3.3.2.11); otherwise an absent claim is
+// accepted. A present claim must match whatever its type. Presence is checked
+// before the hash is computed, so an absent, unrequired claim never consults
+// the alg.
+func validateHashBinding(claims map[string]any, headerAlg string, b hashBinding, value string, required bool) error {
+	raw, present := claims[b.claim]
+	if !present {
+		if required {
+			return profileErr(b.missingReason, fmt.Sprintf("ID token missing required '%s' claim for %s issued with it", b.claim, b.subject))
+		}
+		return nil
+	}
+	expected, err := leftHalfHash(value, headerAlg)
+	if err != nil {
+		return err
+	}
+	if actual, ok := raw.(string); !ok || !constantTimeEqual(actual, expected) {
+		return profileErr(b.mismatchReason, fmt.Sprintf("ID token '%s' claim does not match %s", b.claim, b.subject))
+	}
+	return nil
+}
+
+// validateAudiences enforces §3.1.3.7 step 3: the token MUST be rejected if aud
+// contains an audience the client does not trust. The trusted set is the
+// client_id (when set) plus the WithTrustedAudiences list, so with neither
+// configured every aud value is untrusted (fail closed). aud may be a JSON
+// string or array, and a non-string value is never trusted. aud is REQUIRED
+// (§2): an absent or null aud, or one holding only empty strings, names no
+// audience and is rejected first, with or without a client_id.
+func validateAudiences(claims map[string]any, cfg *config) error {
+	var audiences []any
+	switch audRaw := claims["aud"].(type) {
+	case nil:
+	case []any:
+		audiences = audRaw
+	default:
+		audiences = []any{audRaw}
+	}
+	if namesNoAudience(audiences) {
+		return profileErr(ReasonMissingAud, "ID token missing required 'aud' claim")
+	}
+	for _, a := range audiences {
+		if aud, isString := a.(string); !isString || !cfg.trustsAudience(aud) {
+			return profileErr(ReasonUntrustedAudience, "ID token 'aud' contains an audience not trusted by the client")
+		}
+	}
+	return nil
+}
+
+// namesNoAudience reports whether every aud value is the empty string
+// (vacuously true for none), matching the reference's all(a == "" ...).
+func namesNoAudience(audiences []any) bool {
+	for _, a := range audiences {
+		if s, ok := a.(string); !ok || s != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// validateAZP enforces the opt-in azp rules ([WithAZPValidation]). A JSON null
+// azp is treated as absent, matching the reference (claims.get("azp") is None).
 func validateAZP(claims map[string]any, clientID string) error {
 	audMultiElement := false
 	if arr, ok := claims["aud"].([]any); ok && len(arr) > 1 {
@@ -132,12 +207,12 @@ func validateAZP(claims map[string]any, clientID string) error {
 	azpStr, _ := azpRaw.(string)
 	azpFalsy := !azpPresent || azpRaw == nil || azpStr == ""
 
-	// Step 4: with multiple audiences an azp claim MUST be present.
+	// Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an azp.
 	if audMultiElement && azpFalsy {
 		return profileErr(ReasonAZPRequiredMultiAud, "ID token with multiple audiences must contain an 'azp' claim")
 	}
 
-	// Step 6: when present, azp MUST identify this client.
+	// Errata 2 step 5: a present azp identifies this client.
 	if azpPresent && azpRaw != nil && clientID != "" && azpStr != clientID {
 		return profileErr(ReasonAZPMismatch, "ID token 'azp' claim does not match the configured client_id")
 	}

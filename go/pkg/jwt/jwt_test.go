@@ -320,6 +320,111 @@ func TestValidate_KidNotFound_ForcesRefresh(t *testing.T) {
 	}
 }
 
+// countingKeySet serves jwksJSON like keySetFromJSON and also returns a pointer
+// to the number of JWKS requests served.
+func countingKeySet(t *testing.T, jwksJSON []byte) (*jwks.JSONWebKeySet, *int) {
+	t.Helper()
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwksJSON)
+	}))
+	t.Cleanup(srv.Close)
+	set, err := jwks.FetchKeySet(context.Background(), srv.URL, jwks.WithInsecureAllowHTTP())
+	if err != nil {
+		t.Fatalf("fetch key set: %v", err)
+	}
+	return set, &calls
+}
+
+// kidless returns a copy of key with no kid, so tokens it signs carry none.
+func kidless(key *jose.JSONWebKey) *jose.JSONWebKey {
+	k := *key
+	k.KeyID = ""
+	return &k
+}
+
+// JWKS-009: a token with no kid verifies against the single key in the set,
+// even though that key has a kid, with no forced refresh.
+func TestValidate_NoKid_SingleKey(t *testing.T) {
+	set, calls := countingKeySet(t, readFixture(t, "jwks.json"))
+	token := signWith(t, kidless(loadSigningKey(t)), jose.RS256, validClaims())
+
+	if _, err := Validate(context.Background(), token, set, withFixedNow()); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if *calls != 1 {
+		t.Errorf("JWKS requests = %d, want 1 (no forced refresh)", *calls)
+	}
+}
+
+// JWKS-009: with no kid, an RS256 token is verified by the RSA key of an
+// {EC, RSA} set rather than the first key.
+func TestValidate_NoKid_KtyNarrowing(t *testing.T) {
+	ecPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signing := loadSigningKey(t)
+	ecPub := jose.JSONWebKey{Key: &ecPriv.PublicKey, KeyID: "ec-key", Use: "sig"}
+	rsaPub := jose.JSONWebKey{Key: signing.Public().Key, KeyID: testKid, Use: "sig"}
+	set, calls := countingKeySet(t, jwksJSON(t, ecPub, rsaPub))
+	token := signWith(t, kidless(signing), jose.RS256, validClaims())
+
+	if _, err := Validate(context.Background(), token, set, withFixedNow()); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if *calls != 1 {
+		t.Errorf("JWKS requests = %d, want 1 (no forced refresh)", *calls)
+	}
+}
+
+// JWKS-009: with no kid and two RSA signing keys the key is ambiguous, a typed
+// error distinct from key-not-found.
+func TestValidate_NoKid_Ambiguous(t *testing.T) {
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signing := loadSigningKey(t)
+	set, calls := countingKeySet(t, jwksJSON(t,
+		jose.JSONWebKey{Key: signing.Public().Key, KeyID: testKid, Use: "sig"},
+		jose.JSONWebKey{Key: &other.PublicKey, KeyID: "other-key", Use: "sig"},
+	))
+	token := signWith(t, kidless(signing), jose.RS256, validClaims())
+
+	_, err = Validate(context.Background(), token, set, withFixedNow())
+	if !errors.Is(err, jwks.ErrAmbiguousKey) {
+		t.Fatalf("err = %v, want jwks.ErrAmbiguousKey", err)
+	}
+	if errors.Is(err, jwks.ErrKeyNotFound) {
+		t.Errorf("err = %v, want an error distinct from key-not-found", err)
+	}
+	if *calls != 1 {
+		t.Errorf("JWKS requests = %d, want 1 (no forced refresh)", *calls)
+	}
+}
+
+// JWKS-010: a correctly signed RS256 token is rejected when the key that
+// verifies it declares RS384, whether the token names it by kid or not.
+func TestValidate_KeyDeclaringOtherAlg(t *testing.T) {
+	signing := loadSigningKey(t)
+	for _, key := range []*jose.JSONWebKey{signing, kidless(signing)} {
+		t.Run("kid="+key.KeyID, func(t *testing.T) {
+			set := keySetFromJSON(t, jwksJSON(t,
+				jose.JSONWebKey{Key: signing.Public().Key, KeyID: testKid, Algorithm: "RS384", Use: "sig"},
+			))
+			token := signWith(t, key, jose.RS256, validClaims())
+
+			_, err := Validate(context.Background(), token, set, withFixedNow())
+			if !errors.Is(err, jwks.ErrKeyAlgorithmMismatch) {
+				t.Fatalf("err = %v, want jwks.ErrKeyAlgorithmMismatch", err)
+			}
+		})
+	}
+}
+
 // JWKS-004: a kid that never appears surfaces the descriptive key-not-found error.
 func TestValidate_KidNeverFound(t *testing.T) {
 	placeholder, err := rsa.GenerateKey(rand.Reader, 2048)

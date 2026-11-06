@@ -47,7 +47,7 @@ def _request_token(
     Request token with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's Config.
     """
     kwargs: dict = {"data": data, "headers": headers}
     if auth is not None:
@@ -65,7 +65,7 @@ def request_client_credentials_token(
     Args:
         request: Client credentials token request
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            thread-local default.
+            library default client.
 
     Returns:
         ClientCredentialsTokenResponse: Token response

@@ -5,8 +5,9 @@ in ``_refresh_jwks`` writes back *after* ``clear()`` runs and leaves the
 cleared cache holding a stale entry.
 
 Pre-fix the helpers were sync functions that called ``_cache.clear()``
-without acquiring ``_*_cache_write_lock`` (the lock is an
-``asyncio.Lock``, which can only be awaited). Post-fix they are async and
+without acquiring the cache write lock (the lock is an ``asyncio.Lock``,
+which can only be awaited). Since #753 the caches and their locks live on
+the client (``AsyncHTTPClient.caches``). Post-fix they are async and
 ``async with`` the lock before clearing.
 
 This is a breaking API change documented in the helper docstrings —
@@ -25,6 +26,7 @@ import pytest
 import respx
 
 from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
 )
@@ -43,6 +45,15 @@ from ..constants import DISCO_URL
 
 
 JWKS_URL = "https://example.com/jwks"
+PRIMED_JWKS_URL = "https://op.example/primed"
+PRIMED_TTL = 3600.0
+PRIMED_COOLDOWN_STAMP = 100.0
+
+
+@pytest.fixture
+async def client():
+    async with AsyncHTTPClient() as managed:
+        yield managed
 
 
 # ============================================================================
@@ -87,39 +98,54 @@ def _make_jwk_response(kid: str) -> JwksResponse:
 
 class TestAsyncClearActuallyClears:
     @pytest.mark.asyncio
-    async def test_clear_jwks_cache_empties_cache_and_cooldown(self):
+    async def test_clear_jwks_cache_empties_cache_and_cooldown(self, client):
         # Prime the cache + cooldown sidecar directly so the test doesn't
         # depend on the full refresh pipeline.
-        aio_tv._jwks_cache[JWKS_URL] = JwksCacheEntry(
+        caches = client.caches
+        caches.jwks[JWKS_URL] = JwksCacheEntry(
             response=_make_jwk_response("primed"),
             cached_at=0.0,
-            ttl=3600.0,
+            ttl=PRIMED_TTL,
         )
-        aio_tv._kid_miss_last_attempt[JWKS_URL] = 100.0
-        assert JWKS_URL in aio_tv._jwks_cache
-        assert JWKS_URL in aio_tv._kid_miss_last_attempt
+        caches.kid_miss_last_attempt[JWKS_URL] = PRIMED_COOLDOWN_STAMP
+        assert JWKS_URL in caches.jwks
+        assert JWKS_URL in caches.kid_miss_last_attempt
 
-        await async_clear_jwks_cache()
+        await async_clear_jwks_cache(http_client=client)
 
-        assert aio_tv._jwks_cache == {}
-        assert aio_tv._kid_miss_last_attempt == {}
+        assert caches.jwks == {}
+        assert caches.kid_miss_last_attempt == {}
 
     @pytest.mark.asyncio
-    async def test_clear_discovery_cache_empties_cache(self):
+    async def test_clear_discovery_cache_empties_cache(self, client):
+        caches = client.caches
         cache_key = (
             DISCO_URL,
             DiscoveryPolicy().cache_key(),
         )
-        aio_tv._disco_cache[cache_key] = DiscoCacheEntry(
+        caches.disco[cache_key] = DiscoCacheEntry(
             response=DiscoveryDocumentResponse(is_successful=True),
             cached_at=0.0,
-            ttl=3600.0,
+            ttl=PRIMED_TTL,
         )
-        assert cache_key in aio_tv._disco_cache
+        assert cache_key in caches.disco
 
-        await async_clear_discovery_cache()
+        await async_clear_discovery_cache(http_client=client)
 
-        assert aio_tv._disco_cache == {}
+        assert caches.disco == {}
+
+    @pytest.mark.asyncio
+    async def test_clear_only_touches_the_given_client(self, client):
+        """Clearing the default client leaves an injected client's cache."""
+        client.caches.jwks[JWKS_URL] = JwksCacheEntry(
+            response=_make_jwk_response("primed"),
+            cached_at=0.0,
+            ttl=PRIMED_TTL,
+        )
+
+        await async_clear_jwks_cache()
+
+        assert list(client.caches.jwks) == [JWKS_URL]
 
 
 # ============================================================================
@@ -145,16 +171,17 @@ class TestAsyncClearActuallyClears:
 class TestAsyncClearWaitsForInFlightRefresh:
     @pytest.mark.asyncio
     @respx.mock
-    async def test_clear_blocks_until_in_flight_refresh_completes(self):
-        """If clear_jwks_cache did NOT acquire _jwks_cache_write_lock, it
+    async def test_clear_blocks_until_in_flight_refresh_completes(self, client):
+        """If clear_jwks_cache did NOT acquire the JWKS write lock, it
         could complete *before* the in-flight _refresh_jwks's
         apply_jwks_cache_outcome write, leaving an entry in the "cleared"
         cache. Post-fix the lock serializes them."""
         # Prime with one entry so we know it gets cleared.
-        aio_tv._jwks_cache["https://op.example/primed"] = JwksCacheEntry(
+        caches = client.caches
+        caches.jwks[PRIMED_JWKS_URL] = JwksCacheEntry(
             response=_make_jwk_response("primed-kid"),
             cached_at=0.0,
-            ttl=3600.0,
+            ttl=PRIMED_TTL,
         )
 
         # The handler waits on this event before responding, letting the
@@ -182,20 +209,22 @@ class TestAsyncClearWaitsForInFlightRefresh:
         respx.get(JWKS_URL).mock(side_effect=slow_handler)
 
         # Start the refresh coroutine — it will block waiting on `proceed`.
-        refresh_task = asyncio.create_task(aio_tv._refresh_jwks(JWKS_URL))
+        refresh_task = asyncio.create_task(
+            aio_tv._refresh_jwks(JWKS_URL, http_client=client)
+        )
         # Let the refresh coroutine reach the await on `proceed`.
         await asyncio.sleep(0)
 
         # Release the handler so the refresh completes its fetch and runs
-        # apply_jwks_cache_outcome (which acquires _jwks_cache_write_lock).
+        # apply_jwks_cache_outcome (under the client's JWKS write lock).
         proceed.set()
 
         # Now concurrently clear. The clear must serialize after the
         # refresh's lock-holding critical section.
-        await asyncio.gather(refresh_task, async_clear_jwks_cache())
+        await asyncio.gather(refresh_task, async_clear_jwks_cache(http_client=client))
 
         # Net effect: clear ran AFTER refresh's apply_outcome under the
         # same lock, so the cache is fully empty — the refresh's write is
         # not re-introduced after clear.
-        assert aio_tv._jwks_cache == {}
-        assert aio_tv._kid_miss_last_attempt == {}
+        assert caches.jwks == {}
+        assert caches.kid_miss_last_attempt == {}

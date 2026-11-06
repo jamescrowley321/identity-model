@@ -30,7 +30,7 @@ from py_identity_model import (
     TokenValidationConfig,
     to_principal,
 )
-from py_identity_model.aio import validate_token
+from py_identity_model.aio import AsyncHTTPClient, validate_token
 
 
 logger = logging.getLogger("fastapi_identity_model")
@@ -149,9 +149,12 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             tokens never do); ``scp`` covers the Azure AD convention. Override for
             an OP whose access tokens signal type differently. Ignored when
             ``require_access_token_marker`` is ``False``.
+        http_client: Managed HTTP client for discovery and JWKS, built from
+            your ``Config``. Its caches hold this middleware's discovery
+            document and keys. ``None`` uses the library default client.
     """
 
-    def __init__(  # noqa: PLR0913  # opt-in F-07 marker config adds two optional params
+    def __init__(  # noqa: PLR0913  # opt-in F-07 marker config + http_client
         self,
         app,
         discovery_url: str,
@@ -162,6 +165,8 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         access_token_marker_claims: tuple[
             str, ...
         ] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
+        *,
+        http_client: AsyncHTTPClient | None = None,
     ):
         super().__init__(app)
         if not audience:
@@ -189,6 +194,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             else ["/docs", "/docs/oauth2-redirect", "/openapi.json", "/health"]
         )
         self.custom_claims_validator = custom_claims_validator
+        self.http_client = http_client
 
     def _is_excluded(self, path: str) -> bool:
         """Whether *path* is excluded from token validation.
@@ -271,6 +277,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                     claims_validator=self.custom_claims_validator,
                 ),
                 disco_doc_address=self.discovery_url,
+                http_client=self.http_client,
             )
             # Reject an ID token presented as an access token (token-type
             # confusion at the resource server).

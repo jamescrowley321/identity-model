@@ -6,13 +6,15 @@ supporting automatic cache expiry and forced refresh on key rotation (RFC 7517 �
 
 JWKS TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's JWKS HTTP response
-2. ``JWKS_CACHE_TTL`` environment variable (seconds)
-3. Default: 86400 (24 hours)
+2. ``Config.jwks_cache_ttl`` (default: 86400, 24 hours)
 
 Discovery TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's discovery HTTP response
-2. ``DISCO_CACHE_TTL`` environment variable (seconds)
-3. Default: 3600 (1 hour)
+2. ``Config.discovery_cache_ttl`` (default: 3600, 1 hour)
+
+Cache size and the kid-miss cooldown also come from the client's
+:class:`~py_identity_model.core.config.Config`. Nothing here reads the
+environment.
 
 The provider's cache header is preferred because providers set ``max-age``
 based on their key rotation schedule (e.g., Google uses ``max-age=19800``).
@@ -20,9 +22,7 @@ based on their key rotation schedule (e.g., Google uses ``max-age=19800``).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import math
-import os
+from dataclasses import dataclass
 import re
 import threading
 import time
@@ -34,6 +34,7 @@ from ..logging_config import logger
 if TYPE_CHECKING:
     from collections import OrderedDict
 
+    from ..core.config import Config
     from ..core.models import DiscoveryDocumentResponse, JwksResponse
 
 DEFAULT_JWKS_CACHE_TTL_SECONDS: float = 86400.0  # 24 hours
@@ -62,9 +63,9 @@ MAX_KID_MISS_COOLDOWN_SECONDS: float = 3600.0
 DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS: float = 5.0
 
 # Caps the number of distinct (jwks_uri) or (disco_address, require_https)
-# entries the cache will hold per process. Bounds an unbounded-growth attack
-# where attacker-controlled discovery addresses (multi-tenant gateways,
-# attacker-supplied issuer headers) accumulate cache entries forever — at
+# entries each of a client's caches holds (``Config.cache_max_entries``).
+# Bounds an unbounded-growth attack where attacker-controlled discovery
+# addresses (multi-tenant gateways, attacker-supplied issuer headers) accumulate cache entries forever — at
 # ~5KB per DiscoveryDocumentResponse, a few thousand unique entries is tens
 # of MB of memory leak. Default 64 covers any realistic multi-IdP deployment
 # while keeping worst-case memory bounded. Eviction is LRU by access order:
@@ -76,136 +77,20 @@ DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS: float = 5.0
 # by reading distinct addresses in insertion order (issue #397).
 DEFAULT_MAX_CACHE_ENTRIES: int = 64
 
-_env_ttl: float | None = None
-_disco_env_ttl: float | None = None
-_kid_miss_cooldown: float | None = None
-_max_cache_entries: int | None = None
 _MAX_AGE_RE = re.compile(r"max-age=(\d+)", re.IGNORECASE)
 _NO_STORE_RE = re.compile(r"\bno-store\b", re.IGNORECASE)
 _NO_CACHE_RE = re.compile(r"\bno-cache\b", re.IGNORECASE)
 
 
-def _safe_env_float(
-    env_var: str,
-    default: float,
-    min_value: float,
-    max_value: float,
-) -> float:
-    """Read a float env var with NaN/Inf rejection, clamp, and fail-safe parsing.
-
-    Garbage values (``""``, ``"60s"``, non-numeric, NaN, Inf) log a warning
-    and fall back to the default rather than crashing the process at first
-    cache access. Values outside ``[min_value, max_value]`` are clamped.
-
-    Without this, ``JWKS_CACHE_TTL=0`` would silently disable the cache,
-    ``KID_MISS_REFRESH_COOLDOWN="abc"`` would crash at first kid-miss, and
-    ``KID_MISS_REFRESH_COOLDOWN=nan`` would make the cooldown permanent
-    (``now - last >= nan`` is False forever).
-    """
-    raw = os.getenv(env_var)
-    if raw is None or raw == "":
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid %s=%r; falling back to default %s",
-            env_var,
-            raw,
-            default,
-        )
-        return default
-    if not math.isfinite(value):
-        logger.warning(
-            "Non-finite %s=%s; falling back to default %s",
-            env_var,
-            value,
-            default,
-        )
-        return default
-    clamped = max(min_value, min(value, max_value))
-    if clamped != value:
-        logger.warning(
-            "Clamped %s=%s to [%s, %s] → %s",
-            env_var,
-            value,
-            min_value,
-            max_value,
-            clamped,
-        )
-    return clamped
-
-
-def _safe_env_ttl(env_var: str, default: float) -> float:
-    """Read a TTL env var with clamp + fail-safe parsing.
-
-    Thin wrapper around :func:`_safe_env_float` with the TTL bounds.
-    """
-    return _safe_env_float(
-        env_var, default, MIN_CACHE_TTL_SECONDS, MAX_CACHE_TTL_SECONDS
-    )
-
-
-def _get_env_ttl() -> float:
-    """Read JWKS_CACHE_TTL from env once, cache the result."""
-    global _env_ttl  # noqa: PLW0603
-    if _env_ttl is None:
-        _env_ttl = _safe_env_ttl("JWKS_CACHE_TTL", DEFAULT_JWKS_CACHE_TTL_SECONDS)
-    return _env_ttl
-
-
-def _get_disco_env_ttl() -> float:
-    """Read DISCO_CACHE_TTL from env once, cache the result."""
-    global _disco_env_ttl  # noqa: PLW0603
-    if _disco_env_ttl is None:
-        _disco_env_ttl = _safe_env_ttl(
-            "DISCO_CACHE_TTL", DEFAULT_DISCO_CACHE_TTL_SECONDS
-        )
-    return _disco_env_ttl
-
-
-def get_max_cache_entries() -> int:
-    """Read JWKS_CACHE_MAX_ENTRIES from env once, cache the result.
-
-    Falls back to the default on garbage or non-positive values, logging
-    a warning. Reset via ``_reset_env_for_testing``.
-    """
-    global _max_cache_entries  # noqa: PLW0603
-    if _max_cache_entries is None:
-        raw = os.getenv("JWKS_CACHE_MAX_ENTRIES")
-        if raw is None or raw == "":
-            _max_cache_entries = DEFAULT_MAX_CACHE_ENTRIES
-        else:
-            try:
-                value = int(raw)
-                if value < 1:
-                    logger.warning(
-                        "JWKS_CACHE_MAX_ENTRIES=%s must be >= 1; "
-                        "falling back to default %d",
-                        value,
-                        DEFAULT_MAX_CACHE_ENTRIES,
-                    )
-                    value = DEFAULT_MAX_CACHE_ENTRIES
-            except ValueError:
-                logger.warning(
-                    "Invalid JWKS_CACHE_MAX_ENTRIES=%r; falling back to default %d",
-                    raw,
-                    DEFAULT_MAX_CACHE_ENTRIES,
-                )
-                value = DEFAULT_MAX_CACHE_ENTRIES
-            _max_cache_entries = value
-    return _max_cache_entries
-
-
-# Serializes ALL structural mutation of the process-shared JWKS and discovery
+# Serializes ALL structural mutation of every client's JWKS and discovery
 # ``OrderedDict``s — the read-hit reorder (:func:`touch_cache_entry`), the write
 # reinsert/pop (:func:`apply_jwks_cache_outcome` / :func:`apply_disco_cache_outcome`),
 # and the eviction scan (:func:`_enforce_size_limit`) — against each other.
 #
 # A single *process-wide* lock is used deliberately rather than the callers'
-# per-domain locks: the sync path guards writes with a global ``threading.Lock``
-# while the async path uses a lock keyed per event loop, but both concurrency
-# domains mutate the *same* module-global cache objects. A per-loop async lock
+# per-domain locks: the sync path guards writes with a per-client
+# ``threading.Lock`` while the async path uses a lock keyed per event loop, and
+# one client's cache objects are shared by every thread and loop using it. A per-loop async lock
 # cannot serialize a mutation on loop A against the eviction scan on loop B (nor
 # against a sync thread), so without this lock a read-hit ``move_to_end`` or a
 # write reinsert on one loop could race ``next(iter(cache))``/``pop`` on another
@@ -248,21 +133,21 @@ def clear_cache_locked(cache: dict) -> None:
     """Empty a shared cache under ``_CACHE_STRUCTURE_LOCK``.
 
     ``clear_jwks_cache`` / ``clear_discovery_cache`` hold their per-domain write
-    lock, but that lock is per-event-loop on the async side while the cache is
-    process-global — so it does not serialize the structural ``clear()`` against
+    lock, but that lock is per-event-loop on the async side while the client's
+    cache is shared by every loop and thread — so it does not serialize the structural ``clear()`` against
     a read-hit :func:`touch_cache_entry` or the eviction scan in
     :func:`_enforce_size_limit` running on another loop/thread. Routing the
     ``clear()`` through this leaf lock keeps the "every structural mutation
     holds the structure lock" invariant intact (#397): a concurrent ``clear()``
     can no longer race ``next(iter(cache))`` (``RuntimeError``) or ``move_to_end``
-    (``KeyError``). Sidecar dicts (e.g. ``_kid_miss_last_attempt``) are cleared
+    (``KeyError``). Sidecar dicts (e.g. the kid-miss cooldown map) are cleared
     separately by the caller — they are never touched under the structure lock.
     """
     with _CACHE_STRUCTURE_LOCK:
         cache.clear()
 
 
-def _enforce_size_limit(cache: dict) -> list:
+def _enforce_size_limit(cache: dict, max_size: int) -> list:
     """Evict least-recently-used entries until the cache fits.
 
     With an ``OrderedDict`` reordered on every read hit (see
@@ -276,10 +161,9 @@ def _enforce_size_limit(cache: dict) -> list:
 
     Returns the list of evicted keys (in eviction order, LRU first) so
     callers can clean up sidecar state keyed by the same identifiers — e.g.,
-    ``_kid_miss_last_attempt`` in the token_validation modules, which would
+    the client's kid-miss cooldown map, which would
     otherwise grow unbounded even though the JWKS cache itself is bounded.
     """
-    max_size = get_max_cache_entries()
     evicted: list = []
     with _CACHE_STRUCTURE_LOCK:
         while len(cache) > max_size:
@@ -294,30 +178,12 @@ def _enforce_size_limit(cache: dict) -> list:
     return evicted
 
 
-def get_kid_miss_cooldown() -> float:
-    """Read KID_MISS_REFRESH_COOLDOWN from env once, cache the result.
-
-    Routed through :func:`_safe_env_float` so garbage values do not crash
-    the first kid-miss caller, and so NaN does not silently make the
-    cooldown permanent. ``KID_MISS_REFRESH_COOLDOWN=0`` is honored as an
-    explicit opt-out (no cooldown — accepts the DoS amplification risk).
-    """
-    global _kid_miss_cooldown  # noqa: PLW0603
-    if _kid_miss_cooldown is None:
-        _kid_miss_cooldown = _safe_env_float(
-            "KID_MISS_REFRESH_COOLDOWN",
-            DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS,
-            MIN_KID_MISS_COOLDOWN_SECONDS,
-            MAX_KID_MISS_COOLDOWN_SECONDS,
-        )
-    return _kid_miss_cooldown
-
-
 def should_attempt_kid_miss_refresh(
     last_attempts: dict[str, float],
     jwks_uri: str,
     has_cached_keys: bool,
     now: float,
+    cooldown: float,
 ) -> bool:
     """Gate the kid-miss forced refresh to bound DoS amplification.
 
@@ -333,28 +199,15 @@ def should_attempt_kid_miss_refresh(
 
     The state is keyed by ``jwks_uri`` so an attacker spamming kids against
     one OP cannot suppress legitimate refreshes for a different OP.
+    ``cooldown`` is the client's ``Config.jwks_kid_miss_cooldown``; 0
+    disables it.
     """
     if not has_cached_keys:
         return True
     last = last_attempts.get(jwks_uri)
     if last is None:
         return True
-    return (now - last) >= get_kid_miss_cooldown()
-
-
-def _reset_env_for_testing() -> None:
-    """Test-only helper: clear memoized env-derived values.
-
-    The module-level memoization (``_env_ttl``, ``_disco_env_ttl``,
-    ``_kid_miss_cooldown``, ``_max_cache_entries``) makes ``monkeypatch.setenv``
-    a silent no-op after any prior call has populated the cache. Tests that
-    need to vary these knobs across runs call this to reset the memos.
-    """
-    global _env_ttl, _disco_env_ttl, _kid_miss_cooldown, _max_cache_entries  # noqa: PLW0603
-    _env_ttl = None
-    _disco_env_ttl = None
-    _kid_miss_cooldown = None
-    _max_cache_entries = None
+    return (now - last) >= cooldown
 
 
 def is_uncacheable(cache_control: str | None) -> bool:
@@ -429,11 +282,11 @@ def parse_max_age(cache_control: str | None) -> float | None:
     return None
 
 
-def resolve_ttl(cache_control: str | None) -> float:
+def resolve_ttl(cache_control: str | None, default_ttl: float) -> float:
     """Determine the JWKS cache TTL from HTTP headers or config.
 
-    Priority: Cache-Control max-age > JWKS_CACHE_TTL env var > default.
-    Result is clamped to [60s, 86400s].
+    Priority: Cache-Control max-age (clamped to [60s, 86400s]) >
+    ``default_ttl`` (the client's ``Config.jwks_cache_ttl``).
     """
     max_age = parse_max_age(cache_control)
     if max_age is not None:
@@ -442,14 +295,14 @@ def resolve_ttl(cache_control: str | None) -> float:
             "Using provider Cache-Control max-age=%s (clamped to %.0fs)", max_age, ttl
         )
         return ttl
-    return _get_env_ttl()
+    return default_ttl
 
 
-def resolve_disco_ttl(cache_control: str | None) -> float:
+def resolve_disco_ttl(cache_control: str | None, default_ttl: float) -> float:
     """Determine the discovery cache TTL from HTTP headers or config.
 
-    Priority: Cache-Control max-age > DISCO_CACHE_TTL env var > default (1h).
-    Result is clamped to [60s, 86400s].
+    Priority: Cache-Control max-age (clamped to [60s, 86400s]) >
+    ``default_ttl`` (the client's ``Config.discovery_cache_ttl``).
     """
     max_age = parse_max_age(cache_control)
     if max_age is not None:
@@ -460,7 +313,7 @@ def resolve_disco_ttl(cache_control: str | None) -> float:
             ttl,
         )
         return ttl
-    return _get_disco_env_ttl()
+    return default_ttl
 
 
 @dataclass
@@ -469,7 +322,7 @@ class JwksCacheEntry:
 
     response: JwksResponse
     cached_at: float
-    ttl: float = field(default_factory=_get_env_ttl)
+    ttl: float = DEFAULT_JWKS_CACHE_TTL_SECONDS
 
 
 @dataclass
@@ -478,7 +331,7 @@ class DiscoCacheEntry:
 
     response: DiscoveryDocumentResponse
     cached_at: float
-    ttl: float = field(default_factory=_get_disco_env_ttl)
+    ttl: float = DEFAULT_DISCO_CACHE_TTL_SECONDS
 
 
 def is_cache_expired(entry: JwksCacheEntry | DiscoCacheEntry) -> bool:
@@ -507,8 +360,8 @@ def apply_jwks_cache_outcome(
     jwks_uri: str,
     response: JwksResponse,
     now: float,
-    cooldown: dict[str, float] | None = None,
-) -> None:
+    config: Config,
+) -> list[str]:
     """Apply the cache-write/invalidate/retain decision for a JWKS response.
 
     Decision matrix (order matters):
@@ -528,20 +381,22 @@ def apply_jwks_cache_outcome(
       as the documented policy hook for future strict-mode opt-ins.
     - Successful, cacheable, non-empty: store with the resolved TTL.
 
-    The optional ``cooldown`` dict is a sidecar of per-URI timestamps that
-    must be evicted alongside their cache entry — otherwise it grows
-    unboundedly even when the cache itself is bounded.
+    ``config`` supplies the default TTL (``jwks_cache_ttl``) and the size
+    bound (``cache_max_entries``).
+
+    Returns the URIs whose entry left the cache (evicted or invalidated). The
+    caller drops its per-URI sidecar state for them — the kid-miss cooldown
+    timestamps — which would otherwise grow unboundedly even when the cache
+    itself is bounded.
     """
     if not response.is_successful:
-        return
+        return []
     if not response.keys:
-        return
+        return []
     if is_uncacheable_for_jwks(response.cache_control):
         with _CACHE_STRUCTURE_LOCK:
             cache.pop(jwks_uri, None)
-        if cooldown is not None:
-            cooldown.pop(jwks_uri, None)
-        return
+        return [jwks_uri]
     # Pop-and-reinsert so a refreshed URI moves to the most-recently-used end
     # (LRU eviction will not target it next when the cache is under pressure).
     # The whole structural transaction (reinsert + eviction scan) runs under
@@ -552,12 +407,9 @@ def apply_jwks_cache_outcome(
         cache[jwks_uri] = JwksCacheEntry(
             response=response,
             cached_at=now,
-            ttl=resolve_ttl(response.cache_control),
+            ttl=resolve_ttl(response.cache_control, config.jwks_cache_ttl),
         )
-        evicted = _enforce_size_limit(cache)
-    if cooldown is not None:
-        for key in evicted:
-            cooldown.pop(key, None)
+        return _enforce_size_limit(cache, config.cache_max_entries)
 
 
 def apply_disco_cache_outcome(
@@ -565,6 +417,7 @@ def apply_disco_cache_outcome(
     cache_key: tuple[str, tuple],
     response: DiscoveryDocumentResponse,
     now: float,
+    config: Config,
 ) -> None:
     """Apply the cache-write/invalidate/retain decision for a discovery response.
 
@@ -585,9 +438,9 @@ def apply_disco_cache_outcome(
         cache[cache_key] = DiscoCacheEntry(
             response=response,
             cached_at=now,
-            ttl=resolve_disco_ttl(response.cache_control),
+            ttl=resolve_disco_ttl(response.cache_control, config.discovery_cache_ttl),
         )
-        _enforce_size_limit(cache)
+        _enforce_size_limit(cache, config.cache_max_entries)
 
 
 __all__ = [
@@ -604,8 +457,6 @@ __all__ = [
     "apply_disco_cache_outcome",
     "apply_jwks_cache_outcome",
     "clear_cache_locked",
-    "get_kid_miss_cooldown",
-    "get_max_cache_entries",
     "is_cache_expired",
     "is_uncacheable",
     "is_uncacheable_for_jwks",

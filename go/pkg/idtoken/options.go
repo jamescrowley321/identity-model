@@ -1,6 +1,7 @@
 package idtoken
 
 import (
+	"slices"
 	"time"
 
 	"github.com/jamescrowley321/identity-model/go/pkg/jwt"
@@ -16,15 +17,24 @@ type config struct {
 	allowedAlgs []string
 
 	// ID-Token profile.
-	clientID       string
-	nonce          string
-	nonceSet       bool
-	accessToken    string
-	accessTokenSet bool
-	code           string
-	codeSet        bool
-	maxAge         time.Duration
-	maxAgeSet      bool
+	clientID         string
+	trustedAudiences []string
+	validateAZP      bool
+	nonce            string
+	nonceSet         bool
+	accessToken      string
+	accessTokenSet   bool
+	// accessTokenWithIDToken: the access token came in the same authorization
+	// response as the ID Token, so at_hash is required (§3.2.2.10, §3.3.2.11).
+	// Defaults to true.
+	accessTokenWithIDToken bool
+	code                   string
+	codeSet                bool
+	// codeWithIDToken: the code came in the same authorization response as the
+	// ID Token, so c_hash is required (§3.3.2.11). Defaults to true.
+	codeWithIDToken bool
+	maxAge          time.Duration
+	maxAgeSet       bool
 	// leeway is the clock-skew tolerance. It is applied to the base exp check
 	// (as jwt.WithClockSkew) and, mirroring the reference implementation, to the
 	// max_age/auth_time freshness check (§3.1.3.7 step 12).
@@ -37,7 +47,7 @@ type config struct {
 type Option func(*config)
 
 func newConfig(opts ...Option) *config {
-	cfg := &config{}
+	cfg := &config{accessTokenWithIDToken: true, codeWithIDToken: true}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -50,6 +60,15 @@ func (c *config) now() time.Time {
 		return c.nowFunc()
 	}
 	return time.Now()
+}
+
+// trustsAudience reports whether aud is the client_id (when set) or one of the
+// configured trusted audiences (§3.1.3.7 step 3).
+func (c *config) trustsAudience(aud string) bool {
+	if c.clientID != "" && aud == c.clientID {
+		return true
+	}
+	return slices.Contains(c.trustedAudiences, aud)
 }
 
 // jwtOptions maps the base config onto the options for [jwt.Validate]. The nonce
@@ -84,10 +103,29 @@ func WithIssuer(issuer string) Option {
 }
 
 // WithClientID sets the relying party's client_id. It is enforced as the
-// expected audience of the base JWT validation (§3.1.3.7 step 3) and, when a
-// token carries an azp, azp MUST equal it (§3.1.3.7 step 6).
+// expected audience of the base JWT validation (§3.1.3.7 step 3) and, with
+// [WithAZPValidation], is the value a present azp must equal.
 func WithClientID(clientID string) Option {
 	return func(c *config) { c.clientID = clientID }
+}
+
+// WithTrustedAudiences lists the additional audiences, besides the client_id,
+// that the client trusts to appear in an ID Token's aud. Every aud value MUST be
+// the client_id or one of these, otherwise the token is rejected (§3.1.3.7
+// step 3). The list only adds trusted values: omitting it, or passing none,
+// trusts the client_id alone, and nothing disables the check.
+func WithTrustedAudiences(audiences ...string) Option {
+	return func(c *config) { c.trustedAudiences = audiences }
+}
+
+// WithAZPValidation opts in to the authorized-party (azp) rules: a token with
+// multiple audiences must carry an azp, and a present azp must equal the
+// client_id. OIDC Core 1.0 errata set 2 makes neither a MUST — §3.1.3.7 step 5
+// is a MAY/SHOULD, and the multiple-audience rule is the Core 1.0 (2014) step-4
+// SHOULD that errata set 2 removed. Without this option azp is ignored, as §2
+// advises relying parties that use no extensions.
+func WithAZPValidation() Option {
+	return func(c *config) { c.validateAZP = true }
 }
 
 // WithNonce requires the token's nonce to be present and equal nonce, the value
@@ -101,8 +139,10 @@ func WithNonce(nonce string) Option {
 	}
 }
 
-// WithAccessToken requires the token's at_hash to be present and match the
-// left-half hash of accessToken (§3.3.2.11). When unset, at_hash is not checked.
+// WithAccessToken requires the token's at_hash to match the left-half hash of
+// accessToken (§3.3.2.11). The claim must also be present unless
+// [WithAccessTokenIssuedWithIDToken](false) is set. When unset, at_hash is not
+// checked.
 func WithAccessToken(accessToken string) Option {
 	return func(c *config) {
 		c.accessToken = accessToken
@@ -110,13 +150,33 @@ func WithAccessToken(accessToken string) Option {
 	}
 }
 
-// WithCode requires the token's c_hash to be present and match the left-half
-// hash of code (§3.3.2.11). When unset, c_hash is not checked.
+// WithAccessTokenIssuedWithIDToken states whether the [WithAccessToken] value
+// came back in the same authorization response as the ID Token (response_type
+// "id_token token" or "code id_token token"), which makes at_hash REQUIRED
+// (§3.2.2.10, §3.3.2.11). The default is true. Pass false for a token-endpoint
+// ID Token, which may omit at_hash (§3.1.3.6); a present at_hash must still
+// match. It has no effect without [WithAccessToken].
+func WithAccessTokenIssuedWithIDToken(issued bool) Option {
+	return func(c *config) { c.accessTokenWithIDToken = issued }
+}
+
+// WithCode requires the token's c_hash to match the left-half hash of code
+// (§3.3.2.11). The claim must also be present unless
+// [WithCodeIssuedWithIDToken](false) is set. When unset, c_hash is not checked.
 func WithCode(code string) Option {
 	return func(c *config) {
 		c.code = code
 		c.codeSet = true
 	}
+}
+
+// WithCodeIssuedWithIDToken states whether the [WithCode] value came back in
+// the same authorization response as the ID Token (response_type
+// "code id_token" or "code id_token token"), which makes c_hash REQUIRED
+// (§3.3.2.11). The default is true. Pass false when it did not; a present
+// c_hash must still match. It has no effect without [WithCode].
+func WithCodeIssuedWithIDToken(issued bool) Option {
+	return func(c *config) { c.codeWithIDToken = issued }
 }
 
 // WithMaxAge requires auth_time to be present and satisfy

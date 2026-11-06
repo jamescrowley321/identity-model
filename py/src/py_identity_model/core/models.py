@@ -448,11 +448,13 @@ class DiscoveryErrorKind(Enum):
     UNEXPECTED_STATUS = "unexpected_status"
     """The endpoint returned a non-success HTTP status; see ``status_code``."""
     INVALID_JSON = "invalid_json"
-    """The response body could not be decoded as JSON."""
+    """The response body could not be decoded as a JSON object."""
     MISSING_FIELDS = "missing_fields"
     """A required-field check failed; see ``missing_fields``."""
     HTTPS_REQUIRED = "https_required"
     """A URL violated the policy's HTTPS requirement."""
+    ISSUER_MISMATCH = "issuer_mismatch"
+    """The document's issuer differs from the requested issuer."""
     INVALID_CONFIGURATION = "invalid_configuration"
     """Another URL or configuration check failed."""
     INVALID_DOCUMENT = "invalid_document"
@@ -1151,7 +1153,10 @@ class UserInfoRequest(BaseRequest):
         expected_sub: Expected ``sub`` claim from the ID token for
             verification per OIDC Core 1.0 Section 5.3.4.  When provided,
             the ``sub`` in the UserInfo response is compared against this
-            value and a mismatch produces an error response.
+            value and a mismatch produces an error response.  A signed or
+            encrypted (``application/jwt``) response cannot be checked here,
+            so it also produces an error response; omit ``expected_sub`` to
+            receive the raw JWT, then verify it and compare its ``sub``.
         dpop_key: When set, the UserInfo request is DPoP-bound (RFC 9449): the
             access token is presented with ``Authorization: DPoP <token>`` and
             a resource-request DPoP proof (carrying the ``ath`` access-token
@@ -1169,6 +1174,13 @@ class UserInfoRequest(BaseRequest):
     mtls: MtlsClientAuth | None = None
 
 
+class UserInfoErrorKind(Enum):
+    """Why a UserInfo response failed, set on ``UserInfoResponse.error_kind``."""
+
+    MISSING_SUB = "missing_sub"
+    """The response has no non-empty string ``sub`` (OIDC Core 1.0 §5.3.2)."""
+
+
 @dataclass(repr=False, eq=False)
 class UserInfoResponse(BaseResponse):
     """Response from the UserInfo endpoint.
@@ -1178,6 +1190,7 @@ class UserInfoResponse(BaseResponse):
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "raw"})
 
+    error_kind: UserInfoErrorKind | None = field(default=None, kw_only=True)
     claims: dict | None = None
     raw: str | None = None
 

@@ -27,7 +27,10 @@ from fastapi_identity_model import (
     TokenValidationMiddleware, OIDCSettings, get_current_user, require_scope,
 )
 
-settings = OIDCSettings.from_env()  # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
+settings = OIDCSettings(
+    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    client_id="<client_id>",
+)
 app = FastAPI()
 app.add_middleware(
     TokenValidationMiddleware,
@@ -93,6 +96,46 @@ encrypt** the cookie. Stored identity claims are tamper-proof but readable by th
 client. Raw tokens are stored **only** when you pass `build_oidc_router(settings,
 store_tokens=True)` — enable that only with an encrypted or server-side session
 store. For production, back the session with a server-side store.
+
+## Configuration
+
+The package reads no environment variables. Construct `OIDCSettings` yourself,
+or build it from the environment with the optional helper:
+
+```python
+from fastapi_identity_model.config_helpers import oidc_settings_from_env
+
+settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
+settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
+```
+
+`DISCOVERY_URL` and `CLIENT_ID` are required. `EXCLUDED_PATHS` is a
+comma-separated list. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
+`SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
+to the `OIDCSettings` default when unset.
+
+HTTP settings (timeouts, retries, CA bundle, cache TTLs) belong to the
+`py-identity-model` `Config`. Build an `AsyncHTTPClient` from it and pass it
+as `http_client=` to `TokenValidationMiddleware`, `build_oidc_router`,
+`build_ws_authenticator` and `TokenManager`. Each provider call then uses that
+client and its caches. Without it, the library default client is used.
+
+```python
+from py_identity_model import Config
+from py_identity_model.aio import AsyncHTTPClient
+
+http_client = AsyncHTTPClient(config=Config(http_timeout=10.0))
+app.add_middleware(
+    TokenValidationMiddleware,
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    http_client=http_client,
+)
+app.include_router(build_oidc_router(settings, http_client=http_client), prefix="/auth")
+```
+
+Close the client on shutdown (`await http_client.close()`, e.g. in the app's
+lifespan).
 
 ## Token refresh
 

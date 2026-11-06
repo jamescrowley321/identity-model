@@ -29,7 +29,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "py-identity-model>=3.1.0",
+    "py-identity-model>=5.0.0,<6",
     # fastapi floor aligned with starlette>=0.49.1: fastapi 0.100 pins an old
     # starlette (~0.27) and cannot satisfy the starlette floor below.
     "fastapi>=0.115.0",

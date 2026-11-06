@@ -60,6 +60,8 @@ from .middleware import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from py_identity_model.aio import AsyncHTTPClient
+
 
 logger = logging.getLogger("fastapi_identity_model")
 
@@ -106,6 +108,7 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
     custom_claims_validator: Callable | None = None,
     require_access_token_marker: bool = False,
     access_token_marker_claims: tuple[str, ...] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Callable:
     """Build a FastAPI WebSocket dependency that validates a Bearer token.
 
@@ -126,6 +129,8 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
             default ``False``. See :class:`TokenValidationMiddleware`.
         access_token_marker_claims: Positive access-token marker claims for
             ``require_access_token_marker``. Defaults to ``("scope", "scp")``.
+        http_client: Managed HTTP client for discovery and JWKS, built from
+            your ``Config``. ``None`` uses the library default client.
 
     Returns:
         An async dependency ``(websocket) -> dict`` returning the validated
@@ -178,6 +183,7 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
                     claims_validator=custom_claims_validator,
                 ),
                 disco_doc_address=discovery_url,
+                http_client=http_client,
             )
         except PyIdentityModelException as e:
             if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):

@@ -1,18 +1,14 @@
 """
-Shared HTTP utilities for retry logic and configuration.
+Shared HTTP utilities for retry logic.
 
 This module provides common utilities used by both sync and async HTTP clients.
-
-Environment Variables:
-    HTTP_RETRY_MAX_ATTEMPTS: Maximum number of retry attempts (default: 3).
-        Also accepted as HTTP_RETRY_COUNT (documented alias).
-    HTTP_RETRY_BASE_DELAY: Base delay in seconds for exponential backoff (default: 1.0)
-    HTTP_TIMEOUT: Request timeout in seconds (default: 30.0)
+Timeouts, retry counts and JWKS limits come from the client's injected
+:class:`~py_identity_model.core.config.Config`; nothing here reads the
+environment.
 """
 
 from datetime import UTC
 from email.utils import parsedate_to_datetime
-import os
 import time
 
 import httpx
@@ -36,38 +32,6 @@ HTTP_TOO_MANY_REQUESTS = 429
 HTTP_INTERNAL_SERVER_ERROR = 500
 HTTP_REDIRECT_MIN = 300
 HTTP_REDIRECT_MAX = 399
-
-
-def get_retry_config() -> tuple[int, float]:
-    """
-    Get retry configuration from environment variables.
-
-    Returns:
-        tuple: (max_retries, base_delay)
-    """
-    # Accept the documented ``HTTP_RETRY_COUNT`` name as an alias of
-    # ``HTTP_RETRY_MAX_ATTEMPTS`` (the README and the workspace docs advertise
-    # ``HTTP_RETRY_COUNT``). ``HTTP_RETRY_MAX_ATTEMPTS`` wins when both are set;
-    # ``"0"`` is truthy, so an explicit ``0`` (disable retries) is honored.
-    max_retries = int(
-        os.getenv("HTTP_RETRY_MAX_ATTEMPTS")
-        or os.getenv("HTTP_RETRY_COUNT")
-        or str(DEFAULT_RETRY_MAX_ATTEMPTS)
-    )
-    base_delay = float(
-        os.getenv("HTTP_RETRY_BASE_DELAY", str(DEFAULT_RETRY_BASE_DELAY))
-    )
-    return max_retries, base_delay
-
-
-def get_timeout() -> float:
-    """
-    Get HTTP timeout from environment variable.
-
-    Returns:
-        float: Timeout in seconds
-    """
-    return float(os.getenv("HTTP_TIMEOUT", str(DEFAULT_HTTP_TIMEOUT)))
 
 
 def should_retry_response(response: httpx.Response, attempt: int, retries: int) -> bool:
@@ -171,24 +135,6 @@ def check_no_redirect(response: httpx.Response) -> None:
         )
 
 
-def get_max_jwks_size() -> int:
-    """Get maximum JWKS response size from environment variable.
-
-    Returns:
-        int: Maximum response size in bytes.
-    """
-    return int(os.getenv("MAX_JWKS_SIZE", str(DEFAULT_MAX_JWKS_SIZE)))
-
-
-def get_max_jwks_keys() -> int:
-    """Get maximum number of keys allowed in a JWKS response.
-
-    Returns:
-        int: Maximum number of keys (always >= 1).
-    """
-    return max(1, int(os.getenv("MAX_JWKS_KEYS", str(DEFAULT_MAX_JWKS_KEYS))))
-
-
 __all__ = [
     "DEFAULT_HTTP_TIMEOUT",
     "DEFAULT_MAX_JWKS_KEYS",
@@ -202,10 +148,6 @@ __all__ = [
     "MAX_RETRY_DELAY_SECONDS",
     "calculate_delay",
     "check_no_redirect",
-    "get_max_jwks_keys",
-    "get_max_jwks_size",
-    "get_retry_config",
-    "get_timeout",
     "parse_retry_after",
     "resolve_retry_delay",
     "should_retry_response",
