@@ -23,12 +23,15 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
     Required: ``{prefix}DISCOVERY_URL``, ``{prefix}CLIENT_ID``. ``REDIRECT_URI``
     is required only for the login router; a resource-server-only deployment
     may omit it. ``EXCLUDED_PATHS`` is a comma-separated list.
-    ``REQUIRED_BINDING`` is ``none``, ``dpop`` or ``mtls``. Others fall back to
-    the ``OIDCSettings`` defaults.
+    ``REQUIRED_BINDING`` is ``none``, ``dpop`` or ``mtls``.
+    ``CLIENT_CERTIFICATE_HEADER`` names the header carrying the mTLS client
+    certificate; ``EXPECTED_ORIGIN`` is the ``scheme://host[:port]`` for the
+    DPoP ``htu`` check. Others fall back to the ``OIDCSettings`` defaults.
 
     Raises:
-        ValueError: A required variable is unset or empty, or
-            ``REQUIRED_BINDING`` is not a ``TokenBinding`` value.
+        ValueError: A required variable is unset or empty,
+            ``REQUIRED_BINDING`` is not a ``TokenBinding`` value, or
+            ``EXPECTED_ORIGIN`` is not an http(s) origin.
     """
 
     def _req(name: str) -> str:
@@ -56,5 +59,9 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
         required_binding=TokenBinding(
             os.environ.get(f"{prefix}REQUIRED_BINDING") or TokenBinding.NONE.value
         ),
+        client_certificate_header=(
+            os.environ.get(f"{prefix}CLIENT_CERTIFICATE_HEADER") or None
+        ),
+        expected_origin=os.environ.get(f"{prefix}EXPECTED_ORIGIN") or None,
         **extra,
     )

@@ -140,27 +140,88 @@ another worker is refused (RFC 9449 §11.1).
 `TokenValidationMiddleware` and `build_ws_authenticator` build the
 `TokenPresentation` for every request, so a bound token is always checked. They
 accept `Authorization: Bearer <token>` and `Authorization: DPoP <token>` (scheme
-case-insensitive):
+case-insensitive).
+
+Both take their binding configuration from one frozen `AuthOptions`, passed as
+`options=`. Pass the same instance to both entry points so HTTP and WebSocket
+routes enforce the same rules:
 
 ```python
-from fastapi_identity_model import TokenValidationMiddleware
+from fastapi_identity_model import (
+    AuthOptions,
+    TokenValidationMiddleware,
+    build_ws_authenticator,
+)
 from py_identity_model import (
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
 )
 
-app.add_middleware(
-    TokenValidationMiddleware,
-    discovery_url=settings.discovery_url,
-    audience=settings.audience,
-    required_binding=TokenBinding.DPOP,  # or settings.required_binding
+options = AuthOptions(
+    required_binding=TokenBinding.DPOP,  # refuse Bearer and unbound tokens
     dpop=DPoPVerificationOptions(
         algorithms=frozenset({"ES256", "PS256", "EdDSA"}),
         replay_cache=InMemoryDPoPReplayCache(),
     ),
+    expected_origin="https://api.example.com",
+)
+app.add_middleware(
+    TokenValidationMiddleware,
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    options=options,
+)
+ws_auth = build_ws_authenticator(
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    options=options,
 )
 ```
+
+`AuthOptions` fields:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `required_binding` | `TokenBinding.NONE` | The sender constraint every token must carry. |
+| `dpop` | `None` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). `None` uses the defaults. |
+| `client_certificate` | `None` | Callable returning the connection's client certificate (PEM or DER), or `None`. Receives the `Request` or `WebSocket`. |
+| `expected_origin` | `None` | `scheme://host[:port]` the proof's `htu` is checked against. `None` takes the origin from the request. |
+
+`AuthOptions(required_binding=TokenBinding.MTLS)` without `client_certificate`
+raises `ValueError`, because every token would be refused.
+
+#### From `OIDCSettings`
+
+Pass `settings=` instead of `options=` and both entry points read the binding
+from `OIDCSettings`, along with `discovery_url`, `audience` and (middleware)
+`excluded_paths`:
+
+```python
+from fastapi_identity_model.config_helpers import oidc_settings_from_env
+
+settings = oidc_settings_from_env()
+app.add_middleware(TokenValidationMiddleware, settings=settings)
+ws_auth = build_ws_authenticator(settings=settings)
+```
+
+| Setting | Environment variable | Values |
+|---|---|---|
+| `required_binding` | `OIDC_REQUIRED_BINDING` | `none`, `dpop`, `mtls` |
+| `client_certificate_header` | `OIDC_CLIENT_CERTIFICATE_HEADER` | Header carrying the client certificate PEM, URL-decoded before use (nginx `$ssl_client_escaped_cert`) |
+| `expected_origin` | `OIDC_EXPECTED_ORIGIN` | `scheme://host[:port]` |
+
+Settings cannot hold callables or a replay cache. Supply those with
+`AuthOptions.from_settings(settings, dpop=..., client_certificate=...)` and pass
+the result as `options=` together with `settings=`. An `options` that drops a
+`required_binding`, `expected_origin` or client certificate header set in
+`settings` raises `ValueError`. A request that carries the certificate header
+more than once gets no certificate.
+
+Read the client certificate only from a header your TLS terminator sets and
+strips from client requests; otherwise a client can present any certificate.
+
+#### Behaviour
 
 - A rejected binding is a `401` with
   `WWW-Authenticate: DPoP error="<kind.oauth_error>", algs="<accepted algorithms>"`
@@ -168,21 +229,24 @@ app.add_middleware(
 - With `required_binding=TokenBinding.DPOP`, every `401` challenges with `DPoP`.
   Otherwise non-DPoP failures challenge with `Bearer`.
 - More than one `DPoP` header is refused as `invalid_dpop_proof` (§4.3).
-- The proof's `htu` is checked against `request.url`. Behind a reverse proxy,
-  run uvicorn with `--proxy-headers` (or Starlette's proxy-headers middleware)
-  so `request.url` is the URI the client addressed.
-- Certificate-bound tokens need `client_certificate=`, a callable that returns
-  the request's client certificate (PEM or DER) from wherever your TLS
-  terminator puts it. Without it, every certificate-bound token is refused.
-- `OIDCSettings.required_binding` carries the setting;
-  `oidc_settings_from_env` reads it from `OIDC_REQUIRED_BINDING`
-  (`none`, `dpop` or `mtls`).
+- Without `expected_origin`, the proof's `htu` is checked against
+  `request.url`, whose scheme and host come from the ASGI scope and the `Host`
+  header. A client that controls the `Host` header your app sees can then get a
+  proof minted for another origin past the `htu` check. Set `expected_origin`
+  to the origin clients address, unless a trusted proxy pins `Host` (or
+Starlette's `TrustedHostMiddleware` restricts it). Behind a
+  reverse proxy without it, run uvicorn with `--proxy-headers` (or Starlette's
+  proxy-headers middleware) so `request.url` is the URI the client addressed.
+- With `expected_origin`, `htu` is compared with that origin plus the request
+  path and query as sent.
+- Certificate-bound tokens need a `client_certificate` source. Without one,
+  every certificate-bound token is refused.
 
-On a WebSocket, `build_ws_authenticator` takes the same `required_binding`,
-`dpop` and `client_certificate` options. A DPoP proof for the handshake has
-`htm` `GET` and `htu` the handshake URI written with `http`/`https` in place of
-`ws`/`wss`. A token from the query parameter is a bearer token, so a DPoP-bound
-token can only be used from a client that can set headers.
+On a WebSocket, a DPoP proof for the handshake has `htm` `GET` and `htu` the
+handshake URI written with `http`/`https` in place of `ws`/`wss` (or
+`expected_origin` plus the path). A token from the query parameter is a bearer
+token, so a DPoP-bound token can only be used from a client that can set
+headers.
 
 ::: py_identity_model.core.token_binding.TokenPresentation
 

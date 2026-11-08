@@ -189,6 +189,11 @@ ignore = [
 # the keyword-only cache= and presentation= (RFC 9449 §7.1 / RFC 8705 §3 binding).
 "src/py_identity_model/sync/token_validation.py" = ["PLR0913"]
 "src/py_identity_model/aio/token_validation.py" = ["PLR0913"]
+# The FastAPI resource-server entry points: endpoint (discovery_url, audience,
+# excluded paths), the F-07 marker pair, http_client, cache, settings and one
+# shared AuthOptions. New validation options go on AuthOptions, not here.
+"packages/fastapi-identity-model/fastapi_identity_model/middleware.py" = ["PLR0913"]
+"packages/fastapi-identity-model/fastapi_identity_model/ws.py" = ["PLR0913"]
 # Likewise oidc_settings_from_env in the FastAPI package.
 "packages/fastapi-identity-model/fastapi_identity_model/config_helpers.py" = ["TID251"]
 "src/tests/unit/test_ssl_config.py" = [

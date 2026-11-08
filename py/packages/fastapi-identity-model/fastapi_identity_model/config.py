@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from py_identity_model import TokenBinding
 
+from .options import normalize_origin
+
 
 def _default_excluded_paths() -> list[str]:
     # Exact paths (the middleware matches excluded_paths exactly by default;
@@ -33,7 +35,20 @@ class OIDCSettings:
         post_logout_redirect: Where ``/logout`` redirects after clearing the session.
         excluded_paths: Paths the resource-server middleware skips (health/docs).
         required_binding: The sender constraint the resource-server middleware
-            requires of every token (``TokenBinding.NONE``, ``DPOP``, ``MTLS``).
+            and WebSocket authenticator require of every token
+            (``TokenBinding.NONE``, ``DPOP``, ``MTLS``). Both read it when
+            given ``settings=`` and no explicit ``options=``. ``MTLS`` needs a
+            client certificate source: ``client_certificate_header`` or a
+            ``client_certificate`` callable passed to
+            :meth:`~fastapi_identity_model.AuthOptions.from_settings`.
+        client_certificate_header: Request header your TLS terminator sets to
+            the client certificate (PEM, optionally URL-encoded, e.g. nginx's
+            ``$ssl_client_escaped_cert``). Only trust a header the terminator
+            sets and strips from client requests.
+        expected_origin: The origin clients address (``scheme://host[:port]``)
+            for the DPoP ``htu`` check. ``None`` takes the origin from the
+            request's ``Host`` header; see
+            :class:`~fastapi_identity_model.AuthOptions`.
     """
 
     discovery_url: str
@@ -46,8 +61,13 @@ class OIDCSettings:
     post_logout_redirect: str = "/"
     excluded_paths: list[str] = field(default_factory=_default_excluded_paths)
     required_binding: TokenBinding = TokenBinding.NONE
+    client_certificate_header: str | None = None
+    expected_origin: str | None = None
 
     def __post_init__(self) -> None:
+        self.required_binding = TokenBinding(self.required_binding)
+        if self.expected_origin is not None:
+            self.expected_origin = normalize_origin(self.expected_origin)
         # Validate required fields are non-empty.
         for name in ("discovery_url", "client_id"):
             if not getattr(self, name):

@@ -7,10 +7,11 @@ a static key instead of discovery, so the signature, claims and binding checks
 """
 
 from base64 import urlsafe_b64encode
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 import datetime
 import time
 from types import SimpleNamespace
+from urllib.parse import quote
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -24,11 +25,14 @@ from starlette.datastructures import URL as StarletteURL
 from starlette.datastructures import Headers
 
 from fastapi_identity_model import (
+    AuthOptions,
+    OIDCSettings,
     TokenValidationMiddleware,
     build_ws_authenticator,
     get_claims,
     ws,
 )
+from fastapi_identity_model.config_helpers import oidc_settings_from_env
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
     DPoPVerificationOptions,
@@ -135,8 +139,10 @@ def client(monkeypatch, public_jwk):
             discovery_url=DISCOVERY_URL,
             audience=AUDIENCE,
             excluded_paths=[],
-            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
-            **options,
+            options=AuthOptions(
+                dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
+                **options,
+            ),
         )
 
         @app.get("/me")
@@ -396,8 +402,10 @@ def ws_authenticate(monkeypatch, public_jwk):
         auth = build_ws_authenticator(
             discovery_url=DISCOVERY_URL,
             audience=AUDIENCE,
-            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
-            **options,
+            options=AuthOptions(
+                dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
+                **options,
+            ),
         )
         sock = SimpleNamespace(
             headers=Headers(raw=[(k.lower().encode(), v.encode()) for k, v in headers]),
@@ -476,3 +484,463 @@ class TestWebSocket:
             )
 
         assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+
+
+def _static_key_validator(public_jwk):
+    async def _validate(*, jwt, token_validation_config, presentation, **_):
+        config = replace(
+            token_validation_config,
+            perform_disco=False,
+            key=public_jwk,
+            algorithms=["RS256"],
+            issuer=ISSUER,
+        )
+        return await avalidate_token(jwt, config, presentation=presentation)
+
+    return _validate
+
+
+@pytest.fixture
+def raw_client(monkeypatch, public_jwk):
+    """An ASGI client for an app whose middleware takes *kwargs* unchanged."""
+    monkeypatch.setattr(mw, "validate_token", _static_key_validator(public_jwk))
+
+    def _raw_client(**kwargs) -> httpx.AsyncClient:
+        app = FastAPI()
+        app.add_middleware(TokenValidationMiddleware, **kwargs)
+
+        @app.get("/me")
+        async def me(claims: dict = Depends(get_claims)):
+            return {"sub": claims["sub"]}
+
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        )
+
+    return _raw_client
+
+
+@pytest.fixture
+def raw_ws_authenticate(monkeypatch, public_jwk):
+    """Authenticate a handshake to *url* with ``build_ws_authenticator(**kwargs)``."""
+    monkeypatch.setattr(ws, "validate_token", _static_key_validator(public_jwk))
+
+    async def _authenticate(headers, *, url=WS_URL, **kwargs):
+        auth = build_ws_authenticator(**kwargs)
+        sock = SimpleNamespace(
+            headers=Headers(raw=[(k.lower().encode(), v.encode()) for k, v in headers]),
+            query_params={},
+            url=StarletteURL(url),
+            scope={},
+            state=SimpleNamespace(),
+        )
+        return await auth(sock)
+
+    return _authenticate
+
+
+@pytest.fixture
+def oidc_env(monkeypatch):
+    for name in (
+        "REQUIRED_BINDING",
+        "CLIENT_CERTIFICATE_HEADER",
+        "EXPECTED_ORIGIN",
+        "AUDIENCE",
+        "EXCLUDED_PATHS",
+    ):
+        monkeypatch.delenv(f"OIDC_{name}", raising=False)
+    monkeypatch.setenv("OIDC_DISCOVERY_URL", DISCOVERY_URL)
+    monkeypatch.setenv("OIDC_CLIENT_ID", AUDIENCE)
+    return monkeypatch
+
+
+class TestSettingsWiring:
+    async def test_env_required_binding_dpop_reaches_middleware(
+        self, raw_client, oidc_env, token
+    ):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
+        settings = oidc_settings_from_env()
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+
+        async with raw_client(settings=settings) as c:
+            bearer = await c.get("/me", headers={"Authorization": f"Bearer {token()}"})
+            dpop = await c.get("/me", headers=_dpop_headers(bound, key))
+
+        assert (_rejected(bearer), dpop.status_code, dpop.json()) == (
+            (401, INVALID_TOKEN_DPOP, GENERIC_BODY),
+            200,
+            {"sub": "user"},
+        )
+
+    async def test_env_required_binding_dpop_reaches_ws_authenticator(
+        self, raw_ws_authenticate, oidc_env, token
+    ):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
+        settings = oidc_settings_from_env()
+
+        with pytest.raises(WebSocketException) as exc:
+            await raw_ws_authenticate(
+                [("Authorization", f"Bearer {token()}")], settings=settings
+            )
+
+        assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+
+    async def test_env_mtls_reads_certificate_header(
+        self, raw_client, oidc_env, token, client_cert_pem
+    ):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        settings = oidc_settings_from_env()
+        bound = token({"x5t#S256": compute_certificate_thumbprint(client_cert_pem)})
+        escaped = quote(client_cert_pem.decode())
+
+        async with raw_client(settings=settings) as c:
+            with_cert = await c.get(
+                "/me",
+                headers={"Authorization": f"Bearer {bound}", "X-Client-Cert": escaped},
+            )
+            without_cert = await c.get(
+                "/me", headers={"Authorization": f"Bearer {bound}"}
+            )
+            unbound = await c.get(
+                "/me",
+                headers={
+                    "Authorization": f"Bearer {token()}",
+                    "X-Client-Cert": escaped,
+                },
+            )
+
+        assert (
+            (with_cert.status_code, with_cert.json()),
+            _rejected(without_cert),
+            unbound.status_code,
+        ) == (
+            (200, {"sub": "user"}),
+            (401, 'Bearer error="invalid_token"', GENERIC_BODY),
+            401,
+        )
+
+    async def test_duplicate_certificate_header_refused(
+        self, raw_client, oidc_env, token, client_cert_pem
+    ):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        settings = oidc_settings_from_env()
+        bound = token({"x5t#S256": compute_certificate_thumbprint(client_cert_pem)})
+        escaped = quote(client_cert_pem.decode())
+
+        async with raw_client(settings=settings) as c:
+            resp = await c.get(
+                "/me",
+                headers=[
+                    ("Authorization", f"Bearer {bound}"),
+                    ("X-Client-Cert", escaped),
+                    ("X-Client-Cert", escaped),
+                ],
+            )
+
+        assert _rejected(resp) == (401, 'Bearer error="invalid_token"', GENERIC_BODY)
+
+    def test_env_mtls_without_certificate_source_fails_at_construction(self, oidc_env):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        settings = oidc_settings_from_env()
+
+        with pytest.raises(ValueError, match="client_certificate"):
+            TokenValidationMiddleware(FastAPI(), settings=settings)
+        with pytest.raises(ValueError, match="client_certificate"):
+            build_ws_authenticator(settings=settings)
+
+    def test_settings_supply_endpoint_audience_and_exclusions(self, oidc_env):
+        oidc_env.setenv("OIDC_EXCLUDED_PATHS", "/live")
+        settings = oidc_settings_from_env()
+
+        middleware = TokenValidationMiddleware(FastAPI(), settings=settings)
+
+        assert (
+            middleware.discovery_url,
+            middleware.audience,
+            middleware.excluded_paths,
+            middleware.options,
+        ) == (DISCOVERY_URL, AUDIENCE, ["/live"], AuthOptions())
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_explicit_arguments_win_over_settings(self):
+        settings = oidc_settings_from_env()
+
+        middleware = TokenValidationMiddleware(
+            FastAPI(),
+            discovery_url="https://other/.well-known/openid-configuration",
+            audience="urn:other",
+            excluded_paths=[],
+            settings=settings,
+        )
+
+        assert (
+            middleware.discovery_url,
+            middleware.audience,
+            middleware.excluded_paths,
+        ) == ("https://other/.well-known/openid-configuration", "urn:other", [])
+
+    def test_discovery_url_required_without_settings(self):
+        with pytest.raises(ValueError, match="discovery_url"):
+            TokenValidationMiddleware(FastAPI(), audience=AUDIENCE)
+        with pytest.raises(ValueError, match="discovery_url"):
+            build_ws_authenticator(audience=AUDIENCE)
+
+    def test_options_dropping_settings_binding_rejected(self, oidc_env):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
+        settings = oidc_settings_from_env()
+
+        with pytest.raises(ValueError, match="required_binding"):
+            TokenValidationMiddleware(
+                FastAPI(), settings=settings, options=AuthOptions()
+            )
+        with pytest.raises(ValueError, match="required_binding"):
+            build_ws_authenticator(settings=settings, options=AuthOptions())
+
+    def test_options_dropping_settings_origin_rejected(self, oidc_env):
+        oidc_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com")
+        settings = oidc_settings_from_env()
+
+        with pytest.raises(ValueError, match="expected_origin"):
+            TokenValidationMiddleware(
+                FastAPI(), settings=settings, options=AuthOptions()
+            )
+        with pytest.raises(ValueError, match="expected_origin"):
+            build_ws_authenticator(settings=settings, options=AuthOptions())
+
+    def test_options_dropping_settings_certificate_header_rejected(self, oidc_env):
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        settings = oidc_settings_from_env()
+
+        with pytest.raises(ValueError, match="client_certificate"):
+            TokenValidationMiddleware(
+                FastAPI(), settings=settings, options=AuthOptions()
+            )
+        with pytest.raises(ValueError, match="client_certificate"):
+            build_ws_authenticator(settings=settings, options=AuthOptions())
+
+    async def test_env_mtls_certificate_header_reaches_ws_authenticator(
+        self, raw_ws_authenticate, oidc_env, token, client_cert_pem
+    ):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        settings = oidc_settings_from_env()
+        bound = token({"x5t#S256": compute_certificate_thumbprint(client_cert_pem)})
+        escaped = quote(client_cert_pem.decode())
+
+        claims = await raw_ws_authenticate(
+            [("Authorization", f"Bearer {bound}"), ("X-Client-Cert", escaped)],
+            settings=settings,
+        )
+        with pytest.raises(WebSocketException) as exc:
+            await raw_ws_authenticate(
+                [("Authorization", f"Bearer {bound}")], settings=settings
+            )
+
+        assert (claims["sub"], exc.value.code) == (
+            "user",
+            status.WS_1008_POLICY_VIOLATION,
+        )
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_stricter_options_than_settings_accepted(self):
+        settings = oidc_settings_from_env()
+        options = AuthOptions(required_binding=TokenBinding.DPOP)
+
+        middleware = TokenValidationMiddleware(
+            FastAPI(), settings=settings, options=options
+        )
+
+        assert middleware.options is options
+
+    def test_from_settings_keeps_explicit_parts(self, oidc_env):
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        oidc_env.setenv("OIDC_EXPECTED_ORIGIN", "HTTPS://API.example.com:443/")
+        settings = oidc_settings_from_env()
+        dpop = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+
+        def certificate(_connection):
+            return None
+
+        options = AuthOptions.from_settings(
+            settings, dpop=dpop, client_certificate=certificate
+        )
+
+        assert options == AuthOptions(
+            required_binding=TokenBinding.MTLS,
+            dpop=dpop,
+            client_certificate=certificate,
+            expected_origin="https://api.example.com:443",
+        )
+
+
+class TestSharedOptions:
+    async def test_one_instance_configures_both_entry_points(
+        self, raw_client, raw_ws_authenticate, token
+    ):
+        options = AuthOptions(
+            required_binding=TokenBinding.DPOP,
+            expected_origin="https://api.example.com",
+        )
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        http_headers = _dpop_headers(bound, key, url="https://api.example.com/me")
+        ws_proof = create_dpop_proof(
+            key, "GET", "https://api.example.com/ws", access_token=bound
+        )
+        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+
+        async with raw_client(options=options, **common) as c:
+            http_ok = await c.get("/me", headers=http_headers)
+            http_bearer = await c.get(
+                "/me", headers={"Authorization": f"Bearer {token()}"}
+            )
+        ws_claims = await raw_ws_authenticate(
+            [("Authorization", f"DPoP {bound}"), ("DPoP", ws_proof)],
+            options=options,
+            **common,
+        )
+        with pytest.raises(WebSocketException) as ws_bearer:
+            await raw_ws_authenticate(
+                [("Authorization", f"Bearer {token()}")], options=options, **common
+            )
+
+        assert (
+            http_ok.status_code,
+            _rejected(http_bearer),
+            ws_claims["cnf"],
+            ws_bearer.value.code,
+        ) == (
+            200,
+            (401, INVALID_TOKEN_DPOP, GENERIC_BODY),
+            {"jkt": key.jwk_thumbprint},
+            status.WS_1008_POLICY_VIOLATION,
+        )
+
+    def test_options_are_frozen(self):
+        options = AuthOptions()
+        field_name = "required_binding"
+
+        with pytest.raises(FrozenInstanceError):
+            setattr(options, field_name, TokenBinding.DPOP)
+
+    def test_mtls_without_certificate_rejected(self):
+        with pytest.raises(ValueError, match="client_certificate"):
+            AuthOptions(required_binding=TokenBinding.MTLS)
+
+
+class TestExpectedOrigin:
+    async def test_proof_for_spoofed_host_accepted_without_origin(
+        self, raw_client, token
+    ):
+        # Default behaviour: the origin comes from the Host header.
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key, url="http://evil.example/me")
+        headers["Host"] = "evil.example"
+
+        async with raw_client(discovery_url=DISCOVERY_URL, audience=AUDIENCE) as c:
+            resp = await c.get("/me", headers=headers)
+
+        assert (resp.status_code, resp.json()) == (200, {"sub": "user"})
+
+    async def test_proof_for_spoofed_host_rejected_with_origin(self, raw_client, token):
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key, url="http://evil.example/me")
+        headers["Host"] = "evil.example"
+        options = AuthOptions(expected_origin="https://api.example.com")
+
+        async with raw_client(
+            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
+        ) as c:
+            resp = await c.get("/me", headers=headers)
+
+        assert _rejected(resp) == (401, INVALID_PROOF_DPOP, GENERIC_BODY)
+
+    async def test_proof_for_expected_origin_accepted_whatever_host(
+        self, raw_client, token
+    ):
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key, url="https://api.example.com/me?x=1")
+        options = AuthOptions(expected_origin="https://api.example.com")
+
+        async with raw_client(
+            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
+        ) as c:
+            resp = await c.get("/me?x=1", headers=headers)
+
+        assert (resp.status_code, resp.json()) == (200, {"sub": "user"})
+
+    async def test_proof_for_request_host_rejected_with_origin(self, raw_client, token):
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        options = AuthOptions(expected_origin="https://api.example.com")
+
+        async with raw_client(
+            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
+        ) as c:
+            resp = await c.get("/me", headers=_dpop_headers(bound, key))
+
+        assert _rejected(resp) == (401, INVALID_PROOF_DPOP, GENERIC_BODY)
+
+    async def test_ws_proof_for_handshake_host_rejected_with_origin(
+        self, raw_ws_authenticate, token
+    ):
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        proof = create_dpop_proof(key, "GET", WS_PROOF_URL, access_token=bound)
+
+        with pytest.raises(WebSocketException) as exc:
+            await raw_ws_authenticate(
+                [("Authorization", f"DPoP {bound}"), ("DPoP", proof)],
+                discovery_url=DISCOVERY_URL,
+                audience=AUDIENCE,
+                options=AuthOptions(expected_origin="https://api.example.com"),
+            )
+
+        assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.parametrize(
+        ("origin", "normalized"),
+        [
+            ("https://api.example.com", "https://api.example.com"),
+            ("HTTPS://API.Example.com/", "https://api.example.com"),
+            ("http://localhost:8000", "http://localhost:8000"),
+            ("https://[::1]:8443", "https://[::1]:8443"),
+        ],
+    )
+    def test_origin_is_normalized(self, origin, normalized):
+        assert AuthOptions(expected_origin=origin) == AuthOptions(
+            expected_origin=normalized
+        )
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "api.example.com",
+            "ftp://api.example.com",
+            "https://api.example.com/v1",
+            "https://api.example.com?x=1",
+            "https://api.example.com#f",
+            "https://user@api.example.com",
+            "https://api.example.com:notaport",
+            "https://",
+            "https://[::1",
+        ],
+    )
+    def test_invalid_origin_rejected(self, origin):
+        with pytest.raises(ValueError, match="expected_origin"):
+            AuthOptions(expected_origin=origin)
+
+    def test_invalid_settings_origin_rejected(self):
+        with pytest.raises(ValueError, match="expected_origin"):
+            OIDCSettings(
+                discovery_url=DISCOVERY_URL,
+                client_id=AUDIENCE,
+                expected_origin="https://api.example.com/v1",
+            )

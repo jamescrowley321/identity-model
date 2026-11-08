@@ -46,11 +46,8 @@ from jwt import InvalidTokenError
 
 from py_identity_model import (
     AuthorizationScheme,
-    DPoPVerificationOptions,
     NetworkException,
     PyIdentityModelException,
-    TokenBinding,
-    TokenPresentation,
     TokenValidationConfig,
     to_principal,
 )
@@ -61,14 +58,18 @@ from .middleware import (
     _is_upstream_fetch_failure,
     evaluate_token_type,
     parse_authorization,
-    request_uri,
+    presentation,
 )
+from .options import resolve_auth_options
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
+
+    from .config import OIDCSettings
+    from .options import AuthOptions
 
 
 logger = logging.getLogger("fastapi_identity_model")
@@ -110,15 +111,9 @@ def _extract_ws_token(
     return (AuthorizationScheme.BEARER, token) if token else None
 
 
-def _handshake_url(websocket: WebSocket) -> str:
-    url = websocket.url
-    http_url = url.replace(scheme=_HTTP_SCHEMES.get(url.scheme, url.scheme))
-    return request_uri(http_url, websocket.scope)
-
-
-def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in F-07 marker config + a WS token-source knob
-    discovery_url: str,
-    audience: str,
+def build_ws_authenticator(
+    discovery_url: str | None = None,
+    audience: str | None = None,
     *,
     query_param: str = "access_token",
     custom_claims_validator: Callable | None = None,
@@ -126,9 +121,8 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
     access_token_marker_claims: tuple[str, ...] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
     http_client: AsyncHTTPClient | None = None,
     cache: AsyncValidationCache | None = None,
-    required_binding: TokenBinding = TokenBinding.NONE,
-    dpop: DPoPVerificationOptions | None = None,
-    client_certificate: Callable[[WebSocket], str | bytes | None] | None = None,
+    settings: OIDCSettings | None = None,
+    options: AuthOptions | None = None,
 ) -> Callable:
     """Build a FastAPI WebSocket dependency that validates a Bearer token.
 
@@ -136,8 +130,10 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
     HTTP middleware cannot reach (issue #598).
 
     Args:
-        discovery_url: The OpenID Connect discovery document URL.
-        audience: Expected ``aud`` claim. Required — a ``None`` audience does
+        discovery_url: The OpenID Connect discovery document URL. Defaults to
+            ``settings.discovery_url``; required without ``settings``.
+        audience: Expected ``aud`` claim. Defaults to ``settings.audience``.
+            Required — a ``None`` audience does
             not enforce ``aud`` for tokens that omit it, which on a shared
             multi-tenant issuer accepts tokens minted for other clients.
         query_param: Query-string parameter carrying the token when no
@@ -154,13 +150,16 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
         cache: The :class:`~py_identity_model.aio.AsyncValidationCache` for
             the discovery document, keys and kid-miss cooldown. ``None`` uses
             the library default cache.
-        required_binding: The sender constraint every token must carry. A
-            bound token is checked either way. See :class:`TokenValidationMiddleware`.
-        dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
-            proofs. A proof's ``htm`` is ``GET`` and its ``htu`` is the
-            handshake URI with ``ws``/``wss`` written as ``http``/``https``.
-        client_certificate: Returns the handshake's mTLS client certificate,
-            or ``None``. Without it every certificate-bound token is refused.
+        settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
+            ``discovery_url`` and ``audience`` when not passed, and the binding
+            options when ``options`` is not passed. See
+            :class:`TokenValidationMiddleware`.
+        options: :class:`~fastapi_identity_model.AuthOptions`, the same
+            instance the HTTP middleware takes. A DPoP proof's ``htm`` is
+            ``GET`` and its ``htu`` is the handshake URI with ``ws``/``wss``
+            written as ``http``/``https`` (or ``expected_origin`` plus the
+            path when set). ``client_certificate`` receives the
+            ``WebSocket``.
 
     Returns:
         An async dependency ``(websocket) -> dict`` returning the validated
@@ -183,6 +182,11 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
         handshake denial (all pre-accept close codes surface the same way), so
         do not rely on the code being distinguishable browser-side.
     """
+    if settings is not None:
+        discovery_url = discovery_url or settings.discovery_url
+        audience = audience or settings.audience
+    if not discovery_url:
+        raise ValueError("build_ws_authenticator requires a discovery_url or settings.")
     if not audience:
         raise ValueError(
             "build_ws_authenticator requires a non-empty 'audience'; a "
@@ -193,6 +197,7 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
             "require_access_token_marker=True needs a non-empty "
             "access_token_marker_claims; an empty set rejects every token."
         )
+    auth_options = resolve_auth_options(settings, options)
 
     async def authenticate_websocket(websocket: WebSocket) -> dict:
         credentials = _extract_ws_token(websocket, query_param)
@@ -213,19 +218,21 @@ def build_ws_authenticator(  # noqa: PLR0913  # mirrors the middleware's opt-in 
                     perform_disco=True,
                     audience=audience,
                     claims_validator=custom_claims_validator,
-                    required_binding=required_binding,
-                    dpop=dpop,
+                    required_binding=auth_options.required_binding,
+                    dpop=auth_options.dpop,
                 ),
                 disco_doc_address=discovery_url,
                 http_client=http_client,
                 cache=cache,
-                presentation=TokenPresentation(
+                presentation=presentation(
+                    websocket,
+                    auth_options,
                     scheme=scheme,
                     method=_HANDSHAKE_METHOD,
-                    url=_handshake_url(websocket),
-                    dpop_proof=websocket.headers.get("DPoP"),
-                    client_certificate=(
-                        client_certificate(websocket) if client_certificate else None
+                    url=websocket.url.replace(
+                        scheme=_HTTP_SCHEMES.get(
+                            websocket.url.scheme, websocket.url.scheme
+                        )
                     ),
                 ),
             )
