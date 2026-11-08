@@ -9,11 +9,13 @@ import (
 // [WithAllowedAlgorithms] is not supplied. Only asymmetric signature algorithms
 // are permitted: the symmetric "HS*" family is intentionally excluded so a token
 // signed with HMAC cannot be verified against a provider's public key
-// (algorithm confusion). "none" is never accepted (JWT-003).
+// (algorithm confusion). "none" is never accepted (JWT-003). EdDSA (Ed25519
+// keys, RFC 8037) matches Python's DEFAULT_ALLOWED_ALGORITHMS.
 var defaultAllowedAlgorithms = []string{
 	"RS256", "RS384", "RS512",
 	"PS256", "PS384", "PS512",
 	"ES256", "ES384", "ES512",
+	"EdDSA",
 }
 
 // config holds the resolved settings for a Validate call.

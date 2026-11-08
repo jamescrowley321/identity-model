@@ -124,6 +124,25 @@ pub enum IdentityError {
         alg: String,
     },
 
+    /// The key resolved to verify a token is below the strength floor: an RSA
+    /// modulus under [`MIN_RSA_KEY_BITS`](crate::MIN_RSA_KEY_BITS) (RFC 7518
+    /// §3.3) or an EC coordinate under
+    /// [`MIN_EC_KEY_BITS`](crate::MIN_EC_KEY_BITS) (FAPI 2.0 Security Profile
+    /// §5.4.1). The key is not skipped and the JWK Set is not refreshed.
+    #[error(
+        "weak key: {kty} verification key {kid:?} is {bits} bits; at least {min_bits} required"
+    )]
+    WeakKey {
+        /// The key's `kid` (empty when it has none).
+        kid: String,
+        /// `RSA` or `EC`.
+        kty: String,
+        /// The key's size in bits.
+        bits: usize,
+        /// The floor it missed.
+        min_bits: usize,
+    },
+
     /// The token endpoint replied with a non-2xx OAuth 2.0 error response
     /// (RFC 6749 §5.2).
     #[error("token endpoint error {error:?}{}: HTTP {status}", .description.as_deref().map(|d| format!(": {d}")).unwrap_or_default())]

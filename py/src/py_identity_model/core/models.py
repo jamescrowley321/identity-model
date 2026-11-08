@@ -1354,7 +1354,15 @@ class TokenValidationConfig:
             members are ignored during conversion, so a public key is never
             misclassified as private.
         audience: Expected audience claim(s) in the token
-        algorithms: List of allowed signing algorithms (e.g., ['RS256'])
+        algorithms: Allowed signing algorithms (e.g., ``['PS256', 'ES256']``).
+            When ``None`` (the default), discovery mode allows
+            ``DEFAULT_ALLOWED_ALGORITHMS``: RS256/384/512, PS256/384/512,
+            ES256/384/512 and EdDSA, the same set as the Go and Rust libraries.
+            HMAC algorithms (``HS*``) must be listed explicitly. Manual mode
+            (``perform_disco=False``) requires ``algorithms``. Whatever the
+            algorithm, an RSA verification key under 2048 bits (RFC 7518
+            §3.3) or an EC key under 224 bits (FAPI 2.0 SP §5.4.1) raises
+            ``WeakKeyException``.
         issuer: Expected issuer claim.  A single string or a list of
             accepted issuers for multi-tenant validation.
         subject: Expected ``sub`` claim.  Validated after decoding.

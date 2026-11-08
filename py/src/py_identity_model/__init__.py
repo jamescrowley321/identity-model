@@ -10,6 +10,7 @@ from .core.config import (
     ConfigError,
     ConfigIssue,
 )
+from .core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 
 # Backward compatible sync exports (default)
 from .exceptions import (
@@ -43,6 +44,7 @@ from .exceptions import (
     UntrustedAudienceException,
     UserInfoException,
     ValidationException,
+    WeakKeyException,
 )
 
 # Identity models (shared)
@@ -161,6 +163,8 @@ from .sync import (
 
 
 __all__ = [
+    # Token validation
+    "DEFAULT_ALLOWED_ALGORITHMS",
     # FAPI 2.0
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
@@ -273,6 +277,7 @@ __all__ = [
     "UserInfoResponse",
     "ValidationCache",
     "ValidationException",
+    "WeakKeyException",
     "build_authorization_url",
     "build_dpop_headers",
     "build_end_session_url",

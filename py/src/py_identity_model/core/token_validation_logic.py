@@ -8,6 +8,7 @@ implementations to reduce code duplication.
 import inspect
 
 from ..core.jwt_helpers import decode_and_validate_jwt
+from ..core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from ..core.models import (
     DiscoveryDocumentResponse,
     JwksResponse,
@@ -291,14 +292,19 @@ def build_resolved_config(
         A new TokenValidationConfig with the resolved key and algorithm.
 
     Raises:
-        TokenValidationException: If the caller set ``algorithms`` and the
-            resolved algorithm is not in it.
+        TokenValidationException: If the resolved algorithm is not in the
+            caller's ``algorithms``, or in ``DEFAULT_ALLOWED_ALGORITHMS`` when
+            ``algorithms`` is ``None``.
     """
     # The resolved alg equals the JWT header alg whenever the header carries
     # one (find_key_by_kid rejects a key whose alg differs), and decode pins
     # verification to [alg], so this membership check gates the header alg.
-    allowed = original_config.algorithms
-    if allowed is not None and alg not in allowed:
+    allowed = (
+        sorted(DEFAULT_ALLOWED_ALGORITHMS)
+        if original_config.algorithms is None
+        else original_config.algorithms
+    )
+    if alg not in allowed:
         raise TokenValidationException(
             f"Algorithm '{alg}' is not in the allowed algorithms",
             token_part="header",

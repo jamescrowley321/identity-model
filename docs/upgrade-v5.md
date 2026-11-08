@@ -597,6 +597,50 @@ except KeyNotFoundException as exc:
     print(exc.details["kid"], exc.details["available_kids"])
 ```
 
+### `algorithms=None` allows only asymmetric algorithms ([#952](https://github.com/jamescrowley321/identity-model/issues/952))
+
+In 4.x, a discovery-mode `TokenValidationConfig` with `algorithms=None` (the
+default) accepted any algorithm that matched the resolved key, including
+`HS256` with an `oct` key from the JWK Set. In 5.0, `None` means
+`DEFAULT_ALLOWED_ALGORITHMS`: RS256/384/512, PS256/384/512, ES256/384/512 and
+EdDSA, the same default as the Go and Rust libraries. A token signed with any
+other algorithm raises `TokenValidationException`
+(`"Algorithm 'HS256' is not in the allowed algorithms"`).
+
+An explicit `algorithms` list works as before, and manual mode
+(`perform_disco=False`) still requires one. To keep accepting an HMAC-signed
+token, list its algorithm:
+
+```python
+config = TokenValidationConfig(
+    perform_disco=True,
+    audience="my-api",
+    algorithms=["HS256"],
+)
+```
+
+### Weak RSA and EC verification keys are rejected ([#952](https://github.com/jamescrowley321/identity-model/issues/952))
+
+5.0 refuses to verify a token with an RSA key under 2048 bits
+([RFC 7518 §3.3](https://www.rfc-editor.org/rfc/rfc7518#section-3.3)) or an EC
+key under 224 bits
+([FAPI 2.0 Security Profile §5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1)).
+This applies in discovery and manual mode and to JARM responses, whatever the
+`algorithms` setting. The new `WeakKeyException` (a `TokenValidationException`)
+is raised when the key chosen for the token is too weak. Other keys in the
+JWK Set are unaffected, and the JWK Set is not refreshed. OKP (Ed25519) keys
+have no floor. A provider still signing with a 1024-bit RSA key must rotate
+it. Its tokens fail validation until it does.
+
+```python
+from py_identity_model import WeakKeyException, validate_token
+
+try:
+    claims = validate_token(token, validation_config, DISCOVERY_URL)
+except WeakKeyException as exc:
+    print(exc.details["kid"], exc.details["bits"], exc.details["min_bits"])
+```
+
 ## UserInfo
 
 ### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))
@@ -720,3 +764,15 @@ In Rust, `JsonWebKeySet::resolve_signing_key` and
 the same and return `IdentityError::KeyNotFound`, with an empty `kid` for a
 kid-less token. `find`, `resolve_key` and `JwksClient::resolve_key` are
 unchanged.
+
+Both also refuse weak verification keys
+([#952](https://github.com/jamescrowley321/identity-model/issues/952)), as in
+Python: an RSA key under 2048 bits or an EC key under 224 bits fails
+validation without a JWK Set refresh. Go returns `*jwt.WeakKeyError`
+(`errors.Is(err, jwt.ErrWeakKey)`), with the floors in `jwt.MinRSAKeyBits` and
+`jwt.MinECKeyBits`. Rust returns `IdentityError::WeakKey { kid, kty, bits,
+min_bits }`, with the floors in `MIN_RSA_KEY_BITS` and `MIN_EC_KEY_BITS`.
+Their default algorithm allowlists now include `EdDSA`, and Ed25519 (`OKP`)
+keys verify: in Go with `jwt.Validate` and `idtoken`, in Rust with
+`validate_token` and `validate_token_with_jwks`. A caller that passes its own
+allowlist is unaffected.

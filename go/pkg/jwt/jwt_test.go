@@ -348,8 +348,9 @@ func kidless(key *jose.JSONWebKey) *jose.JSONWebKey {
 // JWKS-009: a token with no kid verifies against the single key in the set,
 // even though that key has a kid, with no forced refresh.
 func TestValidate_NoKid_SingleKey(t *testing.T) {
-	set, calls := countingKeySet(t, readFixture(t, "jwks.json"))
-	token := signWith(t, kidless(loadSigningKey(t)), jose.RS256, validClaims())
+	signer := loadSigningKey(t)
+	set, calls := countingKeySet(t, jwksJSON(t, signer.Public()))
+	token := signWith(t, kidless(signer), jose.RS256, validClaims())
 
 	if _, err := Validate(context.Background(), token, set, withFixedNow()); err != nil {
 		t.Fatalf("Validate: %v", err)
