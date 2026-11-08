@@ -52,6 +52,8 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 | `config-rp` | `configs/config-rp.json` | Config RP certification (discovery-based config) |
 | `form-post-basic-rp` | `configs/form-post-basic-rp.json` | Basic RP with `form_post` response mode |
 | `fapi2-rp` | `configs/fapi2-rp.json` | FAPI 2.0 Security Profile RP (PAR + PKCE S256 + private_key_jwt + DPoP + RFC 9207 `iss`) |
+| `fapi2-mtls-rp` | `configs/fapi2-mtls-rp.json` | FAPI 2.0 Security Profile RP, mTLS variant (`self_signed_tls_client_auth` + certificate-bound tokens) |
+| `fapi2-message-signing-rp` | `configs/fapi2-message-signing-rp.json` | FAPI 2.0 Message Signing RP (JARM signed authorization responses) |
 | `fastapi-basic-rp` | `configs/fastapi-basic-rp.json` | Basic RP regression for the fastapi-identity-model router (`--rp-url http://localhost:8889`) |
 | `fastapi-config-rp` | `configs/fastapi-config-rp.json` | Config RP regression for the fastapi-identity-model router |
 | `fastapi-form-post-basic-rp` | `configs/fastapi-form-post-basic-rp.json` | Form Post Basic RP regression for the fastapi-identity-model router |
@@ -98,12 +100,19 @@ building blocks previously only *produced* proofs):
 # Local suite (brings up the OP + RP harness):
 python run_tests.py --plan fapi2-rp
 
+# One module only (substring match on the module name):
+python run_tests.py --plan fapi2-rp --only-module invalid-alternate-alg
+
 # Hosted suite (evidence run — requires CONFORMANCE_TOKEN):
 python run_tests.py --plan fapi2-rp \
   --suite-url https://www.certification.openid.net \
   --export-zip results/hosted/fapi2-rp-export.zip \
   --rp-logs-zip results/hosted/fapi2-rp-rp-logs.zip
 ```
+
+The conformance workflow runs all three FAPI 2.0 plans (`fapi2-rp`,
+`fapi2-mtls-rp`, `fapi2-message-signing-rp`) in full on every pull request, in
+the `conformance-fapi2` job.
 
 > **Variant confirmation:** `configs/fapi2-rp.json` pins the plan name and variant
 > (`client_auth_type=private_key_jwt`, `sender_constrain=dpop`,
