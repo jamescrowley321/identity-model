@@ -35,9 +35,19 @@ from py_identity_model import (
     compute_certificate_thumbprint,
     create_dpop_proof,
     generate_dpop_key,
+    validate_id_token,
+    validate_logout_token,
     validate_token,
 )
-from py_identity_model.aio import validate_token as avalidate_token
+from py_identity_model.aio import (
+    validate_id_token as avalidate_id_token,
+)
+from py_identity_model.aio import (
+    validate_logout_token as avalidate_logout_token,
+)
+from py_identity_model.aio import (
+    validate_token as avalidate_token,
+)
 from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
@@ -93,7 +103,9 @@ def client_cert_pem() -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
-def _access_token(signing_key, cnf: dict | None = None) -> str:
+def _access_token(
+    signing_key, cnf: dict | None = None, extra: dict | None = None
+) -> str:
     claims: dict[str, object] = {
         "iss": ISSUER,
         "aud": AUDIENCE,
@@ -103,6 +115,7 @@ def _access_token(signing_key, cnf: dict | None = None) -> str:
     }
     if cnf is not None:
         claims["cnf"] = cnf
+    claims.update(extra or {})
     pem = signing_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
@@ -610,3 +623,94 @@ class TestCheckTokenBindingWithoutPresentation:
         config = TokenValidationConfig(perform_disco=True)
 
         assert check_token_binding({"sub": "user"}, "token", config, None) is None
+
+
+ID_TOKEN_CLAIMS = {"nonce": "n-1", "auth_time": int(time.time())}
+LOGOUT_EVENT = {"http://schemas.openid.net/event/backchannel-logout": {}}
+
+
+def _run(validator):
+    """Call *validator* the same way whether it is sync or async."""
+
+    def _call(*args, **kwargs):
+        result = validator(*args, **kwargs)
+        return asyncio.run(result) if asyncio.iscoroutine(result) else result
+
+    return _call
+
+
+@pytest.fixture(scope="module")
+def binding_cnfs(client_cert_pem) -> dict[str, dict]:
+    return {
+        "dpop": {"jkt": generate_dpop_key().jwk_thumbprint},
+        "mtls": {"x5t#S256": compute_certificate_thumbprint(client_cert_pem)},
+    }
+
+
+@pytest.mark.unit
+class TestBindingCheckIsAccessTokenOnly:
+    """RFC 9449 §7 / RFC 8705 §3 bind access tokens at a protected resource.
+
+    ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout
+    §2.6) carry no presentation, so a ``cnf`` claim in them is not checked.
+    """
+
+    @pytest.mark.parametrize("binding", ["dpop", "mtls"])
+    @pytest.mark.parametrize(
+        "validator", [validate_id_token, avalidate_id_token], ids=["sync", "async"]
+    )
+    def test_bound_id_token_validates(
+        self, signing_key, public_jwk, binding_cnfs, binding, validator
+    ):
+        cnf = binding_cnfs[binding]
+        token = _access_token(signing_key, cnf, ID_TOKEN_CLAIMS)
+
+        claims = _run(validator)(token, _config(public_jwk), nonce="n-1")
+
+        assert (claims["sub"], claims["cnf"]) == ("user", cnf)
+
+    @pytest.mark.parametrize("binding", ["dpop", "mtls"])
+    @pytest.mark.parametrize(
+        "validator",
+        [validate_logout_token, avalidate_logout_token],
+        ids=["sync", "async"],
+    )
+    def test_bound_logout_token_validates(
+        self, signing_key, public_jwk, binding_cnfs, binding, validator
+    ):
+        cnf = binding_cnfs[binding]
+        token = _access_token(
+            signing_key, cnf, {"jti": "logout-1", "events": LOGOUT_EVENT}
+        )
+
+        claims = _run(validator)(token, _config(public_jwk))
+
+        assert (claims["events"], claims["cnf"]) == (LOGOUT_EVENT, cnf)
+
+    @pytest.mark.parametrize("required", [TokenBinding.DPOP, TokenBinding.MTLS])
+    @pytest.mark.parametrize(
+        "validator", [validate_id_token, avalidate_id_token], ids=["sync", "async"]
+    )
+    def test_required_binding_does_not_apply_to_id_tokens(
+        self, signing_key, public_jwk, binding_cnfs, required, validator
+    ):
+        cnf = binding_cnfs[required.value]
+        token = _access_token(signing_key, cnf, ID_TOKEN_CLAIMS)
+
+        claims = _run(validator)(token, _config(public_jwk, required))
+
+        assert claims["cnf"] == cnf
+
+    @pytest.mark.parametrize(
+        "case",
+        [("dpop", DPoPValidationError), ("mtls", CertificateBindingError)],
+        ids=["dpop", "mtls"],
+    )
+    def test_same_cnf_on_an_access_token_is_rejected(
+        self, validate, signing_key, public_jwk, binding_cnfs, case
+    ):
+        binding, error = case
+        token = _access_token(signing_key, binding_cnfs[binding])
+
+        with pytest.raises(error):
+            validate(token, _config(public_jwk))

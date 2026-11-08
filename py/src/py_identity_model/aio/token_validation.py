@@ -495,7 +495,11 @@ async def validate_token(
     presentation: TokenPresentation | None = None,
 ) -> dict:
     """
-    Validate a JWT token (async).
+    Validate a JWT access token (async).
+
+    Use ``validate_id_token`` / ``validate_logout_token`` for ID Tokens and
+    Logout Tokens: they skip the sender-constraint check, which applies to
+    access tokens only.
 
     Args:
         jwt: The JWT token to validate
@@ -526,9 +530,38 @@ async def validate_token(
         ConfigurationException: If configuration is invalid
         RuntimeError: If *http_client* has been closed
     """
+    return await _validate_jwt(
+        jwt,
+        token_validation_config,
+        disco_doc_address,
+        http_client,
+        cache=cache,
+        presentation=presentation,
+        access_token=True,
+    )
+
+
+async def _validate_jwt(
+    jwt: str,
+    token_validation_config: TokenValidationConfig,
+    disco_doc_address: str | None,
+    http_client: AsyncHTTPClient | None,
+    *,
+    cache: AsyncValidationCache | None,
+    presentation: TokenPresentation | None,
+    access_token: bool,
+) -> dict:
+    """Validate a JWT; check its sender constraint only if *access_token*.
+
+    RFC 9449 §7 and RFC 8705 §3 bind access tokens presented to a protected
+    resource. ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel
+    Logout §2.6) arrive with no presentation, so their validators pass
+    ``access_token=False`` and a ``cnf`` claim in them is not checked.
+    """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)
-    require_presentation(token_validation_config, presentation)
+    if access_token:
+        require_presentation(token_validation_config, presentation)
 
     if token_validation_config.perform_disco:
         policy = resolve_discovery_policy(
@@ -557,7 +590,8 @@ async def validate_token(
         validate_config_for_manual_validation(token_validation_config)
         decoded_token = decode_with_config(jwt, token_validation_config)
 
-    check_token_binding(decoded_token, jwt, token_validation_config, presentation)
+    if access_token:
+        check_token_binding(decoded_token, jwt, token_validation_config, presentation)
     await validate_async_claims(decoded_token, token_validation_config)
     log_validation_success(decoded_token)
     return decoded_token

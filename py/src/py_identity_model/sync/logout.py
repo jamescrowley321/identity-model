@@ -1,7 +1,7 @@
 """Synchronous Back-Channel Logout token validation.
 
-Thin wrapper over ``validate_token``: performs the full standard JWT
-validation (signature via JWKS, ``iss``, ``aud``, ``iat`` and ``exp`` when
+Runs the standard JWT validation shared with ``validate_token``, minus its
+access-token sender-constraint check (signature via JWKS, ``iss``, ``aud``, ``iat`` and ``exp`` when
 present) then applies the Logout-Token-specific claim rules from
 ``core.logout_logic``. All business logic lives in ``core`` so the sync and
 async wrappers stay in lock-step (OpenID Connect Back-Channel Logout 1.0 §2.4).
@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.logout_logic import validate_logout_token_claims
-from .token_validation import validate_token
+from .token_validation import _validate_jwt
 
 
 if TYPE_CHECKING:
@@ -31,10 +31,14 @@ def validate_logout_token(
 ) -> dict:
     """Validate a Back-Channel Logout Token (Back-Channel Logout 1.0 §2.4).
 
-    Runs the standard JWT validation via ``validate_token`` (signature,
+    Runs the standard JWT validation of ``validate_token`` (signature,
     ``iss``, ``aud``, ``iat`` and ``exp`` when present), then enforces the
     Logout-Token-specific rules: required ``events`` member, ``sub``/``sid``
     presence, and the ``nonce`` prohibition.
+
+    The access-token sender-constraint check (RFC 9449 §7, RFC 8705 §3) is not
+    run: a Logout Token (Back-Channel Logout §2.6) arrives with no
+    presentation, so a ``cnf`` claim in it is not checked.
 
     Args:
         logout_token: The compact-serialized Logout Token JWT received at the
@@ -56,12 +60,14 @@ def validate_logout_token(
         LogoutTokenValidationException: If a Logout-Token-specific rule fails.
         ConfigurationException: If the configuration is invalid.
     """
-    claims = validate_token(
+    claims = _validate_jwt(
         logout_token,
         token_validation_config,
         disco_doc_address=disco_doc_address,
         http_client=http_client,
         cache=cache,
+        presentation=None,
+        access_token=False,
     )
     validate_logout_token_claims(claims)
     return claims

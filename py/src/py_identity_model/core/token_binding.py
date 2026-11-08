@@ -6,11 +6,14 @@ DPoP-bound token (``cnf.jkt``, RFC 9449 §6.1) needs the ``DPoP`` scheme and a
 proof signed by the bound key (§7.1); a certificate-bound token
 (``cnf["x5t#S256"]``, RFC 8705 §3) needs the client certificate it is bound to.
 
-``validate_token`` runs :func:`check_token_binding` on every token, with the
-:class:`TokenPresentation` (how the token arrived on the request) when one is
-given. A bound token with no presentation is rejected (RFC 9449 §7.2, RFC 8705
-§3). ``TokenValidationConfig.required_binding`` refuses tokens without the named
-binding.
+``validate_token`` (the access-token entry point) runs
+:func:`check_token_binding` on every token, with the :class:`TokenPresentation`
+(how the token arrived on the request) when one is given. A bound access token
+with no presentation is rejected (RFC 9449 §7.2, RFC 8705 §3).
+``validate_id_token`` and ``validate_logout_token`` do not run it: ID Tokens
+(OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout §2.6) arrive with
+no presentation. ``TokenValidationConfig.required_binding`` refuses access
+tokens without the named binding.
 """
 
 from __future__ import annotations
@@ -147,9 +150,11 @@ def check_token_binding(
     config: TokenValidationConfig,
     presentation: TokenPresentation | None,
 ) -> None:
-    """Check the token's sender constraint against how it was presented.
+    """Check an access token's sender constraint against how it was presented.
 
-    With no *presentation*, a bound token is rejected: a resource server
+    Only for access tokens presented to a protected resource; ID Tokens and
+    Logout Tokens are not checked. With no *presentation*, a bound access
+    token is rejected: a resource server
     "MUST reject a DPoP-bound access token received as a bearer token"
     (RFC 9449 §7.2), a DPoP-bound token needs its proof (§6.1, §7.1), and a
     certificate-bound token is valid only with the client certificate it is

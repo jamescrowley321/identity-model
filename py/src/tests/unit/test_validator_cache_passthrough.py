@@ -1,7 +1,7 @@
-"""The ID Token and Logout Token validators pass ``cache=`` to ``validate_token`` (#953).
+"""The ID Token and Logout Token validators pass ``cache=`` to ``_validate_jwt`` (#953).
 
 Each validator is called with a ``cache`` and an ``http_client``; a stand-in
-``validate_token`` records what it was given and stops the call.
+``_validate_jwt`` records what it was given and stops the call.
 """
 
 from unittest.mock import AsyncMock, Mock
@@ -27,7 +27,7 @@ VALIDATION = TokenValidationConfig(
 
 
 class _Stop(Exception):
-    """Raised by the stand-in ``validate_token`` once it has recorded its call."""
+    """Raised by the stand-in ``_validate_jwt`` once it has recorded its call."""
 
 
 def _passed(mock: Mock) -> dict:
@@ -44,7 +44,7 @@ def _passed(mock: Mock) -> dict:
 )
 def test_sync_validators_pass_the_cache(monkeypatch, module, name):
     stand_in = Mock(side_effect=_Stop)
-    monkeypatch.setattr(module, "validate_token", stand_in)
+    monkeypatch.setattr(module, "_validate_jwt", stand_in)
     validator = getattr(module, name)
     cache = ValidationCache()
     with HTTPClient() as client, pytest.raises(_Stop):
@@ -61,7 +61,7 @@ def test_sync_validators_pass_the_cache(monkeypatch, module, name):
 )
 async def test_async_validators_pass_the_cache(monkeypatch, module, name):
     stand_in = AsyncMock(side_effect=_Stop)
-    monkeypatch.setattr(module, "validate_token", stand_in)
+    monkeypatch.setattr(module, "_validate_jwt", stand_in)
     validator = getattr(module, name)
     cache = AsyncValidationCache()
     async with AsyncHTTPClient() as client:
@@ -81,7 +81,7 @@ async def test_async_validators_pass_the_cache(monkeypatch, module, name):
 )
 def test_sync_validators_default_to_no_cache(monkeypatch, module, name):
     stand_in = Mock(side_effect=_Stop)
-    monkeypatch.setattr(module, "validate_token", stand_in)
+    monkeypatch.setattr(module, "_validate_jwt", stand_in)
     validator = getattr(module, name)
     with pytest.raises(_Stop):
         validator(TOKEN, VALIDATION, DISCO_URL)

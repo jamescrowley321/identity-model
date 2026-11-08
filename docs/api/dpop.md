@@ -121,6 +121,10 @@ What `required_binding` does:
 | `NONE` | `cnf["x5t#S256"]` | no `presentation=` | `CertificateBindingError` (RFC 8705 §3) |
 | `NONE` | no `cnf.jkt` or `cnf["x5t#S256"]` | no `presentation=` | accepted |
 
+The table applies to access tokens (`validate_token`). `validate_id_token` and
+`validate_logout_token` do not check `cnf` and ignore `required_binding`: ID
+Tokens and Logout Tokens arrive with no presentation.
+
 `required_binding=DPOP` or `MTLS` without `presentation=` raises
 `ConfigurationException`. Every rejection is a `DPoPValidationError` (or
 `CertificateBindingError` for mTLS), both `TokenValidationException`s, with a
