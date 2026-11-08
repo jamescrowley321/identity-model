@@ -423,8 +423,10 @@ loopback URI is allowed with `native_app=True`). It fills
 `PrivateKeyJwt.issuer` from the discovery issuer and refuses an `audience` or
 `issuer` that names anything else, so the assertion `aud` is never the
 endpoint URL. Its request builders fix PAR, `response_type=code` and PKCE
-`S256`, require a DPoP key for a `private_key_jwt` client, cap `nonce` at 64
-characters, and raise on anything that would weaken the flow.
+`S256`, require a DPoP key for a `private_key_jwt` client whose algorithm the
+server lists in `dpop_signing_alg_values_supported`, cap `nonce` at 64
+characters, and raise on anything that would weaken the flow. The issuer and
+every endpoint must be an `https` URL with a host.
 `validate_callback_issuer` requires the RFC 9207 `iss` parameter, and
 `signing_algorithms` is the list to pass when validating ID Tokens and JARM
 responses.

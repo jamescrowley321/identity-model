@@ -870,3 +870,96 @@ def test_authorization_url_trailing_delimiter_not_doubled(suffix):
     assert profile.authorization_url("urn:x") == (
         f"{AUTHORIZATION_ENDPOINT}{suffix}client_id={CLIENT_ID}&request_uri=urn%3Ax"
     )
+
+
+@pytest.mark.unit
+def test_authorization_url_trailing_ampersand_without_query_starts_query():
+    profile = _profile_from(
+        _discovery(authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}&")
+    )
+    assert profile.authorization_url("urn:x") == (
+        f"{AUTHORIZATION_ENDPOINT}&?client_id={CLIENT_ID}&request_uri=urn%3Ax"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "name",
+    [
+        "issuer",
+        "authorization_endpoint",
+        "token_endpoint",
+        "pushed_authorization_request_endpoint",
+    ],
+)
+def test_endpoint_without_host_refused(name):
+    with pytest.raises(FAPIProfileError) as exc_info:
+        _profile_from(_discovery(**{name: "https:///path"}))
+    assert exc_info.value.violations == [
+        f"{name} must have a host, got 'https:///path'"
+    ]
+
+
+@pytest.mark.unit
+def test_mtls_alias_without_host_refused():
+    discovery = _discovery(
+        mtls_endpoint_aliases={
+            "token_endpoint": "https:///token",
+            "pushed_authorization_request_endpoint": MTLS_PAR_ENDPOINT,
+        }
+    )
+    with pytest.raises(FAPIProfileError) as exc_info:
+        _profile_from(discovery, client_auth=_mtls())
+    assert exc_info.value.violations == [
+        "token_endpoint must have a host, got 'https:///token'"
+    ]
+
+
+@pytest.mark.unit
+class TestFAPI2ClientProfileAdvertisedDPoPAlgorithms:
+    """The flow's DPoP key must use an algorithm the server advertises."""
+
+    NOT_ADVERTISED = (
+        "Server does not advertise DPoP algorithm 'ES256' in "
+        "dpop_signing_alg_values_supported (RFC 9449 §5.1)"
+    )
+
+    def test_advertised_fapi_algorithms_kept(self):
+        discovery = _discovery(
+            dpop_signing_alg_values_supported=["RS256", "PS256", "ES256"]
+        )
+        assert _profile_from(discovery).dpop_signing_algorithms == (
+            "ES256",
+            "PS256",
+        )
+
+    def test_par_with_unadvertised_key_refused(self):
+        profile = _profile_from(_discovery(dpop_signing_alg_values_supported=["PS256"]))
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.pushed_authorization_request(
+                state="state", code_challenge="challenge", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [self.NOT_ADVERTISED]
+
+    def test_token_request_with_unadvertised_key_refused(self):
+        profile = _profile_from(_discovery(dpop_signing_alg_values_supported=["PS256"]))
+        with pytest.raises(FAPIProfileError) as exc_info:
+            profile.authorization_code_token_request(
+                code="code", code_verifier="verifier", dpop_key=DPOP_KEY
+            )
+        assert exc_info.value.violations == [self.NOT_ADVERTISED]
+
+    def test_advertised_key_accepted(self):
+        discovery = _discovery(dpop_signing_alg_values_supported=["PS256", "ES256"])
+        request = _profile_from(discovery).authorization_code_token_request(
+            code="code", code_verifier="verifier", dpop_key=DPOP_KEY
+        )
+        assert request.dpop_key is DPOP_KEY
+
+    def test_non_fapi_key_reported_once(self):
+        discovery = _discovery(dpop_signing_alg_values_supported=["RS256", "ES256"])
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(discovery).authorization_code_token_request(
+                code="code", code_verifier="verifier", dpop_key=RS256_DPOP_KEY
+            )
+        assert exc_info.value.violations == [_alg_violation("DPoP", "RS256")]
