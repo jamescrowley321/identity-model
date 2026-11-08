@@ -524,6 +524,7 @@ class DiscoveryDocumentResponse(BaseResponse):
             "authorization_encryption_enc_values_supported",
             "mtls_endpoint_aliases",
             "tls_client_certificate_bound_access_tokens",
+            "dpop_signing_alg_values_supported",
         }
     )
 
@@ -613,6 +614,10 @@ class DiscoveryDocumentResponse(BaseResponse):
 
     # HTTP cache metadata (not a guarded field — always accessible)
     cache_control: str | None = None
+
+    # DPoP support (RFC 9449 §5.1).  Last, so positional callers of the
+    # fields above are unaffected.
+    dpop_signing_alg_values_supported: list[str] | None = None
 
 
 # ============================================================================

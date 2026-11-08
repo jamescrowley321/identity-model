@@ -412,6 +412,10 @@ def build_discovery_response(
         tls_client_certificate_bound_access_tokens=response_json.get(
             "tls_client_certificate_bound_access_tokens",
         ),
+        # DPoP support (RFC 9449 §5.1)
+        dpop_signing_alg_values_supported=response_json.get(
+            "dpop_signing_alg_values_supported",
+        ),
         # RP-Initiated Logout support (OpenID Connect RP-Initiated Logout 1.0 §2)
         end_session_endpoint=response_json.get("end_session_endpoint"),
         # Back-Channel Logout support (OpenID Connect Back-Channel Logout 1.0 §3)
