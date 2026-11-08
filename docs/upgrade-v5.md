@@ -569,25 +569,33 @@ to (RFC 8705 §3).
 - An unbound token is accepted as before, unless `required_binding` is `DPOP`
   or `MTLS` (still a `ConfigurationException` without `presentation=`).
 
-To accept a bound token, pass how it arrived:
+To accept a bound token, pass how it arrived, with the scheme from the
+request's `Authorization` header:
 
 ```python
+scheme, _, access_token = request.headers["Authorization"].partition(" ")
 claims = validate_token(
     access_token,
     config,
     disco_doc_address,
     presentation=TokenPresentation(
-        scheme=AuthorizationScheme.DPOP,
+        scheme=(
+            AuthorizationScheme.DPOP
+            if scheme.lower() == "dpop"
+            else AuthorizationScheme.BEARER
+        ),
         method=request.method,
         url="https://api.example.com/orders",
-        dpop_proof=request.headers.get("DPoP"),
-        client_certificate=client_certificate,  # for cnf["x5t#S256"]
+        dpop_proof=request.headers.get("DPoP"),  # for cnf.jkt
+        client_certificate=client_certificate,  # for cnf["x5t#S256"], from mTLS
     ),
 )
 ```
 
-The FastAPI middleware already passes a presentation; see
-[DPoP](api/dpop.md).
+The check runs on every token `validate_token` decodes, so an ID Token or
+Logout Token carrying `cnf.jkt` or `cnf["x5t#S256"]` is rejected by
+`validate_id_token` / `validate_logout_token` too. The FastAPI middleware
+already passes a presentation; see [DPoP](api/dpop.md).
 
 ## ID Token validation
 

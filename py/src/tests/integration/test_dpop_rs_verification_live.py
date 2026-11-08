@@ -240,6 +240,13 @@ class TestDPoPBoundTokenLive:
 
         assert _kind(validate, token, bearer) is DPoPErrorKind.WRONG_SCHEME
 
+    def test_9b_bound_token_without_presentation_rejected(self, validate, bound):
+        # RFC 9449 §7.2: no presentation means no proof; the bound token is
+        # refused rather than accepted as a bearer token.
+        _key, token = bound
+
+        assert _kind(validate, token, None) is DPoPErrorKind.PROOF_REQUIRED
+
     def test_11_typ_jwt_rejected(self, validate, bound):
         key, token = bound
         proof = _signed_proof(key, token, typ="JWT")
@@ -270,3 +277,8 @@ class TestUnboundTokenLive:
 
         assert "cnf" not in claims
         assert claims["aud"] == RESOURCE
+
+    def test_12b_unbound_without_presentation_accepted(self, validate, unbound_token):
+        claims = validate(unbound_token)
+
+        assert ("cnf" in claims, claims["aud"]) == (False, RESOURCE)
