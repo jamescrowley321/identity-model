@@ -198,7 +198,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: jamescrowley321/blind-peer-review
-          ref: 9d1c5036c17e4bc741c36dc8a70a8ffc2b634d41 # v3.12.1
+          ref: a1222e722c479cf36bf24bc746c8b3d99499d798 # v3.13.0
           path: .review-plugin
           persist-credentials: false
 
