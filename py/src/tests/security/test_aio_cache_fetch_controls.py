@@ -33,14 +33,16 @@ import respx
 
 from py_identity_model import Config, get_cache_counters
 from py_identity_model.aio import token_validation as aio_tv
-from py_identity_model.aio.http_client import get_default_async_http_client
-from py_identity_model.aio.managed_client import AsyncClientCaches, AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks,
     _get_disco_response,
     _refresh_jwks,
     clear_discovery_cache,
     clear_jwks_cache,
+)
+from py_identity_model.aio.validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
 )
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.jwks_cache import DiscoCacheEntry, JwksCacheEntry
@@ -51,7 +53,11 @@ from py_identity_model.core.models import (
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.exceptions import ConfigurationException
 
-from ..token_validation_helpers import generate_rsa_keypair
+from ..token_validation_helpers import (
+    disco_cache_key,
+    generate_rsa_keypair,
+    jwks_cache_key,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -59,7 +65,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 async def _clean_state():
-    """Reset the default client's caches (+ cooldown) and counters between tests.
+    """Reset the default cache (+ cooldown) and counters between tests.
 
     ``clear_jwks_cache`` also clears the kid-miss cooldown sidecar.
     """
@@ -72,10 +78,10 @@ async def _clean_state():
     get_cache_counters().reset()
 
 
-def _caches() -> AsyncClientCaches:
-    """Caches of the default async client — used by every call below that
-    passes no ``http_client``."""
-    return get_default_async_http_client().caches
+def _caches() -> AsyncValidationCache:
+    """The default async validation cache — used by every call below that
+    passes no ``cache``."""
+    return get_default_async_validation_cache()
 
 
 # Generate ONE RSA keypair for the whole module. These tests exercise cache /
@@ -194,10 +200,9 @@ class TestSchemeEnforcement:
 
 
 @pytest.fixture
-async def single_entry_client():
-    """A client whose caches hold one provider (``cache_max_entries=1``)."""
-    async with AsyncHTTPClient(config=Config(cache_max_entries=1)) as client:
-        yield client
+def single_entry_cache() -> AsyncValidationCache:
+    """A cache that holds one provider (``cache_max_entries=1``)."""
+    return AsyncValidationCache(config=Config(cache_max_entries=1))
 
 
 class TestCooldownSidecarEviction:
@@ -208,20 +213,20 @@ class TestCooldownSidecarEviction:
     cache itself is bounded."""
 
     @staticmethod
-    def _seed(client: AsyncHTTPClient, old_uri: str) -> None:
-        client.caches.jwks[old_uri] = JwksCacheEntry(
+    def _seed(cache: AsyncValidationCache, old_uri: str) -> None:
+        cache.jwks[jwks_cache_key(old_uri)] = JwksCacheEntry(
             response=_jwks_resp([_jwk()]),
             cached_at=time.monotonic(),
             ttl=1e9,
         )
-        client.caches.kid_miss_last_attempt[old_uri] = 123.0
+        cache.kid_miss_last_attempt[old_uri] = 123.0
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_cached_jwks_eviction_clears_cooldown(self, single_entry_client):
+    async def test_cached_jwks_eviction_clears_cooldown(self, single_entry_cache):
         old_uri = "https://old.example/jwks"
         new_uri = "https://new.example/jwks"
-        self._seed(single_entry_client, old_uri)
+        self._seed(single_entry_cache, old_uri)
         respx.get(new_uri).mock(
             return_value=httpx.Response(
                 200,
@@ -229,17 +234,17 @@ class TestCooldownSidecarEviction:
                 headers={"Cache-Control": "max-age=3600"},
             )
         )
-        await _get_cached_jwks(new_uri, http_client=single_entry_client)
+        await _get_cached_jwks(new_uri, cache=single_entry_cache)
         # old_uri was evicted (max=1); its cooldown sidecar entry must be gone.
-        assert old_uri not in single_entry_client.caches.jwks
-        assert old_uri not in single_entry_client.caches.kid_miss_last_attempt
+        assert jwks_cache_key(old_uri) not in single_entry_cache.jwks
+        assert old_uri not in single_entry_cache.kid_miss_last_attempt
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_refresh_eviction_clears_cooldown(self, single_entry_client):
+    async def test_refresh_eviction_clears_cooldown(self, single_entry_cache):
         old_uri = "https://old.example/jwks"
         new_uri = "https://new.example/jwks"
-        self._seed(single_entry_client, old_uri)
+        self._seed(single_entry_cache, old_uri)
         respx.get(new_uri).mock(
             return_value=httpx.Response(
                 200,
@@ -247,9 +252,9 @@ class TestCooldownSidecarEviction:
                 headers={"Cache-Control": "max-age=3600"},
             )
         )
-        await _refresh_jwks(new_uri, http_client=single_entry_client)
-        assert old_uri not in single_entry_client.caches.jwks
-        assert old_uri not in single_entry_client.caches.kid_miss_last_attempt
+        await _refresh_jwks(new_uri, cache=single_entry_cache)
+        assert jwks_cache_key(old_uri) not in single_entry_cache.jwks
+        assert old_uri not in single_entry_cache.kid_miss_last_attempt
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +275,7 @@ class TestRefreshSemantics:
         fall back and mislabel it ``from_retained=True``.
         """
         uri = "https://op.example/jwks"
-        _caches().jwks[uri] = JwksCacheEntry(
+        _caches().jwks[jwks_cache_key(uri)] = JwksCacheEntry(
             response=_jwks_resp([]),  # retained but EMPTY
             cached_at=time.monotonic() - 1000.0,  # old -> not coalesced
             ttl=1e9,
@@ -292,7 +297,7 @@ class TestRefreshSemantics:
         uri = "https://op.example/jwks"
         seeded = _jwks_resp([_jwk()])
         fixed_t = 5000.0
-        _caches().jwks[uri] = JwksCacheEntry(
+        _caches().jwks[jwks_cache_key(uri)] = JwksCacheEntry(
             response=seeded, cached_at=fixed_t, ttl=1e9
         )
         route = respx.get(uri).mock(
@@ -350,8 +355,8 @@ class TestDoubleCheckedLockAndLru:
         """
         addr_x = "https://opx.example/.well-known/openid-configuration"
         addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = (addr_x, DiscoveryPolicy().cache_key())
-        key_y = (addr_y, DiscoveryPolicy().cache_key())
+        key_x = disco_cache_key(addr_x)
+        key_y = disco_cache_key(addr_y)
         resp_x = _disco_resp("https://opx.example")
         # Seed order: x (oldest) then y (newest).
         _caches().disco[key_x] = DiscoCacheEntry(
@@ -382,8 +387,8 @@ class TestDoubleCheckedLockAndLru:
         an attacker reading distinct addresses could evict it)."""
         addr_x = "https://opx.example/.well-known/openid-configuration"
         addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = (addr_x, DiscoveryPolicy().cache_key())
-        key_y = (addr_y, DiscoveryPolicy().cache_key())
+        key_x = disco_cache_key(addr_x)
+        key_y = disco_cache_key(addr_y)
         resp_x = _disco_resp("https://opx.example")
         _caches().disco[key_x] = DiscoCacheEntry(
             response=resp_x, cached_at=time.monotonic(), ttl=1e9
@@ -414,10 +419,10 @@ class TestDoubleCheckedLockAndLru:
         uri_x = "https://opx.example/jwks"
         uri_y = "https://opy.example/jwks"
         resp_x = _jwks_resp([_jwk()])
-        _caches().jwks[uri_x] = JwksCacheEntry(
+        _caches().jwks[jwks_cache_key(uri_x)] = JwksCacheEntry(
             response=resp_x, cached_at=time.monotonic(), ttl=1e9
         )
-        _caches().jwks[uri_y] = JwksCacheEntry(
+        _caches().jwks[jwks_cache_key(uri_y)] = JwksCacheEntry(
             response=_jwks_resp([_jwk()]), cached_at=time.monotonic(), ttl=1e9
         )
         route = respx.get(uri_x).mock(
@@ -429,4 +434,7 @@ class TestDoubleCheckedLockAndLru:
 
         assert result is resp_x
         assert route.call_count == 0
-        assert list(_caches().jwks.keys()) == [uri_y, uri_x]
+        assert list(_caches().jwks.keys()) == [
+            jwks_cache_key(uri_y),
+            jwks_cache_key(uri_x),
+        ]

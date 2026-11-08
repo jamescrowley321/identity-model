@@ -16,12 +16,12 @@ leaf :class:`threading.Lock`. The lock guards only the counter fields — it
 never wraps I/O or a cache-structure critical section, so instrumenting the
 cache fast path adds no contention against the cache itself.
 
-**What is counted:** only the module-level singleton cache paths in
+**What is counted:** the async validation cache paths in
 :mod:`py_identity_model.aio.token_validation`
-(``_get_disco_response`` / ``_get_cached_jwks`` / ``_refresh_jwks``). The
-injected-``http_client`` path bypasses those caches entirely and is
-deliberately *not* counted — it performs no caching, so a "hit rate" over it
-would be meaningless.
+(``_get_disco_response`` / ``_get_cached_jwks`` / ``_refresh_jwks``), for
+every :class:`~py_identity_model.aio.validation_cache.AsyncValidationCache`
+and whichever ``http_client`` is passed. The sync validation cache paths are
+not counted.
 """
 
 from dataclasses import dataclass, field

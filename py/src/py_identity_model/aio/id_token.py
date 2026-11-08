@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from ..core.models import TokenValidationConfig
     from .managed_client import AsyncHTTPClient
+    from .validation_cache import AsyncValidationCache
 
 
 async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.7/§3.3.2.11)
@@ -30,6 +31,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
     disco_doc_address: str | None = None,
     http_client: AsyncHTTPClient | None = None,
     *,
+    cache: AsyncValidationCache | None = None,
     trusted_audiences: Iterable[str] | None = None,
     validate_azp: bool = False,
     nonce: str | None = None,
@@ -56,6 +58,8 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         disco_doc_address: Discovery document address (required when
             ``perform_disco`` is True).
         http_client: Optional managed async HTTP client (see ``validate_token``).
+        cache: Optional :class:`AsyncValidationCache` for the discovery document,
+            JWKS and kid-miss cooldown (see ``validate_token``).
         trusted_audiences: Additional audiences the client trusts besides
             ``token_validation_config.audience``. Every ``aud`` value MUST be
             the audience or one of these (§3.1.3.7 step 3); omitted or empty
@@ -107,6 +111,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         token_validation_config,
         disco_doc_address=disco_doc_address,
         http_client=http_client,
+        cache=cache,
     )
     _kid, header_alg = extract_jwt_header_fields(id_token)
     validate_id_token_claims(

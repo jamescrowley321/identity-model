@@ -190,7 +190,8 @@ class Config:
         jwks_max_size: Largest JWKS response accepted, in bytes.
         jwks_max_keys: Most keys accepted in one JWKS.
         jwks_cache_ttl: JWKS cache lifetime in seconds, used only when the
-            response has no ``Cache-Control: max-age``. 60 to 86400.
+            response has no ``Cache-Control: max-age``. 60 to 86400; default
+            3600 (1 hour).
         jwks_kid_miss_cooldown: Minimum seconds between JWKS refreshes
             triggered by an unknown ``kid``. 0 to 3600; 0 disables the
             cooldown.

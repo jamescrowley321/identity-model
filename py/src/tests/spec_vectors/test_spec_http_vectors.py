@@ -63,6 +63,7 @@ from py_identity_model.sync.token_validation import (
     _refresh_jwks,
 )
 from py_identity_model.sync.userinfo import UserInfoRequest, get_userinfo
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..dpop_proof_helpers import assert_dpop_proof, dpop_fixture_key, proof_jti
 
@@ -330,13 +331,13 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
         request = DiscoveryDocumentRequest(address=address, policy=policy)
         return base, [get_discovery_document(request)]
     responses = []
-    # A dedicated client carries the vector's TTL and owns its own cache, so
-    # nothing is left in the library default client's cache afterwards.
-    config = Config(
-        discovery_cache_ttl=inp["cache_ttl_seconds"],
-        http_retry_base_delay=0,
-    )
-    with HTTPClient(config=config) as client, pytest.MonkeyPatch.context() as mp:
+    # A dedicated cache carries the vector's TTL, so nothing is left in the
+    # library default cache afterwards; a dedicated client skips retry delays.
+    cache = ValidationCache(config=Config(discovery_cache_ttl=inp["cache_ttl_seconds"]))
+    with (
+        HTTPClient(config=Config(http_retry_base_delay=0)) as client,
+        pytest.MonkeyPatch.context() as mp,
+    ):
         now = [0.0]
         cache_clock = SimpleNamespace(monotonic=lambda: now[0])
         mp.setattr(token_validation, "time", cache_clock)
@@ -345,7 +346,7 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
         for at in inp["calls_at_seconds"]:
             now[0] = start + at
             responses.append(
-                token_validation._get_disco_response(address, policy, client)
+                token_validation._get_disco_response(address, policy, client, cache)
             )
     return base, responses
 
@@ -537,20 +538,28 @@ def _token_with_header(kid: str | None, alg: str | None) -> str:
     return f"{b64(header)}.{b64({})}.sig"
 
 
+class _JwksStack(NamedTuple):
+    """The transport and the validation cache one JWKS vector runs against."""
+
+    client: HTTPClient
+    cache: ValidationCache
+
+
 def _jwks_step(
-    client: HTTPClient,
+    stack: _JwksStack,
     base: str,
     step: str,
     kid: str | None,
     alg: str | None = None,
 ) -> list[dict]:
+    client, cache = stack
     jwks_uri = base + "/jwks"
     if step == "fetch":
-        response = _get_cached_jwks(jwks_uri, http_client=client)
+        response = _get_cached_jwks(jwks_uri, http_client=client, cache=cache)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "force_refresh":
-        response, _ = _refresh_jwks(jwks_uri, http_client=client)
+        response, _ = _refresh_jwks(jwks_uri, http_client=client, cache=cache)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "resolve":
@@ -559,15 +568,17 @@ def _jwks_step(
             base + _DISCO_PATH,
             client,
             DiscoveryPolicy(),
+            cache,
         )
         return [key]
     pytest.fail(f"unknown jwks step {step!r}")
 
 
 def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
-    # A fresh client per vector: empty discovery/JWKS caches and no kid-miss
+    # A fresh cache per vector: empty discovery/JWKS caches and no kid-miss
     # cooldown carried over from another vector.
     with HTTPClient(config=Config(http_retry_base_delay=0)) as client:
+        stack = _JwksStack(client, ValidationCache())
         # Each resolve takes the next of input.kids when given, else input.kid.
         kids = iter(inp.get("kids", []))
         steps = inp["steps"]
@@ -575,7 +586,7 @@ def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
         for n, step in enumerate(steps, 1):
             kid = next(kids, inp.get("kid")) if step == "resolve" else None
             try:
-                keys = _jwks_step(client, base, step, kid, inp.get("alg"))
+                keys = _jwks_step(stack, base, step, kid, inp.get("alg"))
             except TokenValidationException as exc:
                 # A key-not-found miss before the last step does not end the run.
                 if n == len(steps) or not isinstance(exc, KeyNotFoundException):

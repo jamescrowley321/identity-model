@@ -9,6 +9,7 @@ import concurrent.futures
 from functools import lru_cache
 import threading
 
+from py_identity_model.core.process_local import ProcessLocal
 from py_identity_model.sync import http_client as sync_http_client
 from py_identity_model.sync.http_client import (
     _reset_http_client,
@@ -27,9 +28,13 @@ class TestDefaultClientThreadSafety:
 
     def test_default_client_concurrent_creation_is_shared(self, monkeypatch):
         """Concurrent first use from many threads yields one default client."""
-        # Start with no default installed; monkeypatch restores the session's
-        # default client afterwards.
-        monkeypatch.setitem(sync_http_client._default_state, "client", None)
+        # Start with no default built (a fresh holder with the library's own
+        # factory); monkeypatch restores the session's default client afterwards.
+        monkeypatch.setattr(
+            sync_http_client,
+            "_default_client",
+            ProcessLocal(sync_http_client._default_client._factory),
+        )
         results = []
         errors = []
         lock = threading.Lock()
@@ -51,7 +56,7 @@ class TestDefaultClientThreadSafety:
 
         assert errors == []
         assert len(results) == CONCURRENT_CALLS
-        # One process-wide default client, so its caches are shared.
+        # One process-wide default client, shared by every thread.
         assert {id(client) for client in results} == {id(get_default_http_client())}
 
 

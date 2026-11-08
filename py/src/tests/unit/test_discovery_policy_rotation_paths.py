@@ -41,7 +41,6 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio.http_client import get_default_async_http_client
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
@@ -52,6 +51,9 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
+from py_identity_model.aio.validation_cache import (
+    get_default_async_validation_cache,
+)
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.core.token_validation_logic import build_resolved_config
@@ -59,7 +61,6 @@ from py_identity_model.exceptions import (
     SignatureVerificationException,
     TokenValidationException,
 )
-from py_identity_model.sync.http_client import get_default_http_client
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
@@ -70,6 +71,7 @@ from py_identity_model.sync.token_validation import (
 from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
+from py_identity_model.sync.validation_cache import get_default_validation_cache
 
 from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
@@ -135,13 +137,13 @@ def _lax_config() -> TokenValidationConfig:
 
 
 def _sync_kid_miss_last_attempt() -> dict[str, float]:
-    """Kid-miss cooldown state of the default sync client (no ``http_client``)."""
-    return get_default_http_client().caches.kid_miss_last_attempt
+    """Kid-miss cooldown state of the default sync cache (no ``cache=``)."""
+    return get_default_validation_cache().kid_miss_last_attempt
 
 
 def _async_kid_miss_last_attempt() -> dict[str, float]:
-    """Kid-miss cooldown state of the default async client."""
-    return get_default_async_http_client().caches.kid_miss_last_attempt
+    """Kid-miss cooldown state of the default async cache."""
+    return get_default_async_validation_cache().kid_miss_last_attempt
 
 
 @pytest.fixture(autouse=True)

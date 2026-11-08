@@ -160,6 +160,10 @@ from .token_exchange import (
 )
 from .token_validation import TokenValidationConfig, validate_token
 from .userinfo import UserInfoRequest, UserInfoResponse, get_userinfo
+from .validation_cache import (
+    AsyncValidationCache,
+    get_default_async_validation_cache,
+)
 
 
 __all__ = [
@@ -171,6 +175,7 @@ __all__ = [
     # HTTP Client
     "AsyncHTTPClient",
     # Auth Code + PKCE
+    "AsyncValidationCache",
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
     # Authorize Callback
@@ -255,6 +260,7 @@ __all__ = [
     "generate_code_verifier",
     "generate_dpop_key",
     "generate_pkce_pair",
+    "get_default_async_validation_cache",
     "get_discovery_document",
     "get_jwks",
     "get_userinfo",

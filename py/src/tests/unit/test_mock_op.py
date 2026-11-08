@@ -15,6 +15,7 @@ import pytest
 
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import validate_token
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import PyIdentityModelException
 
@@ -50,6 +51,11 @@ def _validation_config() -> TokenValidationConfig:
 
 
 async def _validate(mock: MockOP, token: str) -> dict:
+    """Validate *token* as a cold resource server: a fresh client and cache.
+
+    A fresh cache per call means no discovery/JWKS entry or kid-miss cooldown
+    carries over between calls (or from the process default cache).
+    """
     client = _client(mock)
     try:
         return await validate_token(
@@ -57,6 +63,7 @@ async def _validate(mock: MockOP, token: str) -> dict:
             _validation_config(),
             disco_doc_address=mock.discovery_url,
             http_client=client,
+            cache=AsyncValidationCache(),
         )
     finally:
         await client.close()

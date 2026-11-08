@@ -6,7 +6,9 @@ import pytest
 
 from py_identity_model import Config
 from py_identity_model.aio.managed_client import AsyncHTTPClient
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.sync.managed_client import HTTPClient
+from py_identity_model.sync.validation_cache import ValidationCache
 
 
 # Custom timeout value for testing (seconds)
@@ -120,14 +122,15 @@ class TestHTTPClient:
         client.close()
         raw.close()
 
-    def test_each_client_owns_its_caches(self):
-        first = HTTPClient()
-        second = HTTPClient()
-        assert first.caches is not second.caches
-        assert first.caches.jwks is not second.caches.jwks
-        assert first.caches.disco is not second.caches.disco
-        first.close()
-        second.close()
+    def test_client_holds_no_validation_cache(self):
+        """Caches live on a ValidationCache, never on the transport (#953)."""
+        with HTTPClient() as client:
+            assert not hasattr(client, "caches")
+            assert [
+                name
+                for name, value in vars(client).items()
+                if isinstance(value, ValidationCache)
+            ] == []
 
     def test_unowned_close_blocks_further_access(self):
         raw = httpx.Client()
@@ -220,12 +223,16 @@ class TestAsyncHTTPClient:
         assert client.client.timeout.connect == WRAPPED_CLIENT_TIMEOUT
         assert client.config is config
 
-    def test_each_client_owns_its_caches(self):
-        first = AsyncHTTPClient()
-        second = AsyncHTTPClient()
-        assert first.caches is not second.caches
-        assert first.caches.jwks is not second.caches.jwks
-        assert first.caches.disco is not second.caches.disco
+    @pytest.mark.asyncio
+    async def test_client_holds_no_validation_cache(self):
+        """Caches live on an AsyncValidationCache, never on the transport (#953)."""
+        async with AsyncHTTPClient() as client:
+            assert not hasattr(client, "caches")
+            assert [
+                name
+                for name, value in vars(client).items()
+                if isinstance(value, AsyncValidationCache)
+            ] == []
 
     @pytest.mark.asyncio
     async def test_unowned_close_blocks_further_access(self):

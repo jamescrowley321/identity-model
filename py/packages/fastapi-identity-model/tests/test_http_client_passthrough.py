@@ -3,6 +3,9 @@
 The app builds an ``AsyncHTTPClient`` from its own ``Config`` and hands it to
 the middleware, the WebSocket authenticator, the login router and the token
 manager. Without one, the library default client is used (``None``).
+
+Token validation also takes the ``cache`` the app passed (an
+``AsyncValidationCache``); without one, the library default cache is used.
 """
 
 from types import SimpleNamespace
@@ -26,7 +29,7 @@ from fastapi_identity_model import (
 import fastapi_identity_model.middleware as mw
 import fastapi_identity_model.token_manager as tm_mod
 from py_identity_model import Config
-from py_identity_model.aio import AsyncHTTPClient
+from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
 
 
 pytestmark = pytest.mark.unit
@@ -46,6 +49,11 @@ async def http_client():
         yield client
 
 
+@pytest.fixture
+def cache() -> AsyncValidationCache:
+    return AsyncValidationCache(config=Config(jwks_cache_ttl=900.0))
+
+
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testserver"
@@ -54,6 +62,10 @@ def _asgi_client(app: FastAPI) -> httpx.AsyncClient:
 
 def _used_clients(*mocks: AsyncMock) -> list:
     return [call.kwargs["http_client"] for m in mocks for call in m.await_args_list]
+
+
+def _used_caches(mock: AsyncMock) -> list:
+    return [call.kwargs["cache"] for call in mock.await_args_list]
 
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +102,12 @@ async def test_middleware_validates_with_the_given_client(monkeypatch, http_clie
 async def test_middleware_defaults_to_the_library_client(monkeypatch):
     validate = await _call_through_middleware(monkeypatch)
     assert _used_clients(validate) == [None]
+    assert _used_caches(validate) == [None]
+
+
+async def test_middleware_validates_with_the_given_cache(monkeypatch, cache):
+    validate = await _call_through_middleware(monkeypatch, cache=cache)
+    assert _used_caches(validate) == [cache]
 
 
 # --------------------------------------------------------------------------- #
@@ -120,6 +138,12 @@ async def test_ws_authenticator_validates_with_the_given_client(
 async def test_ws_authenticator_defaults_to_the_library_client(monkeypatch):
     validate = await _call_ws_authenticator(monkeypatch)
     assert _used_clients(validate) == [None]
+    assert _used_caches(validate) == [None]
+
+
+async def test_ws_authenticator_validates_with_the_given_cache(monkeypatch, cache):
+    validate = await _call_ws_authenticator(monkeypatch, cache=cache)
+    assert _used_caches(validate) == [cache]
 
 
 # --------------------------------------------------------------------------- #

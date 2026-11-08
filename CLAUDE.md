@@ -143,10 +143,11 @@ py/src/py_identity_model/
    - Core functions are pure (no I/O) and return result objects or raise exceptions
 
 3. **Caching Strategy**
-   - Discovery documents and JWKS are cached with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `Config.cache_max_entries`, default 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. The caches and kid-miss cooldown state are owned by the HTTP client (`HTTPClient.caches` / `AsyncHTTPClient.caches`), so each cache has one `Config` and two clients never share cached documents. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
-   - Entries expire on a TTL resolved from `Cache-Control: max-age` (clamped to `[60s, 86400s]`) → the client's `Config` (`discovery_cache_ttl` / `jwks_cache_ttl`). Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
-   - Per-process cache hit/miss/refresh counters are exposed via `core/cache_metrics.py` (`get_cache_counters()`, re-exported at the top level); the async cache paths are instrumented. Clear caches with `clear_discovery_cache(http_client=None)` / `clear_jwks_cache(http_client=None)` (async variants must be `await`ed).
-   - All caches are per client (the library default client's are shared by the process), never across processes
+   - Discovery documents and JWKS are cached with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `Config.cache_max_entries`, default 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. HTTP clients only send requests and hold no cache. The caches and kid-miss cooldown state live on a `ValidationCache` (`sync/validation_cache.py`) / `AsyncValidationCache` (`aio/validation_cache.py`), built from its own `Config` and passed as `cache=` to the token validators; without one, the process-wide default cache (`get_default_validation_cache()` / `get_default_async_validation_cache()`) is used, whichever `http_client` is passed. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
+   - Cached documents are keyed by the fetching client's `trust_scope` (`core/trust_scope.py`: `Config.ca_bundle` for owned clients, the wrapped httpx client's identity otherwise), so a document fetched over a permissive transport is never served to a stricter client. The kid-miss cooldown is keyed by `jwks_uri` alone and shared across scopes (#945).
+   - Entries expire on a TTL resolved from `Cache-Control: max-age` (clamped to `[60s, 86400s]`) → the cache's `Config` (`discovery_cache_ttl` / `jwks_cache_ttl`). Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
+   - Per-process cache hit/miss/refresh counters are exposed via `core/cache_metrics.py` (`get_cache_counters()`, re-exported at the top level); the async cache paths are instrumented. Clear caches with `clear_discovery_cache(cache=None)` / `clear_jwks_cache(cache=None)` (async variants must be `await`ed).
+   - Caches are never shared across processes: the default cache and the default HTTP clients are held in `core/process_local.py` `ProcessLocal` and rebuilt in a forked child (pid check)
 
 4. **Error Handling**
    - Per-feature error handlers in `core/error_handlers.py` (e.g., `handle_discovery_error()`, `handle_token_error()`, `handle_userinfo_error()`)
@@ -269,7 +270,9 @@ hold it (`None` → `Config()` defaults, never the environment), and every entry
 point takes `http_client=`; without one, the library default client
 (`get_default_http_client()` / `get_default_async_http_client()`, built from
 `Config()`) is used. Retry decorators read retries/backoff from the managed
-client's `Config`.
+client's `Config`. The four cache settings (`jwks_cache_ttl`,
+`discovery_cache_ttl`, `cache_max_entries`, `jwks_kid_miss_cooldown`) are read
+from the `ValidationCache`'s `Config`, never from the client's.
 
 The only modules that read `os.environ` are the optional
 `config_helpers.py` (`config_from_env` / `config_from_mapping`) and the FastAPI

@@ -8,6 +8,7 @@ Covers:
 
 import asyncio
 import json
+import threading
 from typing import ClassVar
 
 import httpx
@@ -28,6 +29,8 @@ from py_identity_model.core.response_processors import parse_jwks_response
 
 
 DEFAULT_CONFIG = Config()
+# ``threading.Lock`` is a factory function, not a type.
+THREAD_LOCK_TYPE = type(threading.Lock())
 SMALL_MAX_JWKS_SIZE = 100
 TINY_MAX_JWKS_SIZE = 50
 SMALL_MAX_JWKS_KEYS = 5
@@ -303,11 +306,21 @@ class TestJwksMissingKeysField:
 
 
 class TestAsyncCleanupLock:
-    """Verify the async cleanup lock is eagerly initialized."""
+    """Verify the async default client's close is guarded by an eager lock."""
 
-    def test_cleanup_lock_is_eagerly_created(self):
-        """The default client's cleanup lock exists before any close, not lazily."""
-        assert isinstance(_get_default()._cleanup_lock, asyncio.Lock)
+    def test_close_lock_is_eager_thread_lock(self):
+        """The default client's close lock exists before any close, not lazily.
+
+        It is a thread lock, and the client holds no ``asyncio`` primitive, so
+        close is safe from any event loop (#944).
+        """
+        default = _get_default()
+        assert isinstance(default._creation_lock, THREAD_LOCK_TYPE)
+        assert [
+            name
+            for name, value in vars(default).items()
+            if isinstance(value, asyncio.Lock)
+        ] == []
 
     @pytest.mark.asyncio
     async def test_concurrent_close_does_not_race(self):
