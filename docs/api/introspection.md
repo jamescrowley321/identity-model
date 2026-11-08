@@ -7,7 +7,8 @@ OAuth 2.0 Token Introspection (RFC 7662) for validating tokens and obtaining met
 Set `signed_response` to ask for a signed JWT response and verify it. The
 client sends `Accept: application/token-introspection+jwt` and accepts the
 response only if its `typ` is `token-introspection+jwt`, its `alg` is allowed
-(PS256, ES256 or EdDSA by default, FAPI 2.0 Message Signing §5.5.2), its
+(`DEFAULT_ALLOWED_ALGORITHMS` by default; see
+[Algorithm allowlists](token-validation.md#algorithm-allowlists)), its
 signature verifies with a key from `jwks`, `iss` is `issuer`, `aud` is the
 `client_id`, and it has an `iat`. `claims` is then the JWT's
 `token_introspection` object.
@@ -48,8 +49,9 @@ or `CLAIM_VALIDATION` (`iss`, `aud` or `iat`). An HTTP error response keeps
 
 The authorization server advertises its algorithms in
 `DiscoveryDocumentResponse.introspection_signing_alg_values_supported`. Pass
-`algorithms=` to allow a different asymmetric set; `none` and `HS*` are
-refused.
+`algorithms=` to allow a different asymmetric set, such as
+`FAPI2_ALLOWED_SIGNING_ALGORITHMS` for FAPI 2.0 (Message Signing §5.5.2);
+`none` and `HS*` are refused.
 
 ## Request Model
 

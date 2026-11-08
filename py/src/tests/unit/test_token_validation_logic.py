@@ -130,17 +130,26 @@ class TestValidateConfigForManualValidation:
         ):
             validate_config_for_manual_validation(config)
 
-    def test_validate_config_missing_algorithms(self):
-        """Test config validation with missing algorithms."""
+    def test_validate_config_none_algorithms_accepted(self):
+        """``algorithms=None`` means DEFAULT_ALLOWED_ALGORITHMS in manual mode too."""
         config = TokenValidationConfig(
             perform_disco=False,
             key={"kty": "RSA", "n": "test", "e": "AQAB"},
         )
-        with pytest.raises(
-            ConfigurationException,
-            match=r"TokenValidationConfig\.algorithms is required",
-        ):
+        validate_config_for_manual_validation(config)
+
+    def test_validate_config_empty_algorithms_rejected(self):
+        config = TokenValidationConfig(
+            perform_disco=False,
+            key={"kty": "RSA", "n": "test", "e": "AQAB"},
+            algorithms=[],
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
             validate_config_for_manual_validation(config)
+        assert exc_info.value.message == (
+            "TokenValidationConfig.algorithms must not be empty; "
+            "None allows DEFAULT_ALLOWED_ALGORITHMS"
+        )
 
     def test_validate_config_valid(self):
         """Test config validation with valid config."""
@@ -264,20 +273,17 @@ class TestDecodeWithConfig:
         )
         with pytest.raises(
             ConfigurationException,
-            match="Token validation configuration must have key and algorithms set",
+            match="Token validation configuration must have a key",
         ):
             decode_with_config("fake.jwt.token", config)
 
-    def test_decode_with_config_missing_algorithms(self):
-        """Test decode with missing algorithms."""
+    def test_decode_with_config_empty_algorithms(self):
         config = TokenValidationConfig(
             perform_disco=False,
             key={"kty": "RSA", "n": "test", "e": "AQAB"},
+            algorithms=[],
         )
-        with pytest.raises(
-            ConfigurationException,
-            match="Token validation configuration must have key and algorithms set",
-        ):
+        with pytest.raises(ConfigurationException, match="must not be empty"):
             decode_with_config("fake.jwt.token", config)
 
     def test_empty_string_issuer_not_replaced_by_config(self):

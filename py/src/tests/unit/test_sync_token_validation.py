@@ -65,7 +65,7 @@ class TestSyncTokenValidation:
 
         with pytest.raises(
             ConfigurationException,
-            match=r"TokenValidationConfig\.key and TokenValidationConfig\.algorithms are required",
+            match=r"TokenValidationConfig\.key is required if perform_disco is False",
         ):
             validate_token(
                 jwt="fake.jwt.token",

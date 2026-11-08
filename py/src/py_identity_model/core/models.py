@@ -931,9 +931,11 @@ class SignedIntrospectionOptions:
     Attributes:
         issuer: The authorization server's issuer identifier.
         jwks: The authorization server's signing keys (``get_jwks``).
-        algorithms: Allowed signing algorithms. ``None`` (default) allows the
-            FAPI 2.0 set: PS256, ES256, EdDSA (FAPI 2.0 Message Signing
-            §5.5.2). ``none`` and ``HS*`` are refused.
+        algorithms: Allowed signing algorithms. ``None`` (default) allows
+            ``DEFAULT_ALLOWED_ALGORITHMS`` (RS256/384/512, PS256/384/512,
+            ES256/384/512, EdDSA). For FAPI 2.0 (Message Signing §5.5.2) pass
+            ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and ``HS*`` are
+            refused.
     """
 
     issuer: str
@@ -1492,11 +1494,11 @@ class TokenValidationConfig:
             misclassified as private.
         audience: Expected audience claim(s) in the token
         algorithms: Allowed signing algorithms (e.g., ``['PS256', 'ES256']``).
-            When ``None`` (the default), discovery mode allows
+            When ``None`` (the default), discovery and manual mode both allow
             ``DEFAULT_ALLOWED_ALGORITHMS``: RS256/384/512, PS256/384/512,
-            ES256/384/512 and EdDSA, the same set as the Go and Rust libraries.
-            HMAC algorithms (``HS*``) must be listed explicitly. Manual mode
-            (``perform_disco=False``) requires ``algorithms``. Whatever the
+            ES256/384/512 and EdDSA (Go's default; Rust's lacks ES512). The
+            set has no HMAC algorithm, so a public key is never used as an
+            HMAC secret; ``HS*`` must be listed explicitly. Whatever the
             algorithm, an RSA verification key under 2048 bits (RFC 7518
             §3.3) or an EC key under 224 bits (FAPI 2.0 SP §5.4.1) raises
             ``WeakKeyException``.

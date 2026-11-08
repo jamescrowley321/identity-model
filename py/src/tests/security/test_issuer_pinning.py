@@ -174,13 +174,13 @@ class TestDecodeWithConfigChokepoint:
         with pytest.raises(ConfigurationException) as exc_info:
             decode_with_config("a.b.c", cfg)
         assert exc_info.value.message == (
-            "Token validation configuration must have key and algorithms set"
+            "Token validation configuration must have a key"
         )
 
-    def test_missing_algorithms_raises_typed_configuration_exception(self):
+    def test_empty_algorithms_raises_typed_configuration_exception(self):
         cfg = TokenValidationConfig(
-            perform_disco=True, key={"kty": "oct", "k": "AA"}
-        )  # algorithms unset
+            perform_disco=True, key={"kty": "oct", "k": "AA"}, algorithms=[]
+        )
         with pytest.raises(ConfigurationException):
             decode_with_config("a.b.c", cfg)
 

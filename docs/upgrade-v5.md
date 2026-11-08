@@ -749,15 +749,64 @@ EdDSA, the same default as the Go and Rust libraries. A token signed with any
 other algorithm raises `TokenValidationException`
 (`"Algorithm 'HS256' is not in the allowed algorithms"`).
 
-An explicit `algorithms` list works as before, and manual mode
-(`perform_disco=False`) still requires one. To keep accepting an HMAC-signed
-token, list its algorithm:
+An explicit `algorithms` list works as before. Manual mode is covered in the
+next section. To keep accepting an HMAC-signed token, list its algorithm:
 
 ```python
 config = TokenValidationConfig(
     perform_disco=True,
     audience="my-api",
     algorithms=["HS256"],
+)
+```
+
+### One algorithm allowlist per purpose ([#1058](https://github.com/jamescrowley321/identity-model/issues/1058))
+
+5.0 has one allowlist per purpose, and `algorithms=None` means the verify set
+everywhere (see
+[Algorithm allowlists](api/token-validation.md#algorithm-allowlists)):
+
+| Purpose | Set | Contents |
+|---|---|---|
+| Verify (every inbound JWS) | `DEFAULT_ALLOWED_ALGORITHMS` | RS256/384/512, PS256/384/512, ES256/384/512, EdDSA |
+| Sign (client assertions, request objects) | `SUPPORTED_SIGNING_ALGORITHMS` | RS256/384/512, PS256/384/512, ES256/384/512, EdDSA |
+| FAPI 2.0 (only when passed) | `FAPI2_ALLOWED_SIGNING_ALGORITHMS` | PS256, ES256, EdDSA |
+
+`DEFAULT_ALLOWED_ALGORITHMS` is no longer the same object as
+`SUPPORTED_SIGNING_ALGORITHMS`, so a future signing algorithm will not widen
+verification. The defaults are:
+
+- **Manual mode.** `TokenValidationConfig(perform_disco=False, key=...)` with
+  `algorithms=None` no longer raises `ConfigurationException`. The token's
+  header `alg` must be in `DEFAULT_ALLOWED_ALGORITHMS`, as in discovery mode;
+  an HMAC token is refused (`"Algorithm 'HS256' is not in the allowed
+  algorithms"`). The error for a missing key is now
+  `"TokenValidationConfig.key is required if perform_disco is False"`.
+  `algorithms=[]` raises `ConfigurationException`.
+- **DPoP proofs and signed introspection (new in 5.0).**
+  `DPoPVerificationOptions(algorithms=None)` and
+  `SignedIntrospectionOptions(algorithms=None)` accept the verify set, so a
+  plain RS256 authorization server works for signed introspection, and
+  `DPoPVerificationOptions().accepted_algorithms` (the `algs` of a
+  `WWW-Authenticate: DPoP` challenge) lists all ten. Neither defaults to the
+  FAPI 2.0 set: a FAPI 2.0 deployment passes
+  `algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS`.
+- **JARM.** With no `algorithms`, a response must use an algorithm the
+  authorization server advertises in `authorization_signing_alg_values_supported`
+  that is also in `DEFAULT_ALLOWED_ALGORITHMS`. If the server advertises none,
+  `DEFAULT_ALLOWED_ALGORITHMS` applies instead of raising
+  `JarmValidationException`.
+
+```python
+from py_identity_model import (
+    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    DPoPVerificationOptions,
+    SignedIntrospectionOptions,
+)
+
+dpop = DPoPVerificationOptions(algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS)
+signed = SignedIntrospectionOptions(
+    issuer=issuer, jwks=jwks, algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS
 )
 ```
 

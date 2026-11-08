@@ -407,7 +407,7 @@
       "title": "Signed JWT introspection response",
       "given": "A client configured for signed introspection responses with the authorization server's issuer and JWKS",
       "when": "Introspect is called",
-      "then": "The request carries Accept: application/token-introspection+jwt. An application/token-introspection+jwt response with typ token-introspection+jwt, an allowed asymmetric alg (FAPI 2.0 set by default), a valid signature, iss equal to the issuer, aud equal to the client_id and an iat is accepted, and its token_introspection claim is the introspection response. A JSON response, a wrong typ, a disallowed alg, a bad signature or a wrong aud is rejected",
+      "then": "The request carries Accept: application/token-introspection+jwt. An application/token-introspection+jwt response with typ token-introspection+jwt, an allowed asymmetric alg (the default verify allowlist, or the algorithms the client passes, such as the FAPI 2.0 set PS256/ES256/EdDSA), a valid signature, iss equal to the issuer, aud equal to the client_id and an iat is accepted, and its token_introspection claim is the introspection response. A JSON response, a wrong typ, a disallowed alg, a bad signature or a wrong aud is rejected",
       "references": [
         "RFC 9701 §4",
         "RFC 9701 §5",
@@ -533,12 +533,59 @@
           }
         },
         {
-          "name": "alg-not-allowed",
+          "name": "rs256-default-allowed",
           "input": {
             "token": "the-token",
             "signed_response": {
               "issuer": "https://issuer.example.com/",
               "jwks_fixture": "introspection/signed-jwks.json"
+            }
+          },
+          "http": {
+            "/introspect": {
+              "status": 200,
+              "headers": {
+                "content-type": "application/token-introspection+jwt"
+              },
+              "body_fixture": "introspection/signed-rs256.jwt"
+            }
+          },
+          "expect_request": {
+            "path": "/introspect",
+            "method": "POST",
+            "headers": {
+              "authorization": "Basic Y2lkOnNlY3JldA==",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "application/token-introspection+jwt"
+            },
+            "form": {
+              "token": "the-token",
+              "client_id": "",
+              "client_secret": ""
+            }
+          },
+          "expect": {
+            "outcome": "accept",
+            "claims": {
+              "active": true
+            },
+            "custom_claims": {
+              "extension_field": "twenty-seven"
+            }
+          }
+        },
+        {
+          "name": "alg-not-allowed",
+          "input": {
+            "token": "the-token",
+            "signed_response": {
+              "issuer": "https://issuer.example.com/",
+              "jwks_fixture": "introspection/signed-jwks.json",
+              "algorithms": [
+                "EdDSA",
+                "ES256",
+                "PS256"
+              ]
             }
           },
           "http": {

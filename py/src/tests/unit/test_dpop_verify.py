@@ -394,7 +394,21 @@ class TestKeyChecks:
     @pytest.mark.parametrize(
         ("algorithms", "expected"),
         [
-            (None, ("ES256", "ES384", "ES512", "EdDSA", "PS256", "RS256")),
+            (
+                None,
+                (
+                    "ES256",
+                    "ES384",
+                    "ES512",
+                    "EdDSA",
+                    "PS256",
+                    "PS384",
+                    "PS512",
+                    "RS256",
+                    "RS384",
+                    "RS512",
+                ),
+            ),
             (frozenset({"PS256", "ES256"}), ("ES256", "PS256")),
         ],
     )

@@ -475,11 +475,13 @@ def _introspection_call(base: str, inp: dict) -> Any:
         kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
     if signed := inp.get("signed_response"):
         jwks = json.loads((_FIXTURES_DIR / signed["jwks_fixture"]).read_text())
+        algorithms = signed.get("algorithms")
         kwargs["signed_response"] = SignedIntrospectionOptions(
             issuer=signed["issuer"],
             jwks=JwksResponse(
                 is_successful=True, keys=[jwks_from_dict(k) for k in jwks["keys"]]
             ),
+            algorithms=None if algorithms is None else frozenset(algorithms),
         )
     return introspect_token(
         TokenIntrospectionRequest(

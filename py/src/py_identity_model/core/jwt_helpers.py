@@ -9,8 +9,10 @@ from jwt.exceptions import (
     ExpiredSignatureError,
     InvalidAudienceError,
     InvalidIssuerError,
+    InvalidKeyError,
     InvalidSignatureError,
     InvalidTokenError,
+    PyJWKError,
 )
 
 from ..exceptions import (
@@ -252,6 +254,14 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         logger.error(f"Invalid signature: {e!s}")
         raise SignatureVerificationException(
             "Invalid signature",
+            details={"error": str(e)},
+        ) from e
+    except (InvalidKeyError, PyJWKError) as e:
+        # The key does not fit the token's alg (e.g. an RSA key, ES256 header).
+        logger.error(f"Key does not fit the token algorithm: {e!s}")
+        raise TokenValidationException(
+            "Key does not fit the token algorithm",
+            token_part="header",
             details={"error": str(e)},
         ) from e
     except InvalidTokenError as e:
