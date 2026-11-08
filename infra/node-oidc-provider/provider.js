@@ -163,10 +163,8 @@ async function startProvider() {
         },
       },
       {
-        // client_secret_post client (RFC 6749 §2.3.1). The provider accepts
-        // only this method for it, so a Basic attempt fails with
-        // invalid_client: that proves the library sent the method it was
-        // asked for (src/tests/integration/test_client_secret_post.py).
+        // client_secret_post client (RFC 6749 §2.3.1), used by
+        // src/tests/integration/test_client_secret_post.py.
         client_id: "test-client-secret-post",
         client_secret: "test-client-secret-post-secret",
         grant_types: ["client_credentials"],

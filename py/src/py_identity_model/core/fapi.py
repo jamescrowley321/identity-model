@@ -196,6 +196,7 @@ def validate_fapi_authorization_request(
             private_key_jwt=request.private_key_jwt,
             mtls=request.mtls,
             dpop_key=request.dpop_key,
+            client_auth_method=request.client_auth_method,
         )
     )
 
@@ -207,10 +208,15 @@ def _client_violations(
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
     dpop_key: DPoPKey | None,
+    client_auth_method: ClientAuthMethod | None = None,
 ) -> list[str]:
     """Client authentication and sender constraint (§5.3.3.1, §5.4.1)."""
     return [
-        *_client_authentication_violations(private_key_jwt=private_key_jwt, mtls=mtls),
+        *_client_authentication_violations(
+            private_key_jwt=private_key_jwt,
+            mtls=mtls,
+            client_auth_method=client_auth_method,
+        ),
         *_sender_constraint_request_violations(dpop_key=dpop_key, mtls=mtls),
     ]
 
@@ -219,8 +225,19 @@ def _client_authentication_violations(
     *,
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
+    client_auth_method: ClientAuthMethod | None = None,
 ) -> list[str]:
     violations: list[str] = []
+    # An explicit method is what gets sent, whatever credentials are present.
+    if (
+        client_auth_method is not None
+        and client_auth_method.value not in FAPI2_ALLOWED_AUTH_METHODS
+    ):
+        violations.append(
+            f"client_auth_method '{client_auth_method.value}' is not FAPI 2.0 "
+            f"compliant; use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))} "
+            "(FAPI 2.0 Security Profile §5.3.3.1)"
+        )
     if private_key_jwt is None and mtls is None:
         violations.append(
             "Client authentication is required: private_key_jwt or mTLS "

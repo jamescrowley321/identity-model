@@ -12,9 +12,15 @@ from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+import httpx
 import pytest
+import respx
 
-from py_identity_model import ClientAuthMethod, oidc_constants
+from py_identity_model import (
+    ClientAuthMethod,
+    oidc_constants,
+    request_client_credentials_token,
+)
 from py_identity_model.core import config as config_module
 from py_identity_model.core.client_auth import basic_auth_credentials
 from py_identity_model.core.device_auth_logic import (
@@ -337,6 +343,23 @@ def test_explicit_tls_method_sends_client_id_only(endpoint: Endpoint):
     assert auth is None
     assert params["client_id"] == CLIENT_ID
     assert "client_secret" not in params
+
+
+@respx.mock
+def test_public_request_function_sends_nothing_when_credential_missing():
+    # Request functions return error responses rather than raising; the
+    # misconfiguration must still stop the request before it is sent.
+    route = respx.post(ADDRESS).mock(return_value=httpx.Response(200, json={}))
+    response = request_client_credentials_token(
+        ClientCredentialsTokenRequest(
+            address=ADDRESS,
+            client_id=CLIENT_ID,
+            client_auth_method=ClientAuthMethod.CLIENT_SECRET_POST,
+        )
+    )
+    assert response.is_successful is False
+    assert "client_secret" in (response.error or "")
+    assert route.call_count == 0
 
 
 # --------------------------------------------------------------------------- #

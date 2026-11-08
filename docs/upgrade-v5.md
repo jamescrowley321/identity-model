@@ -282,8 +282,9 @@ Every request that authenticates a client also accepts an optional
 `client_auth_method`. Leaving it unset keeps the existing behaviour: the
 method is picked from what you set (`private_key_jwt`, then `mtls`, then
 `client_secret` as HTTP Basic, else a public client). Setting it sends only
-that method, and raises `ClientAuthMethodError` before any request if its
-credential is missing. This is how you send `client_secret_post`:
+that method. If its credential is missing, nothing is sent: the request
+function returns an unsuccessful response whose `error` names the missing
+credential. This is how you send `client_secret_post`:
 
 ```python
 request_client_credentials_token(

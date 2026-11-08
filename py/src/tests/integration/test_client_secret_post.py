@@ -1,8 +1,10 @@
 """Integration tests for ``client_secret_post`` client authentication (#1056).
 
 Runs against the bundled node-oidc-provider fixture, which registers a
-``test-client-secret-post`` client that accepts only ``client_secret_post``.
-Skipped against any other provider (they don't register this client).
+``test-client-secret-post`` client. node-oidc-provider accepts either secret
+method for such a client, so this proves a live provider accepts the POST
+form; the exact request bytes are pinned by the CC-003, INTR-003 and EXCH-001
+spec vectors. Skipped against any other provider.
 """
 
 from urllib.parse import urlparse
@@ -53,7 +55,7 @@ def _request(
 
 @pytest.mark.integration
 class TestClientSecretPostLive:
-    """The chosen method is the one the provider receives."""
+    """A live provider accepts a client authenticated with client_secret_post."""
 
     def test_client_secret_post_accepted(self, raw_discovery, token_endpoint):
         _require_node_oidc(raw_discovery)
@@ -63,16 +65,6 @@ class TestClientSecretPostLive:
         assert response.is_successful is True, response.error
         assert response.token is not None
         assert response.token.get("access_token")
-
-    def test_client_secret_basic_rejected_for_post_only_client(
-        self, raw_discovery, token_endpoint
-    ):
-        _require_node_oidc(raw_discovery)
-        response = request_client_credentials_token(
-            _request(ClientAuthMethod.CLIENT_SECRET_BASIC, token_endpoint)
-        )
-        assert response.is_successful is False
-        assert "invalid_client" in (response.error or "")
 
     @pytest.mark.asyncio
     async def test_async_client_secret_post_accepted(

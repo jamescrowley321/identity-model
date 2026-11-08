@@ -166,6 +166,30 @@ class TestValidateFAPIAuthorizationRequest:
     def test_compliant_private_key_jwt_dpop_request(self):
         assert validate_fapi_authorization_request(_par()).violations == []
 
+    @pytest.mark.parametrize(
+        "method",
+        [
+            ClientAuthMethod.NONE,
+            ClientAuthMethod.CLIENT_SECRET_BASIC,
+            ClientAuthMethod.CLIENT_SECRET_POST,
+        ],
+        ids=lambda m: m.value,
+    )
+    def test_explicit_non_fapi_client_auth_method_rejected(self, method):
+        # private_key_jwt is present, but the explicit method is what is sent.
+        result = validate_fapi_authorization_request(_par(client_auth_method=method))
+        assert result.violations == [
+            f"client_auth_method '{method.value}' is not FAPI 2.0 compliant; use "
+            "private_key_jwt, self_signed_tls_client_auth, tls_client_auth "
+            "(FAPI 2.0 Security Profile §5.3.3.1)"
+        ]
+
+    def test_explicit_private_key_jwt_accepted(self):
+        result = validate_fapi_authorization_request(
+            _par(client_auth_method=ClientAuthMethod.PRIVATE_KEY_JWT)
+        )
+        assert result.violations == []
+
     def test_compliant_mtls_request(self):
         request = _par(private_key_jwt=None, dpop_key=None, mtls=_mtls())
         assert validate_fapi_authorization_request(request).violations == []
