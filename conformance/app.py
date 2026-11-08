@@ -382,13 +382,17 @@ def _fapi2_public_jwk() -> dict:
     return jwk
 
 
-def _fapi2_private_key_jwt(audience: str) -> PrivateKeyJwt:
-    """Build the private_key_jwt assertion params for ``audience`` (RFC 7523)."""
+def _fapi2_private_key_jwt(issuer: str) -> PrivateKeyJwt:
+    """Build the private_key_jwt assertion params (RFC 7523).
+
+    With ``issuer`` set, the assertion ``aud`` is the issuer (FAPI 2.0
+    Security Profile §5.3.3.1).
+    """
     return PrivateKeyJwt(
         private_key=_FAPI2_CLIENT_KEY.private_key_pem,
         algorithm="ES256",
         kid=_FAPI2_CLIENT_KID,
-        audience=audience,
+        issuer=issuer,
     )
 
 

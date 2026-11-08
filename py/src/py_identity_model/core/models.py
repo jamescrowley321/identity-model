@@ -670,12 +670,18 @@ class PrivateKeyJwt:
         private_key: PEM-encoded private key used to sign the assertion
             (``bytes`` or ``str``).
         algorithm: Asymmetric signing algorithm (default ``"PS256"``).
-            FAPI 2.0 requires ``PS256`` or ``ES256``.
+            FAPI 2.0 requires ``PS256``, ``ES256`` or ``EdDSA``.
         kid: Optional key ID placed in the assertion JWT header to aid the
             authorization server's key lookup.
-        audience: Override for the assertion ``aud`` claim.  Defaults to the
-            request ``address`` (the endpoint URL) when ``None``.
+        audience: Override for the assertion ``aud`` claim.  Wins over
+            ``issuer`` when both are set.
         lifetime: Assertion validity in seconds (default 300).
+        issuer: The authorization server's issuer identifier (the discovery
+            document's ``issuer``).  When set and ``audience`` is not, the
+            assertion ``aud`` is the issuer, a single string, as FAPI 2.0
+            Security Profile §5.3.3.1 requires.  With
+            neither set, ``aud`` falls back to the request ``address`` (the
+            endpoint URL, OpenID Connect Core 1.0 §9).
     """
 
     # repr suppressed: the raw PEM signing key must never leak into logs,
@@ -686,6 +692,7 @@ class PrivateKeyJwt:
     kid: str | None = None
     audience: str | None = None
     lifetime: int = 300
+    issuer: str | None = None
 
 
 @dataclass
