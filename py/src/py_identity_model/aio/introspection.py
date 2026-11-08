@@ -13,7 +13,12 @@ from ..core.introspection_logic import (
     prepare_introspection_request_data,
     process_introspection_response,
 )
-from ..core.models import TokenIntrospectionRequest, TokenIntrospectionResponse
+from ..core.models import (
+    IntrospectionErrorKind,
+    SignedIntrospectionOptions,
+    TokenIntrospectionRequest,
+    TokenIntrospectionResponse,
+)
 from .http_client import resolve_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 
@@ -56,7 +61,7 @@ async def introspect_token(
         response = await _introspect_token(
             client, request.address, params, headers, auth
         )
-        return process_introspection_response(response)
+        return process_introspection_response(response, request)
     except Exception as e:
         return handle_introspection_error(e)
     finally:
@@ -67,6 +72,8 @@ async def introspect_token(
 
 
 __all__ = [
+    "IntrospectionErrorKind",
+    "SignedIntrospectionOptions",
     "TokenIntrospectionRequest",
     "TokenIntrospectionResponse",
     "introspect_token",

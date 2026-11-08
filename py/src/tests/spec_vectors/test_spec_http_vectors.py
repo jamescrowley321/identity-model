@@ -29,7 +29,11 @@ from py_identity_model import (
     Config,
     DiscoveryDocumentRequest,
     DiscoveryErrorKind,
+    IntrospectionErrorKind,
+    JwksResponse,
+    SignedIntrospectionOptions,
     get_discovery_document,
+    jwks_from_dict,
 )
 from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
@@ -84,6 +88,7 @@ def _find_repo_root() -> Path:
 
 
 _VECTORS_DIR = _find_repo_root() / "spec" / "vectors"
+_FIXTURES_DIR = _find_repo_root() / "spec" / "test-fixtures"
 
 
 class KnownGap(Exception):
@@ -468,6 +473,14 @@ def _introspection_call(base: str, inp: dict) -> Any:
         ):
             raise KnownGap("TokenIntrospectionRequest has no client_auth_method")
         kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
+    if signed := inp.get("signed_response"):
+        jwks = json.loads((_FIXTURES_DIR / signed["jwks_fixture"]).read_text())
+        kwargs["signed_response"] = SignedIntrospectionOptions(
+            issuer=signed["issuer"],
+            jwks=JwksResponse(
+                is_successful=True, keys=[jwks_from_dict(k) for k in jwks["keys"]]
+            ),
+        )
     return introspect_token(
         TokenIntrospectionRequest(
             address=endpoint,
@@ -480,6 +493,16 @@ def _introspection_call(base: str, inp: dict) -> Any:
     )
 
 
+#: Canonical error code for each signed-response refusal (RFC 9701 §5).
+_INTROSPECTION_ERRORS = {
+    IntrospectionErrorKind.MALFORMED: "malformed",
+    IntrospectionErrorKind.INVALID_TYPE: "malformed",
+    IntrospectionErrorKind.UNSUPPORTED_ALGORITHM: "unsupported_alg",
+    IntrospectionErrorKind.SIGNATURE: "signature",
+    IntrospectionErrorKind.CLAIM_VALIDATION: "claim_validation",
+}
+
+
 def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
     if expect["outcome"] == "accept":
         assert response.is_successful, f"{case_id}: {response.error}"
@@ -490,6 +513,8 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
         if "active" in expect.get("claims", {}):
             assert claims.get("active") is expect["claims"]["active"], "active"
         for name, value in expect.get("claims", {}).items():
+            if name == "active":
+                continue
             if not hasattr(response, name):
                 raise KnownGap(f"{case_id}: no typed member {name} (#772)")
             assert getattr(response, name) == value, f"typed member {name}"
@@ -497,6 +522,9 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
     if response.is_successful and expect["error"] == "malformed":
         raise KnownGap(f"{case_id}: malformed response accepted (#782)")
     assert not response.is_successful, f"{case_id}: expected reject"
+    if response.error_kind is not None:
+        assert _INTROSPECTION_ERRORS[response.error_kind] == expect["error"], case_id
+        return
     assert f"status code: {expect['status']}" in (response.error or "")
     # The error code appears in the raw body, so a substring check proves
     # nothing until the error is typed (#791).
@@ -649,7 +677,6 @@ _KNOWN_GAPS = {
     "INTR-001-active-token": "no typed §2.2 introspection members (#772)",
     "INTR-001-missing-active": "a response with no active member is accepted (#782)",
     "INTR-001-active-not-boolean": "a non-boolean active member is accepted (#782)",
-    "INTR-002-inactive-token": "no typed §2.2 introspection members (#772)",
     "INTR-003-client-secret-post": "no client_secret_post for introspection (#574)",
     "INTR-005-invalid-client": "introspection errors are untyped (#791)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",

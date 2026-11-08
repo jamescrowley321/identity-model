@@ -12,6 +12,10 @@ from ..logging_utils import redact_url
 from .client_assertion import apply_private_key_jwt
 from .client_auth import basic_auth_credentials
 from .error_handlers import handle_introspection_error
+from .introspection_jwt import (
+    INTROSPECTION_JWT_MEDIA_TYPE,
+    verify_signed_introspection_response,
+)
 from .models import TokenIntrospectionRequest, TokenIntrospectionResponse
 from .mtls import apply_mtls_client_auth
 from .response_processors import parse_introspection_response
@@ -38,6 +42,9 @@ def prepare_introspection_request_data(
         params["token_type_hint"] = request.token_type_hint
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    if request.signed_response is not None:
+        # RFC 9701 §4: ask for the JWT response.
+        headers["Accept"] = INTROSPECTION_JWT_MEDIA_TYPE
 
     auth: tuple[str, str] | None = None
     if request.private_key_jwt is not None:
@@ -67,12 +74,26 @@ def log_introspection_status(status_code: int) -> None:
 
 def process_introspection_response(
     response: httpx.Response,
+    request: TokenIntrospectionRequest | None = None,
 ) -> TokenIntrospectionResponse:
-    """Process token introspection HTTP response."""
+    """Process token introspection HTTP response.
+
+    With ``request.signed_response`` set, a 2xx response must be a verified
+    JWT introspection response (RFC 9701 §5).
+    """
     log_introspection_status(response.status_code)
 
     try:
-        result = parse_introspection_response(response)
+        if (
+            request is not None
+            and request.signed_response is not None
+            and response.is_success
+        ):
+            result = verify_signed_introspection_response(
+                response, request.client_id, request.signed_response
+            )
+        else:
+            result = parse_introspection_response(response)
         if result.is_successful and result.claims is not None:
             active = result.claims.get("active", False)
             logger.info(f"Token introspection complete: active={active}")

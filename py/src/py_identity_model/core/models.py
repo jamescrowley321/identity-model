@@ -527,6 +527,7 @@ class DiscoveryDocumentResponse(BaseResponse):
             "mtls_endpoint_aliases",
             "tls_client_certificate_bound_access_tokens",
             "dpop_signing_alg_values_supported",
+            "introspection_signing_alg_values_supported",
         }
     )
 
@@ -597,6 +598,9 @@ class DiscoveryDocumentResponse(BaseResponse):
     authorization_signing_alg_values_supported: list[str] | None = None
     authorization_encryption_alg_values_supported: list[str] | None = None
     authorization_encryption_enc_values_supported: list[str] | None = None
+
+    # JWT introspection response signing (RFC 9701 §7)
+    introspection_signing_alg_values_supported: list[str] | None = None
 
     # Mutual-TLS support (RFC 8705 §3.3 / §5)
     mtls_endpoint_aliases: dict | None = None
@@ -915,6 +919,42 @@ class RefreshTokenResponse(BaseResponse):
 # ============================================================================
 
 
+@dataclass(frozen=True)
+class SignedIntrospectionOptions:
+    """Request a JWT introspection response and verify it (RFC 9701).
+
+    The client sends ``Accept: application/token-introspection+jwt`` and
+    accepts only a ``token-introspection+jwt`` response signed with one of
+    *algorithms* by a key in *jwks*, issued by *issuer* to the client's
+    ``client_id`` (RFC 9701 §5).
+
+    Attributes:
+        issuer: The authorization server's issuer identifier.
+        jwks: The authorization server's signing keys (``get_jwks``).
+        algorithms: Allowed signing algorithms. ``None`` (default) allows the
+            FAPI 2.0 set: PS256, ES256, EdDSA (FAPI 2.0 Message Signing
+            §5.5.2). ``none`` and ``HS*`` are refused.
+    """
+
+    issuer: str
+    jwks: JwksResponse
+    algorithms: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.issuer:
+            raise ValueError("SignedIntrospectionOptions requires an issuer")
+        if self.algorithms is not None and (
+            not self.algorithms
+            or any(
+                alg.lower() == "none" or alg.upper().startswith("HS")
+                for alg in self.algorithms
+            )
+        ):
+            raise ValueError(
+                "algorithms must be a non-empty set of asymmetric algorithms"
+            )
+
+
 @dataclass
 class TokenIntrospectionRequest(BaseRequest):
     """Request for OAuth 2.0 Token Introspection (RFC 7662).
@@ -925,6 +965,7 @@ class TokenIntrospectionRequest(BaseRequest):
         client_id: The client identifier for authentication.
         token_type_hint: Optional hint — ``"access_token"`` or ``"refresh_token"``.
         client_secret: Client secret for authentication (optional for public clients).
+        signed_response: Request and verify a signed JWT response (RFC 9701).
     """
 
     token: str
@@ -933,6 +974,24 @@ class TokenIntrospectionRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    signed_response: SignedIntrospectionOptions | None = None
+
+
+class IntrospectionErrorKind(Enum):
+    """Why a signed introspection response was refused (RFC 9701 §5), set on
+    ``TokenIntrospectionResponse.error_kind``."""
+
+    MALFORMED = "malformed"
+    """Not a ``application/token-introspection+jwt`` JWT, or its
+    ``token_introspection`` claim is missing or has no boolean ``active``."""
+    INVALID_TYPE = "invalid_type"
+    """The JWT ``typ`` is not ``token-introspection+jwt``."""
+    UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
+    """The JWT ``alg`` is not in ``SignedIntrospectionOptions.algorithms``."""
+    SIGNATURE = "signature"
+    """No signing key matches, or the signature does not verify."""
+    CLAIM_VALIDATION = "claim_validation"
+    """``iss``, ``aud`` or ``iat`` is missing or wrong."""
 
 
 @dataclass(repr=False, eq=False)
@@ -948,6 +1007,7 @@ class TokenIntrospectionResponse(BaseResponse):
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims"})
 
+    error_kind: IntrospectionErrorKind | None = field(default=None, kw_only=True)
     claims: dict | None = None
 
 

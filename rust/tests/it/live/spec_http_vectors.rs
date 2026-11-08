@@ -47,6 +47,12 @@ const ADAPTERS: &[&str] = &[
 /// Capabilities rs-identity-model does not implement; their vectors are
 /// skipped rather than failing as "no adapter".
 const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
+/// Cases rs-identity-model does not implement yet, with the issue that tracks
+/// each. They are skipped by id, never silently.
+const NOT_IMPLEMENTED_CASES: &[(&str, &str)] = &[
+    // Signed introspection responses (RFC 9701).
+    ("INTR-007", "#1030"),
+];
 
 #[test]
 fn implemented_http_capabilities_cannot_be_skipped() {
@@ -750,6 +756,10 @@ async fn spec_http_vectors() {
             .unwrap_or_else(|| panic!("{}: no tests", file.display()));
         for case in cases {
             let id = case["id"].as_str().expect("case id");
+            if let Some((_, issue)) = NOT_IMPLEMENTED_CASES.iter().find(|(c, _)| *c == id) {
+                eprintln!("skipping {id}: not implemented in Rust ({issue})");
+                continue;
+            }
             let vectors = case["vectors"].as_array().cloned().unwrap_or_default();
             if ADAPTERS.contains(&capability) {
                 assert!(!vectors.is_empty(), "{id}: case has no vectors");
