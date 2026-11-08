@@ -164,7 +164,9 @@ impl JwksClient {
     }
 
     /// Resolves the key with `kid` at `jwks_uri`, forcing one refresh and
-    /// retrying on a miss before erroring (JWKS-003/004).
+    /// retrying on a miss before erroring (JWKS-003/004). Returns a key
+    /// whatever its `use`; to pick a key that verifies a signature, use
+    /// [`JwksClient::resolve_signing_key`].
     ///
     /// This handles key rotation: a token signed with a freshly published key
     /// whose `kid` is not yet cached triggers a re-fetch. To resolve against an
@@ -183,8 +185,20 @@ impl JwksClient {
     /// - [`IdentityError::KeyNotFound`] — no key with `kid` even after a refresh.
     /// - The fetch errors of [`JwksClient::fetch`].
     pub async fn resolve_key(&self, jwks_uri: &str, kid: &str) -> Result<JsonWebKey> {
+        self.resolve_key_where(jwks_uri, kid, JsonWebKeySet::find)
+            .await
+    }
+
+    /// Resolves the key `find` returns for `kid`, with the throttled forced
+    /// refresh on a miss described on [`JwksClient::resolve_key`].
+    async fn resolve_key_where(
+        &self,
+        jwks_uri: &str,
+        kid: &str,
+        find: for<'s> fn(&'s JsonWebKeySet, &str) -> Option<&'s JsonWebKey>,
+    ) -> Result<JsonWebKey> {
         let key_set = self.fetch(jwks_uri).await?;
-        if let Some(key) = key_set.find(kid) {
+        if let Some(key) = find(&key_set, kid) {
             return Ok(key.clone());
         }
         // JWKS-004: the kid may belong to a freshly rotated key, so force one
@@ -200,25 +214,31 @@ impl JwksClient {
             return Err(IdentityError::KeyNotFound(kid.to_string()));
         }
         let refreshed = self.force_refresh(uri).await?;
-        refreshed.resolve_key(kid).cloned()
+        find(&refreshed, kid)
+            .cloned()
+            .ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))
     }
 
     /// Resolves the key at `jwks_uri` that verifies a token whose JOSE header
     /// carries `kid` and `alg`.
     ///
-    /// With a `kid` it is [`JwksClient::resolve_key`], forced refresh on a miss
-    /// included. With no `kid` it selects the key as
-    /// [`JsonWebKeySet::resolve_signing_key`] does, from the cached set and
-    /// with no forced refresh (JWKS-009). Callers must reject `alg` `none`
-    /// first.
+    /// Only signing keys are candidates (`use` `sig` or absent, RFC 7517
+    /// §4.2); a `use` `enc` key is never returned (JWKS-011). With a `kid` it
+    /// is [`JwksClient::resolve_key`] over the signing keys, forced refresh on
+    /// a miss included: a `kid` naming only an `enc` key is a miss. With no
+    /// `kid` it selects the key as [`JsonWebKeySet::resolve_signing_key`]
+    /// does, from the cached set and with no forced refresh (JWKS-009).
+    /// Callers must reject `alg` `none` first.
     ///
     /// # Errors
     ///
     /// - [`IdentityError::AmbiguousKey`] — no `kid` and more than one key
     ///   could verify the token.
+    /// - [`IdentityError::KeyNotFound`] — no signing key has `kid` even after
+    ///   a refresh, or (with an empty `kid`) no `kid` and no signing key.
     /// - [`IdentityError::KeyAlgorithmMismatch`] — the resolved key declares
     ///   an `alg` other than `alg` (JWKS-010).
-    /// - The errors of [`JwksClient::resolve_key`].
+    /// - The fetch errors of [`JwksClient::fetch`].
     pub async fn resolve_signing_key(
         &self,
         jwks_uri: &str,
@@ -226,7 +246,9 @@ impl JwksClient {
         alg: &str,
     ) -> Result<JsonWebKey> {
         if !kid.is_empty() {
-            let key = self.resolve_key(jwks_uri, kid).await?;
+            let key = self
+                .resolve_key_where(jwks_uri, kid, JsonWebKeySet::find_signing)
+                .await?;
             check_declared_alg(&key, alg)?;
             return Ok(key);
         }
@@ -558,6 +580,87 @@ mod tests {
         }
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 1, "no forced refresh");
+    }
+
+    // RFC 7517 §4.2 (#888): a kid naming only a `use` `enc` key names no
+    // signing key, so it is a miss: one forced refresh, then KeyNotFound. A
+    // kid-less token against a set with no signing key is KeyNotFound with no
+    // refresh. `resolve_key` stays a generic kid lookup.
+    #[tokio::test]
+    async fn resolve_signing_key_never_returns_enc_key() {
+        let server = MockServer::start().await;
+        let enc_only = r#"{ "keys": [
+            {"kty":"RSA","kid":"enc","use":"enc","n":"a","e":"AQAB"}
+        ] }"#;
+        mount(
+            &server,
+            ResponseTemplate::new(200).set_body_string(enc_only),
+        )
+        .await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let err = client
+            .resolve_signing_key(&jwks_uri(&server), "", "RS256")
+            .await
+            .expect_err("no signing key");
+        assert!(
+            matches!(&err, IdentityError::KeyNotFound(kid) if kid.is_empty()),
+            "expected KeyNotFound(\"\"), got {err:?}"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no forced refresh"
+        );
+
+        let err = client
+            .resolve_signing_key(&jwks_uri(&server), "enc", "RS256")
+            .await
+            .expect_err("kid names an enc key");
+        assert!(
+            matches!(&err, IdentityError::KeyNotFound(kid) if kid == "enc"),
+            "expected KeyNotFound(enc), got {err:?}"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "initial + forced refresh"
+        );
+
+        let key = client
+            .resolve_key(&jwks_uri(&server), "enc")
+            .await
+            .expect("generic lookup");
+        assert_eq!(key.use_, "enc");
+    }
+
+    // #888: the forced refresh a kid naming an enc key triggers picks up the
+    // key once the provider relabels it for signing.
+    #[tokio::test]
+    async fn resolve_signing_key_enc_kid_resolves_after_relabel() {
+        let server = MockServer::start().await;
+        let enc = r#"{ "keys": [ {"kty":"RSA","kid":"k1","use":"enc","n":"a","e":"AQAB"} ] }"#;
+        let sig = r#"{ "keys": [ {"kty":"RSA","kid":"k1","use":"sig","n":"a","e":"AQAB"} ] }"#;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(enc))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        mount(&server, ResponseTemplate::new(200).set_body_string(sig)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        client.fetch(&jwks_uri(&server)).await.expect("prime");
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "k1", "RS256")
+            .await
+            .expect("relabelled key");
+        assert_eq!(key.use_, "sig");
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "initial + forced refresh"
+        );
     }
 
     // JWKS-004: a kid that never appears errors KeyNotFound after the refresh.

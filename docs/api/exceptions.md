@@ -13,6 +13,7 @@ PyIdentityModelException
 │       ├── TokenExpiredException
 │       ├── InvalidAudienceException
 │       ├── InvalidIssuerException
+│       ├── KeyNotFoundException
 │       ├── AmbiguousKeyException
 │       ├── KeyAlgorithmMismatchException
 │       ├── CertificateBindingError
@@ -56,6 +57,8 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.InvalidAudienceException
 
 ::: py_identity_model.exceptions.InvalidIssuerException
+
+::: py_identity_model.exceptions.KeyNotFoundException
 
 ::: py_identity_model.exceptions.AmbiguousKeyException
 

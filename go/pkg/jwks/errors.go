@@ -49,21 +49,28 @@ func (e *EmptyKeySetError) Error() string {
 }
 
 // KeyNotFoundError reports that no key matching Kid was present, even after a
-// forced refresh (JWKS-004, RFC 7517 §4.5).
+// forced refresh (JWKS-004, RFC 7517 §4.5). From
+// [JSONWebKeySet.ResolveSigningKey] it means no signing key matched (a use
+// "enc" key never does, RFC 7517 §4.2); an empty Kid means the token had no
+// kid and the set holds no signing key (JWKS-011).
 type KeyNotFoundError struct {
 	Kid string
 }
 
 func (e *KeyNotFoundError) Error() string {
+	if e.Kid == "" {
+		return "jwks: token has no kid and the key set holds no signing key"
+	}
 	return fmt.Sprintf("jwks: no key found for kid %q", e.Kid)
 }
 
 // AmbiguousKeyError reports that a token with no kid could be verified by more
-// than one key in the set (JWKS-009). With no kid, the set is narrowed to
-// signing keys (use absent or "sig", RFC 7517 §4.2), then to keys whose alg is
-// absent or equals the header alg (§4.4) and whose kty matches it, each step
-// applied only when it leaves a key; Count keys were left. Kids lists the ids of those that have one. It is distinct from
-// [KeyNotFoundError], which reports a kid that matches no key.
+// than one key in the set (JWKS-009). With no kid, only signing keys (use
+// absent or "sig", RFC 7517 §4.2) are candidates; they are narrowed to keys
+// whose alg is absent or equals the header alg (§4.4) and whose kty matches it,
+// each of those two steps applied only when it leaves a key; Count keys were
+// left. Kids lists the ids of those that have one. It is distinct from
+// [KeyNotFoundError], which reports that no signing key matched.
 type AmbiguousKeyError struct {
 	Alg   string
 	Kids  []string

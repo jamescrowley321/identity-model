@@ -38,6 +38,7 @@ from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import (
     AmbiguousKeyException,
     KeyAlgorithmMismatchException,
+    KeyNotFoundException,
     TokenValidationException,
 )
 from py_identity_model.sync import token_validation
@@ -509,7 +510,8 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 # ``resolve`` is ``_discover_and_resolve_key`` with a token header carrying the
 # kid (none when the vector gives neither ``kid`` nor ``kids``) and
 # ``input.alg``. Errors are messages on ``TokenValidationException``, except
-# ``ambiguous_key`` and ``key_alg_mismatch``, which have their own types.
+# ``key_not_found``, ``ambiguous_key`` and ``key_alg_mismatch``, which have
+# their own types.
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
@@ -517,11 +519,11 @@ _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 _JWKS_ERRORS = {
     "malformed": "Invalid JSON",
     "empty_key_set": "No keys available",
-    "key_not_found": "No matching kid found",
 }
 
 #: Canonical reject codes surfaced as their own exception type.
 _JWKS_TYPED_ERRORS: dict[str, type[TokenValidationException]] = {
+    "key_not_found": KeyNotFoundException,
     "ambiguous_key": AmbiguousKeyException,
     "key_alg_mismatch": KeyAlgorithmMismatchException,
 }
@@ -576,7 +578,7 @@ def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
                 keys = _jwks_step(client, base, step, kid, inp.get("alg"))
             except TokenValidationException as exc:
                 # A key-not-found miss before the last step does not end the run.
-                if n == len(steps) or _JWKS_ERRORS["key_not_found"] not in str(exc):
+                if n == len(steps) or not isinstance(exc, KeyNotFoundException):
                     return exc
                 keys = []
     return [{m: k[m] for m in _JWK_MEMBERS if k.get(m)} for k in keys]

@@ -205,12 +205,22 @@ impl JsonWebKeySet {
     }
 
     /// Returns the key whose `kid` matches, scanning the in-memory set only
-    /// (RFC 7517 §4.5). Makes no network request.
+    /// (RFC 7517 §4.5). Makes no network request. Returns a key whatever its
+    /// `use`; to pick a key that verifies a signature, use
+    /// [`JsonWebKeySet::resolve_signing_key`].
     pub fn find(&self, kid: &str) -> Option<&JsonWebKey> {
         self.keys.iter().find(|k| k.kid == kid)
     }
 
-    /// Resolves the key whose `kid` matches (JWKS-003, RFC 7517 §4.5).
+    /// Returns the signing key whose `kid` matches, scanning the in-memory set
+    /// only. A key whose `use` is not `sig` or absent is skipped (RFC 7517
+    /// §4.2).
+    pub(crate) fn find_signing(&self, kid: &str) -> Option<&JsonWebKey> {
+        self.keys.iter().find(|k| k.kid == kid && is_signing_key(k))
+    }
+
+    /// Resolves the key whose `kid` matches (JWKS-003, RFC 7517 §4.5),
+    /// whatever its `use`.
     ///
     /// # Errors
     ///
@@ -223,34 +233,35 @@ impl JsonWebKeySet {
     /// Resolves the key that verifies a token whose JOSE header carries `kid`
     /// and `alg`, scanning the in-memory set only.
     ///
-    /// With a `kid` it is [`JsonWebKeySet::resolve_key`]. With no `kid` (an OP
-    /// may omit it when its set holds a single key, OIDC Core 1.0 §10.1) the
-    /// set is narrowed to signing keys (`use` absent or `sig`, RFC 7517 §4.2;
-    /// if none, every key), then, while more than one remains, to keys whose
-    /// `alg` is absent or equals `alg` (§4.4) and to keys whose `kty` matches
-    /// `alg`, each step applied only when it leaves a key. The one remaining
-    /// key is returned (JWKS-009). Callers must reject `alg` `none` first.
+    /// Only signing keys are candidates: keys whose `use` is `sig` or absent
+    /// (RFC 7517 §4.2). A `use` `enc` key is never returned (JWKS-011).
+    ///
+    /// With a `kid` it is the signing key with that `kid`. With no `kid` (an
+    /// OP may omit it when its set holds a single key, OIDC Core 1.0 §10.1)
+    /// the signing keys are narrowed, while more than one remains, to keys
+    /// whose `alg` is absent or equals `alg` (§4.4) and to keys whose `kty`
+    /// matches `alg`, each step applied only when it leaves a key. The one
+    /// remaining key is returned (JWKS-009). Callers must reject `alg` `none`
+    /// first.
     ///
     /// Either way, a key that declares an `alg` other than a non-empty `alg`
     /// is not returned (JWKS-010, RFC 7517 §4.4).
-    ///
-    /// The fallback to every key when none is a signing key matches the
-    /// Python implementation, where a `kid` naming a `use` `enc` key is also
-    /// used; enforcing `use` on both paths in every language is tracked in
-    /// #888.
     ///
     /// # Errors
     ///
     /// - [`IdentityError::AmbiguousKey`] when no `kid` is given and more than
     ///   one key remains.
-    /// - [`IdentityError::KeyNotFound`] when `kid` matches no key.
+    /// - [`IdentityError::KeyNotFound`] when `kid` matches no signing key, or
+    ///   (with an empty `kid`) when no `kid` is given and the set holds no
+    ///   signing key.
     /// - [`IdentityError::KeyAlgorithmMismatch`] when the resolved key
     ///   declares another `alg`.
     pub fn resolve_signing_key(&self, kid: &str, alg: &str) -> Result<&JsonWebKey> {
         let key = if kid.is_empty() {
             self.resolve_kidless(alg)?
         } else {
-            self.resolve_key(kid)?
+            self.find_signing(kid)
+                .ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))?
         };
         check_declared_alg(key, alg)?;
         Ok(key)
@@ -259,8 +270,9 @@ impl JsonWebKeySet {
     /// Selects the key for a token with no `kid`, as described on
     /// [`JsonWebKeySet::resolve_signing_key`].
     fn resolve_kidless(&self, alg: &str) -> Result<&JsonWebKey> {
-        let all: Vec<&JsonWebKey> = self.keys.iter().collect();
-        let mut candidates = narrow(all, |k| k.use_.is_empty() || k.use_ == "sig");
+        // RFC 7517 §4.2: a hard filter, with no fallback to non-signing keys.
+        let mut candidates: Vec<&JsonWebKey> =
+            self.keys.iter().filter(|k| is_signing_key(k)).collect();
         if candidates.len() > 1 && !alg.is_empty() {
             candidates = narrow(candidates, |k| k.alg.is_empty() || k.alg == alg);
             if let Some(kty) = alg_kty(alg) {
@@ -281,6 +293,12 @@ impl JsonWebKeySet {
             }),
         }
     }
+}
+
+/// Whether `key` may verify a signature: its `use` is `sig` or absent
+/// (RFC 7517 §4.2). A `use` `enc` key is for encryption only.
+fn is_signing_key(key: &JsonWebKey) -> bool {
+    key.use_.is_empty() || key.use_ == "sig"
 }
 
 /// Rejects `key` when it declares an `alg` other than a non-empty token `alg`
@@ -482,18 +500,54 @@ mod tests {
             by_alg.resolve_signing_key("", "RS384").expect("rs384").kid,
             "rs384"
         );
+    }
 
-        let enc_only = JsonWebKeySet::parse(
-            br#"{ "keys": [ {"kty":"RSA","kid":"enc-only","use":"enc","n":"a","e":"AQAB"} ] }"#,
+    // RFC 7517 §4.2 (#888): a `use` `enc` key never verifies a signature. A kid
+    // naming one is key-not-found, a kid-less token against a set with no
+    // signing key is key-not-found (not ambiguous), and a key with no `use` is
+    // a signing key. `find` and `resolve_key` stay generic kid lookups.
+    #[test]
+    fn resolve_signing_key_never_returns_enc_key() {
+        let set = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"RSA","kid":"enc","use":"enc","n":"a","e":"AQAB"},
+                {"kty":"RSA","kid":"sig","use":"sig","n":"b","e":"AQAB"},
+                {"kty":"RSA","kid":"plain","n":"c","e":"AQAB"}
+            ] }"#,
         )
         .expect("parses");
-        assert_eq!(
-            enc_only
-                .resolve_signing_key("", "RS256")
-                .expect("fallback")
-                .kid,
-            "enc-only"
+        assert!(
+            matches!(set.resolve_signing_key("enc", "RS256"),
+                Err(IdentityError::KeyNotFound(kid)) if kid == "enc"),
+            "kid naming an enc key is key-not-found"
         );
+        assert_eq!(
+            set.resolve_signing_key("sig", "RS256").expect("sig").kid,
+            "sig"
+        );
+        assert_eq!(
+            set.resolve_signing_key("plain", "RS256")
+                .expect("plain")
+                .kid,
+            "plain"
+        );
+        assert_eq!(set.find("enc").expect("generic lookup").use_, "enc");
+        assert_eq!(set.resolve_key("enc").expect("generic lookup").use_, "enc");
+
+        let enc_only = JsonWebKeySet::parse(
+            br#"{ "keys": [
+                {"kty":"RSA","kid":"enc-1","use":"enc","n":"a","e":"AQAB"},
+                {"kty":"RSA","kid":"enc-2","use":"enc","n":"b","e":"AQAB"}
+            ] }"#,
+        )
+        .expect("parses");
+        for alg in ["RS256", ""] {
+            assert!(
+                matches!(enc_only.resolve_signing_key("", alg),
+                    Err(IdentityError::KeyNotFound(kid)) if kid.is_empty()),
+                "alg {alg:?}: no signing key is key-not-found"
+            );
+        }
     }
 
     // JWKS-009: the kty step maps EdDSA to OKP and HS* to oct, so each picks

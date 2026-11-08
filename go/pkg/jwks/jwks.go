@@ -119,18 +119,32 @@ func ClearCache() { globalCache.clear() }
 // ResolveKey returns the key whose kid matches and reports whether one was
 // found, scanning the in-memory set only (JWKS-003, RFC 7517 §4.5). It makes no
 // network request; use [JSONWebKeySet.ResolveKeyWithRefresh] to re-fetch on a
-// miss.
+// miss. It returns a key whatever its use; to pick a key that verifies a
+// signature, use [JSONWebKeySet.ResolveSigningKey].
 func (s *JSONWebKeySet) ResolveKey(kid string) (*JSONWebKey, bool) {
+	return s.lookup(kid, anyKey)
+}
+
+// lookup returns a copy of the first key whose kid matches and that satisfies
+// keep, scanning the in-memory set only.
+func (s *JSONWebKeySet) lookup(kid string, keep func(*JSONWebKey) bool) (*JSONWebKey, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for i := range s.Keys {
-		if s.Keys[i].Kid == kid {
+		if s.Keys[i].Kid == kid && keep(&s.Keys[i]) {
 			k := cloneKey(s.Keys[i])
 			return &k, true
 		}
 	}
 	return nil, false
 }
+
+// anyKey keeps every key.
+func anyKey(*JSONWebKey) bool { return true }
+
+// isSigningKey reports whether k may verify a signature: its use is "sig" or
+// absent (RFC 7517 §4.2). A use "enc" key is for encryption only.
+func isSigningKey(k *JSONWebKey) bool { return k.Use == "" || k.Use == "sig" }
 
 // ResolveKeyWithRefresh resolves kid, and on a miss performs one forced refresh
 // and retries before returning a [KeyNotFoundError] (JWKS-004). This handles
@@ -142,8 +156,18 @@ func (s *JSONWebKeySet) ResolveKey(kid string) (*JSONWebKey, bool) {
 // header, an attacker presenting tokens with random kid values would otherwise
 // drive an unbounded number of outbound JWKS fetches. Within the cooldown a miss
 // returns [KeyNotFoundError] without re-fetching.
+//
+// Like [JSONWebKeySet.ResolveKey] it returns a key whatever its use; to pick a
+// key that verifies a signature, use [JSONWebKeySet.ResolveSigningKey].
 func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (*JSONWebKey, error) {
-	if k, ok := s.ResolveKey(kid); ok {
+	return s.resolveWithRefresh(ctx, kid, anyKey)
+}
+
+// resolveWithRefresh resolves the key whose kid matches and that satisfies
+// keep, with the throttled forced refresh on a miss described on
+// [JSONWebKeySet.ResolveKeyWithRefresh].
+func (s *JSONWebKeySet) resolveWithRefresh(ctx context.Context, kid string, keep func(*JSONWebKey) bool) (*JSONWebKey, error) {
+	if k, ok := s.lookup(kid, keep); ok {
 		return k, nil
 	}
 	if s.cache.refreshThrottled(s.uri, s.cfg.refreshCooldown) {
@@ -152,7 +176,7 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 	if err := s.ForceRefresh(ctx); err != nil {
 		return nil, err
 	}
-	if k, ok := s.ResolveKey(kid); ok {
+	if k, ok := s.lookup(kid, keep); ok {
 		return k, nil
 	}
 	return nil, &KeyNotFoundError{Kid: kid}
@@ -161,26 +185,27 @@ func (s *JSONWebKeySet) ResolveKeyWithRefresh(ctx context.Context, kid string) (
 // ResolveSigningKey resolves the key that verifies a token whose JOSE header
 // carries kid and alg.
 //
-// With a kid it is [JSONWebKeySet.ResolveKeyWithRefresh]. With no kid (an OP
-// may omit it when its set holds a single key, OIDC Core 1.0 §10.1) it scans
-// the in-memory set only, with no forced refresh: the set is narrowed to signing
-// keys (use absent or "sig", RFC 7517 §4.2; if none, every key), then, while
-// more than one remains, to keys whose alg is absent or equals alg (§4.4) and to
-// keys whose kty matches alg, each step applied only when it leaves a key. The
-// one remaining key is returned; more than one is an [AmbiguousKeyError]
-// (JWKS-009). Callers must reject alg "none" before calling it.
+// Only signing keys are candidates: keys whose use is "sig" or absent
+// (RFC 7517 §4.2). A use "enc" key is never returned (JWKS-011).
+//
+// With a kid it is [JSONWebKeySet.ResolveKeyWithRefresh] over the signing keys:
+// a kid that names no signing key, including one that names only an enc key,
+// is a miss that gets the throttled forced refresh, then a [KeyNotFoundError].
+// With no kid (an OP may omit it when its set holds a single key, OIDC Core 1.0
+// §10.1) it scans the in-memory signing keys only, with no forced refresh:
+// while more than one remains, they are narrowed to keys whose alg is absent or
+// equals alg (§4.4) and to keys whose kty matches alg, each step applied only
+// when it leaves a key. The one remaining key is returned; more than one is an
+// [AmbiguousKeyError] (JWKS-009), and none is a [KeyNotFoundError] with an
+// empty Kid. Callers must reject alg "none" before calling it.
 //
 // Either way, a key that declares an alg other than a non-empty alg is not
 // returned: that is a [KeyAlgorithmMismatchError] (JWKS-010, RFC 7517 §4.4).
-//
-// The fallback to every key when none is a signing key matches the Python
-// implementation, where a kid naming a use "enc" key is also used; enforcing
-// use on both paths in every language is tracked in #888.
 func (s *JSONWebKeySet) ResolveSigningKey(ctx context.Context, kid, alg string) (*JSONWebKey, error) {
 	var key *JSONWebKey
 	var err error
 	if kid != "" {
-		key, err = s.ResolveKeyWithRefresh(ctx, kid)
+		key, err = s.resolveWithRefresh(ctx, kid, isSigningKey)
 	} else {
 		key, err = s.resolveKidless(alg)
 	}
@@ -224,15 +249,17 @@ var algKty = map[string]string{
 	"HS256": "oct", "HS384": "oct", "HS512": "oct",
 }
 
-// kidlessCandidates narrows keys to those that could verify a token with no
-// kid, in the order and with the fallbacks described on
+// kidlessCandidates narrows keys to the signing keys that could verify a token
+// with no kid, in the order and with the fallbacks described on
 // [JSONWebKeySet.ResolveSigningKey].
 func kidlessCandidates(keys []JSONWebKey, alg string) []*JSONWebKey {
-	all := make([]*JSONWebKey, 0, len(keys))
+	// RFC 7517 §4.2: a hard filter, with no fallback to non-signing keys.
+	candidates := make([]*JSONWebKey, 0, len(keys))
 	for i := range keys {
-		all = append(all, &keys[i])
+		if isSigningKey(&keys[i]) {
+			candidates = append(candidates, &keys[i])
+		}
 	}
-	candidates := narrow(all, func(k *JSONWebKey) bool { return k.Use == "" || k.Use == "sig" })
 	if len(candidates) > 1 && alg != "" {
 		candidates = narrow(candidates, func(k *JSONWebKey) bool { return k.Alg == "" || k.Alg == alg })
 		if kty, ok := algKty[alg]; ok {
