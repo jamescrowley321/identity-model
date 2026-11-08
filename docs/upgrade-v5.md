@@ -552,6 +552,43 @@ disco = process_discovery_response(
 )
 ```
 
+## Access token validation
+
+### A bound token without a presentation is rejected ([#1062](https://github.com/jamescrowley321/identity-model/issues/1062))
+
+In 4.x, `validate_token` without `presentation=` skipped the sender-constraint
+check, so a DPoP-bound or certificate-bound token was accepted as a plain bearer
+token. 5.0 rejects it, whatever `required_binding` is: a resource server "MUST
+reject a DPoP-bound access token received as a bearer token" (RFC 9449 §7.2),
+and a certificate-bound token is valid only with the certificate it is bound
+to (RFC 8705 §3).
+
+- A token with `cnf.jkt` raises `DPoPValidationError` with kind
+  `PROOF_REQUIRED`.
+- A token with `cnf["x5t#S256"]` raises `CertificateBindingError`.
+- An unbound token is accepted as before, unless `required_binding` is `DPOP`
+  or `MTLS` (still a `ConfigurationException` without `presentation=`).
+
+To accept a bound token, pass how it arrived:
+
+```python
+claims = validate_token(
+    access_token,
+    config,
+    disco_doc_address,
+    presentation=TokenPresentation(
+        scheme=AuthorizationScheme.DPOP,
+        method=request.method,
+        url="https://api.example.com/orders",
+        dpop_proof=request.headers.get("DPoP"),
+        client_certificate=client_certificate,  # for cnf["x5t#S256"]
+    ),
+)
+```
+
+The FastAPI middleware already passes a presentation; see
+[DPoP](api/dpop.md).
+
 ## ID Token validation
 
 ### Untrusted additional audiences are rejected ([#881](https://github.com/jamescrowley321/identity-model/pull/881))

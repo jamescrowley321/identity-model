@@ -6,9 +6,10 @@ DPoP-bound token (``cnf.jkt``, RFC 9449 §6.1) needs the ``DPoP`` scheme and a
 proof signed by the bound key (§7.1); a certificate-bound token
 (``cnf["x5t#S256"]``, RFC 8705 §3) needs the client certificate it is bound to.
 
-``validate_token`` runs :func:`check_token_binding` when it is given a
-:class:`TokenPresentation` (how the token arrived on the request).
-``TokenValidationConfig.required_binding`` refuses tokens without the named
+``validate_token`` runs :func:`check_token_binding` on every token, with the
+:class:`TokenPresentation` (how the token arrived on the request) when one is
+given. A bound token with no presentation is rejected (RFC 9449 §7.2, RFC 8705
+§3). ``TokenValidationConfig.required_binding`` refuses tokens without the named
 binding.
 """
 
@@ -57,8 +58,8 @@ class TokenBinding(enum.Enum):
     """The sender constraint a resource server requires of every token."""
 
     NONE = "none"
-    """No binding required. A bound token is still checked when a
-    :class:`TokenPresentation` is given."""
+    """No binding required. A bound token is still checked, and is rejected
+    when no :class:`TokenPresentation` is given."""
     DPOP = "dpop"
     """Only DPoP-bound tokens (``cnf.jkt``) with a valid proof (RFC 9449)."""
     MTLS = "mtls"
@@ -148,8 +149,14 @@ def check_token_binding(
 ) -> None:
     """Check the token's sender constraint against how it was presented.
 
-    With no *presentation* nothing is checked (call
-    :func:`require_presentation` first). Otherwise:
+    With no *presentation*, a bound token is rejected: a resource server
+    "MUST reject a DPoP-bound access token received as a bearer token"
+    (RFC 9449 §7.2), a DPoP-bound token needs its proof (§6.1, §7.1), and a
+    certificate-bound token is valid only with the client certificate it is
+    bound to (RFC 8705 §3). So ``cnf.jkt`` raises ``PROOF_REQUIRED`` and
+    ``cnf["x5t#S256"]`` raises :class:`CertificateBindingError`. An unbound
+    token passes, unless ``required_binding`` is not ``NONE``
+    (:func:`require_presentation`). With a *presentation*:
 
     - ``cnf.jkt`` present: the scheme must be ``DPoP`` and the proof must
       verify for this request and token, with the bound key (RFC 9449 §7.1).
@@ -165,19 +172,30 @@ def check_token_binding(
         presentation: How the token arrived, or ``None``.
 
     Raises:
-        DPoPValidationError: If the DPoP binding fails.
+        ConfigurationException: If ``required_binding`` is not ``NONE`` and
+            *presentation* is ``None``.
+        DPoPValidationError: If the DPoP binding fails, including a
+            ``cnf.jkt`` token with no *presentation*.
         CertificateBindingError: If the certificate binding fails, including
-            an unparseable ``presentation.client_certificate``.
+            a ``cnf["x5t#S256"]`` token with no *presentation* and an
+            unparseable ``presentation.client_certificate``.
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
-    if presentation is None:
-        return
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     cnf = cnf if isinstance(cnf, dict) else {}
     binding = config.required_binding
-
     jkt_member = ConfirmationMethods.JwkThumbprint.value
+    certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
+
+    if presentation is None:
+        require_presentation(config, presentation)
+        if jkt_member in cnf:
+            raise DPoPValidationError(DPoPErrorKind.PROOF_REQUIRED)
+        if certificate_bound:
+            raise CertificateBindingError(BOUND_WITHOUT_CERTIFICATE_MESSAGE)
+        return
+
     if jkt_member in cnf:
         _check_dpop_binding(cnf[jkt_member], access_token, presentation, config.dpop)
     elif (
@@ -185,7 +203,6 @@ def check_token_binding(
     ):
         raise DPoPValidationError(DPoPErrorKind.NOT_BOUND)
 
-    certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
     if binding is not TokenBinding.MTLS and not certificate_bound:
         return
     certificate = presentation.client_certificate

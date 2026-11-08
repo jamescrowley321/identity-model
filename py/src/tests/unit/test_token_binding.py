@@ -38,6 +38,7 @@ from py_identity_model import (
     validate_token,
 )
 from py_identity_model.aio import validate_token as avalidate_token
+from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
     ConfigurationException,
@@ -382,15 +383,50 @@ class TestRequiredBinding:
             validate(token, _config(public_jwk), presentation=bearer)["sub"] == "user"
         )
 
-    def test_none_without_presentation_unchanged(
+    def test_dpop_bound_token_without_presentation_rejected(
         self, validate, signing_key, public_jwk
     ):
+        # RFC 9449 §7.2: a DPoP-bound token received as a bearer token MUST
+        # be rejected; with no presentation there is no proof to check.
         key = generate_dpop_key()
         token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
 
-        assert validate(token, _config(public_jwk))["cnf"] == {
-            "jkt": key.jwk_thumbprint
-        }
+        with pytest.raises(DPoPValidationError) as exc:
+            validate(token, _config(public_jwk))
+
+        assert (exc.value.kind, exc.value.kind.oauth_error, str(exc.value)) == (
+            DPoPErrorKind.PROOF_REQUIRED,
+            "invalid_token",
+            "DPoP-bound access token was sent without a DPoP proof (RFC 9449 §7.1)",
+        )
+
+    @pytest.mark.parametrize("jkt", ["", 5, None])
+    def test_malformed_jkt_without_presentation_rejected(
+        self, validate, signing_key, public_jwk, jkt
+    ):
+        token = _access_token(signing_key, {"jkt": jkt})
+
+        assert (
+            _kind(validate, token, _config(public_jwk), None)
+            is DPoPErrorKind.PROOF_REQUIRED
+        )
+
+    def test_unbound_token_without_presentation_accepted(
+        self, validate, signing_key, public_jwk
+    ):
+        token = _access_token(signing_key)
+
+        claims = validate(token, _config(public_jwk))
+
+        assert (claims["sub"], "cnf" in claims) == ("user", False)
+
+    @pytest.mark.parametrize("cnf", [{}, {"kid": "k1"}, "not-an-object"])
+    def test_cnf_without_binding_member_without_presentation_accepted(
+        self, validate, signing_key, public_jwk, cnf
+    ):
+        token = _access_token(signing_key, cast("dict", cnf))
+
+        assert validate(token, _config(public_jwk))["cnf"] == cnf
 
     def test_default_is_none(self):
         assert TokenValidationConfig(perform_disco=True).required_binding is (
@@ -492,14 +528,35 @@ class TestMtlsBinding:
 
         assert "cnf" not in claims
 
-    def test_certificate_bound_token_without_presentation_unchanged(
-        self, validate, signing_key, public_jwk
+    def test_certificate_bound_token_without_presentation_rejected(
+        self, validate, signing_key, public_jwk, client_cert_pem
     ):
-        token = _access_token(signing_key, {"x5t#S256": "A" * 43})
+        # RFC 8705 §3: the resource server MUST verify the presented
+        # certificate matches; with no presentation there is none.
+        thumbprint = compute_certificate_thumbprint(client_cert_pem)
+        token = _access_token(signing_key, {"x5t#S256": thumbprint})
 
-        claims = validate(token, _config(public_jwk))
+        with pytest.raises(CertificateBindingError) as exc:
+            validate(token, _config(public_jwk))
 
-        assert claims["cnf"] == {"x5t#S256": "A" * 43}
+        assert str(exc.value) == (
+            "Certificate-bound access token was presented without a client "
+            "certificate (RFC 8705 §3)"
+        )
+
+    def test_doubly_bound_token_without_presentation_rejected_as_dpop(
+        self, validate, signing_key, public_jwk, client_cert_pem
+    ):
+        key = generate_dpop_key()
+        thumbprint = compute_certificate_thumbprint(client_cert_pem)
+        token = _access_token(
+            signing_key, {"jkt": key.jwk_thumbprint, "x5t#S256": thumbprint}
+        )
+
+        assert (
+            _kind(validate, token, _config(public_jwk), None)
+            is DPoPErrorKind.PROOF_REQUIRED
+        )
 
     def test_required_mtls_unbound_rejected(
         self, validate, signing_key, public_jwk, client_cert_pem
@@ -512,3 +569,44 @@ class TestMtlsBinding:
                 _config(public_jwk, TokenBinding.MTLS),
                 presentation=self._presentation(client_cert_pem),
             )
+
+
+@pytest.mark.unit
+class TestCheckTokenBindingWithoutPresentation:
+    """``check_token_binding`` called directly, as the middleware packages do."""
+
+    @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
+    def test_required_binding_is_config_error(self, binding):
+        config = TokenValidationConfig(perform_disco=True, required_binding=binding)
+
+        with pytest.raises(ConfigurationException) as exc:
+            check_token_binding({"sub": "user"}, "token", config, None)
+
+        assert str(exc.value) == (
+            f"required_binding={binding.value} needs the request's presentation= "
+            "(scheme, method, url, DPoP proof or client certificate)"
+        )
+
+    def test_dpop_bound_rejected(self):
+        config = TokenValidationConfig(perform_disco=True)
+
+        with pytest.raises(DPoPValidationError) as exc:
+            check_token_binding({"cnf": {"jkt": "x" * 43}}, "token", config, None)
+
+        assert exc.value.kind is DPoPErrorKind.PROOF_REQUIRED
+
+    def test_certificate_bound_rejected(self):
+        config = TokenValidationConfig(perform_disco=True)
+
+        with pytest.raises(CertificateBindingError) as exc:
+            check_token_binding({"cnf": {"x5t#S256": "A" * 43}}, "token", config, None)
+
+        assert str(exc.value) == (
+            "Certificate-bound access token was presented without a client "
+            "certificate (RFC 8705 §3)"
+        )
+
+    def test_unbound_accepted(self):
+        config = TokenValidationConfig(perform_disco=True)
+
+        assert check_token_binding({"sub": "user"}, "token", config, None) is None

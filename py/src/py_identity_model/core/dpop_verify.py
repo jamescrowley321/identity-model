@@ -97,7 +97,8 @@ class DPoPErrorKind(enum.Enum):
     """The replay cache is full of live ``jti`` values, so the proof cannot be
     recorded and is refused rather than risk a replay (§11.1)."""
     PROOF_REQUIRED = "proof_required"
-    """A DPoP-bound token arrived without a ``DPoP`` proof (§7.1)."""
+    """A DPoP-bound token arrived without a ``DPoP`` proof, or with no
+    presentation at all (§7.1, §7.2)."""
     WRONG_SCHEME = "wrong_scheme"
     """A DPoP-bound token arrived with a scheme other than ``DPoP`` (§7.1)."""
     NOT_BOUND = "not_bound"

@@ -465,9 +465,10 @@ def validate_token(
             process-wide default cache is used, whichever client is passed.
         presentation: How the token arrived on the request
             (:class:`TokenPresentation`: scheme, method, URL, ``DPoP`` proof,
-            client certificate). When given, a sender-constrained token is
-            checked against it after decoding (RFC 9449 §7.1, RFC 8705 §3);
-            required when ``required_binding`` is not ``NONE``.
+            client certificate). A sender-constrained token is checked
+            against it after decoding (RFC 9449 §7.1, RFC 8705 §3), and is
+            rejected when it is ``None`` (RFC 9449 §7.2). Required when
+            ``required_binding`` is not ``NONE``.
 
     Returns:
         dict: Decoded token claims
