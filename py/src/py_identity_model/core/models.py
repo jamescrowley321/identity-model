@@ -17,6 +17,7 @@ from ..exceptions import (
     FailedResponseAccessError,
     SuccessfulResponseAccessError,
 )
+from .token_binding import TokenBinding
 
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
     from .discovery_policy import DiscoveryPolicy
     from .dpop import DPoPKey
+    from .dpop_verify import DPoPVerificationOptions
 
 
 # ============================================================================
@@ -1483,6 +1485,17 @@ class TokenValidationConfig:
             ``require_https`` (the policy's own ``require_https`` governs). The
             discovery cache is partitioned by the full policy, so a response
             admitted under a lax policy is never served to a stricter caller.
+        required_binding: The sender constraint every token must carry
+            (:class:`TokenBinding`). ``NONE`` (the default) keeps the previous
+            behaviour: without a ``presentation=`` nothing is checked, and with
+            one a bound token is still checked against it. ``DPOP`` requires a
+            ``cnf.jkt`` token with a valid DPoP proof (RFC 9449 §7.1);
+            ``MTLS`` requires a ``cnf["x5t#S256"]`` token and the bound client
+            certificate (RFC 8705 §3). Either needs ``presentation=`` on
+            ``validate_token``, else ``ConfigurationException``.
+        dpop: :class:`DPoPVerificationOptions` for DPoP proofs (allowed
+            algorithms, ``iat`` window, ``jti`` replay cache). ``None`` uses
+            the defaults and the process-wide replay cache.
 
     Examples:
         >>> # Multi-tenant with clock skew tolerance
@@ -1519,6 +1532,8 @@ class TokenValidationConfig:
     leeway: float | None = None
     allowed_issuers: list[str] | None = None
     discovery_policy: DiscoveryPolicy | None = None
+    required_binding: TokenBinding = TokenBinding.NONE
+    dpop: DPoPVerificationOptions | None = None
 
 
 __all__ = [

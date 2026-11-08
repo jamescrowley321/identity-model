@@ -18,6 +18,10 @@ from ..exceptions import (
     DiscoveryParseError,
 )
 from .discovery_policy import DiscoveryPolicy, is_loopback
+from .token_binding import TokenBinding
+
+
+REQUIRED_BINDING_TYPE_MESSAGE = "required_binding must be a TokenBinding"
 
 
 if TYPE_CHECKING:
@@ -213,6 +217,9 @@ def validate_token_config(
             raise ConfigurationException(
                 "leeway must be a finite number",
             )
+
+    if not isinstance(token_validation_config.required_binding, TokenBinding):
+        raise ConfigurationException(REQUIRED_BINDING_TYPE_MESSAGE)
 
     if token_validation_config.perform_disco:
         return

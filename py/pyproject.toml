@@ -185,6 +185,10 @@ ignore = [
 # The library reads no environment: config_from_env is the one sanctioned
 # reader, and nothing in the library imports it (test_config_helpers.py).
 "src/py_identity_model/config_helpers.py" = ["TID251"]
+# validate_token is public API: jwt, config, discovery address and client, plus
+# the keyword-only cache= and presentation= (RFC 9449 §7.1 / RFC 8705 §3 binding).
+"src/py_identity_model/sync/token_validation.py" = ["PLR0913"]
+"src/py_identity_model/aio/token_validation.py" = ["PLR0913"]
 # Likewise oidc_settings_from_env in the FastAPI package.
 "packages/fastapi-identity-model/fastapi_identity_model/config_helpers.py" = ["TID251"]
 "src/tests/unit/test_ssl_config.py" = [

@@ -19,6 +19,14 @@ import pytest
 
 from py_identity_model.core import dpop
 from py_identity_model.core.dpop import compute_ath, create_dpop_proof
+from py_identity_model.core.dpop_verify import (
+    DPoPErrorKind,
+    DPoPProofRequest,
+    DPoPValidationError,
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    verify_dpop_proof,
+)
 from py_identity_model.core.pkce import generate_code_challenge, generate_code_verifier
 
 from ..dpop_proof_helpers import (
@@ -44,9 +52,7 @@ class KnownGap(Exception):
 
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
-_KNOWN_GAPS = {
-    "DPOP-006": "no DPoP proof verifier (#478)",
-}
+_KNOWN_GAPS: dict[str, str] = {}
 
 #: Fewest verifiers a generate_code_verifier vector may ask for, so a
 #: repeated verifier can be detected at all.
@@ -100,8 +106,43 @@ def _thumbprint(case_id: str, inp: dict, expect: dict) -> None:
         assert fixture(inp["bound_token"])["payload"]["cnf"]["jkt"] == thumbprint
 
 
-def _verify_proof(case_id: str, _inp: dict, _expect: dict) -> None:
-    raise KnownGap(f"{case_id}: no DPoP proof verifier (#478)")
+#: The proof field each DPoPErrorKind names (DPOP-006 ``expect.fields``).
+_DPOP_ERROR_FIELDS = {
+    DPoPErrorKind.HTM_MISMATCH: "htm",
+    DPoPErrorKind.HTU_MISMATCH: "htu",
+    DPoPErrorKind.UNSUPPORTED_ALGORITHM: "alg",
+    DPoPErrorKind.INVALID_KEY: "jwk",
+    DPoPErrorKind.INVALID_SIGNATURE: "signature",
+    DPoPErrorKind.IAT_OUT_OF_WINDOW: "iat",
+    DPoPErrorKind.INVALID_TYPE: "typ",
+    DPoPErrorKind.ATH_MISMATCH: "ath",
+    DPoPErrorKind.NONCE_MISMATCH: "nonce",
+}
+
+
+def _verify_proof(case_id: str, inp: dict, expect: dict) -> None:
+    request = DPoPProofRequest(
+        method=inp["htm"],
+        url=inp["htu"],
+        access_token=inp.get("access_token"),
+        expected_nonce=inp.get("nonce"),
+    )
+    options = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+    if expect["outcome"] == "reject":
+        with pytest.raises(DPoPValidationError) as exc:
+            verify_dpop_proof(inp["proof"], request, options, now=inp["now"])
+        assert exc.value.kind.oauth_error == expect["error"], case_id
+        assert [_DPOP_ERROR_FIELDS[exc.value.kind]] == expect["fields"], case_id
+        return
+    proof = verify_dpop_proof(inp["proof"], request, options, now=inp["now"])
+    got = {
+        "jti": proof.jti,
+        "htm": proof.htm,
+        "htu": proof.htu,
+        "iat": proof.iat,
+        "thumbprint": proof.jkt,
+    }
+    assert got == expect["result"], case_id
 
 
 def _generate_key(case_id: str, inp: dict, expect: dict) -> None:
