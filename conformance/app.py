@@ -40,11 +40,12 @@ from py_identity_model import (
     DiscoveryDocumentResponse,
     DiscoveryPolicy,
     DPoPKey,
+    FAPI2ClientProfile,
+    FAPIProfileError,
     HTTPClient,
     JwksRequest,
     MtlsClientAuth,
     PrivateKeyJwt,
-    PushedAuthorizationRequest,
     TokenValidationConfig,
     UserInfoRequest,
     build_authorization_url,
@@ -64,7 +65,6 @@ from py_identity_model import (
     register_client,
     request_authorization_code_token,
     resolve_mtls_endpoint,
-    validate_authorize_callback_issuer,
     validate_authorize_callback_state,
     validate_logout_token,
     validate_id_token,
@@ -284,6 +284,10 @@ class AuthSession:
     # per-flow key the PAR + token + userinfo requests are bound to.
     fapi2: bool = False
     dpop_key: DPoPKey | None = None
+    # The library's FAPI 2.0 client profile the flow was built with: it builds
+    # the PAR + token requests, checks ``iss``, and supplies the accepted
+    # ID Token / JARM algorithms.
+    fapi_profile: FAPI2ClientProfile | None = None
     # mTLS (RFC 8705): when set, client authentication + sender constraining use a
     # client certificate (presented at the TLS layer) instead of private_key_jwt +
     # DPoP, and requests target the OP's mtls_endpoint_aliases.
@@ -313,6 +317,11 @@ _http_client: HTTPClient | None = None
 # carries no flow parameters, so the receiver recovers the issuer (for signature
 # + iss validation) and client_id (audience) from the last flow it drove.
 _last_flow_context: dict[str, str] | None = None
+
+# The FAPI 2.0 profile of the most recent flow (None for non-FAPI flows). A JARM
+# callback carries its state inside the JWT, so /callback takes the accepted
+# algorithms from here before it can look the session up.
+_last_fapi_profile: FAPI2ClientProfile | None = None
 
 # Most recent completed-login context for RP-Initiated Logout: the OP's
 # end-session endpoint, the issued id_token (used as ``id_token_hint``), and the
@@ -359,12 +368,6 @@ _FAPI2_CLIENT_KEY: DPoPKey = generate_dpop_key("ES256")
 # scope must equal it (EnsureRequestedScopeIsEqualToConfiguredScope).
 _FAPI2_SCOPE = "openid"
 
-# FAPI 2.0 permits only strong asymmetric ID token signing algorithms; RS256 in
-# particular is forbidden. Restricting the RP's accepted set here makes the
-# library reject an ID token signed with a disallowed alg (the OIDF
-# ``invalid-alternate-alg`` module forces RS256 and expects rejection).
-_FAPI2_ID_TOKEN_ALGS = ["PS256", "ES256", "EdDSA"]
-
 # For the ``plain_fapi`` profile the OIDF client test treats a dedicated resource
 # ("accounts") endpoint — NOT userinfo — as the resource server; the happy-path
 # module only transitions to FINISHED once the RP makes a (DPoP-bound) resource
@@ -382,17 +385,16 @@ def _fapi2_public_jwk() -> dict:
     return jwk
 
 
-def _fapi2_private_key_jwt(issuer: str) -> PrivateKeyJwt:
+def _fapi2_private_key_jwt() -> PrivateKeyJwt:
     """Build the private_key_jwt assertion params (RFC 7523).
 
-    With ``issuer`` set, the assertion ``aud`` is the issuer (FAPI 2.0
-    Security Profile §5.3.3.1).
+    The FAPI 2.0 profile sets ``issuer`` from discovery, so the assertion
+    ``aud`` is the issuer (FAPI 2.0 Security Profile §5.3.3.1).
     """
     return PrivateKeyJwt(
         private_key=_FAPI2_CLIENT_KEY.private_key_pem,
         algorithm="ES256",
         kid=_FAPI2_CLIENT_KID,
-        issuer=issuer,
     )
 
 
@@ -827,7 +829,7 @@ def authorize(
             scope=_FAPI2_SCOPE,
             test_id=test_id,
             test_name=test_name,
-            profile=profile,
+            test_profile=profile,
             skip_userinfo=skip_userinfo.lower() == "true",
             jarm=jarm.lower() == "true",
             mtls=mtls.lower() == "true",
@@ -922,18 +924,34 @@ def authorize(
     # Record the flow context so the Back-Channel Logout receiver can validate a
     # Logout Token the OP later posts to /backchannel-logout (no flow params ride
     # along on that request).
-    global _last_flow_context
+    global _last_flow_context, _last_fapi_profile
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
         "disco_address": disco_endpoint.url,
     }
+    _last_fapi_profile = None
 
     logger.info(
         "ACCEPTED: discovery issuer '%s' matches expected; redirecting to OP", issuer
     )
     logger.info("Redirecting to OP: %s", auth_url)
     return RedirectResponse(url=auth_url, status_code=302)
+
+
+def _fapi2_rejected(
+    issuer: str, test_id: str, error: str, detail: str | None
+) -> JSONResponse:
+    """Record and return a FAPI 2.0 authorization request the RP refused."""
+    if test_id:
+        error_session = AuthSession(issuer=issuer, state="", nonce="")
+        error_session.result = {
+            "test_id": test_id,
+            "status": "error",
+            "error": f"{error}: {detail}",
+        }
+        test_results[test_id] = error_session
+    return JSONResponse(status_code=400, content={"error": error, "detail": detail})
 
 
 def _authorize_fapi2(
@@ -944,7 +962,7 @@ def _authorize_fapi2(
     scope: str,
     test_id: str,
     test_name: str,
-    profile: str,
+    test_profile: str,
     skip_userinfo: bool,
     http_client: HTTPClient,
     jarm: bool = False,
@@ -961,36 +979,22 @@ def _authorize_fapi2(
     the session so /callback completes the flow the same way, with RFC 9207
     ``iss`` checks throughout.
     """
-    # mTLS drives the OP's mtls_endpoint_aliases (a distinct host/port); the
-    # library resolves the alias, falling back to the standard endpoint.
-    par_endpoint = (
-        resolve_mtls_endpoint(disco, "pushed_authorization_request_endpoint")
-        if mtls
-        else disco.pushed_authorization_request_endpoint
-    )
-    if not par_endpoint:
-        error_msg = "OP does not advertise a pushed_authorization_request_endpoint"
-        logger.error("REJECTED: %s", error_msg)
-        if test_id:
-            error_session = AuthSession(issuer=issuer, state="", nonce="")
-            error_session.result = {
-                "test_id": test_id,
-                "status": "error",
-                "error": f"par_not_supported: {error_msg}",
-            }
-            test_results[test_id] = error_session
-        return JSONResponse(
-            status_code=400,
-            content={"error": "par_not_supported", "detail": error_msg},
+    redirect_uri = f"{RP_BASE_URL}/callback"
+    try:
+        # The library's profile: validates the OP's FAPI 2.0 metadata, fixes the
+        # assertion aud to the discovery issuer and resolves mtls_endpoint_aliases.
+        # The harness redirects to http://localhost, a loopback URI (RFC 8252 §7.3).
+        profile = FAPI2ClientProfile(
+            disco,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            client_auth=_fapi2_mtls_auth() if mtls else _fapi2_private_key_jwt(),
+            native_app=True,
+            jarm=jarm,
+            scope=scope,
         )
-    if disco.authorization_endpoint is None:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": "missing_endpoint",
-                "detail": "Discovery document missing authorization_endpoint",
-            },
-        )
+    except FAPIProfileError as exc:
+        return _fapi2_rejected(issuer, test_id, "fapi_profile", str(exc))
 
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
@@ -998,56 +1002,29 @@ def _authorize_fapi2(
     # mTLS sender-constrains via the client certificate, so no DPoP key; the
     # cert-configured client is built by the library (http_client must be None).
     dpop_key = None if mtls else generate_dpop_key("ES256")
-    mtls_auth = _fapi2_mtls_auth() if mtls else None
-    redirect_uri = f"{RP_BASE_URL}/callback"
 
     par_response = push_authorization_request(
-        PushedAuthorizationRequest(
-            address=par_endpoint,
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            scope=scope,
+        profile.pushed_authorization_request(
             state=state,
             nonce=nonce,
             code_challenge=code_challenge,
-            code_challenge_method="S256",
-            private_key_jwt=None
-            if mtls
-            else _fapi2_private_key_jwt(disco.issuer or issuer),
             dpop_key=dpop_key,
-            mtls=mtls_auth,
-            # JARM: ask the OP to return a signed authorization response JWT.
-            response_mode="jwt" if jarm else None,
         ),
         http_client=None if mtls else http_client,
     )
     if not par_response.is_successful or not par_response.request_uri:
         logger.error("REJECTED: PAR request failed: %s", par_response.error)
-        if test_id:
-            error_session = AuthSession(issuer=issuer, state="", nonce="")
-            error_session.result = {
-                "test_id": test_id,
-                "status": "error",
-                "error": f"par_failed: {par_response.error}",
-            }
-            test_results[test_id] = error_session
-        return JSONResponse(
-            status_code=400,
-            content={"error": "par_failed", "detail": par_response.error},
-        )
+        return _fapi2_rejected(issuer, test_id, "par_failed", par_response.error)
 
     # RFC 9126 §4: the authorization request carries ONLY client_id + request_uri;
     # every other parameter was pushed and MUST NOT be repeated on the front channel.
-    auth_url = f"{disco.authorization_endpoint}?" + urlencode(
-        {"client_id": client_id, "request_uri": par_response.request_uri}
-    )
+    auth_url = profile.authorization_url(par_response.request_uri)
 
-    # Persist the OP's canonical discovery issuer (FAPI 2.0 requires the
-    # private_key_jwt ``aud`` at BOTH PAR and token endpoints to be the issuer
-    # URL as a string, not the endpoint URL — ValidateClientAssertionAudClaimIs
+    # The profile carries the OP's discovery issuer, so the token request's
+    # private_key_jwt ``aud`` is the issuer too (ValidateClientAssertionAudClaimIs
     # IssuerAsString).
     session = AuthSession(
-        issuer=disco.issuer or issuer,
+        issuer=profile.issuer,
         state=state,
         nonce=nonce,
         code_verifier=code_verifier,
@@ -1055,8 +1032,9 @@ def _authorize_fapi2(
         redirect_uri=redirect_uri,
         skip_userinfo=skip_userinfo,
         test_name=test_name,
-        profile=profile,
+        profile=test_profile,
         fapi2=True,
+        fapi_profile=profile,
         dpop_key=dpop_key,
         jarm=jarm,
         mtls=mtls,
@@ -1066,12 +1044,13 @@ def _authorize_fapi2(
     if test_id:
         session.result["test_id"] = test_id
 
-    global _last_flow_context
+    global _last_flow_context, _last_fapi_profile
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
         "disco_address": disco_address,
     }
+    _last_fapi_profile = profile
 
     logger.info(
         "ACCEPTED: FAPI2 PAR pushed (%s + PKCE S256); redirecting to OP with "
@@ -1146,21 +1125,17 @@ def _fetch_and_validate_discovery(
 
 def _validate_fapi2_callback_issuer(
     cb_response: AuthorizeCallbackResponse,
-    disco: DiscoveryDocumentResponse,
     session: AuthSession,
 ) -> HTMLResponse | None:
     """RFC 9207 ``iss`` validation for a FAPI 2.0 callback (mix-up defense).
 
-    FAPI 2.0 mandates the ``iss`` authorization-response parameter, so it is
-    required regardless of advertised metadata support. Returns an error
-    ``HTMLResponse`` on failure, or ``None`` when the flow may proceed (including
-    for non-FAPI2 sessions, which skip the check).
+    The FAPI 2.0 profile requires the ``iss`` authorization-response parameter.
+    Returns an error ``HTMLResponse`` on failure, or ``None`` when the flow may
+    proceed (including for non-FAPI2 sessions, which skip the check).
     """
-    if not session.fapi2:
+    if session.fapi_profile is None:
         return None
-    iss_result = validate_authorize_callback_issuer(
-        cb_response, disco.issuer, require=True
-    )
+    iss_result = session.fapi_profile.validate_callback_issuer(cb_response)
     if iss_result.is_valid:
         return None
     session.result["status"] = "error"
@@ -1196,28 +1171,14 @@ def _build_auth_code_token_request(
 ) -> AuthorizationCodeTokenRequest:
     """Build the auth-code token exchange request for a session.
 
-    mTLS sessions authenticate + sender-constrain with the client certificate at
-    the OP's mtls token endpoint; other FAPI 2.0 sessions use ``private_key_jwt``
-    + DPoP; the rest use the (optional) client secret.
+    FAPI 2.0 sessions build it from their profile (mTLS at the OP's mtls token
+    endpoint, or ``private_key_jwt`` + DPoP); the rest use the (optional) client
+    secret.
     """
-    if session.mtls:
-        token_endpoint = resolve_mtls_endpoint(disco, "token_endpoint") or ""
-        return AuthorizationCodeTokenRequest(
-            address=token_endpoint,
-            client_id=session.client_id,
+    if session.fapi_profile is not None:
+        return session.fapi_profile.authorization_code_token_request(
             code=code,
-            redirect_uri=session.redirect_uri,
             code_verifier=session.code_verifier,
-            mtls=_fapi2_mtls_auth(),
-        )
-    if session.fapi2:
-        return AuthorizationCodeTokenRequest(
-            address=disco.token_endpoint,
-            client_id=session.client_id,
-            code=code,
-            redirect_uri=session.redirect_uri,
-            code_verifier=session.code_verifier,
-            private_key_jwt=_fapi2_private_key_jwt(session.issuer),
             dpop_key=session.dpop_key,
         )
     return AuthorizationCodeTokenRequest(
@@ -1329,24 +1290,26 @@ def _fetch_userinfo(
     )
 
 
-def _id_token_validation_params(
-    session: AuthSession,
-) -> tuple[dict, list[str] | None]:
-    """Return ``(options, algorithms)`` for ID token validation.
+def _id_token_validation_config(
+    session: AuthSession, disco: DiscoveryDocumentResponse
+) -> TokenValidationConfig:
+    """ID token validation settings for a session.
 
-    FAPI 2.0 hardens validation: require ``exp``/``aud`` and restrict the
-    accepted signature algorithms to the strong asymmetric set (rejecting
-    RS256), so the library fails closed on the OIDF negative modules
+    FAPI 2.0 sessions take the profile's: PS256/ES256/EdDSA only and ``exp`` /
+    ``aud`` required, so the library fails closed on the OIDF negative modules
     (invalid-alternate-alg, invalid-missing-exp) instead of accepting the token
     and calling userinfo. Basic/Config/Form-Post profiles keep the looser
     OIDC-Core defaults.
     """
-    if session.fapi2:
-        return (
-            {"verify_exp": True, "require": ["sub", "iat", "exp", "aud"]},
-            _FAPI2_ID_TOKEN_ALGS,
-        )
-    return {"verify_exp": True, "require": ["sub", "iat"]}, None
+    if session.fapi_profile is not None:
+        return session.fapi_profile.id_token_validation_config()
+    return TokenValidationConfig(
+        perform_disco=True,
+        audience=session.client_id,
+        issuer=disco.issuer,
+        options={"verify_exp": True, "require": ["sub", "iat"]},
+        require_https=False,
+    )
 
 
 def _fetch_fapi2_resource(
@@ -1417,10 +1380,16 @@ def _parse_callback(
     try:
         if is_jarm_response(request_url):
             ctx = _last_flow_context or {}
+            fapi_profile = _last_fapi_profile
             return process_jarm_response(
                 request_url,
                 client_id=ctx.get("client_id", ""),
                 disco_doc_address=ctx.get("disco_address"),
+                algorithms=(
+                    fapi_profile.signing_algorithms
+                    if fapi_profile is not None
+                    else None
+                ),
                 require_https=False,
                 http_client=http_client,
             )
@@ -1507,7 +1476,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     disco, disco_endpoint = disco_result
 
     # FAPI 2.0: validate the RFC 9207 ``iss`` authorization-response parameter.
-    fapi2_iss_error = _validate_fapi2_callback_issuer(cb_response, disco, session)
+    fapi2_iss_error = _validate_fapi2_callback_issuer(cb_response, session)
     if fapi2_iss_error is not None:
         return fapi2_iss_error
 
@@ -1578,7 +1547,6 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # to verify, and it only works if we let the library own the HTTP client.
     claims: dict = {}
     if id_token_jwt:
-        id_token_options, id_token_algorithms = _id_token_validation_params(session)
         try:
             # validate_id_token adds the ID-Token profile on top of the base
             # checks, including the rejection of audiences other than this
@@ -1586,14 +1554,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             # invalid-secondary-aud module exercises.
             claims = validate_id_token(
                 id_token_jwt,
-                token_validation_config=TokenValidationConfig(
-                    perform_disco=True,
-                    audience=session.client_id,
-                    issuer=disco.issuer,
-                    algorithms=id_token_algorithms,
-                    options=id_token_options,
-                    require_https=False,
-                ),
+                token_validation_config=_id_token_validation_config(session, disco),
                 disco_doc_address=disco_endpoint.url,
             )
         except TokenValidationException as exc:

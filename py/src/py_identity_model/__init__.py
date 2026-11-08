@@ -52,6 +52,7 @@ from .identity import Claim, ClaimsIdentity, ClaimsPrincipal, to_principal
 from .sync import (
     FAPI2_ALLOWED_AUTH_METHODS,
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    FAPI2_MAX_NONCE_LENGTH,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
     AuthorizationCodeTokenRequest,
@@ -80,6 +81,8 @@ from .sync import (
     DiscoveryErrorKind,
     DiscoveryPolicy,
     DPoPKey,
+    FAPI2ClientProfile,
+    FAPIProfileError,
     FAPIValidationResult,
     HTTPClient,
     JsonWebAlgorithmsKeyTypes,
@@ -168,6 +171,7 @@ __all__ = [
     # FAPI 2.0
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
+    "FAPI2_MAX_NONCE_LENGTH",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     "AmbiguousKeyException",
@@ -224,6 +228,8 @@ __all__ = [
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
     "DiscoveryPolicy",
+    "FAPI2ClientProfile",
+    "FAPIProfileError",
     "FAPIValidationResult",
     "FailedResponseAccessError",
     # HTTP Client

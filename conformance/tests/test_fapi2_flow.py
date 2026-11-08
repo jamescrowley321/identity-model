@@ -23,7 +23,12 @@ import jwt as pyjwt
 import respx
 from run_tests import ConformanceSuiteClient
 
-from py_identity_model import generate_dpop_key, parse_authorize_callback_response
+from py_identity_model import (
+    DiscoveryDocumentResponse,
+    FAPI2ClientProfile,
+    generate_dpop_key,
+    parse_authorize_callback_response,
+)
 
 
 ISSUER = "https://op.example.com"
@@ -37,6 +42,10 @@ DISCO = {
     "subject_types_supported": ["public"],
     "id_token_signing_alg_values_supported": ["ES256"],
     "authorization_response_iss_parameter_supported": True,
+    "token_endpoint_auth_methods_supported": ["private_key_jwt"],
+    "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
+    "code_challenge_methods_supported": ["S256"],
+    "dpop_signing_alg_values_supported": ["ES256"],
 }
 
 
@@ -134,8 +143,16 @@ def test_fapi2_authorize_rejects_op_without_par_endpoint() -> None:
         follow_redirects=False,
     )
 
+    # The library's FAPI 2.0 profile refuses the OP before any request is sent.
     assert resp.status_code == httpx.codes.BAD_REQUEST
-    assert resp.json()["error"] == "par_not_supported"
+    assert resp.json() == {
+        "error": "fapi_profile",
+        "detail": (
+            "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
+            "Security Profile §5.3.2.2 requires pushed authorization requests "
+            "(RFC 9126)"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +205,12 @@ def _fapi2_session() -> harness_app.AuthSession:
         redirect_uri="https://rp.example.com/callback",
         code_verifier="cv",
         fapi2=True,
+        fapi_profile=FAPI2ClientProfile(
+            DiscoveryDocumentResponse(is_successful=True, **DISCO),
+            client_id="conformance-rp",
+            redirect_uri="https://rp.example.com/callback",
+            client_auth=harness_app._fapi2_private_key_jwt(),
+        ),
         dpop_key=generate_dpop_key("ES256"),
     )
 
@@ -196,7 +219,7 @@ def test_fapi2_iss_validation_accepts_matching_issuer() -> None:
     cb = parse_authorize_callback_response(
         f"https://rp.example.com/callback?code=c&state=s&iss={ISSUER}"
     )
-    result = harness_app._validate_fapi2_callback_issuer(cb, _Disco(), _fapi2_session())
+    result = harness_app._validate_fapi2_callback_issuer(cb, _fapi2_session())
     assert result is None
 
 
@@ -206,7 +229,7 @@ def test_fapi2_iss_validation_rejects_missing_issuer() -> None:
         "https://rp.example.com/callback?code=c&state=s"
     )
     session = _fapi2_session()
-    result = harness_app._validate_fapi2_callback_issuer(cb, _Disco(), session)
+    result = harness_app._validate_fapi2_callback_issuer(cb, session)
     assert result is not None
     assert result.status_code == httpx.codes.BAD_REQUEST
     assert session.result["status"] == "error"
@@ -217,13 +240,15 @@ def test_non_fapi2_session_skips_iss_validation() -> None:
         "https://rp.example.com/callback?code=c&state=s"
     )
     session = harness_app.AuthSession(issuer=ISSUER, state="s", nonce="n")
-    assert harness_app._validate_fapi2_callback_issuer(cb, _Disco(), session) is None
+    assert harness_app._validate_fapi2_callback_issuer(cb, session) is None
 
 
 def test_build_token_request_fapi2_uses_private_key_jwt_and_dpop() -> None:
     session = _fapi2_session()
     req = harness_app._build_auth_code_token_request(session, _Disco(), "the-code")
+    assert req.address == f"{ISSUER}/token"
     assert req.private_key_jwt is not None
+    assert req.private_key_jwt.issuer == ISSUER
     assert req.dpop_key is session.dpop_key
     assert req.client_secret is None
 
