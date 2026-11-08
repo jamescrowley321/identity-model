@@ -191,8 +191,9 @@ def is_signing_key(key: JsonWebKey) -> bool:
     """Return True when *key* may verify a signature.
 
     Per RFC 7517 §4.2 a key whose ``use`` is ``sig`` or absent (an empty
-    ``use`` counts as absent) is a signing key; any other ``use`` (``enc``, or a URI) is not, so the key is never
-    used to verify a signature, whether named by ``kid`` or not.
+    ``use`` counts as absent) is a signing key; any other ``use`` (``enc``,
+    a URI) is not, so the key is never used to verify a signature, whether
+    named by ``kid`` or not.
     """
     return key.use in (None, "", "sig")
 

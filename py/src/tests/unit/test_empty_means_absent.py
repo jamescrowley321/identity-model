@@ -7,17 +7,19 @@ value, and a real value is unaffected. Also covers the relaxed ``key_ops`` /
 
 import base64
 import json
+import time
 
 import httpx
 import pytest
 import respx
 
 from py_identity_model.core.id_token_logic import validate_id_token_claims
-from py_identity_model.core.models import JsonWebKey
+from py_identity_model.core.models import JsonWebKey, TokenValidationConfig
 from py_identity_model.core.parsers import (
     extract_jwt_header_fields,
     extract_kid_from_jwt,
     find_key_by_kid,
+    get_public_key_from_jwk,
     is_signing_key,
     jwks_from_dict,
 )
@@ -29,6 +31,18 @@ from py_identity_model.exceptions import (
     UntrustedAudienceException,
 )
 from py_identity_model.jwks import JwksRequest, get_jwks
+from py_identity_model.sync.token_validation import (
+    clear_discovery_cache,
+    clear_jwks_cache,
+    validate_token,
+)
+
+from ..constants import DISCO_URL
+from ..token_validation_helpers import (
+    DISCO_RESPONSE_WITH_JWKS,
+    generate_rsa_keypair,
+    sign_jwt,
+)
 
 
 _CLIENT_ID = "s6BhdRkqt3"
@@ -146,6 +160,40 @@ class TestEmptyKid:
         with pytest.raises(AmbiguousKeyException) as exc_info:
             find_key_by_kid(kid, keys, "RS256")
         assert exc_info.value.details == {"available_kids": [], "key_count": 2}
+
+    @pytest.mark.parametrize("header", [{"kid": ""}, {}], ids=["empty", "missing"])
+    def test_deprecated_lookup_treats_empty_kid_as_absent(self, header):
+        key = jwks_from_dict({**_RSA, "kid": "k1"})
+        token = _jwt({"alg": "RS256", **header})
+        with pytest.warns(DeprecationWarning, match="get_public_key_from_jwk"):
+            found = get_public_key_from_jwk(token, [key])
+        assert found == JsonWebKey(
+            kty="RSA", n="example_n", e="AQAB", kid="k1", alg="RS256"
+        )
+
+    @respx.mock
+    def test_empty_header_kid_validates_without_kid_miss_refresh(self):
+        clear_discovery_cache()
+        clear_jwks_cache()
+        key_dict, pem = generate_rsa_keypair()
+        issuer = DISCO_RESPONSE_WITH_JWKS["issuer"]
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        jwks_route = respx.get(DISCO_RESPONSE_WITH_JWKS["jwks_uri"]).mock(
+            return_value=httpx.Response(200, json={"keys": [key_dict]})
+        )
+        claims = {"iss": issuer, "sub": "u1", "exp": int(time.time()) + 300}
+        token = sign_jwt(pem, claims, headers={"kid": ""})
+        config = TokenValidationConfig(
+            perform_disco=True, issuer=issuer, options={"verify_aud": False}
+        )
+        try:
+            assert validate_token(token, config, DISCO_URL) == claims
+            assert jwks_route.call_count == 1
+        finally:
+            clear_discovery_cache()
+            clear_jwks_cache()
 
     def test_real_kid_is_looked_up(self):
         named = jwks_from_dict({**_RSA, "kid": "k1"})

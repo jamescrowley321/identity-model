@@ -28,6 +28,7 @@ layer, not here.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import hmac
 import time
@@ -43,6 +44,8 @@ from ..exceptions import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from .models import TokenValidationConfig
 
 
 # Signing algorithms whose ``at_hash``/``c_hash`` digest is fixed regardless of
@@ -184,6 +187,19 @@ def _reject_untrusted_audiences(
             "ID token contains audience(s) not trusted by the client",
             untrusted_audiences=untrusted,
         )
+
+
+def unset_empty_client_id(
+    token_validation_config: TokenValidationConfig,
+) -> TokenValidationConfig:
+    """Return the config with an empty ``audience`` (``client_id``) unset.
+
+    An empty ``client_id`` means none is configured, so ``audience=""`` is
+    validated exactly like ``audience=None``.
+    """
+    if token_validation_config.audience == "":
+        return dataclasses.replace(token_validation_config, audience=None)
+    return token_validation_config
 
 
 def check_azp_config(client_id: str | None, validate_azp: bool) -> None:

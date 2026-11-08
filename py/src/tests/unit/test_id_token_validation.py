@@ -828,16 +828,46 @@ class TestSyncValidateIdToken:
         clear_discovery_cache()
         clear_jwks_cache()
 
+    @pytest.mark.parametrize("audience", [None, ""], ids=["missing", "empty"])
     @respx.mock
-    def test_azp_validation_without_audience_fails_before_any_fetch(self):
+    def test_azp_validation_without_audience_fails_before_any_fetch(self, audience):
         # #930: the configuration error is raised before discovery/JWKS I/O.
         # No route is mocked, so any request would fail with a respx error.
-        config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
+        # #1065: an empty audience is no audience.
+        config = TokenValidationConfig(
+            perform_disco=True, issuer=_ISSUER, audience=audience
+        )
         with pytest.raises(AzpRequiresClientIdError):
             validate_id_token(
                 "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
             )
         assert respx.calls.call_count == 0
+
+    @respx.mock
+    def test_empty_audience_validates_like_no_audience(self, rsa_keypair):
+        # #1065: audience="" must not let a token whose aud lists "" through.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=["other-api", ""]),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        def outcome(audience):
+            config = TokenValidationConfig(
+                perform_disco=True, issuer=_ISSUER, audience=audience
+            )
+            with pytest.raises(TokenValidationException) as exc_info:
+                validate_id_token(
+                    token,
+                    config,
+                    disco_doc_address=DISCO_URL,
+                    trusted_audiences=["other-api", ""],
+                )
+            return type(exc_info.value), str(exc_info.value)
+
+        assert outcome("") == outcome(None)
 
     @respx.mock
     def test_valid_signed_id_token_accepted(self, rsa_keypair):
@@ -1067,15 +1097,48 @@ class TestAsyncValidateIdToken:
         await aio_clear_jwks_cache()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("audience", [None, ""], ids=["missing", "empty"])
     @respx.mock
-    async def test_azp_validation_without_audience_fails_before_any_fetch(self):
+    async def test_azp_validation_without_audience_fails_before_any_fetch(
+        self, audience
+    ):
         # #930: the configuration error is raised before discovery/JWKS I/O.
-        config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
+        # #1065: an empty audience is no audience.
+        config = TokenValidationConfig(
+            perform_disco=True, issuer=_ISSUER, audience=audience
+        )
         with pytest.raises(AzpRequiresClientIdError):
             await aio_validate_id_token(
                 "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
             )
         assert respx.calls.call_count == 0
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_empty_audience_validates_like_no_audience(self, rsa_keypair):
+        # #1065: audience="" must not let a token whose aud lists "" through.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=["other-api", ""]),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        async def outcome(audience):
+            config = TokenValidationConfig(
+                perform_disco=True, issuer=_ISSUER, audience=audience
+            )
+            with pytest.raises(TokenValidationException) as exc_info:
+                await aio_validate_id_token(
+                    token,
+                    config,
+                    disco_doc_address=DISCO_URL,
+                    trusted_audiences=["other-api", ""],
+                )
+            return type(exc_info.value), str(exc_info.value)
+
+        assert await outcome("") == await outcome(None)
 
     @pytest.mark.asyncio
     @respx.mock

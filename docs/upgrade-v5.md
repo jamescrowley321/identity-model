@@ -768,7 +768,8 @@ except KeyNotFoundException as exc:
   URI is now accepted. In 4.x it was dropped. A key whose `use` is anything
   other than `sig` or absent still never verifies a signature.
 
-A `key_ops` that is not a list of strings, or a `use` that is not a string,
+`key_ops` does not affect whether a key verifies. When a JWK Set is parsed, a
+`key_ops` that is not a list of strings, or a `use` that is not a string,
 still makes the key unusable.
 
 ### `algorithms=None` allows only asymmetric algorithms ([#952](https://github.com/jamescrowley321/identity-model/issues/952))
