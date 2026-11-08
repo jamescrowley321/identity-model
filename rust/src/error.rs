@@ -39,6 +39,16 @@ pub enum IdentityError {
     /// with neither configured every `aud` value is untrusted (fail closed).
     #[error("id token validation error: ID token 'aud' contains untrusted audiences: {0:?}")]
     IdTokenUntrustedAudience(Vec<String>),
+
+    /// [`validate_azp(true)`](crate::IdTokenValidationOptionsBuilder::validate_azp)
+    /// was set without a `client_id`. OIDC Core 1.0 §3.1.3.7 step 5 compares a
+    /// present `azp` with the client's own `client_id`, so with none configured
+    /// the check cannot run as asked. A caller misconfiguration, not a token
+    /// defect: it is reported before any claim is read (and, from
+    /// [`validate_id_token`](crate::validate_id_token), before any JWKS fetch).
+    #[error("configuration error: validate_azp requires a client_id to compare 'azp' against")]
+    IdTokenAzpRequiresClientId,
+
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without

@@ -15,6 +15,7 @@ from .core.config import (
 from .exceptions import (
     AmbiguousKeyException,
     AuthorizeCallbackException,
+    AzpRequiresClientIdError,
     CertificateBindingError,
     ConfigurationException,
     DiscoveryException,
@@ -170,6 +171,7 @@ __all__ = [
     "AuthorizeCallbackException",
     "AuthorizeCallbackResponse",
     "AuthorizeCallbackValidationResult",
+    "AzpRequiresClientIdError",
     # Base Classes
     "BaseRequest",
     "BaseResponse",

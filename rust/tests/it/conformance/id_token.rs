@@ -147,6 +147,23 @@ fn reason_marker(reason: &str) -> &'static str {
     }
 }
 
+/// The canonical family of vectors whose caller inputs are inconsistent: the
+/// crate reports them as a typed configuration variant before any profile rule
+/// runs.
+const CONFIGURATION_ERROR: &str = "configuration";
+
+/// Asserts `err` is the typed variant for a `configuration`-family `reason`.
+fn assert_configuration_error(label: &str, reason: &str, err: &IdentityError) {
+    let matched = match reason {
+        "azp_requires_client_id" => matches!(err, IdentityError::IdTokenAzpRequiresClientId),
+        other => panic!("{label}: unknown configuration reason {other:?}"),
+    };
+    assert!(
+        matched,
+        "{label}: expected configuration error {reason:?}, got {err:?}"
+    );
+}
+
 fn options_for(input: &Input) -> IdTokenValidationOptions {
     let mut b = IdTokenValidationOptions::builder().now(input.now);
     if let Some(client_id) = &input.client_id {
@@ -217,30 +234,34 @@ fn spec_id_token_conformance() {
                         "{label}: expected reject ({})",
                         vector.expect.reason
                     ));
-                    assert_eq!(
-                        vector.expect.error, "id_token_profile",
-                        "{label}: unexpected canonical error family {:?}",
-                        vector.expect.error
-                    );
-                    if vector.expect.reason == UNTRUSTED_AUDIENCE {
-                        // Typed variant: matched by pattern, not by message.
-                        let IdentityError::IdTokenUntrustedAudience(untrusted) = &err else {
-                            panic!("{label}: expected IdTokenUntrustedAudience, got {err:?}");
-                        };
-                        assert!(
-                            !untrusted.is_empty(),
-                            "{label}: untrusted-audience rejection carries no values"
-                        );
+                    if vector.expect.error == CONFIGURATION_ERROR {
+                        assert_configuration_error(&label, &vector.expect.reason, &err);
                     } else {
-                        let IdentityError::IdTokenValidation(msg) = &err else {
-                            panic!("{label}: expected IdTokenValidation, got {err:?}");
-                        };
-                        let marker = reason_marker(&vector.expect.reason);
-                        assert!(
-                            msg.contains(marker),
-                            "{label}: rejection {msg:?} does not match reason {:?} (marker {marker:?})",
-                            vector.expect.reason
+                        assert_eq!(
+                            vector.expect.error, "id_token_profile",
+                            "{label}: unexpected canonical error family {:?}",
+                            vector.expect.error
                         );
+                        if vector.expect.reason == UNTRUSTED_AUDIENCE {
+                            // Typed variant: matched by pattern, not by message.
+                            let IdentityError::IdTokenUntrustedAudience(untrusted) = &err else {
+                                panic!("{label}: expected IdTokenUntrustedAudience, got {err:?}");
+                            };
+                            assert!(
+                                !untrusted.is_empty(),
+                                "{label}: untrusted-audience rejection carries no values"
+                            );
+                        } else {
+                            let IdentityError::IdTokenValidation(msg) = &err else {
+                                panic!("{label}: expected IdTokenValidation, got {err:?}");
+                            };
+                            let marker = reason_marker(&vector.expect.reason);
+                            assert!(
+                                msg.contains(marker),
+                                "{label}: rejection {msg:?} does not match reason {:?} (marker {marker:?})",
+                                vector.expect.reason
+                            );
+                        }
                     }
                 }
                 other => panic!("{label}: unknown expected outcome {other:?}"),

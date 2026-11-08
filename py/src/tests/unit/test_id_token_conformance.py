@@ -15,7 +15,9 @@ Thin-executor contract: the vectors carry the inputs and a canonical expected
 outcome; only the mapping of each canonical ``reason`` label to py-identity-
 model's exception surface lives here (``_REASON_MESSAGE``). Every reject path in
 the pure validator raises :class:`IdTokenValidationException`; the ``reason``
-label pins *which* profile rule fired.
+label pins *which* profile rule fired. The ``configuration`` family
+(``_CONFIGURATION_EXCEPTION``) maps a caller misconfiguration to its typed
+:class:`ConfigurationException` subclass instead.
 
 """
 
@@ -28,6 +30,8 @@ import pytest
 
 from py_identity_model.core.id_token_logic import validate_id_token_claims
 from py_identity_model.exceptions import (
+    AzpRequiresClientIdError,
+    ConfigurationException,
     IdTokenValidationException,
     UntrustedAudienceException,
 )
@@ -56,6 +60,12 @@ _CASES = _CAPABILITY["tests"]
 # type rather than by message.
 _REASON_EXCEPTION = {
     "untrusted_audience": UntrustedAudienceException,
+}
+
+# Each ``configuration``-family reason maps to its typed configuration error:
+# the inputs are inconsistent, so no profile rule runs at all.
+_CONFIGURATION_EXCEPTION: dict[str, type[ConfigurationException]] = {
+    "azp_requires_client_id": AzpRequiresClientIdError,
 }
 
 # Each other canonical reject ``reason`` maps to a stable substring of the message
@@ -123,6 +133,19 @@ def test_id_token_vector(case_id: str, vector: dict) -> None:
     if outcome == "accept":
         # A conforming ID Token: the profile validator must not raise.
         _run_vector(vector)
+    elif outcome == "reject" and expect.get("error") == "configuration":
+        reason = expect["reason"]
+        want_config = _CONFIGURATION_EXCEPTION.get(reason)
+        assert want_config is not None, (
+            f"{case_id}: unknown configuration reason {reason!r} — extend "
+            "_CONFIGURATION_EXCEPTION"
+        )
+        with pytest.raises(ConfigurationException) as config_info:
+            _run_vector(vector)
+        assert type(config_info.value) is want_config, (
+            f"{case_id}: reason {reason!r} expected {want_config.__name__}, "
+            f"got {type(config_info.value).__name__}: {config_info.value}"
+        )
     elif outcome == "reject":
         assert expect.get("error") == "id_token_profile", (
             f"{case_id}: unexpected canonical error family {expect.get('error')!r}"

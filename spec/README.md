@@ -72,7 +72,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
 | JWKS | `vectors/jwks.json` (JWKS-001..008) — **executable vectors** | `test-fixtures/jwks/` |
 | Validation | `vectors/validation.json` (JWT-001..013) — **executable vectors** | `test-fixtures/validation/` |
-| ID Token | `vectors/id-token.json` (IDT-001..012) — **executable vectors** | `test-fixtures/validation/` |
+| ID Token | `vectors/id-token.json` (IDT-001..014) — **executable vectors** | `test-fixtures/validation/` |
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007, UI-009) — **executable vectors** | `test-fixtures/userinfo/` |
 | Token Introspection | `vectors/introspection.json` (INTR-001..006) — **executable vectors** | `test-fixtures/introspection/` |
@@ -87,7 +87,7 @@ that implements them**:
 | capability | cases | vectors | Go | Python | Rust |
 | --- | --- | --- | --- | --- | --- |
 | validation | 12 | 13 | `go/internal/conformance/validation_test.go` | `py/src/tests/unit/test_spec_conformance.py` | `rust/tests/it/conformance/validation.rs` |
-| id-token | 11 | 30 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
+| id-token | 14 | 72 | `go/internal/conformance/idtoken_conformance_test.go` | `py/src/tests/unit/test_id_token_conformance.py` | `rust/tests/it/conformance/id_token.rs` |
 | revocation | 5 | 7 | `go/internal/conformance/httpvector_test.go` (adapter: `revocation_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | userinfo | 7 | 9 | `go/internal/conformance/httpvector_test.go` (adapter: `userinfo_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |
 | jwks | 8 | 15 | `go/internal/conformance/httpvector_test.go` (adapter: `jwks_test.go`) | `py/src/tests/spec_vectors/test_spec_http_vectors.py` | `rust/tests/it/live/spec_http_vectors.rs` |

@@ -62,6 +62,14 @@ func (c *config) now() time.Time {
 	return time.Now()
 }
 
+// validate rejects inconsistent caller options before any claim is read.
+func (c *config) validate() error {
+	if c.validateAZP && c.clientID == "" {
+		return ErrAZPRequiresClientID
+	}
+	return nil
+}
+
 // trustsAudience reports whether aud is the client_id (when set) or one of the
 // configured trusted audiences (§3.1.3.7 step 3).
 func (c *config) trustsAudience(aud string) bool {
@@ -123,7 +131,8 @@ func WithTrustedAudiences(audiences ...string) Option {
 // client_id. OIDC Core 1.0 errata set 2 makes neither a MUST — §3.1.3.7 step 5
 // is a MAY/SHOULD, and the multiple-audience rule is the Core 1.0 (2014) step-4
 // SHOULD that errata set 2 removed. Without this option azp is ignored, as §2
-// advises relying parties that use no extensions.
+// advises relying parties that use no extensions. Requires [WithClientID]:
+// without it validation returns [ErrAZPRequiresClientID].
 func WithAZPValidation() Option {
 	return func(c *config) { c.validateAZP = true }
 }

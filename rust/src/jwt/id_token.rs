@@ -194,7 +194,8 @@ impl IdTokenValidationOptionsBuilder {
     /// §3.1.3.7 step 5 is a MAY/SHOULD, and the multiple-audience rule is the
     /// Core 1.0 (2014) step-4 SHOULD that errata set 2 removed. Defaults to
     /// `false`: `azp` is ignored, as §2 advises relying parties that use no
-    /// extensions.
+    /// extensions. Requires a `client_id`: without one validation fails with
+    /// [`IdentityError::IdTokenAzpRequiresClientId`].
     pub fn validate_azp(mut self, validate_azp: bool) -> Self {
         self.inner.validate_azp = validate_azp;
         self
@@ -339,6 +340,16 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
     value.as_f64().map(|f| f.trunc() as i64)
 }
 
+/// Rejects [`validate_azp(true)`](IdTokenValidationOptionsBuilder::validate_azp)
+/// without a `client_id` (§3.1.3.7 step 5). Reads only the caller's options,
+/// so it runs before any claim is read.
+fn check_azp_config(options: &IdTokenValidationOptions) -> Result<()> {
+    if options.validate_azp && options.client_id.is_none() {
+        return Err(IdentityError::IdTokenAzpRequiresClientId);
+    }
+    Ok(())
+}
+
 /// Enforces the opt-in authorized-party (`azp`) rules
 /// ([`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)).
 ///
@@ -348,7 +359,7 @@ fn numeric_seconds(value: &Value) -> Option<i64> {
 /// `azp: ""` is rejected, not accepted. The mismatch check keeps the oracle's
 /// `azp is not None` guard, so a present-but-empty `azp` is still compared
 /// against `client_id`.
-fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) -> Result<()> {
+fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Result<()> {
     let azp = claims.authorized_party.as_deref();
     let azp_present = azp.is_some_and(|value| !value.is_empty());
     if audiences.len() > 1 && !azp_present {
@@ -357,7 +368,7 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) 
             "ID token with multiple audiences must contain an 'azp' claim".to_string(),
         ));
     }
-    if let (Some(azp), Some(client_id)) = (azp, client_id)
+    if let Some(azp) = azp
         && azp != client_id
     {
         // Errata 2 step 5: a present `azp` identifies this client.
@@ -384,6 +395,8 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: Option<&str>) 
 ///
 /// # Errors
 ///
+/// - [`IdentityError::IdTokenAzpRequiresClientId`] when `validate_azp` is set
+///   without a `client_id`, before any claim is read.
 /// - [`IdentityError::IdTokenUntrustedAudience`] when an `aud` value is
 ///   neither the `client_id` nor one of the configured trusted audiences
 ///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
@@ -397,6 +410,9 @@ pub fn validate_id_token_claims(
     header_alg: Option<&str>,
     options: &IdTokenValidationOptions,
 ) -> Result<()> {
+    // §3.1.3.7 step 5 needs a `client_id` to compare `azp` with.
+    check_azp_config(options)?;
+
     // §2 / §3.1.3.7 — `sub` is REQUIRED and must be non-empty.
     if claims.subject.as_deref().unwrap_or_default().is_empty() {
         return Err(IdentityError::IdTokenValidation(
@@ -431,8 +447,10 @@ pub fn validate_id_token_claims(
     }
 
     // §3.1.3.7 steps 4-5 — authorized-party (`azp`) rules, opt-in only.
-    if options.validate_azp {
-        validate_azp(claims, audiences, options.client_id.as_deref())?;
+    if options.validate_azp
+        && let Some(client_id) = options.client_id.as_deref()
+    {
+        validate_azp(claims, audiences, client_id)?;
     }
 
     // §3.1.3.7 step 11 — `nonce` binding (only when the caller passed one).
@@ -544,6 +562,9 @@ fn validate_hash_binding(
 ///
 /// # Errors
 ///
+/// - [`IdentityError::IdTokenAzpRequiresClientId`] — `validate_azp` is set but
+///   neither `profile` nor the `base` audience supplies a `client_id`. Reported
+///   before the JWKS fetch.
 /// - [`IdentityError::Validation`] — standard JWT validation failed (bad
 ///   signature, wrong issuer/audience, expired token).
 /// - [`IdentityError::KeyNotFound`] — no JWKS key matched the token's `kid`.
@@ -562,15 +583,17 @@ pub async fn validate_id_token(
     base: &ValidationOptions,
     profile: &IdTokenValidationOptions,
 ) -> Result<Claims> {
+    let mut effective = profile.clone();
+    if effective.client_id.is_none() {
+        effective.client_id = base.expected_audience.clone();
+    }
+    check_azp_config(&effective)?;
+
     let claims = validate_token_with_jwks(id_token, jwks, jwks_uri, base).await?;
     // The signature was verified under exactly this header `alg`, so reading it
     // back is the *verified* algorithm, not an unauthenticated header read.
     let header_alg = parse_header_alg(id_token)?;
 
-    let mut effective = profile.clone();
-    if effective.client_id.is_none() {
-        effective.client_id = base.expected_audience.clone();
-    }
     validate_id_token_claims(&claims, header_alg.as_deref(), &effective)?;
     Ok(claims)
 }
@@ -860,21 +883,11 @@ mod tests {
     // are what is exercised.
     #[test]
     fn empty_string_azp_matches_oracle_truthiness() {
-        // multi-aud + azp="" with no configured client_id: the former
-        // `azp.is_none()` accepted this; the oracle rejects it.
+        // multi-aud + azp="" with a client_id: the required-multi-aud check
+        // fires first (matching the oracle), not the mismatch check. Without a
+        // client_id the azp rules are a configuration error (IDT-014).
         let multi_empty =
             claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"], "azp": ""}));
-        let trusted_no_cid = IdTokenValidationOptions::builder()
-            .trusted_audiences(["s6BhdRkqt3", "other-client-9x"])
-            .validate_azp(true)
-            .build();
-        assert_id_token_reject(
-            &validate_id_token_claims(&multi_empty, Some("RS256"), &trusted_no_cid).unwrap_err(),
-            "multiple audiences must contain an 'azp'",
-        );
-
-        // multi-aud + azp="" WITH a client_id: the required-multi-aud check
-        // fires first (matching the oracle), not the mismatch check.
         let cid = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
             .trusted_audiences(["other-client-9x"])
@@ -892,10 +905,6 @@ mod tests {
             &validate_id_token_claims(&single_empty_cid, Some("RS256"), &cid).unwrap_err(),
             "'azp' claim does not match",
         );
-
-        // single-aud + azp="" with NO client_id: nothing to compare, accept.
-        validate_id_token_claims(&single_empty_cid, Some("RS256"), &trusted_no_cid)
-            .expect("empty azp on single audience with no client_id validates");
     }
 
     // IDT-004 with `validate_azp(true)`: a present azp is validated even for a
@@ -913,6 +922,56 @@ mod tests {
         assert_id_token_reject(
             &validate_id_token_claims(&bad, Some("RS256"), &cid).unwrap_err(),
             "'azp' claim does not match",
+        );
+    }
+
+    // IDT-014 (#930): `validate_azp(true)` without a `client_id` is a
+    // configuration error, raised before any claim is read — whether or not
+    // the token carries an `azp`, and even when `sub` is missing.
+    #[test]
+    fn azp_validation_without_client_id_is_config_error() {
+        let opts = IdTokenValidationOptions::builder()
+            .trusted_audiences(["s6BhdRkqt3"])
+            .validate_azp(true)
+            .build();
+        for value in [
+            json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "android-client"}),
+            json!({"sub": "u", "aud": "s6BhdRkqt3"}),
+            json!({"aud": "s6BhdRkqt3"}),
+            json!({}),
+        ] {
+            let err =
+                validate_id_token_claims(&claims(value.clone()), Some("RS256"), &opts).unwrap_err();
+            assert!(
+                matches!(err, IdentityError::IdTokenAzpRequiresClientId),
+                "{value}: expected IdTokenAzpRequiresClientId, got {err:?}"
+            );
+        }
+    }
+
+    // The end-to-end entry point reports the configuration error before any
+    // JWKS fetch or token parse: neither the malformed token nor the
+    // unreachable JWKS URI is touched.
+    #[tokio::test]
+    async fn validate_id_token_rejects_azp_without_client_id_before_fetch() {
+        let base = ValidationOptions::builder()
+            .issuer("https://op.example.com")
+            .build();
+        let profile = IdTokenValidationOptions::builder()
+            .validate_azp(true)
+            .build();
+        let err = validate_id_token(
+            "not-a-jwt",
+            &JwksClient::new(),
+            "http://127.0.0.1:9/jwks",
+            &base,
+            &profile,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, IdentityError::IdTokenAzpRequiresClientId),
+            "expected IdTokenAzpRequiresClientId, got {err:?}"
         );
     }
 

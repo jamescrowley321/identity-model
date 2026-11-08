@@ -62,6 +62,13 @@ const (
 // profile violation, for callers that prefer errors.Is over a type assertion.
 var ErrIDTokenProfile = errors.New("idtoken: id-token profile validation failed")
 
+// ErrAZPRequiresClientID is returned when [WithAZPValidation] is set without
+// [WithClientID]. §3.1.3.7 step 5 compares a present azp with the client's own
+// client_id, so with none configured the check cannot run as asked. It is a
+// caller configuration error, not an ID-Token profile violation: it never
+// matches [ErrIDTokenProfile], and it is returned before any claim is read.
+var ErrAZPRequiresClientID = errors.New("idtoken: azp validation requires a client_id")
+
 // ProfileError reports that an ID-Token profile rule (OIDC Core §3.1.3.7 /
 // §3.3.2.11) was violated. Reason is one of the stable Reason* labels above;
 // Message is a human-readable explanation.

@@ -19,6 +19,12 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   parties that use no extensions to ignore `azp`, so the default accepts
   cross-client tokens such as Google's, where `aud` is your backend and `azp`
   is the mobile client that obtained the token.
+  `validate_azp=True` needs a `client_id`: without
+  `token_validation_config.audience` it raises `AzpRequiresClientIdError` (a
+  `ConfigurationException`) before any token is fetched or read. With
+  `validate_azp` off, any audience in `trusted_audiences` is accepted with no
+  `azp` check, so a relying party that trusts extra audiences should pass
+  `validate_azp=True`.
 - **`nonce`** — when you pass `nonce=`, the claim must be present and equal
   (compared in constant time).
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be

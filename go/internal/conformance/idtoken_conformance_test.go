@@ -50,6 +50,15 @@ func TestIDTokenConformance(t *testing.T) {
 
 }
 
+// idTokenConfigurationError is the canonical family of vectors whose caller
+// inputs are inconsistent; each reason maps to the idtoken sentinel returned
+// before any profile rule runs.
+const idTokenConfigurationError = "configuration"
+
+var idTokenConfigurationErrors = map[string]error{
+	"azp_requires_client_id": idtoken.ErrAZPRequiresClientID,
+}
+
 func runIDTokenVector(t *testing.T, id string, idx int, v IDTokenVector) {
 	t.Helper()
 	label := id
@@ -67,6 +76,16 @@ func runIDTokenVector(t *testing.T, id string, idx int, v IDTokenVector) {
 	case OutcomeReject:
 		if err == nil {
 			t.Fatalf("%s[%d]: expected reject (%s), got nil", label, idx, v.Expect.Reason)
+		}
+		if v.Expect.Error == idTokenConfigurationError {
+			want, ok := idTokenConfigurationErrors[v.Expect.Reason]
+			if !ok {
+				t.Fatalf("%s[%d]: unknown configuration reason %q", label, idx, v.Expect.Reason)
+			}
+			if !errors.Is(err, want) || errors.Is(err, idtoken.ErrIDTokenProfile) {
+				t.Fatalf("%s[%d]: err = %v, want configuration error %v", label, idx, err, want)
+			}
+			return
 		}
 		if !errors.Is(err, idtoken.ErrIDTokenProfile) {
 			t.Fatalf("%s[%d]: error %v does not match ErrIDTokenProfile", label, idx, err)
