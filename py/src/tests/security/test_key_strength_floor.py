@@ -71,6 +71,23 @@ def test_weak_key_with_bytes_modulus_is_refused():
 
 
 @pytest.mark.parametrize(
+    "suffix", ["\u00e9", "\U0001f600"], ids=["two-octet", "four-octet"]
+)
+def test_weak_key_with_non_ascii_modulus_is_refused(suffix):
+    # PyJWT encodes a str member as UTF-8 and its base64url decoder discards
+    # the non-alphabet octets, so a weak modulus with a non-ASCII suffix still
+    # converts to the weak key: the floor must measure it the same way.
+    weak = _KEYS["weak-rsa-1024"]
+    token = (_FIXTURES / "weak-rsa-1024-token.txt").read_text().strip()
+    tainted = {**weak, "n": weak["n"] + suffix}
+
+    with pytest.raises(WeakKeyException) as exc_info:
+        decode_and_validate_jwt(token, tainted, ["RS256"], None, None, None)
+
+    assert exc_info.value.details == _WEAK_KEY_CASES["rsa-1024"][2]
+
+
+@pytest.mark.parametrize(
     "n", ["é" * 400, "", b""], ids=["non-ascii", "empty-str", "empty-bytes"]
 )
 def test_unmeasurable_modulus_is_left_to_key_conversion(n):
