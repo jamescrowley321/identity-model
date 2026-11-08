@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .authorize_url import build_par_authorization_url
+from .client_auth_method import ClientAuthMethod
 from .jar import create_request_object
 from .models import (
     AuthorizationCodeTokenRequest,
@@ -44,10 +45,17 @@ if TYPE_CHECKING:
 
 # FAPI 2.0 Security Profile §5.4.1: PS256, ES256 or EdDSA (Ed25519).
 FAPI2_ALLOWED_SIGNING_ALGORITHMS = frozenset({"PS256", "ES256", "EdDSA"})
+# FAPI 2.0 Security Profile §5.3.3.1. String values, because discovery
+# metadata (``token_endpoint_auth_methods_supported``) is compared against them.
 FAPI2_ALLOWED_AUTH_METHODS = frozenset(
-    {"private_key_jwt", "tls_client_auth", "self_signed_tls_client_auth"}
+    m.value
+    for m in (
+        ClientAuthMethod.PRIVATE_KEY_JWT,
+        ClientAuthMethod.TLS_CLIENT_AUTH,
+        ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
+    )
 )
-_MTLS_AUTH_METHODS = frozenset({"tls_client_auth", "self_signed_tls_client_auth"})
+_MTLS_AUTH_METHODS = frozenset(m.value for m in ClientAuthMethod if m.is_mtls)
 FAPI2_REQUIRED_PKCE_METHOD = "S256"
 FAPI2_REQUIRED_RESPONSE_TYPE = "code"
 # FAPI 2.0 Security Profile §5.3.3.2: clients should not send longer nonces.
@@ -221,11 +229,6 @@ def _client_authentication_violations(
     if private_key_jwt is not None:
         violations.extend(
             _algorithm_violation("private_key_jwt", private_key_jwt.algorithm)
-        )
-    if mtls is not None and mtls.auth_method not in FAPI2_ALLOWED_AUTH_METHODS:
-        violations.append(
-            f"mTLS auth method '{mtls.auth_method}' is not FAPI 2.0 compliant; "
-            f"use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))}"
         )
     return violations
 

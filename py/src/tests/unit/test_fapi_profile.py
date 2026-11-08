@@ -14,6 +14,11 @@ from jwt.exceptions import InvalidKeyError
 import pytest
 import respx
 
+from py_identity_model import (
+    ClientAuthMethod,
+    ClientAuthMethodError,
+    ClientAuthMethodErrorReason,
+)
 from py_identity_model.core.authorize_response import (
     parse_authorize_callback_response,
 )
@@ -98,7 +103,7 @@ def _mtls(**overrides: Any) -> MtlsClientAuth:
     fields: dict[str, Any] = {
         "certificate": "client.pem",
         "private_key": "client.key",
-        "auth_method": "self_signed_tls_client_auth",
+        "auth_method": ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         **overrides,
     }
     return MtlsClientAuth(**fields)
@@ -285,7 +290,12 @@ class TestValidateFAPIClientConfig:
         assert result.is_compliant is True
 
     @pytest.mark.parametrize(
-        "auth_method", ["tls_client_auth", "self_signed_tls_client_auth"]
+        "auth_method",
+        [
+            ClientAuthMethod.TLS_CLIENT_AUTH,
+            ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
+        ],
+        ids=lambda m: m.value,
     )
     def test_mtls(self, auth_method):
         result = validate_fapi_client_config(
@@ -329,13 +339,10 @@ class TestValidateFAPIClientConfig:
         ]
 
     def test_client_secret_mtls_method_rejected(self):
-        result = validate_fapi_client_config(
-            issuer=ISSUER, mtls=_mtls(auth_method="client_secret_basic")
-        )
-        assert result.violations == [
-            "mTLS auth method 'client_secret_basic' is not FAPI 2.0 compliant; use "
-            "private_key_jwt, self_signed_tls_client_auth, tls_client_auth"
-        ]
+        # A non-mTLS method can't be configured on MtlsClientAuth at all.
+        with pytest.raises(ClientAuthMethodError) as excinfo:
+            _mtls(auth_method=ClientAuthMethod.CLIENT_SECRET_BASIC)
+        assert excinfo.value.reason is ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD
 
     def test_private_key_jwt_without_dpop_rejected(self):
         result = validate_fapi_client_config(

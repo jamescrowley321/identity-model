@@ -241,17 +241,30 @@ from py_identity_model import Config, ValidationCache
 cache = ValidationCache(config=Config(jwks_cache_ttl=86400.0))
 ```
 
-### `ClientAuthMethod.requires_secret` is removed ([#934](https://github.com/jamescrowley321/identity-model/issues/934))
+### One `ClientAuthMethod` enum, chosen per request ([#934](https://github.com/jamescrowley321/identity-model/issues/934), [#1056](https://github.com/jamescrowley321/identity-model/issues/1056))
 
-The property had no reader in the library. `ClientAuthMethod` and its members
-are unchanged. There is no replacement; compare against
-`ClientAuthMethod.NONE` directly.
+`ClientAuthMethod` now lists every client authentication method the library
+implements: `NONE`, `CLIENT_SECRET_BASIC`, `CLIENT_SECRET_POST`,
+`PRIVATE_KEY_JWT`, `TLS_CLIENT_AUTH` and `SELF_SIGNED_TLS_CLIENT_AUTH`.
+
+- `ClientAuthMethod.requires_secret` is removed. Use `uses_client_secret`,
+  which is true only for the two `client_secret_*` methods. A method that
+  isn't `NONE` doesn't necessarily use a secret: `private_key_jwt` and mTLS
+  don't.
+- `oidc_constants.EndpointAuthenticationMethods` is removed. Use
+  `ClientAuthMethod`; the string values are the same.
+- `MtlsClientAuth.auth_method` takes a `ClientAuthMethod`, not a string. Any
+  method other than the two `TLS_*` ones raises `ClientAuthMethodError`.
 
 Before:
 
 ```python
+from py_identity_model.oidc_constants import EndpointAuthenticationMethods
+
 if method.requires_secret:
     ...
+MtlsClientAuth(certificate=cert, private_key=key,
+               auth_method="self_signed_tls_client_auth")
 ```
 
 After:
@@ -259,8 +272,28 @@ After:
 ```python
 from py_identity_model import ClientAuthMethod
 
-if method is not ClientAuthMethod.NONE:
+if method.uses_client_secret:
     ...
+MtlsClientAuth(certificate=cert, private_key=key,
+               auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH)
+```
+
+Every request that authenticates a client also accepts an optional
+`client_auth_method`. Leaving it unset keeps the existing behaviour: the
+method is picked from what you set (`private_key_jwt`, then `mtls`, then
+`client_secret` as HTTP Basic, else a public client). Setting it sends only
+that method, and raises `ClientAuthMethodError` before any request if its
+credential is missing. This is how you send `client_secret_post`:
+
+```python
+request_client_credentials_token(
+    ClientCredentialsTokenRequest(
+        address=token_endpoint,
+        client_id="my-client",
+        client_secret="...",
+        client_auth_method=ClientAuthMethod.CLIENT_SECRET_POST,
+    )
+)
 ```
 
 ### `private_key_jwt` assertions are addressed to the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950))

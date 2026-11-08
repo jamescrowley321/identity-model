@@ -18,6 +18,7 @@ takes precedence over `client_secret`.
 
 ```python
 from py_identity_model import (
+    ClientAuthMethod,
     ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
     MtlsClientAuth,
@@ -39,7 +40,7 @@ response = request_client_credentials_token(
         mtls=MtlsClientAuth(
             certificate="/path/to/client-cert.pem",
             private_key="/path/to/client-key.pem",
-            auth_method="self_signed_tls_client_auth",
+            auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         ),
     )
 )

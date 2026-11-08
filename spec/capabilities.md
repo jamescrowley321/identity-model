@@ -19,14 +19,14 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | in-progress¶ | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json`¶ | implemented | implemented | implemented |
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json`¶ | implemented | implemented | implemented |
-| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress‡ | implemented | implemented |
+| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json`¶ | in-progress¶ | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json`¶ | in-progress¶ | implemented | implemented |
 | Core | Configuration | [Configuration](config.md) | —† | implemented† | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
-| Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress‡ | implemented | implemented |
-| Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress‡ | implemented | implemented |
-| Extended | Token Exchange | RFC 8693 | `token-exchange.json`¶ | in-progress‡ | implemented | implemented |
+| Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress | implemented | implemented |
+| Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress | implemented | implemented |
+| Extended | Token Exchange | RFC 8693 | `token-exchange.json`¶ | in-progress | implemented | implemented |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json`¶ | in-progress¶ | implemented | in-progress§ |
@@ -47,24 +47,14 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language that implements it executes in its unit or HTTP integration suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust skip `INTR-007` by case id (signed introspection responses, [#1030](https://github.com/jamescrowley321/identity-model/issues/1030)) and have no other known gaps. Python's are:
 >
 > - **JWT Validation** and **ID Token Validation** — no known gaps.
-> - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and ‡.
+> - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
 > - **UserInfo** — Python: `UI-001`, `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)) and `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)), so Python is `in-progress`.
 > - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
-> - **Token Introspection** — Python: `INTR-001` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)), `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `INTR-003 client-secret-post` (‡).
-> - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)), `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)) and `EXCH-001 client-secret-post` (‡).
-> - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)), `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)) and `CC-003 client-secret-post` (‡).
+> - **Token Introspection** — Python: `INTR-001` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)) and `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
+> - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)) and `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)).
+> - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)).
 > - **Authorization Code + PKCE** (HTTP vectors for the code exchange, public and confidential clients and the OAuth error; data vectors for PKCE verifier generation and the RFC 7636 Appendix B S256 challenge) — Python: `ACG-001` and `ACG-004` (its `AuthorizationCodeTokenResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)) and `ACG-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)), so Python is `in-progress`.
 > - **DPoP** (data vectors for proof building and `jti` uniqueness, `ath`, RFC 7638 key thumbprints, proof verification and rejection — `htm`/`htu`, signature, `typ`, `alg`, `jwk`, `iat` window, `ath` and `nonce` — and key generation; HTTP vectors for the token-request proof, the `use_dpop_nonce` retry and the `Authorization: DPoP` resource request) — Rust has no DPoP ([#675](https://github.com/jamescrowley321/identity-model/pull/675)), so its runners skip `dpop.json`. Python: `DPOP-004 nonce-cached` (the server nonce is not reused on later requests, [#784](https://github.com/jamescrowley321/identity-model/issues/784)), so Python is `in-progress`. Python also cannot load a DPoP key from JWK or PEM ([#786](https://github.com/jamescrowley321/identity-model/issues/786)); its runner installs the fixture key directly.
->
-> ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
-> MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
-> each require support for **both** `client_secret_basic` *and* `client_secret_post`. Python implements
-> `private_key_jwt`, mTLS and Basic only — there is no `client_secret_post` path in
-> `core/token_client_logic.py`, `introspection_logic.py` or `revocation_logic.py`. Go and Rust both ship it.
-> The cells were previously marked `implemented`, which contradicted the requirements a few screens below
-> them. Rather than soften a MUST that two of three languages already meet, the status now reflects
-> reality; it flips back to `implemented` when
-> [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574) lands.
 >
 > § **Rust DPoP is `in-progress`**: the key pairs, proof generation, and proof
 > verification are implemented and proven against `DPOP-001`, `DPOP-002`,
@@ -87,10 +77,10 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 >
 > † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `Config`. Go and Rust flip to `implemented` when they have the same settings, defaults, ranges and cache rules, each checked by a unit test against the page ([#757](https://github.com/jamescrowley321/identity-model/issues/757), [#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
 >
-> **Known cross-language divergences.** One remains, where the ports beat the Python reference:
-> Go and Rust support `client_secret_post`; Python does not. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
+> **Known cross-language divergences.** None remain.
 >
-> Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
+> Previously listed here and now resolved: `client_secret_post`, which Python gained with
+> `ClientAuthMethod` ([#1056](https://github.com/jamescrowley321/identity-model/issues/1056)); id-token `nonce` validation and `azp`, both of which Python and
 > Go gained with the id-token profile (#629–#632), and the RFC 8414 issuer-identifier match, which Python
 > now enforces unconditionally (#574). All three languages check `azp` only in that profile,
 > never on base token validation, and only when the caller opts in (Python `validate_azp=True`, Go

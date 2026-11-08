@@ -10,8 +10,7 @@ import httpx
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from ..oidc_constants import TokenResponse
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from .client_auth import apply_client_auth
 from .dpop import create_dpop_proof
 from .error_handlers import (
     handle_auth_code_token_error,
@@ -27,7 +26,6 @@ from .models import (
     RefreshTokenResponse,
     TokenErrorKind,
 )
-from .mtls import apply_mtls_client_auth
 from .response_processors import (
     parse_auth_code_token_response,
     parse_refresh_token_response,
@@ -74,24 +72,7 @@ def prepare_token_request_data(
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # ``is not None`` (not truthiness) mirrors the auth-code/refresh
-        # branches so an empty-string secret is handled identically here.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 
@@ -169,26 +150,7 @@ def prepare_auth_code_token_request_data(
             request.dpop_key, "POST", request.address, nonce=dpop_nonce
         )
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # RFC 6749 §2.3.1: use Basic auth for confidential clients;
-        # client_id is carried in the auth header, not the body.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        # Public client: include client_id in the request body
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 
@@ -284,26 +246,7 @@ def prepare_refresh_token_request_data(
             request.dpop_key, "POST", request.address, nonce=dpop_nonce
         )
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # RFC 6749 §2.3.1: use Basic auth for confidential clients;
-        # client_id is carried in the auth header, not the body.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        # Public client: include client_id in the request body
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 

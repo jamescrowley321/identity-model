@@ -7,7 +7,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import PushedAuthorizationRequest
+from py_identity_model import ClientAuthMethod, PushedAuthorizationRequest
 from py_identity_model.aio.par import (
     push_authorization_request as async_push_authorization_request,
 )
@@ -65,7 +65,7 @@ class TestPrepareSignedPar:
                 mtls=MtlsClientAuth(
                     certificate="client.pem",
                     private_key="client.key",
-                    auth_method="self_signed_tls_client_auth",
+                    auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
                 ),
             )
         )

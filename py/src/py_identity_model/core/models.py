@@ -13,10 +13,13 @@ import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..exceptions import (
+    ClientAuthMethodError,
+    ClientAuthMethodErrorReason,
     ConfigurationException,
     FailedResponseAccessError,
     SuccessfulResponseAccessError,
 )
+from .client_auth_method import ClientAuthMethod
 from .token_binding import TokenBinding
 
 
@@ -749,14 +752,28 @@ class MtlsClientAuth:
             :class:`PrivateKeyJwt`.
         password: Optional password for an encrypted private key. Secret —
             ``repr`` suppressed.
-        auth_method: The RFC 8705 §2 method name — ``"tls_client_auth"``
-            (default, PKI-based) or ``"self_signed_tls_client_auth"``.
+        auth_method: The RFC 8705 §2 method:
+            :attr:`ClientAuthMethod.TLS_CLIENT_AUTH` (default, PKI-based) or
+            :attr:`ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH`. Any other
+            method raises :class:`~py_identity_model.exceptions.ClientAuthMethodError`.
     """
 
     certificate: str
     private_key: str = field(repr=False)
     password: str | None = field(default=None, repr=False)
-    auth_method: str = "tls_client_auth"
+    auth_method: ClientAuthMethod = ClientAuthMethod.TLS_CLIENT_AUTH
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.auth_method, ClientAuthMethod)
+            or not self.auth_method.is_mtls
+        ):
+            raise ClientAuthMethodError(
+                ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD,
+                self.auth_method
+                if isinstance(self.auth_method, ClientAuthMethod)
+                else ClientAuthMethod.NONE,
+            )
 
 
 # ============================================================================
@@ -776,6 +793,11 @@ class ClientCredentialsTokenRequest(BaseRequest):
         scope: Space-delimited list of requested scopes (optional).
         private_key_jwt: ``private_key_jwt`` authentication parameters.  When
             set, takes precedence over ``client_secret`` (RFC 7523).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -783,6 +805,7 @@ class ClientCredentialsTokenRequest(BaseRequest):
     scope: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
 
 
 @dataclass(repr=False, eq=False)
@@ -825,6 +848,11 @@ class AuthorizationCodeTokenRequest(BaseRequest):
             ``token_type`` is not ``DPoP`` (RFC 9449 §5), so a server that
             ignores the proof cannot hand back a Bearer token.  Off by default;
             ``FAPI2ClientProfile`` sets it for DPoP-bound requests.
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -836,6 +864,7 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
     require_dpop_token_type: bool = False
 
 
@@ -886,6 +915,11 @@ class RefreshTokenRequest(BaseRequest):
         require_dpop_token_type: Fail a successful response whose
             ``token_type`` is not ``DPoP`` (RFC 9449 §5).  Off by default;
             ``FAPI2ClientProfile`` sets it for DPoP-bound requests.
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -894,6 +928,7 @@ class RefreshTokenRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
     dpop_key: DPoPKey | None = None
     require_dpop_token_type: bool = False
 
@@ -966,6 +1001,11 @@ class TokenIntrospectionRequest(BaseRequest):
         token_type_hint: Optional hint — ``"access_token"`` or ``"refresh_token"``.
         client_secret: Client secret for authentication (optional for public clients).
         signed_response: Request and verify a signed JWT response (RFC 9701).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     token: str
@@ -974,6 +1014,7 @@ class TokenIntrospectionRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
     signed_response: SignedIntrospectionOptions | None = None
 
 
@@ -1053,6 +1094,11 @@ class PushedAuthorizationRequest(BaseRequest):
         request: A signed request object (RFC 9101 §2.1), e.g. from
             ``create_request_object``, carrying every authorization
             parameter as a claim (FAPI 2.0 Message Signing §5.3.2).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -1067,6 +1113,7 @@ class PushedAuthorizationRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
     response_mode: str | None = None
     request: str | None = None
 
@@ -1100,6 +1147,11 @@ class DeviceAuthorizationRequest(BaseRequest):
         client_id: The client identifier.
         scope: Space-delimited scopes (default ``"openid"``).
         client_secret: Client secret (optional for public clients).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -1107,6 +1159,7 @@ class DeviceAuthorizationRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
 
 
 @dataclass(repr=False, eq=False)
@@ -1150,6 +1203,11 @@ class DeviceTokenRequest(BaseRequest):
         client_id: The client identifier.
         device_code: The device code from :class:`DeviceAuthorizationResponse`.
         client_secret: Client secret (optional for public clients).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -1157,6 +1215,7 @@ class DeviceTokenRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
 
 
 @dataclass(repr=False, eq=False)
@@ -1206,6 +1265,11 @@ class TokenExchangeRequest(BaseRequest):
         scope: Space-delimited requested scopes.
         requested_token_type: Desired type of the issued token.
         client_secret: Client secret (optional for public clients).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     client_id: str
@@ -1220,6 +1284,7 @@ class TokenExchangeRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
 
 
 @dataclass(repr=False, eq=False)
@@ -1255,6 +1320,11 @@ class TokenRevocationRequest(BaseRequest):
         client_id: The client identifier for authentication.
         token_type_hint: Optional hint — ``"access_token"`` or ``"refresh_token"``.
         client_secret: Client secret for authentication (optional for public clients).
+        client_auth_method: How to authenticate the client. ``None`` (default)
+            picks by precedence: ``private_key_jwt``, then ``mtls``, then
+            ``client_secret`` as HTTP Basic, else public. An explicit method
+            needs its own credential and is the only one sent; see
+            :class:`ClientAuthMethod`.
     """
 
     token: str
@@ -1263,6 +1333,7 @@ class TokenRevocationRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = None
 
 
 @dataclass(repr=False, eq=False)
