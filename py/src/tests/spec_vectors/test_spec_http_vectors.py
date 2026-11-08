@@ -666,6 +666,7 @@ _KNOWN_GAPS = {
     "ACG-005-invalid-grant": "token errors are untyped (#791)",
     "CC-004-invalid-client": "token errors are untyped (#791)",
     "CC-006-extra-params": "ClientCredentialsTokenRequest has no extra parameters (#778)",
+    "EXCH-001-client-secret-post": "no typed token-exchange members (#783)",
     "EXCH-001-impersonation": "no typed token-exchange members (#783)",
     "EXCH-002-delegation": "no typed token-exchange members (#783)",
     "EXCH-005-n_a-token-type": "no typed token-exchange members (#783)",

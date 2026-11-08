@@ -797,7 +797,9 @@ class ClientCredentialsTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -805,7 +807,7 @@ class ClientCredentialsTokenRequest(BaseRequest):
     scope: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
 
 @dataclass(repr=False, eq=False)
@@ -852,7 +854,9 @@ class AuthorizationCodeTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -864,7 +868,7 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     require_dpop_token_type: bool = False
 
 
@@ -919,7 +923,9 @@ class RefreshTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -928,7 +934,7 @@ class RefreshTokenRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     dpop_key: DPoPKey | None = None
     require_dpop_token_type: bool = False
 
@@ -1005,7 +1011,9 @@ class TokenIntrospectionRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     token: str
@@ -1014,7 +1022,7 @@ class TokenIntrospectionRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     signed_response: SignedIntrospectionOptions | None = None
 
 
@@ -1098,7 +1106,9 @@ class PushedAuthorizationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -1113,7 +1123,7 @@ class PushedAuthorizationRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     response_mode: str | None = None
     request: str | None = None
 
@@ -1151,7 +1161,9 @@ class DeviceAuthorizationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -1159,7 +1171,7 @@ class DeviceAuthorizationRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
 
 @dataclass(repr=False, eq=False)
@@ -1207,7 +1219,9 @@ class DeviceTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -1215,7 +1229,7 @@ class DeviceTokenRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
 
 @dataclass(repr=False, eq=False)
@@ -1269,7 +1283,9 @@ class TokenExchangeRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
@@ -1284,7 +1300,7 @@ class TokenExchangeRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
 
 @dataclass(repr=False, eq=False)
@@ -1324,7 +1340,9 @@ class TokenRevocationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`.
+            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            always presented at the TLS layer, because it also binds tokens
+            to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     token: str
@@ -1333,7 +1351,7 @@ class TokenRevocationRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
 
 @dataclass(repr=False, eq=False)
