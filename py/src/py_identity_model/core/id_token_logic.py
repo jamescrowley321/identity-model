@@ -176,7 +176,7 @@ def _reject_untrusted_audiences(
             "ID token missing required 'aud' claim", token_part="payload"
         )
     trusted = set(trusted_audiences or ())
-    if client_id is not None:
+    if client_id:
         trusted.add(client_id)
     untrusted = [a for a in audiences if not isinstance(a, str) or a not in trusted]
     if untrusted:
@@ -196,9 +196,9 @@ def check_azp_config(client_id: str | None, validate_azp: bool) -> None:
 
     Raises:
         AzpRequiresClientIdError: If ``validate_azp`` is set and ``client_id``
-            is ``None``.
+            is ``None`` or empty.
     """
-    if validate_azp and client_id is None:
+    if validate_azp and not client_id:
         raise AzpRequiresClientIdError
 
 
@@ -297,7 +297,8 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
         client_id: The relying party's ``client_id`` (i.e.
             ``TokenValidationConfig.audience``). It is the one audience trusted
             without being listed in ``trusted_audiences``, and the value a
-            present ``azp`` must equal when ``validate_azp`` is set.
+            present ``azp`` must equal when ``validate_azp`` is set. ``None``
+            and ``""`` both mean no ``client_id`` is configured.
         trusted_audiences: Additional audiences the client trusts besides
             ``client_id``. Every ``aud`` value MUST be ``client_id`` or one of
             these (§3.1.3.7 step 3). Omitted or empty means ``client_id`` is
@@ -362,7 +363,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     _reject_untrusted_audiences(claims, client_id, trusted_audiences)
 
     # §3.1.3.7 steps 4-5 — authorized-party (``azp``) rules, opt-in only.
-    if validate_azp and client_id is not None:
+    if validate_azp and client_id:
         _validate_azp(claims, client_id)
 
     # §3.1.3.7 step 11 — ``nonce`` binding (only when the caller passed one).
