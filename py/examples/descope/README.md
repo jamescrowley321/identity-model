@@ -22,11 +22,11 @@ This example shows how to integrate [Descope](https://www.descope.com/), a no-/l
 
 ### Code Architecture
 
-This example **reuses shared code** from the generic FastAPI example (`examples/fastapi/`) to minimize duplication:
+This example **reuses shared code** from the `fastapi-identity-model` package (`py/packages/fastapi-identity-model/`) to minimize duplication:
 
-**Shared Components** (imported from `examples.fastapi`):
+**Shared Components** (imported from `fastapi_identity_model`):
 - `TokenValidationMiddleware` - JWT validation middleware
-- Base dependency functions - `get_claims()`, `get_current_user()`, `get_token()`, `require_scope()`
+- `CurrentUser` and base dependency functions - `get_claims()`, `get_current_user()`, `get_token()`, `require_scope()`
 
 **Descope-Specific Components** (unique to this example):
 - `app.py` - Main application with Descope-specific endpoints
@@ -36,7 +36,7 @@ This example **reuses shared code** from the generic FastAPI example (`examples/
 This modular approach demonstrates:
 - 🔄 **Code reuse** across provider examples
 - 🎯 **Provider-specific extensions** without duplication
-- 📦 **Future-ready** for extraction into `fastapi-identity-model` package
+- 📦 **Package reuse** of the published `fastapi-identity-model` package
 
 ## Prerequisites
 
@@ -53,7 +53,7 @@ This modular approach demonstrates:
 
 ### 2. Local Development Requirements
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - Docker and Docker Compose (optional, for containerized deployment)
 - `uv` (recommended) or `pip` for dependency management
 
@@ -64,9 +64,11 @@ This modular approach demonstrates:
 Copy the example environment file and fill in your Descope credentials:
 
 ```bash
-cd examples/descope
+cd py/examples/descope
 cp .env.example .env
 ```
+
+The app does not load `.env` itself; export the variables into your shell (e.g. `set -a && . ./.env && set +a`).
 
 Edit `.env` with your Descope configuration:
 
@@ -90,10 +92,10 @@ SCOPE=openid profile email descope.claims
 
 ### 2. Install Dependencies
 
-Using `uv` (recommended):
+Using `uv` (recommended), from `py/` (this example is a member of the `uv` workspace there):
 
 ```bash
-uv sync
+cd py && uv sync --all-packages
 ```
 
 Or using `pip`:
@@ -104,8 +106,10 @@ pip install -e .
 
 ### 3. Run the Application
 
+`app.py` imports `examples.descope.dependencies`, so run it as a module from `py/`:
+
 ```bash
-python app.py
+cd py && uv run python -m examples.descope.app
 ```
 
 The API will be available at:
@@ -297,7 +301,7 @@ Descope rotates JWKs (JSON Web Keys) daily with a **12-cycle window** before inv
 
 ## Running Tests
 
-### Unit Tests
+### Integration Tests
 
 The example includes integration tests that verify:
 - Public endpoints work without authentication
@@ -309,22 +313,14 @@ The example includes integration tests that verify:
 Run tests:
 
 ```bash
-# Make sure the app is running
-python app.py &
+# Make sure the app is running (from py/)
+uv run python -m examples.descope.app &
 
 # Run integration tests
-python test_integration.py
+uv run python examples/descope/test_integration.py
 
 # Stop the app
 kill %1
-```
-
-### Docker-Based Testing
-
-Using Docker Compose (if configured):
-
-```bash
-docker-compose -f ../docker-compose.test.yml up descope-fastapi-test
 ```
 
 ## Docker Deployment
@@ -332,8 +328,9 @@ docker-compose -f ../docker-compose.test.yml up descope-fastapi-test
 ### Build and Run
 
 ```bash
-# Build the image
-docker build -t descope-fastapi-example .
+# Build the image (the build context is py/, the uv workspace root)
+cd py
+docker build -f examples/descope/Dockerfile -t descope-fastapi-example .
 
 # Run the container
 docker run -p 8000:8000 \
@@ -342,10 +339,6 @@ docker run -p 8000:8000 \
   -e CLIENT_SECRET="your-client-secret" \
   descope-fastapi-example
 ```
-
-### Using Docker Compose
-
-See the main `examples/docker-compose.test.yml` for Docker Compose configuration.
 
 ## Troubleshooting
 

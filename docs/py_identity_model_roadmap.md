@@ -2,7 +2,7 @@
 
 ## Project Overview
 **Goal**: Production-grade Python OIDC/OAuth2.0 client library inspired by Duende.IdentityModel
-**Current Status**: v2.17.2 — all core protocol features implemented, integration test infrastructure active
+**Current Status**: v4.1.1 — all core protocol features implemented, integration test infrastructure active
 **Scope**: Client-side protocol operations (NOT server/provider implementation)
 
 ## Completed
@@ -48,35 +48,35 @@
 
 ### Integration Test Chain
 - [x] T120: node-oidc-provider fixture (PR #274 merged)
-- [ ] T121: Core flow integration tests (Auth Code+PKCE, Token Validation, Refresh) — PR #281 merged, CI follow-up active
-- [ ] T122: Token management integration tests (Introspection, Revocation)
-- [ ] T123: Advanced request pattern integration tests (DPoP, PAR, JAR)
-- [ ] T124: Alternative grant integration tests (Device Auth, Token Exchange)
-- [ ] T125: FAPI 2.0 integration tests
-- [ ] T126: Duende IdentityServer gap analysis (PR #306 open)
+- [x] T121: Core flow integration tests (Auth Code+PKCE, Token Validation, Refresh) — PR #281 merged
+- [x] T122: Token management integration tests (Introspection, Revocation)
+- [x] T123: Advanced request pattern integration tests (DPoP, PAR, JAR)
+- [x] T124: Alternative grant integration tests (Device Auth, Token Exchange)
+- [x] T125: FAPI 2.0 integration tests (`test_fapi_compliance.py`, discovery-based)
+- [x] T126: Duende IdentityServer gap analysis ([identityserver-gaps.md](identityserver-gaps.md))
 
 ---
 
 ## Planned
 
 ### Documentation & Examples
-- [ ] Comprehensive API documentation ([#83](https://github.com/jamescrowley321/identity-model/issues/83))
+- [x] Comprehensive API documentation ([#83](https://github.com/jamescrowley321/identity-model/issues/83))
 - [ ] Provider examples: Auth0, Okta, Azure AD, Google, Cognito ([#35-#39](https://github.com/jamescrowley321/identity-model/issues/35))
 - [ ] Flask middleware example ([#33](https://github.com/jamescrowley321/identity-model/issues/33))
 
 ### Extended Protocol Features
-- [ ] Discovery Cache with configurable TTL ([#219](https://github.com/jamescrowley321/identity-model/issues/219))
-- [ ] RP-Initiated Logout ([#214](https://github.com/jamescrowley321/identity-model/issues/214))
-- [ ] JWT Client Authentication — private_key_jwt / client_secret_jwt ([#213](https://github.com/jamescrowley321/identity-model/issues/213))
+- [x] Discovery Cache with configurable TTL ([#219](https://github.com/jamescrowley321/identity-model/issues/219))
+- [x] RP-Initiated Logout ([#214](https://github.com/jamescrowley321/identity-model/issues/214))
+- [ ] JWT Client Authentication — private_key_jwt / client_secret_jwt ([#213](https://github.com/jamescrowley321/identity-model/issues/213)) — `private_key_jwt` implemented; `client_secret_jwt` not yet
 - [x] AS Issuer Identification — RFC 9207 ([#221](https://github.com/jamescrowley321/identity-model/issues/221))
 - [ ] CIBA — Client-Initiated Backchannel Authentication ([#217](https://github.com/jamescrowley321/identity-model/issues/217))
 - [ ] Rich Authorization Requests — RFC 9396 ([#220](https://github.com/jamescrowley321/identity-model/issues/220))
-- [ ] Dynamic Client Registration — RFC 7591 ([#216](https://github.com/jamescrowley321/identity-model/issues/216))
-- [ ] mTLS Client Auth — RFC 8705 ([#215](https://github.com/jamescrowley321/identity-model/issues/215))
-- [ ] JARM — JWT Secured Authorization Response Mode ([#218](https://github.com/jamescrowley321/identity-model/issues/218))
+- [x] Dynamic Client Registration — RFC 7591 ([#216](https://github.com/jamescrowley321/identity-model/issues/216))
+- [x] mTLS Client Auth — RFC 8705 ([#215](https://github.com/jamescrowley321/identity-model/issues/215))
+- [x] JARM — JWT Secured Authorization Response Mode ([#218](https://github.com/jamescrowley321/identity-model/issues/218))
 
 ### Cloud Provider Integration Testing
 - [ ] AWS Cognito integration tests
 - [ ] Microsoft Entra ID integration tests
 - [ ] Auth0 integration tests
-- [ ] Nightly CI for provider drift detection
+- [ ] Nightly CI for provider drift detection — `nightly.yml` already re-runs the full CI matrix daily against the existing providers; cloud providers not yet covered

@@ -125,10 +125,11 @@ make lint
 
 ### Pre-commit Hooks
 
-Pre-commit hooks run automatically when you commit. Each hook is a make target and runs only when files in its language changed:
+Pre-commit hooks run automatically when you commit. Each language hook is a make target and runs only when files in its language changed:
 - Python: ruff lint + format and pyrefly (`make lint-py`); unit tests for both packages (`make test-unit`, `make test-fastapi`)
 - Go: vet + golangci-lint (`make lint-go`); unit tests (`make test-unit-go`)
 - Rust: rustfmt + clippy (`make lint-rust`); unit tests (`make test-unit-rust`)
+- GitHub workflows: actionlint (+ shellcheck on `run:` blocks) via `.github/scripts/lint_workflows.sh`, when `.github/workflows/` changed
 
 If pre-commit fails, fix the issues and commit again.
 
@@ -181,7 +182,11 @@ test(discovery): add integration tests for discovery endpoint
 PRs are squash-merged, and the **PR title becomes the commit message that
 drives Python releases** — so the title itself must be a valid conventional
 commit line. A `feat:`/`fix:` title cuts a new PyPI release when it merges;
-use `docs:`, `test:`, `ci:`, or `chore:` for changes that should not.
+use `docs:`, `test:`, `ci:`, or `chore:` for changes that should not. Releases
+are routed by **scope**, not by path: a title scoped `(fastapi)`, `(go)`,
+`(rust)`, `(node)`, `(spec)`, `(infra)`, `(conformance)`, `(tools)` or `(ci)`
+never bumps `py-identity-model` (`tools/release_parsers.py`), so scope every
+change that belongs to another release track.
 
 ### Pull Request Process
 
@@ -329,18 +334,21 @@ tag, and the tag triggers publishing to PyPI.
 ### Go (`github.com/jamescrowley321/identity-model/go`)
 
 A Go release is a `go/vX.Y.Z` tag — the subdirectory-module format `go get`
-requires. Pushing the tag verifies the library and cuts a GitHub Release.
+requires. semantic-release creates the tag automatically from `(go)`-scoped
+`feat`/`fix` commits on `main`; the pushed tag verifies the library and cuts a
+GitHub Release.
 
 ### Rust (`rs-identity-model` on crates.io)
 
 A Rust release is a `rust-vX.Y.Z` tag matching the version in
-`rust/Cargo.toml`. Pushing the tag publishes the crate to crates.io and cuts
-a GitHub Release.
+`rust/Cargo.toml`. semantic-release bumps `rust/Cargo.toml` and creates the tag
+automatically from `(rust)`-scoped `feat`/`fix` commits on `main`; the pushed
+tag publishes the crate to crates.io and cuts a GitHub Release.
 
 ### Pre-releases
 
-Every pull request automatically gets a GitHub pre-release build of the
-Python package (an `-rc` version tied to the PR), with install instructions
+Every pull request opened from a branch of this repository (not from a fork)
+automatically gets a GitHub pre-release build of the Python package (an `-rc` version tied to the PR), with install instructions
 posted as a PR comment — useful for testing a change in a real environment
 before it merges. See the
 [Pre-release Testing Guide](https://jamescrowley321.github.io/identity-model/pre-release-guide/)
@@ -386,8 +394,9 @@ Acceptance Criteria, Security Review, Red Team), adjudicated fail-closed into a
 PASS/BLOCK verdict. It is the same lens library the maintainers run locally, so
 CI and the laptop do not drift apart.
 
-It runs **only when asked**. There is no automatic review on every pull request;
-that was removed deliberately in #667.
+It also runs automatically, once, when a maintainer's (`OWNER`, `MEMBER` or
+`COLLABORATOR`) non-draft pull request is opened or marked ready for review.
+Pull requests from anyone else are only reviewed when a maintainer asks.
 
 **Only maintainers can trigger it.** The workflow runs with repository secrets on
 a public repo, so the job's `if:` requires the commenter's `author_association`
