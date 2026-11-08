@@ -382,8 +382,8 @@ Contributions that use AI tools (GitHub Copilot, Claude Code, ChatGPT, Cursor, t
 
 - **All CI checks must pass** — lint, tests, security scans. No exceptions.
 - **Audit disclosure is required.** Every AI-assisted PR must record, in the PR description's **AI provenance** block, the **harness/agent(s)** and the **model(s)** used to produce the change (for example: harness `Claude Code`, model `claude-opus-4-8`; or harness `ralph-orchestrator + pi`, model `z-ai/glm-5.2`).
-- **A human is accountable.** A named human must review the change and attest to it. The submitter is responsible for the correctness, security, and quality of the code regardless of whether it was AI-generated.
-- **Advisory-only AI.** AI output — including automated review — is advisory until a human attests. A green check is not sign-off.
+- **The submitter is responsible** for the correctness, security, and quality of the code regardless of whether it was AI-generated.
+- **Advisory-only AI.** AI output — including automated review — is advisory. A green check is not sign-off.
 
 ### Requesting a review from Claude
 

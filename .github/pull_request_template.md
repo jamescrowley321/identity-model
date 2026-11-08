@@ -11,7 +11,6 @@ model lines. See CONTRIBUTING.md -> AI-Assisted Contributions.
 - [ ] This PR was AI-assisted
 - Harness/agent:
 - Model(s):
-- [ ] A human has reviewed this change and is accountable for it
 
 ## Checklist
 
