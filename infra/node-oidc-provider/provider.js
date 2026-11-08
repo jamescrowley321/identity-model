@@ -305,7 +305,8 @@ async function startProvider() {
     enabledJWA: {
       authorizationSigningAlgValues: ["RS256", "ES256"],
       requestObjectSigningAlgValues: ["RS256", "ES256"],
-      dPoPSigningAlgValues: ["RS256", "ES256"],
+      // PS256 and EdDSA: the FAPI 2.0 §5.4.1 DPoP algorithms besides ES256.
+      dPoPSigningAlgValues: ["RS256", "ES256", "PS256", "EdDSA"],
       introspectionSigningAlgValues: ["RS256", "ES256"],
       // FAPI 2.0 client authentication algorithms for private_key_jwt.
       clientAuthSigningAlgValues: ["PS256", "ES256"],

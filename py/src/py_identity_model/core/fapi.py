@@ -27,6 +27,7 @@ from .models import (
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    RefreshTokenRequest,
     RequestObjectKey,
     TokenValidationConfig,
 )
@@ -602,7 +603,14 @@ class FAPI2ClientProfile:
     The request builders fix the FAPI parameters (PAR,
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
     weaken them, including a DPoP key whose algorithm the server does not
-    advertise (RFC 9449 §5.1).  The profile is immutable.
+    advertise (RFC 9449 §5.1).  A DPoP-bound token request (authorization code
+    or refresh) sets ``require_dpop_token_type``, so a response that comes
+    back with ``token_type`` other than ``DPoP`` fails instead of handing the
+    client a Bearer token.  The profile is immutable.
+
+    For an mTLS client the PAR and token endpoints (refresh included) are the
+    server's ``mtls_endpoint_aliases`` when it advertises them (RFC 8705 §5,
+    FAPI 2.0 Security Profile §5.2.2.1).
 
     With ``request_object_key`` the pushed authorization request is a signed
     request object (FAPI 2.0 Message Signing §5.3.2): ``aud`` is the issuer,
@@ -944,6 +952,44 @@ class FAPI2ClientProfile:
             private_key_jwt=private_key_jwt,
             dpop_key=dpop_key,
             mtls=mtls,
+            require_dpop_token_type=dpop_key is not None,
+        )
+
+    def refresh_token_request(
+        self,
+        *,
+        refresh_token: str,
+        dpop_key: DPoPKey | None = None,
+        scope: str | None = None,
+    ) -> RefreshTokenRequest:
+        """Build the refresh token request.
+
+        A ``private_key_jwt`` client must pass the flow's ``dpop_key`` so the
+        refreshed access token stays bound to it (§5.3.3.1, RFC 9449 §5).  An
+        mTLS client's request goes to the token endpoint's mTLS alias.
+
+        Raises:
+            FAPIProfileError: The request would not be FAPI 2.0 compliant.
+        """
+        private_key_jwt, mtls = self._client_auth_copies()
+        violations = [
+            *_client_violations(
+                private_key_jwt=private_key_jwt, mtls=mtls, dpop_key=dpop_key
+            ),
+            *self._request_violations(dpop_key),
+        ]
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
+            violations.append("refresh_token is required")
+        _raise_on(violations)
+        return RefreshTokenRequest(
+            address=self.token_endpoint,
+            client_id=self.client_id,
+            refresh_token=refresh_token,
+            scope=scope,
+            private_key_jwt=private_key_jwt,
+            mtls=mtls,
+            dpop_key=dpop_key,
+            require_dpop_token_type=dpop_key is not None,
         )
 
 

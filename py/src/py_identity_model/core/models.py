@@ -815,6 +815,10 @@ class AuthorizationCodeTokenRequest(BaseRequest):
             proof for the token endpoint is attached and the ``use_dpop_nonce``
             challenge is honored with a single retry.  FAPI 2.0 sender
             constraining.
+        require_dpop_token_type: Fail a successful response whose
+            ``token_type`` is not ``DPoP`` (RFC 9449 §5), so a server that
+            ignores the proof cannot hand back a Bearer token.  Off by default;
+            ``FAPI2ClientProfile`` sets it for DPoP-bound requests.
     """
 
     client_id: str
@@ -826,6 +830,15 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
+    require_dpop_token_type: bool = False
+
+
+class TokenErrorKind(Enum):
+    """Why a token response failed, set on the response's ``error_kind``."""
+
+    DPOP_TOKEN_TYPE_MISMATCH = "dpop_token_type_mismatch"
+    """A DPoP-bound request got a ``token_type`` other than ``DPoP``
+    (RFC 9449 §5) while ``require_dpop_token_type`` was set."""
 
 
 @dataclass(repr=False, eq=False)
@@ -840,6 +853,7 @@ class AuthorizationCodeTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token"})
 
+    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
     token: dict | None = None
 
 
@@ -858,6 +872,14 @@ class RefreshTokenRequest(BaseRequest):
         refresh_token: The refresh token received from a prior authorization.
         scope: Optional space-delimited scopes (must be subset of original grant).
         client_secret: Client secret (optional for public clients).
+        dpop_key: When set, the refresh request is DPoP-bound (RFC 9449 §5): a
+            DPoP proof for the token endpoint is attached, so the refreshed
+            access token stays bound to the key (FAPI 2.0 Security Profile
+            §5.3.3.1), and the ``use_dpop_nonce`` challenge is honored with a
+            single retry.
+        require_dpop_token_type: Fail a successful response whose
+            ``token_type`` is not ``DPoP`` (RFC 9449 §5).  Off by default;
+            ``FAPI2ClientProfile`` sets it for DPoP-bound requests.
     """
 
     client_id: str
@@ -866,6 +888,8 @@ class RefreshTokenRequest(BaseRequest):
     client_secret: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
+    dpop_key: DPoPKey | None = None
+    require_dpop_token_type: bool = False
 
 
 @dataclass(repr=False, eq=False)
@@ -880,6 +904,7 @@ class RefreshTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token"})
 
+    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
     token: dict | None = None
 
 
@@ -1532,6 +1557,7 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
     "TokenExchangeResponse",

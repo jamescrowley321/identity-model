@@ -35,6 +35,7 @@ from py_identity_model import (
     ClientCredentialsTokenResponse,
     Config,
     DiscoveryDocumentRequest,
+    DPoPKey,
     JsonWebKey,
     JwksRequest,
     JwksResponse,
@@ -1046,6 +1047,8 @@ class AuthCodeFlowConfig:
     # minted token rather than only synthetic claim sets.
     nonce: str | None = None
     max_age: int | None = None
+    # When set, the code exchange is DPoP-bound (RFC 9449 §5).
+    dpop_key: DPoPKey | None = None
 
 
 def perform_auth_code_flow(
@@ -1156,6 +1159,7 @@ def perform_auth_code_flow(
         code_verifier=code_verifier,
         client_secret=config.client_secret,
         private_key_jwt=config.private_key_jwt,
+        dpop_key=config.dpop_key,
     )
     token_response = request_authorization_code_token(token_request)
 
