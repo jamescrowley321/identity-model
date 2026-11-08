@@ -58,6 +58,7 @@ from .sync import (
     FAPI2_REQUIRED_RESPONSE_TYPE,
     AuthorizationCodeTokenRequest,
     AuthorizationCodeTokenResponse,
+    AuthorizationScheme,
     AuthorizeCallbackResponse,
     AuthorizeCallbackValidationResult,
     BaseRequest,
@@ -81,11 +82,18 @@ from .sync import (
     DiscoveryEndpoint,
     DiscoveryErrorKind,
     DiscoveryPolicy,
+    DPoPErrorKind,
     DPoPKey,
+    DPoPProof,
+    DPoPProofRequest,
+    DPoPReplayCache,
+    DPoPValidationError,
+    DPoPVerificationOptions,
     FAPI2ClientProfile,
     FAPIProfileError,
     FAPIValidationResult,
     HTTPClient,
+    InMemoryDPoPReplayCache,
     JsonWebAlgorithmsKeyTypes,
     JsonWebKey,
     JsonWebKeyParameterNames,
@@ -99,11 +107,13 @@ from .sync import (
     RefreshTokenResponse,
     RequestObjectKey,
     StateValidationResult,
+    TokenBinding,
     TokenErrorKind,
     TokenExchangeRequest,
     TokenExchangeResponse,
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
+    TokenPresentation,
     TokenRevocationRequest,
     TokenRevocationResponse,
     TokenValidationConfig,
@@ -122,6 +132,7 @@ from .sync import (
     combine_claims_validators,
     compute_ath,
     compute_certificate_thumbprint,
+    compute_jwk_thumbprint,
     create_dpop_proof,
     create_request_object,
     delete_client,
@@ -132,6 +143,7 @@ from .sync import (
     generate_code_verifier,
     generate_dpop_key,
     generate_pkce_pair,
+    get_default_dpop_replay_cache,
     get_default_validation_cache,
     get_discovery_document,
     get_jwks,
@@ -166,6 +178,7 @@ from .sync import (
     validate_logout_token,
     validate_post_logout_state,
     validate_token,
+    verify_dpop_proof,
 )
 
 
@@ -183,6 +196,7 @@ __all__ = [
     # Auth Code + PKCE
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
+    "AuthorizationScheme",
     # Authorize Callback
     "AuthorizeCallbackException",
     "AuthorizeCallbackResponse",
@@ -215,8 +229,14 @@ __all__ = [
     "ConfigError",
     "ConfigIssue",
     "ConfigurationException",
+    "DPoPErrorKind",
     # DPoP
     "DPoPKey",
+    "DPoPProof",
+    "DPoPProofRequest",
+    "DPoPReplayCache",
+    "DPoPValidationError",
+    "DPoPVerificationOptions",
     # Device Authorization Grant
     "DeviceAuthorizationRequest",
     "DeviceAuthorizationResponse",
@@ -240,6 +260,7 @@ __all__ = [
     # HTTP Client
     "HTTPClient",
     "IdTokenValidationException",
+    "InMemoryDPoPReplayCache",
     "InvalidAudienceException",
     "InvalidIssuerException",
     "JarmValidationException",
@@ -269,6 +290,7 @@ __all__ = [
     "SignatureVerificationException",
     "StateValidationResult",
     "SuccessfulResponseAccessError",
+    "TokenBinding",
     "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
@@ -277,6 +299,7 @@ __all__ = [
     # Token Introspection
     "TokenIntrospectionRequest",
     "TokenIntrospectionResponse",
+    "TokenPresentation",
     "TokenRequestException",
     # Token Revocation
     "TokenRevocationRequest",
@@ -302,6 +325,7 @@ __all__ = [
     "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
+    "compute_jwk_thumbprint",
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
@@ -313,6 +337,7 @@ __all__ = [
     "generate_dpop_key",
     "generate_pkce_pair",
     "get_cache_counters",
+    "get_default_dpop_replay_cache",
     # Sync API (default)
     "get_default_validation_cache",
     "get_discovery_document",
@@ -349,4 +374,5 @@ __all__ = [
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",
+    "verify_dpop_proof",
 ]

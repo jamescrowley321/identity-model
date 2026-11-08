@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 
+from py_identity_model import TokenBinding
+
 from .config import OIDCSettings
 
 
@@ -20,11 +22,13 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
 
     Required: ``{prefix}DISCOVERY_URL``, ``{prefix}CLIENT_ID``. ``REDIRECT_URI``
     is required only for the login router; a resource-server-only deployment
-    may omit it. ``EXCLUDED_PATHS`` is a comma-separated list. Others fall back
-    to the ``OIDCSettings`` defaults.
+    may omit it. ``EXCLUDED_PATHS`` is a comma-separated list.
+    ``REQUIRED_BINDING`` is ``none``, ``dpop`` or ``mtls``. Others fall back to
+    the ``OIDCSettings`` defaults.
 
     Raises:
-        ValueError: A required variable is unset or empty.
+        ValueError: A required variable is unset or empty, or
+            ``REQUIRED_BINDING`` is not a ``TokenBinding`` value.
     """
 
     def _req(name: str) -> str:
@@ -49,5 +53,8 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
         audience=os.environ.get(f"{prefix}AUDIENCE"),
         post_login_redirect=os.environ.get(f"{prefix}POST_LOGIN_REDIRECT", "/"),
         post_logout_redirect=os.environ.get(f"{prefix}POST_LOGOUT_REDIRECT", "/"),
+        required_binding=TokenBinding(
+            os.environ.get(f"{prefix}REQUIRED_BINDING") or TokenBinding.NONE.value
+        ),
         **extra,
     )

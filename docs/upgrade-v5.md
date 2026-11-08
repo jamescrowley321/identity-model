@@ -325,6 +325,42 @@ app.include_router(build_oidc_router(settings, http_client=http_client), prefix=
 
 fastapi-identity-model now requires `py-identity-model>=5.0.0,<6`.
 
+### FastAPI: bound tokens are checked on every request ([#1021](https://github.com/jamescrowley321/identity-model/issues/1021))
+
+`TokenValidationMiddleware` and `build_ws_authenticator` now check a token's
+sender constraint (RFC 9449 §7.1, RFC 8705 §3). Unbound bearer tokens behave as
+before.
+
+- A DPoP-bound token (`cnf.jkt`) sent as `Bearer` is refused. Send it as
+  `Authorization: DPoP <token>` with a `DPoP` proof for the request.
+- A certificate-bound token (`cnf["x5t#S256"]`) is refused unless you pass
+  `client_certificate=`, a callable that returns the request's client
+  certificate:
+
+```python
+from urllib.parse import unquote
+
+
+def client_certificate(request):
+    # nginx: proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
+    escaped = request.headers.get("X-Client-Cert")
+    return unquote(escaped) if escaped else None
+
+
+app.add_middleware(
+    TokenValidationMiddleware,
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    client_certificate=client_certificate,
+)
+```
+
+  Read the certificate only from a header your TLS terminator sets and strips
+  from client requests.
+
+See [DPoP: FastAPI](api/dpop.md#fastapi) for `required_binding` and the
+`DPoP` challenge.
+
 ## Discovery
 
 ### Every Discovery §3 REQUIRED field must be present ([#891](https://github.com/jamescrowley321/identity-model/pull/891))

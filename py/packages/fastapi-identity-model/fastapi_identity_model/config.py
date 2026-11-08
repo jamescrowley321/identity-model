@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from py_identity_model import TokenBinding
+
 
 def _default_excluded_paths() -> list[str]:
     # Exact paths (the middleware matches excluded_paths exactly by default;
@@ -30,6 +32,8 @@ class OIDCSettings:
         post_login_redirect: Where ``/callback`` redirects after a successful login.
         post_logout_redirect: Where ``/logout`` redirects after clearing the session.
         excluded_paths: Paths the resource-server middleware skips (health/docs).
+        required_binding: The sender constraint the resource-server middleware
+            requires of every token (``TokenBinding.NONE``, ``DPOP``, ``MTLS``).
     """
 
     discovery_url: str
@@ -41,6 +45,7 @@ class OIDCSettings:
     post_login_redirect: str = "/"
     post_logout_redirect: str = "/"
     excluded_paths: list[str] = field(default_factory=_default_excluded_paths)
+    required_binding: TokenBinding = TokenBinding.NONE
 
     def __post_init__(self) -> None:
         # Validate required fields are non-empty.

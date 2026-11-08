@@ -327,6 +327,8 @@ def build_resolved_config(
         # Preserve the injected discovery policy so a resolved config stays a
         # faithful copy of the caller's config.
         discovery_policy=original_config.discovery_policy,
+        required_binding=original_config.required_binding,
+        dpop=original_config.dpop,
     )
 
 

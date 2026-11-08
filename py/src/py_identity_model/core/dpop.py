@@ -143,34 +143,54 @@ class DPoPKey:
     @property
     def jwk_thumbprint(self) -> str:
         """JWK Thumbprint (RFC 7638) for use as ``dpop_jkt`` parameter."""
-        jwk = self.public_jwk
-        # Per RFC 7638: lexicographically sorted required members
-        if jwk.get("kty") == "OKP":
-            # RFC 8037 §2: the required OKP members are crv, kty and x.
-            thumbprint_input = json.dumps(
-                {"crv": jwk["crv"], "kty": jwk["kty"], "x": jwk["x"]},
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        elif jwk.get("kty") == "EC":
-            thumbprint_input = json.dumps(
-                {
-                    "crv": jwk["crv"],
-                    "kty": jwk["kty"],
-                    "x": jwk["x"],
-                    "y": jwk["y"],
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        else:
-            thumbprint_input = json.dumps(
-                {"e": jwk["e"], "kty": jwk["kty"], "n": jwk["n"]},
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        digest = hashlib.sha256(thumbprint_input.encode("ascii")).digest()
-        return urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        return compute_jwk_thumbprint(self.public_jwk)
+
+
+_SHA256_B64URL_LENGTH = 43
+
+# RFC 7638 §3.2 / RFC 8037 §2: the required members hashed for each key type,
+# in lexicographic order.
+_THUMBPRINT_MEMBERS: types.MappingProxyType[str, tuple[str, ...]] = (
+    types.MappingProxyType(
+        {
+            "EC": ("crv", "kty", "x", "y"),
+            "OKP": ("crv", "kty", "x"),
+            "RSA": ("e", "kty", "n"),
+        }
+    )
+)
+
+
+def compute_jwk_thumbprint(jwk: dict) -> str:
+    """Compute the RFC 7638 JWK SHA-256 thumbprint of a public key.
+
+    This is the value carried in ``cnf.jkt`` of a DPoP-bound access token
+    (RFC 9449 §6.1) and in the ``dpop_jkt`` authorization parameter (§10).
+
+    Args:
+        jwk: An ``EC``, ``OKP`` or ``RSA`` public JWK. Members outside the
+            required set (``kid``, ``alg``, ...) are ignored.
+
+    Returns:
+        The base64url-encoded (no padding) SHA-256 thumbprint.
+
+    Raises:
+        ValueError: If the key type is unsupported or a required member is
+            missing or not a string.
+    """
+    kty = jwk.get("kty")
+    members = _THUMBPRINT_MEMBERS.get(kty) if isinstance(kty, str) else None
+    if members is None:
+        raise ValueError(f"Unsupported JWK kty for thumbprint: {kty!r}")
+    required = {name: jwk.get(name) for name in members}
+    if not all(isinstance(value, str) and value for value in required.values()):
+        raise ValueError(f"JWK thumbprint needs string members {members}")
+    # RFC 7638 §3: lexicographically ordered members (_THUMBPRINT_MEMBERS lists
+    # them in that order), no whitespace.
+    thumbprint_input = json.dumps(required, separators=(",", ":"))
+    digest = hashlib.sha256(thumbprint_input.encode()).digest()
+    # A SHA-256 digest is 32 octets: 43 base64url characters plus one "=".
+    return urlsafe_b64encode(digest).decode()[:_SHA256_B64URL_LENGTH]
 
 
 def generate_dpop_key(algorithm: str = "ES256") -> DPoPKey:
@@ -338,6 +358,7 @@ __all__ = [
     "DPoPKey",
     "build_dpop_headers",
     "compute_ath",
+    "compute_jwk_thumbprint",
     "create_dpop_proof",
     "extract_dpop_nonce",
     "generate_dpop_key",

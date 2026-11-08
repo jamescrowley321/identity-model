@@ -27,6 +27,7 @@ from fastapi_identity_model import (
     require_scope,
 )
 from fastapi_identity_model.config import _default_excluded_paths
+from py_identity_model import TokenBinding
 from py_identity_model.core.cache_metrics import get_cache_counters
 
 
@@ -63,7 +64,8 @@ def create_app() -> FastAPI:
     Required env: ``RS_DISCOVERY_URL``, ``RS_AUDIENCE``.
     Optional env: ``RS_REQUIRE_SCOPE`` (default ``api``),
     ``RS_REQUIRE_ACCESS_TOKEN_MARKER`` (bool, F-07 opt-in),
-    ``RS_EXCLUDED_PATHS`` (comma-separated).
+    ``RS_EXCLUDED_PATHS`` (comma-separated),
+    ``RS_REQUIRED_BINDING`` (``none``/``dpop``/``mtls``, default ``none``).
     """
     discovery_url = os.environ["RS_DISCOVERY_URL"]
     audience = os.environ["RS_AUDIENCE"]
@@ -85,6 +87,7 @@ def create_app() -> FastAPI:
         require_access_token_marker=_truthy(
             os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
         ),
+        required_binding=TokenBinding(os.environ.get("RS_REQUIRED_BINDING", "none")),
     )
 
     @app.get("/health")
