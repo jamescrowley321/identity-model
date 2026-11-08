@@ -15,15 +15,18 @@ suite-side plan creation is mocked at ``/api/plan``.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from urllib.parse import parse_qs
 
 import app as harness_app
 from fastapi.testclient import TestClient
 import httpx
 import jwt as pyjwt
 import respx
-from run_tests import ConformanceSuiteClient
+from run_tests import ConformanceSuiteClient, drive_rp_authorize
 
 from py_identity_model import (
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     DiscoveryDocumentResponse,
     FAPI2ClientProfile,
     generate_dpop_key,
@@ -124,6 +127,85 @@ def test_fapi2_authorize_pushes_par_with_dpop_and_private_key_jwt() -> None:
     assert claims["htm"] == "POST"
     assert claims["htu"] == f"{ISSUER}/par"
     assert "ath" not in claims
+
+
+@respx.mock
+def test_fapi2_signed_request_pushes_only_request_object() -> None:
+    """FAPI 2.0 Message Signing §5.3.2: the PAR body is a signed request object.
+
+    RFC 9126 §3: alongside ``request`` the form carries only client
+    authentication; the request object's ``aud`` is the issuer and it is
+    signed with the key the runner registers from ``/fapi2-jwks``.
+    """
+    _mock_disco(respx.mock, DISCO)
+    par_route = respx.post(f"{ISSUER}/par").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "request_uri": "urn:ietf:params:oauth:request_uri:abc",
+                "expires_in": 60,
+            },
+        )
+    )
+
+    resp = _client().get(
+        "/authorize",
+        params={
+            "issuer": ISSUER,
+            "client_id": "conformance-rp",
+            "jarm": "true",
+            "signed_request": "true",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == httpx.codes.FOUND
+    form = parse_qs(par_route.calls.last.request.content.decode())
+    assert set(form) == {
+        "client_id",
+        "request",
+        "client_assertion_type",
+        "client_assertion",
+    }
+    (request_object,) = form["request"]
+    public_key = pyjwt.PyJWK(harness_app._fapi2_public_jwk()).key
+    claims = pyjwt.decode(
+        request_object, public_key, algorithms=["ES256"], audience=ISSUER
+    )
+    assert pyjwt.get_unverified_header(request_object)["kid"] == (
+        harness_app._FAPI2_CLIENT_KID
+    )
+    assert claims["iss"] == "conformance-rp"
+    assert claims["response_mode"] == "jwt"
+    assert claims["code_challenge_method"] == "S256"
+    assert claims["exp"] - claims["nbf"] <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME
+
+
+def test_message_signing_config_requests_signed_request_objects() -> None:
+    config = json.loads(
+        (
+            Path(harness_app.__file__).parent / "configs/fapi2-message-signing-rp.json"
+        ).read_text()
+    )
+    assert config["variant"]["fapi_request_method"] == "signed_non_repudiation"
+    assert config["signed_request"] is True
+
+
+def test_drive_rp_authorize_forwards_signed_request() -> None:
+    with respx.mock:
+        route = respx.get("http://rp.test/authorize").mock(
+            return_value=httpx.Response(200, text="ok")
+        )
+        drive_rp_authorize(
+            rp_base_url="http://rp.test",
+            issuer=ISSUER,
+            client_id="conformance-rp",
+            client_secret="",
+            test_id="t1",
+            fapi2=True,
+            signed_request=True,
+        )
+    assert route.calls.last.request.url.params["signed_request"] == "true"
 
 
 @respx.mock

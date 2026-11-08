@@ -15,6 +15,8 @@ the FAPI 2.0 Security Profile.
 
 ::: py_identity_model.core.fapi.FAPI2_MAX_NONCE_LENGTH
 
+::: py_identity_model.core.fapi.FAPI2_MAX_REQUEST_OBJECT_LIFETIME
+
 ::: py_identity_model.core.fapi.FAPI2_REQUIRED_PKCE_METHOD
 
 ::: py_identity_model.core.fapi.FAPI2_REQUIRED_RESPONSE_TYPE

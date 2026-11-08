@@ -18,13 +18,16 @@ from __future__ import annotations
 from dataclasses import InitVar, dataclass, field, replace
 from ipaddress import ip_address
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
 
+from .authorize_url import build_par_authorization_url
+from .jar import create_request_object
 from .models import (
     AuthorizationCodeTokenRequest,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    RequestObjectKey,
     TokenValidationConfig,
 )
 from .mtls import resolve_mtls_endpoint
@@ -48,6 +51,9 @@ FAPI2_REQUIRED_PKCE_METHOD = "S256"
 FAPI2_REQUIRED_RESPONSE_TYPE = "code"
 # FAPI 2.0 Security Profile §5.3.3.2: clients should not send longer nonces.
 FAPI2_MAX_NONCE_LENGTH = 64
+# FAPI 2.0 Message Signing §5.3.2: a request object's exp is at most 60
+# minutes after its nbf.
+FAPI2_MAX_REQUEST_OBJECT_LIFETIME = 3600
 
 
 def _str_values(value: object) -> frozenset[str]:
@@ -476,6 +482,32 @@ def validate_fapi_discovery(
     )
 
 
+def _request_object_key_violations(
+    key: RequestObjectKey | None, advertised: tuple[str, ...] | None
+) -> list[str]:
+    """Message Signing §5.3.2: FAPI algorithm, lifetime of at most 3600 s."""
+    if key is None:
+        return []
+    violations = _algorithm_violation("request object", key.algorithm)
+    if not 0 < key.lifetime <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME:
+        violations.append(
+            f"request object lifetime must be 1 to "
+            f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got {key.lifetime} "
+            "(FAPI 2.0 Message Signing §5.3.2)"
+        )
+    if (
+        # A non-FAPI algorithm is already reported above.
+        advertised is not None
+        and key.algorithm in FAPI2_ALLOWED_SIGNING_ALGORITHMS
+        and key.algorithm not in advertised
+    ):
+        violations.append(
+            f"Server does not advertise request object algorithm "
+            f"'{key.algorithm}' in request_object_signing_alg_values_supported"
+        )
+    return violations
+
+
 def _server_support_violations(
     discovery: DiscoveryDocumentResponse,
     *,
@@ -572,6 +604,12 @@ class FAPI2ClientProfile:
     weaken them, including a DPoP key whose algorithm the server does not
     advertise (RFC 9449 §5.1).  The profile is immutable.
 
+    With ``request_object_key`` the pushed authorization request is a signed
+    request object (FAPI 2.0 Message Signing §5.3.2): ``aud`` is the issuer,
+    ``exp`` is at most 3600 s after ``nbf``, and the algorithm is one of
+    PS256, ES256 or EdDSA and, when the server advertises
+    ``request_object_signing_alg_values_supported``, one it lists.
+
     Args:
         discovery: The authorization server's discovery document.
         client_id: The registered client identifier.
@@ -582,6 +620,8 @@ class FAPI2ClientProfile:
             (``response_mode=jwt``, FAPI 2.0 Message Signing §5.4); verify them
             with ``process_jarm_response(..., algorithms=signing_algorithms)``.
         scope: The scope the client requests.
+        request_object_key: Sign the pushed authorization request as a JAR
+            request object (RFC 9101) with this key.
 
     Attributes:
         issuer: The issuer from the discovery document.
@@ -592,6 +632,9 @@ class FAPI2ClientProfile:
         dpop_signing_algorithms: The §5.4.1 algorithms the server advertises
             in ``dpop_signing_alg_values_supported``; a request's DPoP key
             must use one of them.
+        request_object_signing_algorithms: The server's
+            ``request_object_signing_alg_values_supported``, or ``None`` when
+            it does not advertise the field.
         private_key_jwt: ``client_auth`` with ``issuer`` set, for a
             ``private_key_jwt`` client.
         mtls: ``client_auth`` for an mTLS client.
@@ -604,11 +647,13 @@ class FAPI2ClientProfile:
     native_app: bool = False
     jarm: bool = False
     scope: str = "openid"
+    request_object_key: RequestObjectKey | None = None
     issuer: str = field(init=False)
     authorization_endpoint: str = field(init=False)
     pushed_authorization_request_endpoint: str = field(init=False)
     token_endpoint: str = field(init=False)
     dpop_signing_algorithms: tuple[str, ...] = field(init=False)
+    request_object_signing_algorithms: tuple[str, ...] | None = field(init=False)
     private_key_jwt: PrivateKeyJwt | None = field(init=False)
     mtls: MtlsClientAuth | None = field(init=False)
 
@@ -638,6 +683,9 @@ class FAPI2ClientProfile:
                 return resolve_mtls_endpoint(discovery, name) or ""
             return getattr(discovery, name) or ""
 
+        advertised_request_object_algs = (
+            discovery.request_object_signing_alg_values_supported
+        )
         derived = {
             "issuer": issuer,
             "authorization_endpoint": discovery.authorization_endpoint or "",
@@ -650,6 +698,14 @@ class FAPI2ClientProfile:
                     _str_values(discovery.dpop_signing_alg_values_supported)
                     & FAPI2_ALLOWED_SIGNING_ALGORITHMS
                 )
+            ),
+            "request_object_signing_algorithms": (
+                tuple(sorted(_str_values(advertised_request_object_algs)))
+                if advertised_request_object_algs is not None
+                else None
+            ),
+            "request_object_key": (
+                replace(self.request_object_key) if self.request_object_key else None
             ),
             "private_key_jwt": private_key_jwt,
             "mtls": mtls,
@@ -688,6 +744,12 @@ class FAPI2ClientProfile:
         )
         violations.extend(
             _redirect_uri_violations(self.redirect_uri, native_app=self.native_app)
+        )
+        violations.extend(
+            _request_object_key_violations(
+                derived["request_object_key"],
+                derived["request_object_signing_algorithms"],
+            )
         )
         _raise_on(violations)
 
@@ -754,7 +816,9 @@ class FAPI2ClientProfile:
 
         ``response_type`` is ``code`` and the PKCE method ``S256``; a JARM
         profile asks for ``response_mode=jwt``.  A ``private_key_jwt`` client
-        must pass the flow's ``dpop_key``.
+        must pass the flow's ``dpop_key``.  With ``request_object_key`` the
+        parameters are sent as a signed request object (RFC 9126 §3, FAPI 2.0
+        Message Signing §5.3.2).
 
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
@@ -781,26 +845,62 @@ class FAPI2ClientProfile:
                     request, native_app=self.native_app
                 ).violations,
                 *self._request_violations(dpop_key),
+                *_request_object_key_violations(
+                    self.request_object_key, self.request_object_signing_algorithms
+                ),
             ]
         )
-        return request
+        if self.request_object_key is None:
+            return request
+        return self._signed(request, replace(self.request_object_key))
+
+    def _signed(
+        self, request: PushedAuthorizationRequest, key: RequestObjectKey
+    ) -> PushedAuthorizationRequest:
+        """The request with its parameters moved into a request object."""
+        extra_claims = (
+            {"response_mode": request.response_mode} if request.response_mode else {}
+        )
+        request_object = create_request_object(
+            private_key=key.private_key,
+            algorithm=key.algorithm,
+            client_id=self.client_id,
+            # Message Signing §5.3.2: aud is the issuer.
+            audience=self.issuer,
+            redirect_uri=request.redirect_uri,
+            scope=request.scope,
+            response_type=request.response_type,
+            state=request.state,
+            nonce=request.nonce,
+            code_challenge=request.code_challenge,
+            code_challenge_method=request.code_challenge_method,
+            lifetime=key.lifetime,
+            kid=key.kid,
+            **extra_claims,
+        )
+        return PushedAuthorizationRequest(
+            address=request.address,
+            client_id=self.client_id,
+            private_key_jwt=request.private_key_jwt,
+            dpop_key=request.dpop_key,
+            mtls=request.mtls,
+            request=request_object,
+        )
 
     def authorization_url(self, request_uri: str) -> str:
         """The authorization endpoint URL for a pushed request (§5.3.3.2).
 
-        Carries only ``client_id`` and ``request_uri`` (RFC 9126 §4).
+        Carries only ``client_id`` and ``request_uri`` (RFC 9126 §4); see
+        :func:`~py_identity_model.core.authorize_url.build_par_authorization_url`.
+
+        Raises:
+            FAPIProfileError: ``request_uri`` is not a non-blank string.
         """
-        if not request_uri:
+        if not isinstance(request_uri, str) or not request_uri.strip():
             raise FAPIProfileError(["request_uri is required"])
-        query = urlencode({"client_id": self.client_id, "request_uri": request_uri})
-        endpoint = self.authorization_endpoint
-        has_query = "?" in endpoint
-        if endpoint.endswith("?") or (has_query and endpoint.endswith("&")):
-            separator = ""
-        else:
-            # A trailing "&" with no "?" is part of the path, not a delimiter.
-            separator = "&" if has_query else "?"
-        return f"{endpoint}{separator}{query}"
+        return build_par_authorization_url(
+            self.authorization_endpoint, self.client_id, request_uri
+        )
 
     def validate_callback_issuer(
         self, response: AuthorizeCallbackResponse
@@ -851,6 +951,7 @@ __all__ = [
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
     "FAPI2_MAX_NONCE_LENGTH",
+    "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     "FAPI2ClientProfile",

@@ -46,6 +46,7 @@ from py_identity_model import (
     JwksRequest,
     MtlsClientAuth,
     PrivateKeyJwt,
+    RequestObjectKey,
     TokenValidationConfig,
     UserInfoRequest,
     build_authorization_url,
@@ -399,6 +400,19 @@ def _fapi2_private_key_jwt() -> PrivateKeyJwt:
 
 
 # ---------------------------------------------------------------------------
+def _fapi2_request_object_key() -> RequestObjectKey:
+    """Signing key for FAPI 2.0 Message Signing request objects (§5.3.2).
+
+    The same key as the private_key_jwt assertion, so the suite verifies the
+    request object against the JWKS registered from ``/fapi2-jwks``.
+    """
+    return RequestObjectKey(
+        private_key=_FAPI2_CLIENT_KEY.private_key_pem,
+        algorithm="ES256",
+        kid=_FAPI2_CLIENT_KID,
+    )
+
+
 # mTLS client certificate (FAPI 2.0 client_auth_type=mtls / sender_constrain=mtls)
 # ---------------------------------------------------------------------------
 #
@@ -731,6 +745,15 @@ def authorize(
             "aliases instead of private_key_jwt + DPoP. Implies FAPI 2.0."
         ),
     ),
+    signed_request: str = Query(
+        "false",
+        description=(
+            "Push the authorization request as a signed request object "
+            "(FAPI 2.0 Message Signing §5.3.2; suite variant "
+            "fapi_request_method=signed_non_repudiation), signed with the "
+            "/fapi2-jwks key. Implies FAPI 2.0."
+        ),
+    ),
 ) -> RedirectResponse | JSONResponse:
     """Build an authorization URL and redirect to the OP.
 
@@ -820,7 +843,12 @@ def authorize(
             content={"error": "issuer_mismatch", "detail": error_msg},
         )
 
-    if fapi2.lower() == "true" or jarm.lower() == "true" or mtls.lower() == "true":
+    if "true" in {
+        fapi2.lower(),
+        jarm.lower(),
+        mtls.lower(),
+        signed_request.lower(),
+    }:
         return _authorize_fapi2(
             disco=disco,
             disco_address=disco_endpoint.url,
@@ -833,6 +861,7 @@ def authorize(
             skip_userinfo=skip_userinfo.lower() == "true",
             jarm=jarm.lower() == "true",
             mtls=mtls.lower() == "true",
+            signed_request=signed_request.lower() == "true",
             http_client=http_client,
         )
 
@@ -967,6 +996,7 @@ def _authorize_fapi2(
     http_client: HTTPClient,
     jarm: bool = False,
     mtls: bool = False,
+    signed_request: bool = False,
 ) -> RedirectResponse | JSONResponse:
     """Drive the FAPI 2.0 authorization request via PAR.
 
@@ -977,7 +1007,10 @@ def _authorize_fapi2(
     or — when ``mtls`` — a client certificate presented at the TLS layer against
     the OP's ``mtls_endpoint_aliases`` (RFC 8705). The chosen mode is persisted on
     the session so /callback completes the flow the same way, with RFC 9207
-    ``iss`` checks throughout.
+    ``iss`` checks throughout. With ``signed_request`` the pushed parameters
+    travel in a signed request object (FAPI 2.0 Message Signing §5.3.2), signed
+    with the ``/fapi2-jwks`` key; an ``mtls`` client registers only the
+    ``/fapi2-mtls-jwks`` certificate key, so no plan combines the two.
     """
     redirect_uri = f"{RP_BASE_URL}/callback"
     try:
@@ -992,6 +1025,9 @@ def _authorize_fapi2(
             native_app=True,
             jarm=jarm,
             scope=scope,
+            request_object_key=(
+                _fapi2_request_object_key() if signed_request else None
+            ),
         )
     except FAPIProfileError as exc:
         return _fapi2_rejected(issuer, test_id, "fapi_profile", str(exc))
