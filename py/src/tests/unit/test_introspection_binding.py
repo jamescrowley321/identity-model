@@ -159,6 +159,18 @@ class TestDPoPBoundIntrospection:
 
         assert kind is DPoPErrorKind.ATH_MISMATCH
 
+    def test_dpop_options_apply_to_the_proof(self):
+        # An ES256 proof that the defaults accept is refused when the caller
+        # allows only RS256: the options reach the proof verifier.
+        key = generate_dpop_key("ES256")
+        options = DPoPVerificationOptions(
+            algorithms=frozenset({"RS256"}), replay_cache=InMemoryDPoPReplayCache()
+        )
+
+        kind = _kind(_response({"jkt": key.jwk_thumbprint}), _dpop(key), dpop=options)
+
+        assert kind is DPoPErrorKind.UNSUPPORTED_ALGORITHM
+
     def test_bearer_scheme_rejected(self):
         key = generate_dpop_key()
         presentation = TokenPresentation(scheme=AuthorizationScheme.BEARER)
@@ -301,6 +313,27 @@ class TestFailClosed:
             "kind": "introspection_failed",
             "introspection_error_kind": "signature",
         }
+
+    @pytest.mark.parametrize(
+        ("response", "message"),
+        [
+            (
+                _response(active=False),
+                "Introspected access token is not active (RFC 7662 §2.2)",
+            ),
+            (
+                TokenIntrospectionResponse(is_successful=False, error="boom"),
+                "Token introspection failed; the access token's state is unknown "
+                "and it is not accepted",
+            ),
+        ],
+        ids=["inactive", "failed"],
+    )
+    def test_message_is_fixed_per_kind(self, response, message):
+        with pytest.raises(IntrospectedTokenError) as exc:
+            _check(response, None)
+
+        assert exc.value.message == message
 
     def test_is_a_token_validation_exception(self):
         with pytest.raises(TokenValidationException):
