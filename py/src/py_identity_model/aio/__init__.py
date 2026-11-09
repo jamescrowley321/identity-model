@@ -113,6 +113,7 @@ from ..core.token_binding import (
     AuthorizationScheme,
     TokenBinding,
     TokenPresentation,
+    check_introspection_binding,
 )
 from .device_auth import (
     DeviceAuthorizationRequest,
@@ -294,6 +295,7 @@ __all__ = [
     "build_jar_authorization_url",
     "build_par_authorization_url",
     "certificate_thumbprint_from_file",
+    "check_introspection_binding",
     "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",

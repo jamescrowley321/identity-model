@@ -121,7 +121,11 @@ What `required_binding` does:
 | `NONE` | `cnf["x5t#S256"]` | no `presentation=` | `CertificateBindingError` (RFC 8705 §3) |
 | `NONE` | no `cnf.jkt` or `cnf["x5t#S256"]` | no `presentation=` | accepted |
 
-The table applies to access tokens (`validate_token`). `validate_id_token` and
+The table applies to access tokens (`validate_token`), and to opaque access
+tokens checked with `check_introspection_binding`, which reads `cnf` from the
+introspection response (RFC 9449 §6.2, see
+[Token Introspection](introspection.md#sender-constrained-opaque-tokens)).
+`validate_id_token` and
 `validate_logout_token` do not check `cnf` and ignore `required_binding`: ID
 Tokens and Logout Tokens arrive with no presentation.
 

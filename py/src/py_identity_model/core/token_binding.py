@@ -14,6 +14,10 @@ with no presentation is rejected (RFC 9449 §7.2, RFC 8705 §3).
 (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout §2.6) arrive with
 no presentation. ``TokenValidationConfig.required_binding`` refuses access
 tokens without the named binding.
+
+For opaque access tokens the binding comes from token introspection (RFC 9449
+§6.2, RFC 8705 §3.2): :func:`check_introspection_binding` applies the same
+rules to an introspection response's ``cnf``.
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ from .mtls import validate_certificate_binding
 
 
 if TYPE_CHECKING:
-    from .models import TokenValidationConfig
+    from .models import TokenIntrospectionResponse, TokenValidationConfig
 
 
 PRESENTATION_REQUIRED = (
@@ -112,9 +116,15 @@ def require_presentation(
         ConfigurationException: If ``config.required_binding`` is not
             ``NONE`` and *presentation* is ``None``.
     """
-    if presentation is None and config.required_binding is not TokenBinding.NONE:
+    _require_presentation(config.required_binding, presentation)
+
+
+def _require_presentation(
+    binding: TokenBinding, presentation: TokenPresentation | None
+) -> None:
+    if presentation is None and binding is not TokenBinding.NONE:
         raise ConfigurationException(
-            f"required_binding={config.required_binding.value} {PRESENTATION_REQUIRED}"
+            f"required_binding={binding.value} {PRESENTATION_REQUIRED}"
         )
 
 
@@ -187,14 +197,74 @@ def check_token_binding(
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
+    _check_binding(
+        claims, access_token, config.required_binding, config.dpop, presentation
+    )
+
+
+def check_introspection_binding(
+    response: TokenIntrospectionResponse,
+    access_token: str,
+    presentation: TokenPresentation | None,
+    *,
+    required_binding: TokenBinding = TokenBinding.NONE,
+    dpop: DPoPVerificationOptions | None = None,
+) -> None:
+    """Check an introspected token's sender constraint against how it was presented.
+
+    The resource-server counterpart of :func:`check_token_binding` for opaque
+    access tokens, whose binding the resource server learns from token
+    introspection: the response carries ``cnf.jkt`` (RFC 9449 §6.2) or
+    ``cnf["x5t#S256"]`` (RFC 8705 §3.2). The rules, errors and
+    *required_binding* handling are those of :func:`check_token_binding`, so a
+    bound token with no *presentation* is rejected (RFC 9449 §7.2), a DPoP
+    proof must be signed by the bound key and carry the ``ath`` of
+    *access_token*, and a client certificate must match ``cnf["x5t#S256"]``.
+
+    Call it after ``introspect_token`` and only accept the token when the
+    response is ``active`` and this returns. It does not check ``active``: an
+    inactive response carries no binding and is not checked.
+
+    Args:
+        response: The ``introspect_token`` response for *access_token*.
+        access_token: The access token as received on the request.
+        presentation: How the token arrived, or ``None``.
+        required_binding: The sender constraint every token must carry.
+        dpop: Options for DPoP proof verification. ``None`` uses the defaults
+            and the process-wide replay cache.
+
+    Raises:
+        FailedResponseAccessError: If the introspection request failed.
+        ConfigurationException: If *required_binding* is not ``NONE`` and
+            *presentation* is ``None``.
+        DPoPValidationError: If the DPoP binding fails, including a
+            ``cnf.jkt`` token with no *presentation*.
+        CertificateBindingError: If the certificate binding fails, including
+            a ``cnf["x5t#S256"]`` token with no *presentation*.
+        ValueError: If a DPoP proof is checked without an absolute
+            ``presentation.url`` or a ``presentation.method``.
+    """
+    claims = response.claims or {}
+    _require_presentation(required_binding, presentation)
+    if claims.get("active") is not True:
+        return
+    _check_binding(claims, access_token, required_binding, dpop, presentation)
+
+
+def _check_binding(
+    claims: dict,
+    access_token: str,
+    binding: TokenBinding,
+    dpop: DPoPVerificationOptions | None,
+    presentation: TokenPresentation | None,
+) -> None:
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     cnf = cnf if isinstance(cnf, dict) else {}
-    binding = config.required_binding
     jkt_member = ConfirmationMethods.JwkThumbprint.value
     certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
 
     if presentation is None:
-        require_presentation(config, presentation)
+        _require_presentation(binding, presentation)
         if jkt_member in cnf:
             raise DPoPValidationError(DPoPErrorKind.PROOF_REQUIRED)
         if certificate_bound:
@@ -202,7 +272,7 @@ def check_token_binding(
         return
 
     if jkt_member in cnf:
-        _check_dpop_binding(cnf[jkt_member], access_token, presentation, config.dpop)
+        _check_dpop_binding(cnf[jkt_member], access_token, presentation, dpop)
     elif (
         binding is TokenBinding.DPOP or presentation.scheme is AuthorizationScheme.DPOP
     ):
@@ -227,6 +297,7 @@ __all__ = [
     "AuthorizationScheme",
     "TokenBinding",
     "TokenPresentation",
+    "check_introspection_binding",
     "check_token_binding",
     "require_presentation",
 ]

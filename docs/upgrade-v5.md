@@ -605,6 +605,31 @@ Token profile (required `sub`, no untrusted additional audience, OIDC Core
 §3.1.3.7). `OIDCSettings` has no `trusted_audiences`, so an ID Token whose `aud`
 lists anything besides `client_id` now fails the login with a 401.
 
+### Check the introspected `cnf` of an opaque token ([#1094](https://github.com/jamescrowley321/identity-model/issues/1094))
+
+A resource server that authorizes opaque tokens through `introspect_token`
+learns the token's binding from the response's `cnf` (RFC 9449 §6.2, RFC 8705
+§3.2). 4.x never checked it, so a DPoP-bound or certificate-bound opaque token
+was accepted as a bearer token. Call `check_introspection_binding` after
+introspecting. It has the rules and errors of `validate_token`: a token with
+`cnf.jkt` and no presentation raises `DPoPValidationError` (`PROOF_REQUIRED`), a
+token with `cnf["x5t#S256"]` raises `CertificateBindingError` unless the bound
+certificate is presented, and an unbound token passes.
+
+```python
+response = introspect_token(request)
+if response.is_successful and response.claims["active"] is True:
+    check_introspection_binding(
+        response,
+        access_token,
+        presentation,  # the TokenPresentation built as above
+        required_binding=TokenBinding.NONE,
+    )
+```
+
+`introspect_token` does not run the check; see
+[Token Introspection](api/introspection.md#sender-constrained-opaque-tokens).
+
 ## ID Token validation
 
 ### Untrusted additional audiences are rejected ([#881](https://github.com/jamescrowley321/identity-model/pull/881))
