@@ -72,7 +72,10 @@ from py_identity_model import (
     introspect_token,
 )
 
-scheme, _, access_token = request.headers["Authorization"].partition(" ")
+scheme, _, access_token = request.headers.get("Authorization", "").partition(" ")
+schemes = {"bearer": AuthorizationScheme.BEARER, "dpop": AuthorizationScheme.DPOP}
+if scheme.lower() not in schemes or not access_token:
+    ...  # 401
 response = introspect_token(
     TokenIntrospectionRequest(
         address=disco.introspection_endpoint,
@@ -87,11 +90,7 @@ check_introspection_binding(
     response,
     access_token,
     TokenPresentation(
-        scheme=(
-            AuthorizationScheme.DPOP
-            if scheme.lower() == "dpop"
-            else AuthorizationScheme.BEARER
-        ),
+        scheme=schemes[scheme.lower()],
         method=request.method,
         url="https://api.example.com/orders",  # the URI the client addressed
         dpop_proof=request.headers.get("DPoP"),  # for cnf.jkt

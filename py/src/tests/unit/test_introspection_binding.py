@@ -43,6 +43,8 @@ URL = "https://rs.example.com/api/resource"
 METHOD = "GET"
 OPAQUE_TOKEN = "opaque-access-token-value"
 OTHER_TOKEN = "another-opaque-access-token"
+# Shaped like a base64url SHA-256 thumbprint; matches no key or certificate.
+UNMATCHED_THUMBPRINT = "A" * 43
 BOUND_WITHOUT_CERTIFICATE = (
     "Certificate-bound access token was presented without a client certificate "
     "(RFC 8705 §3)"
@@ -76,7 +78,7 @@ def other_cert_pem() -> bytes:
     return _cert_pem()
 
 
-def _response(cnf: dict | None = None, *, active: object = True):
+def _response(cnf: object = None, *, active: object = True):
     claims: dict[str, object] = {"active": active, "client_id": "app"}
     if cnf is not None:
         claims["cnf"] = cnf
@@ -207,6 +209,13 @@ class TestUnboundIntrospection:
     def test_no_presentation_accepted(self, cnf):
         _check(_response(cnf), None)
 
+    @pytest.mark.parametrize("cnf", ["jkt", ["jkt"], 1])
+    def test_non_object_cnf_is_unbound_as_on_jwt_path(self, cnf):
+        config = TokenValidationConfig(perform_disco=True)
+        check_token_binding({"cnf": cnf}, OPAQUE_TOKEN, config, None)
+
+        _check(_response(cnf), None)
+
     def test_bearer_presentation_accepted(self):
         _check(_response(), TokenPresentation(scheme=AuthorizationScheme.BEARER))
 
@@ -237,6 +246,9 @@ class TestInactiveIntrospection:
 
         _check(_response({"jkt": key.jwk_thumbprint}, active=active), None)
 
+    def test_successful_response_without_claims_not_checked(self):
+        _check(TokenIntrospectionResponse(is_successful=True, claims=None), None)
+
     def test_failed_response_raises(self):
         response = TokenIntrospectionResponse(is_successful=False, error="boom")
 
@@ -250,7 +262,7 @@ class TestSameRulesAsJwtPath:
 
     @pytest.mark.parametrize("member", ["jkt", "x5t#S256"])
     def test_bound_without_presentation_matches_check_token_binding(self, member):
-        cnf = {member: "A" * 43}
+        cnf = {member: UNMATCHED_THUMBPRINT}
         config = TokenValidationConfig(perform_disco=True)
 
         with pytest.raises((DPoPValidationError, CertificateBindingError)) as jwt_exc:

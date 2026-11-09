@@ -622,7 +622,7 @@ if response.is_successful and response.claims["active"] is True:
     check_introspection_binding(
         response,
         access_token,
-        presentation,  # the TokenPresentation built as above
+        presentation,  # a TokenPresentation, see Token Introspection
         required_binding=TokenBinding.NONE,
     )
 ```
