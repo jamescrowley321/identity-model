@@ -193,8 +193,8 @@ def check_token_binding(
     jkt_member = ConfirmationMethods.JwkThumbprint.value
     certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
 
+    require_presentation(config, presentation)
     if presentation is None:
-        require_presentation(config, presentation)
         if jkt_member in cnf:
             raise DPoPValidationError(DPoPErrorKind.PROOF_REQUIRED)
         if certificate_bound:
