@@ -116,8 +116,6 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
         disco_doc_address=disco_doc_address,
         http_client=http_client,
         cache=cache,
-        presentation=None,
-        access_token=False,
     )
     _kid, header_alg = extract_jwt_header_fields(id_token)
     validate_id_token_claims(

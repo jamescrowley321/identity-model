@@ -502,15 +502,16 @@ def _validate_jwt(
     http_client: HTTPClient | None,
     *,
     cache: ValidationCache | None,
-    presentation: TokenPresentation | None,
-    access_token: bool,
+    presentation: TokenPresentation | None = None,
+    access_token: bool = False,
 ) -> dict:
     """Validate a JWT; check its sender constraint only if *access_token*.
 
     RFC 9449 §7 and RFC 8705 §3 bind access tokens presented to a protected
     resource. ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel
-    Logout §2.6) arrive with no presentation, so their validators pass
-    ``access_token=False`` and a ``cnf`` claim in them is not checked.
+    Logout §2.6) arrive with no presentation, so their validators leave
+    *access_token* at its ``False`` default and a ``cnf`` claim in them is
+    not checked.
     """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)

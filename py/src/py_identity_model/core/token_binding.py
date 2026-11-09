@@ -331,8 +331,8 @@ def _check_binding(
     jkt_member = ConfirmationMethods.JwkThumbprint.value
     certificate_bound = ConfirmationMethods.X509ThumbprintSha256.value in cnf
 
+    _require_presentation(binding, presentation)
     if presentation is None:
-        _require_presentation(binding, presentation)
         if jkt_member in cnf:
             raise DPoPValidationError(DPoPErrorKind.PROOF_REQUIRED)
         if certificate_bound:

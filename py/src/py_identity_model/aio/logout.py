@@ -66,8 +66,6 @@ async def validate_logout_token(
         disco_doc_address=disco_doc_address,
         http_client=http_client,
         cache=cache,
-        presentation=None,
-        access_token=False,
     )
     validate_logout_token_claims(claims)
     return claims
