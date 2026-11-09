@@ -31,6 +31,7 @@ from py_identity_model.core.token_validation_logic import (
 from py_identity_model.exceptions import (
     ConfigurationException,
     InvalidIssuerException,
+    TokenValidationException,
 )
 
 
@@ -65,11 +66,13 @@ class TestChokepointRejectsUnapprovedIssuer:
             perform_disco=True, key={"kty": "RSA"}, algorithms=["RS256"]
         )
         # The flow reaches decode (past the skipped pin) and fails there building
-        # PyJWK from the dummy key — a jwt InvalidKeyError, NOT the
+        # PyJWK from the dummy key — the typed key/alg mismatch error, NOT the
         # InvalidIssuerException pinning would raise. If pinning were not opt-in,
         # InvalidIssuerException would be raised first and this would fail.
-        with pytest.raises(pyjwt.InvalidKeyError):
+        with pytest.raises(TokenValidationException) as exc_info:
             decode_with_config("a.b.c", cfg, issuer=_ATTACKER)
+        assert not isinstance(exc_info.value, InvalidIssuerException)
+        assert isinstance(exc_info.value.__cause__, pyjwt.InvalidKeyError)
 
 
 class TestBuildResolvedConfigCopiesAllFields:
