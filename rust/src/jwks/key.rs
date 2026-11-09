@@ -273,7 +273,9 @@ impl JsonWebKeySet {
         // RFC 7517 §4.2: a hard filter, with no fallback to non-signing keys.
         let mut candidates: Vec<&JsonWebKey> =
             self.keys.iter().filter(|k| is_signing_key(k)).collect();
-        if candidates.len() > 1 && !alg.is_empty() {
+        // `narrow` keeps the input when a filter would empty it, so narrowing
+        // zero or one candidate is a no-op and needs no length guard.
+        if !alg.is_empty() {
             candidates = narrow(candidates, |k| k.alg.is_empty() || k.alg == alg);
             if let Some(kty) = alg_kty(alg) {
                 candidates = narrow(candidates, |k| k.kty == kty);
