@@ -18,6 +18,7 @@ PyIdentityModelException
 │       ├── KeyAlgorithmMismatchException
 │       ├── WeakKeyException
 │       ├── CertificateBindingError
+│       ├── IntrospectedTokenError  (see Token Introspection)
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
 │           └── UntrustedAudienceException

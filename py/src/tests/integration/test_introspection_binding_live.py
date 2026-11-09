@@ -18,6 +18,8 @@ from py_identity_model import (
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
+    IntrospectedTokenError,
+    IntrospectedTokenErrorKind,
     TokenIntrospectionRequest,
     TokenPresentation,
     check_introspection_binding,
@@ -166,3 +168,16 @@ def test_unbound_opaque_token_without_presentation_accepted(opaque_client):
     assert "cnf" not in response.claims
 
     check_introspection_binding(response, token, None)
+
+
+def test_inactive_opaque_token_rejected(opaque_client):
+    token = "not-an-issued-token"
+    response = introspect_token(_introspection_request(opaque_client, token))
+    assert response.is_successful, response.error
+    assert response.claims is not None
+    assert response.claims["active"] is False
+
+    with pytest.raises(IntrospectedTokenError) as exc:
+        check_introspection_binding(response, token, None)
+
+    assert exc.value.kind is IntrospectedTokenErrorKind.INACTIVE

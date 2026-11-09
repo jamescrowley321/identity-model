@@ -614,17 +614,18 @@ was accepted as a bearer token. Call `check_introspection_binding` after
 introspecting. It has the rules and errors of `validate_token`: a token with
 `cnf.jkt` and no presentation raises `DPoPValidationError` (`PROOF_REQUIRED`), a
 token with `cnf["x5t#S256"]` raises `CertificateBindingError` unless the bound
-certificate is presented, and an unbound token passes.
+certificate is presented, and an unbound token passes. It fails closed: a
+failed introspection, or a token that "is not active" (RFC 7662 §2.2), raises
+`IntrospectedTokenError` (kind `INTROSPECTION_FAILED` / `INACTIVE`), so a
+normal return means the token is active and correctly bound.
 
 ```python
 response = introspect_token(request)
-if response.is_successful and response.claims["active"] is True:
-    check_introspection_binding(
-        response,
-        access_token,
-        presentation,  # a TokenPresentation, see Token Introspection
-        required_binding=TokenBinding.NONE,
-    )
+check_introspection_binding(  # raises unless active and correctly bound
+    response,
+    access_token,
+    presentation,  # a TokenPresentation, see Token Introspection
+)
 ```
 
 `introspect_token` does not run the check; see

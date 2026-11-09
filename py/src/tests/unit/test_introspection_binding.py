@@ -22,6 +22,9 @@ from py_identity_model import (
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
+    IntrospectedTokenError,
+    IntrospectedTokenErrorKind,
+    IntrospectionErrorKind,
     TokenBinding,
     TokenIntrospectionResponse,
     TokenPresentation,
@@ -35,7 +38,7 @@ from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
     ConfigurationException,
-    FailedResponseAccessError,
+    TokenValidationException,
 )
 
 
@@ -238,22 +241,75 @@ class TestUnboundIntrospection:
 
 
 @pytest.mark.unit
-class TestInactiveIntrospection:
+class TestFailClosed:
+    """Only an active, successful response can pass (RFC 7662 §2.2)."""
+
     @pytest.mark.parametrize("active", [False, None, "true", 1])
-    def test_inactive_bound_response_not_checked(self, active):
-        # An inactive response carries no binding; the caller rejects it.
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_inactive_response_rejected(self, active, bound):
         key = generate_dpop_key()
+        cnf = {"jkt": key.jwk_thumbprint} if bound else None
+        presentation = _dpop(key) if bound else None
 
-        _check(_response({"jkt": key.jwk_thumbprint}, active=active), None)
+        with pytest.raises(IntrospectedTokenError) as exc:
+            _check(_response(cnf, active=active), presentation)
 
-    def test_successful_response_without_claims_not_checked(self):
-        _check(TokenIntrospectionResponse(is_successful=True, claims=None), None)
+        assert exc.value.kind is IntrospectedTokenErrorKind.INACTIVE
+        assert exc.value.introspection_error_kind is None
 
-    def test_failed_response_raises(self):
+    def test_absent_active_rejected(self):
+        response = TokenIntrospectionResponse(
+            is_successful=True, claims={"client_id": "app"}
+        )
+
+        with pytest.raises(IntrospectedTokenError) as exc:
+            _check(response, None)
+
+        assert exc.value.kind is IntrospectedTokenErrorKind.INACTIVE
+
+    def test_successful_response_without_claims_rejected(self):
+        response = TokenIntrospectionResponse(is_successful=True, claims=None)
+
+        with pytest.raises(IntrospectedTokenError) as exc:
+            _check(response, None)
+
+        assert exc.value.kind is IntrospectedTokenErrorKind.INACTIVE
+
+    def test_failed_response_rejected(self):
         response = TokenIntrospectionResponse(is_successful=False, error="boom")
 
-        with pytest.raises(FailedResponseAccessError):
+        with pytest.raises(IntrospectedTokenError) as exc:
             _check(response, None)
+
+        assert exc.value.kind is IntrospectedTokenErrorKind.INTROSPECTION_FAILED
+        assert exc.value.introspection_error_kind is None
+        assert "boom" not in str(exc.value)
+
+    def test_refused_signed_response_carries_error_kind(self):
+        response = TokenIntrospectionResponse(
+            is_successful=False,
+            error="bad signature",
+            error_kind=IntrospectionErrorKind.SIGNATURE,
+        )
+
+        with pytest.raises(IntrospectedTokenError) as exc:
+            _check(response, None)
+
+        assert exc.value.kind is IntrospectedTokenErrorKind.INTROSPECTION_FAILED
+        assert exc.value.introspection_error_kind is IntrospectionErrorKind.SIGNATURE
+        assert exc.value.details == {
+            "kind": "introspection_failed",
+            "introspection_error_kind": "signature",
+        }
+
+    def test_is_a_token_validation_exception(self):
+        with pytest.raises(TokenValidationException):
+            _check(_response(active=False), None)
+
+    @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
+    def test_required_binding_without_presentation_is_config_error_first(self, binding):
+        with pytest.raises(ConfigurationException):
+            _check(_response(active=False), None, required_binding=binding)
 
 
 @pytest.mark.unit

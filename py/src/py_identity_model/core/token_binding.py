@@ -26,7 +26,11 @@ from dataclasses import dataclass
 import enum
 from typing import TYPE_CHECKING
 
-from ..exceptions import CertificateBindingError, ConfigurationException
+from ..exceptions import (
+    CertificateBindingError,
+    ConfigurationException,
+    TokenValidationException,
+)
 from ..jwt_claim_types import ConfirmationMethods, JwtClaimTypes
 from .dpop_verify import (
     DPoPErrorKind,
@@ -39,7 +43,11 @@ from .mtls import validate_certificate_binding
 
 
 if TYPE_CHECKING:
-    from .models import TokenIntrospectionResponse, TokenValidationConfig
+    from .models import (
+        IntrospectionErrorKind,
+        TokenIntrospectionResponse,
+        TokenValidationConfig,
+    )
 
 
 PRESENTATION_REQUIRED = (
@@ -59,6 +67,59 @@ BOUND_WITHOUT_CERTIFICATE_MESSAGE = (
 INVALID_CERTIFICATE_MESSAGE = (
     "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
 )
+
+
+class IntrospectedTokenErrorKind(enum.Enum):
+    """Why :func:`check_introspection_binding` refused a token before its
+    binding was checked."""
+
+    INACTIVE = "inactive"
+    """The response's ``active`` is not ``true``: the token "is not active"
+    (RFC 7662 §2.2). A resource server answers ``401`` with
+    ``error="invalid_token"`` (RFC 6750 §3.1)."""
+    INTROSPECTION_FAILED = "introspection_failed"
+    """The introspection request failed, or its response was refused (network
+    error, HTTP error, unparseable body, or a signed response that did not
+    verify). The token's state is unknown, so it is not accepted."""
+
+
+_INTROSPECTED_TOKEN_MESSAGES = {
+    IntrospectedTokenErrorKind.INACTIVE: (
+        "Introspected access token is not active (RFC 7662 §2.2)"
+    ),
+    IntrospectedTokenErrorKind.INTROSPECTION_FAILED: (
+        "Token introspection failed; the access token's state is unknown and it "
+        "is not accepted"
+    ),
+}
+
+
+class IntrospectedTokenError(TokenValidationException):
+    """Raised when an introspected token is inactive or introspection failed.
+
+    ``kind`` says why; the message is fixed per kind. For
+    ``INTROSPECTION_FAILED``, ``introspection_error_kind`` is the response's
+    ``error_kind`` (set for a refused signed response, else ``None``).
+    """
+
+    def __init__(
+        self,
+        kind: IntrospectedTokenErrorKind,
+        introspection_error_kind: IntrospectionErrorKind | None = None,
+    ) -> None:
+        self.kind = kind
+        self.introspection_error_kind = introspection_error_kind
+        super().__init__(
+            _INTROSPECTED_TOKEN_MESSAGES[kind],
+            details={
+                "kind": kind.value,
+                "introspection_error_kind": (
+                    None
+                    if introspection_error_kind is None
+                    else introspection_error_kind.value
+                ),
+            },
+        )
 
 
 class TokenBinding(enum.Enum):
@@ -221,9 +282,10 @@ def check_introspection_binding(
     proof must be signed by the bound key and carry the ``ath`` of
     *access_token*, and a client certificate must match ``cnf["x5t#S256"]``.
 
-    Call it after ``introspect_token`` and only accept the token when the
-    response is ``active`` and this returns. It does not check ``active``: an
-    inactive response carries no binding and is not checked.
+    It fails closed: a normal return means the token is active and its
+    binding is satisfied. A failed response, or one whose ``active`` is not
+    ``true`` (the token "is not active", RFC 7662 §2.2), raises
+    :class:`IntrospectedTokenError`.
 
     Args:
         response: The ``introspect_token`` response for *access_token*.
@@ -234,9 +296,11 @@ def check_introspection_binding(
             and the process-wide replay cache.
 
     Raises:
-        FailedResponseAccessError: If the introspection request failed.
         ConfigurationException: If *required_binding* is not ``NONE`` and
             *presentation* is ``None``.
+        IntrospectedTokenError: If the introspection failed
+            (``INTROSPECTION_FAILED``) or the token is not active
+            (``INACTIVE``).
         DPoPValidationError: If the DPoP binding fails, including a
             ``cnf.jkt`` token with no *presentation*.
         CertificateBindingError: If the certificate binding fails, including
@@ -244,10 +308,14 @@ def check_introspection_binding(
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
-    claims = response.claims or {}
     _require_presentation(required_binding, presentation)
+    if not response.is_successful:
+        raise IntrospectedTokenError(
+            IntrospectedTokenErrorKind.INTROSPECTION_FAILED, response.error_kind
+        )
+    claims = response.claims or {}
     if claims.get("active") is not True:
-        return
+        raise IntrospectedTokenError(IntrospectedTokenErrorKind.INACTIVE)
     _check_binding(claims, access_token, required_binding, dpop, presentation)
 
 
@@ -295,6 +363,8 @@ def _check_binding(
 
 __all__ = [
     "AuthorizationScheme",
+    "IntrospectedTokenError",
+    "IntrospectedTokenErrorKind",
     "TokenBinding",
     "TokenPresentation",
     "check_introspection_binding",

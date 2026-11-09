@@ -92,6 +92,8 @@ from ..core.state_validation import (
 )
 from ..core.token_binding import (
     AuthorizationScheme,
+    IntrospectedTokenError,
+    IntrospectedTokenErrorKind,
     TokenBinding,
     TokenPresentation,
     check_introspection_binding,
@@ -234,6 +236,8 @@ __all__ = [
     # HTTP Client
     "HTTPClient",
     "InMemoryDPoPReplayCache",
+    "IntrospectedTokenError",
+    "IntrospectedTokenErrorKind",
     # JWKS
     "IntrospectionErrorKind",
     "JsonWebAlgorithmsKeyTypes",

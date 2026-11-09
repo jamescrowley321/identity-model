@@ -84,9 +84,7 @@ response = introspect_token(
         client_secret=client_secret,
     )
 )
-if not response.is_successful or response.claims["active"] is not True:
-    ...  # 401
-check_introspection_binding(
+check_introspection_binding(  # raises unless active and correctly bound
     response,
     access_token,
     TokenPresentation(
@@ -109,9 +107,16 @@ check_introspection_binding(
 - `dpop=DPoPVerificationOptions(...)` sets the proof algorithms, `iat` window
   and replay cache.
 
-It does not check `active`; an inactive response is not checked. A failed
-response raises `FailedResponseAccessError`. `introspect_token` itself does not
-run the check: it is also used by clients that hold no request presentation.
+It fails closed: it returns normally only for an active token whose binding
+is satisfied. A response whose `active` is not `true` means the token "is not
+active" (RFC 7662 §2.2) and raises `IntrospectedTokenError` with kind
+`INACTIVE`. A failed or refused introspection response raises it with kind
+`INTROSPECTION_FAILED`, with `introspection_error_kind` set to the response's
+`error_kind` for a refused signed response. Both are
+`TokenValidationException`s; answer them with `401`
+`error="invalid_token"` (RFC 6750 §3.1). `introspect_token` itself still
+returns a result and never raises: it is also used by clients that hold no
+request presentation.
 
 ## Request Model
 
@@ -130,3 +135,7 @@ run the check: it is also used by clients that hold no request presentation.
 ::: py_identity_model.sync.introspection.introspect_token
 
 ::: py_identity_model.core.token_binding.check_introspection_binding
+
+::: py_identity_model.core.token_binding.IntrospectedTokenError
+
+::: py_identity_model.core.token_binding.IntrospectedTokenErrorKind
