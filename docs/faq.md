@@ -148,7 +148,7 @@ def get_valid_token():
 
 ### Can I use this with Flask or FastAPI?
 
-Yes! py-identity-model works great with both. See the [Examples](https://github.com/jamescrowley321/identity-model/tree/main/examples) directory for middleware implementations.
+Yes! py-identity-model works with both. See the [examples](https://github.com/jamescrowley321/identity-model/tree/main/py/examples) directory for a FastAPI middleware implementation, or use the [`fastapi-identity-model`](https://github.com/jamescrowley321/identity-model/tree/main/py/packages/fastapi-identity-model) package.
 
 ### How do I validate tokens in a decorator?
 
@@ -214,7 +214,7 @@ py-identity-model automatically handles key rotation by fetching the current JWK
 
 ### Can I use this with Django?
 
-Yes, though examples currently focus on Flask and FastAPI. The validation functions work the same way in Django views or middleware.
+Yes, though the examples currently focus on FastAPI. The validation functions work the same way in Django views or middleware.
 
 ### Does it work with API Gateway?
 
@@ -251,7 +251,7 @@ Check the [examples directory](https://github.com/jamescrowley321/identity-model
 
 ### Is there API documentation?
 
-Yes! See the [API Documentation](index.md) for detailed information on all classes and functions.
+Yes! See the [API Documentation](api/index.md) for detailed information on all classes and functions.
 
 ## Troubleshooting Questions
 

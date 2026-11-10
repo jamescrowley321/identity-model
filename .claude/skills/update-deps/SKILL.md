@@ -26,22 +26,24 @@ git checkout -b chore/update-dependencies main
 
 ## Step 3: Analyze what needs to change
 
-For each dependabot PR, determine if it modifies:
-- **`uv.lock` only** — a lockfile-only bump (no version constraint change needed)
-- **`pyproject.toml` + `uv.lock`** — a version constraint change
+Dependabot (`.github/dependabot.yml`) opens two kinds of PRs: `uv` updates for the Python workspace under `py/` (prefix `chore(deps)`) and `github-actions` updates to `.github/workflows/*.yml` (prefix `ci(deps)`). For each `uv` PR, determine if it modifies:
+- **`py/uv.lock` only** — a lockfile-only bump (no version constraint change needed)
+- **a `pyproject.toml` under `py/` + `py/uv.lock`** — a version constraint change
 
-For PRs that modify `pyproject.toml`, read the diff to understand the constraint change:
+For PRs that modify a `pyproject.toml`, read the diff (minus the lockfile) to understand the constraint change:
 ```bash
-gh pr diff <PR_NUMBER> -- pyproject.toml
+gh pr diff <PR_NUMBER> --exclude 'py/uv.lock'
 ```
 
-Lint tools such as ruff are not pinned in `.pre-commit-config.yaml`: every hook is a make target running the version in `uv.lock`, so the lock update covers them.
+For `github-actions` PRs, apply the same pinned-SHA + version-comment change to the affected workflow files.
+
+Lint tools such as ruff are not pinned in `.pre-commit-config.yaml`: every hook is a make target running the version in `py/uv.lock`, so the lock update covers them.
 
 ## Step 4: Apply changes
 
-1. For **pyproject.toml constraint changes**: Edit `pyproject.toml` to update the version bounds.
-2. Run `uv sync` to regenerate `uv.lock` with all updates at once.
-3. Run `uv lock --upgrade` if `uv sync` alone doesn't pick up all the new versions.
+1. For **pyproject.toml constraint changes**: Edit the affected `pyproject.toml` under `py/` to update the version bounds.
+2. Run `cd py && uv sync --all-packages` to regenerate `py/uv.lock` with all updates at once.
+3. Run `cd py && uv lock --upgrade-package <name>` (or `uv lock --upgrade`) if `uv sync` alone doesn't pick up all the new versions.
 
 ## Step 5: Verify
 
@@ -53,16 +55,16 @@ make test
 ```
 
 If tests or lint fail, investigate and fix. Common issues:
-- New linter rules from ruff upgrades — run `uv run ruff check --fix src/`
+- New linter rules from ruff upgrades — run `cd py && uv run ruff check --fix src/`
 - Type errors from pyrefly upgrades — fix type annotations
 - Breaking changes in dependencies — check changelogs from the dependabot PR bodies
 
 ## Step 6: Commit and push
 
-Stage only the changed files (typically `pyproject.toml`, `uv.lock`, `.pre-commit-config.yaml`):
+Stage only the changed files (typically `py/pyproject.toml`, `py/uv.lock`, and any workflow files touched by `github-actions` updates):
 
 ```bash
-git add pyproject.toml uv.lock .pre-commit-config.yaml
+git add py/pyproject.toml py/uv.lock
 ```
 
 Commit with a conventional commit message:

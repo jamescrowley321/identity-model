@@ -12,8 +12,12 @@ All integration tests are provider-agnostic and should pass against any complian
 ## Testing Against ORY (Default)
 
 # Environment Configuration
+
+Without `--env-file`, the suite loads `.env` from pytest's working directory —
+`py/` when run via `make test-integration-ory` — so create it there (or export
+the variables). `TEST_EXPIRED_TOKEN` and `TEST_AUDIENCE` are optional.
 ```shell
-touch .env
+touch py/.env
 
 TEST_DISCO_ADDRESS=
 TEST_JWKS_ADDRESS=
@@ -25,12 +29,12 @@ TEST_SCOPE=
 ```
 
 ```shell
-export $(cat .env | xargs)
+export $(cat py/.env | xargs)
 ```
 
+For a self-hosted Hydra, `ory_create_client.sh` creates a client-credentials client:
 ```shell
-client=$(hydra \
-    hydra create client \
+client=$(hydra create client \
     --endpoint http://127.0.0.1:4445/ \
     --format json \
     --grant-type client_credentials)
@@ -39,8 +43,7 @@ client=$(hydra \
 client_id=$(echo $client | jq -r '.client_id')
 client_secret=$(echo $client | jq -r '.client_secret')
 
-hydra \
-  hydra perform client-credentials \
+hydra perform client-credentials \
   --endpoint http://127.0.0.1:4444/ \
   --client-id "$client_id" \
   --client-secret "$client_secret"
@@ -57,9 +60,9 @@ hydra \
 
 ### Configuration
 
-1. Copy the Descope environment template:
+1. Copy the Descope environment template to the repo root:
 ```bash
-cp .env.descope.example .env.descope
+cp py/src/tests/integration/.env.descope.example .env.descope
 ```
 
 2. Edit `.env.descope` and replace the placeholders:
@@ -105,7 +108,7 @@ make test-integration-descope
 
 Or run pytest directly:
 ```bash
-uv run pytest src/tests -m integration -v -n auto
+cd py && uv run pytest src/tests -m integration --env-file=../.env.descope -v -n auto
 ```
 
 ### Descope-Specific Notes
@@ -212,3 +215,8 @@ given provider (Keycloak, node-oidc, ORY, Descope) exercises live.
 ## Testing Against Local Identity Server
 
 For development and testing with a local OIDC provider:
+
+```bash
+# Create .env.local at the repo root with the TEST_* variables shown above
+make test-integration-local   # runs the suite with --env-file=../.env.local
+```

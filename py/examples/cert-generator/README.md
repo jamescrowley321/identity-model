@@ -15,13 +15,13 @@ This container generates self-signed SSL/TLS certificates for local development 
    - Creates a PFX bundle for ASP.NET Core (`aspnetapp.pfx`)
 
 3. **Configures Subject Alternative Names (SAN)**
-   - DNS: identityserver
+   - DNS: `$CERT_HOSTNAME` (default `identityserver`)
    - DNS: localhost
    - IP: 127.0.0.1
 
 ## Usage
 
-The certificate generator runs automatically when starting the Docker Compose stack:
+The certificate generator runs automatically when starting the Docker Compose stack (from `py/examples/`):
 
 ```bash
 docker compose -f docker-compose.test.yml up
@@ -31,7 +31,7 @@ docker compose -f docker-compose.test.yml up
 
 - `CERT_HOSTNAME` - The hostname for the certificate (default: `identityserver`)
 - `CERT_DAYS` - Certificate validity period in days (default: `365`)
-- `CERT_PASSWORD` - Password for the PFX file (default: `password`, recommended: set via `.env` file)
+- `CERT_PASSWORD` - Password for the PFX file (script default: `password`; `docker-compose.test.yml` passes `${CERT_PASSWORD:-SuperSecurePassword123!}`, so override it via the environment or a `.env` file)
 
 ### Certificate Reuse
 

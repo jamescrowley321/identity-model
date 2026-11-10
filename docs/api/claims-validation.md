@@ -88,8 +88,8 @@ validation time: `require_claims()` / `require_scopes()` with zero arguments,
 
 In `"any"` mode, only a `ClaimsValidationError` counts as a clean rejection to
 aggregate — any other exception from a member propagates immediately.
-Validators are synchronous callables; composing async validators is not
-supported.
+Composed members must be synchronous (the combined validator works in both the
+sync and async validation paths); composing async validators is not supported.
 
 ## Backward compatibility
 
