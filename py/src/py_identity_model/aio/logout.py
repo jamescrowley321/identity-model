@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.logout_logic import validate_logout_token_claims
-from .token_validation import _validate_jwt
+from .token_validation import _validate_jwt_without_binding
 
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ async def validate_logout_token(
         LogoutTokenValidationException: If a Logout-Token-specific rule fails.
         ConfigurationException: If the configuration is invalid.
     """
-    claims = await _validate_jwt(
+    claims = await _validate_jwt_without_binding(
         logout_token,
         token_validation_config,
         disco_doc_address=disco_doc_address,

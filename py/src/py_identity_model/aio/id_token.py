@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..core.id_token_logic import check_azp_config, validate_id_token_claims
 from ..core.parsers import extract_jwt_header_fields
-from .token_validation import _validate_jwt
+from .token_validation import _validate_jwt_without_binding
 
 
 if TYPE_CHECKING:
@@ -111,7 +111,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         ConfigurationException: If the configuration is invalid.
     """
     check_azp_config(token_validation_config.audience, validate_azp)
-    claims = await _validate_jwt(
+    claims = await _validate_jwt_without_binding(
         id_token,
         token_validation_config,
         disco_doc_address=disco_doc_address,
