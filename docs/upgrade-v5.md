@@ -745,7 +745,8 @@ In 4.x, a discovery-mode `TokenValidationConfig` with `algorithms=None` (the
 default) accepted any algorithm that matched the resolved key, including
 `HS256` with an `oct` key from the JWK Set. In 5.0, `None` means
 `DEFAULT_ALLOWED_ALGORITHMS`: RS256/384/512, PS256/384/512, ES256/384/512 and
-EdDSA, the same default as the Go and Rust libraries. A token signed with any
+EdDSA. Go has the same default; Rust's omits ES512
+([#1011](https://github.com/jamescrowley321/identity-model/issues/1011)). A token signed with any
 other algorithm raises `TokenValidationException`
 (`"Algorithm 'HS256' is not in the allowed algorithms"`).
 

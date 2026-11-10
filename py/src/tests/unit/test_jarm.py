@@ -232,6 +232,10 @@ class TestSelectJarmAlgorithm:
             ([], []),
             (["ES256", "HS256", "ES256K", "PS256"], ["ES256", "PS256"]),
             (["HS256"], []),
+            (False, []),
+            (0, []),
+            (5, []),
+            ({"ES256": True}, []),
         ],
     )
     def test_advertised_algorithms_filtered_to_verify_default(

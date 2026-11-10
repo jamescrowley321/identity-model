@@ -62,7 +62,7 @@ Each implementation keeps one JWS algorithm allowlist per purpose:
 | Purpose | Python | Go | Rust |
 |---|---|---|---|
 | Verify: every inbound JWS (access and ID tokens, DPoP proofs, signed introspection responses, JARM responses) | `DEFAULT_ALLOWED_ALGORITHMS` | `jwt.defaultAllowedAlgorithms` | `DEFAULT_ALLOWED_ALGORITHMS` |
-| Sign: outbound JWTs (client assertions, request objects, DPoP proofs) | `SUPPORTED_SIGNING_ALGORITHMS` | | |
+| Sign: outbound JWTs (client assertions, request objects) | `SUPPORTED_SIGNING_ALGORITHMS` | | |
 | FAPI 2.0 | `FAPI2_ALLOWED_SIGNING_ALGORITHMS` | | |
 
 - **Verify.** RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512 and

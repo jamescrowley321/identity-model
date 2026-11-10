@@ -35,7 +35,10 @@ from py_identity_model.core.dpop_verify import (
 )
 from py_identity_model.core.introspection_jwt import _algorithm, _Refused
 from py_identity_model.core.jarm import select_jarm_algorithm
-from py_identity_model.exceptions import JarmValidationException
+from py_identity_model.exceptions import (
+    JarmValidationException,
+    KeyAlgorithmMismatchException,
+)
 from py_identity_model.sync import validate_token
 
 
@@ -242,23 +245,10 @@ class TestIntrospectionNoneIsVerifyDefault:
 
 
 @pytest.mark.unit
-class TestVerifyIndependentOfSigning:
-    """Extending the signing set must not widen any verification default."""
+class TestVerifyRefusesSignableAlgOutsideSet:
+    """ES256K is signable but not in the verify set; every verifier refuses it."""
 
-    @pytest.fixture
-    def wider_signing(self, monkeypatch):
-        monkeypatch.setattr(
-            jwt_signing,
-            "SUPPORTED_SIGNING_ALGORITHMS",
-            jwt_signing.SUPPORTED_SIGNING_ALGORITHMS | {"ES256K"},
-        )
-
-    @pytest.mark.usefixtures("wider_signing")
-    def test_verify_set_unchanged(self):
-        assert DEFAULT_ALLOWED_ALGORITHMS == VERIFY_SET
-
-    @pytest.mark.usefixtures("wider_signing")
-    def test_token_validation_refuses_new_signing_alg(self, keys):
+    def test_token_validation_refuses(self, keys):
         jwk = _public_jwk(keys["ES256K"])
 
         with pytest.raises(TokenValidationException) as exc_info:
@@ -269,15 +259,55 @@ class TestVerifyIndependentOfSigning:
             "allowed": sorted(VERIFY_SET),
         }
 
-    @pytest.mark.usefixtures("wider_signing")
-    def test_dpop_options_refuse_new_signing_alg(self):
+    def test_dpop_options_refuse(self):
         with pytest.raises(ValueError, match="ES256K"):
             DPoPVerificationOptions(algorithms=frozenset({"ES256K"}))
 
-    @pytest.mark.usefixtures("wider_signing")
-    def test_jarm_default_refuses_new_signing_alg(self):
+    def test_jarm_default_refuses(self):
         with pytest.raises(JarmValidationException, match="not in the allowed set"):
             select_jarm_algorithm("ES256K", None)
+
+
+@pytest.mark.unit
+class TestManualKeyDeclaredAlg:
+    """A manual key that declares ``alg`` verifies only that algorithm."""
+
+    def test_pinned_key_rejects_other_alg(self, keys):
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256", "kid": "k1"}
+
+        with pytest.raises(KeyAlgorithmMismatchException) as exc_info:
+            validate_token(_token(keys["PS256"], "PS256"), _manual_config(jwk))
+
+        assert exc_info.value.message == (
+            "Key algorithm 'RS256' does not match JWT algorithm 'PS256'"
+        )
+        assert exc_info.value.token_part == "header"
+        assert exc_info.value.details == {
+            "kid": "k1",
+            "key_alg": "RS256",
+            "jwt_alg": "PS256",
+        }
+
+    async def test_pinned_key_rejects_other_alg_async(self, keys):
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256", "kid": "k1"}
+
+        with pytest.raises(KeyAlgorithmMismatchException):
+            await avalidate_token(_token(keys["PS256"], "PS256"), _manual_config(jwk))
+
+    def test_pinned_key_accepts_its_alg(self, keys):
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "PS256"}
+
+        claims = validate_token(_token(keys["PS256"], "PS256"), _manual_config(jwk))
+
+        assert claims["sub"] == "user-1"
+
+    def test_explicit_algorithms_unchanged(self, keys):
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256"}
+        config = _manual_config(jwk, algorithms=["PS256"])
+
+        claims = validate_token(_token(keys["PS256"], "PS256"), config)
+
+        assert claims["sub"] == "user-1"
 
 
 @pytest.mark.unit

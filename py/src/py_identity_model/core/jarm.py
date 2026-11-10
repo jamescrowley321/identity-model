@@ -139,9 +139,12 @@ def advertised_jarm_algorithms(advertised: list[str] | None) -> list[str] | None
 
     ``None`` (not advertised) stays ``None``, which
     :func:`select_jarm_algorithm` reads as ``DEFAULT_ALLOWED_ALGORITHMS``.
+    A value that is not a list allows nothing.
     """
     if advertised is None:
         return None
+    if not isinstance(advertised, list):
+        return []
     return [
         alg
         for alg in advertised
