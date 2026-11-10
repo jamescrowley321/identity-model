@@ -484,39 +484,36 @@ def validate_token(
         ConfigurationException: If configuration is invalid
         RuntimeError: If *http_client* has been closed
     """
-    return _validate_jwt(
+    # Fail on a bad config or a missing presentation before any network I/O.
+    validate_token_config(token_validation_config)
+    require_presentation(token_validation_config, presentation)
+    claims = _validate_jwt_without_binding(
         jwt,
         token_validation_config,
         disco_doc_address,
         http_client,
         cache=cache,
-        presentation=presentation,
-        access_token=True,
     )
+    check_token_binding(claims, jwt, token_validation_config, presentation)
+    return claims
 
 
-def _validate_jwt(
+def _validate_jwt_without_binding(
     jwt: str,
     token_validation_config: TokenValidationConfig,
     disco_doc_address: str | None,
     http_client: HTTPClient | None,
     *,
     cache: ValidationCache | None,
-    presentation: TokenPresentation | None = None,
-    access_token: bool = False,
 ) -> dict:
-    """Validate a JWT; check its sender constraint only if *access_token*.
+    """Validate a JWT without checking its sender constraint.
 
-    RFC 9449 §7 and RFC 8705 §3 bind access tokens presented to a protected
-    resource. ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel
-    Logout §2.6) arrive with no presentation, so their validators leave
-    *access_token* at its ``False`` default and a ``cnf`` claim in them is
-    not checked.
+    For ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout
+    §2.6), which arrive with no presentation. An access token must go through
+    ``validate_token``, which adds the RFC 9449 §7 / RFC 8705 §3 check.
     """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)
-    if access_token:
-        require_presentation(token_validation_config, presentation)
 
     if token_validation_config.perform_disco:
         policy = resolve_discovery_policy(
@@ -545,8 +542,6 @@ def _validate_jwt(
         validate_config_for_manual_validation(token_validation_config)
         decoded_token = decode_with_config(jwt, token_validation_config)
 
-    if access_token:
-        check_token_binding(decoded_token, jwt, token_validation_config, presentation)
     validate_claims(decoded_token, token_validation_config)
     log_validation_success(decoded_token)
     return decoded_token
