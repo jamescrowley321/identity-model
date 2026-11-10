@@ -94,8 +94,9 @@ except DPoPValidationError as exc:
     ...
 ```
 
-The proof checks run in RFC 9449 §4.3 order: `typ` is `dpop+jwt`; `alg` is an
-asymmetric algorithm DPoP keys support (`none` and `HS*` are refused); the `jwk`
+The proof checks run in RFC 9449 §4.3 order: `typ` is `dpop+jwt`; `alg` is in
+`DPoPVerificationOptions.algorithms`, `DEFAULT_ALLOWED_ALGORITHMS` by default
+(`none` and `HS*` are refused); the `jwk`
 header is a public key that fits `alg` and meets the RSA/EC strength floor; the
 signature verifies with it; `htm` equals the request method; `htu` equals the
 request URI, ignoring query and fragment, with scheme and host case and the
@@ -145,6 +146,7 @@ case-insensitive):
 ```python
 from fastapi_identity_model import TokenValidationMiddleware
 from py_identity_model import (
+    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
@@ -156,7 +158,7 @@ app.add_middleware(
     audience=settings.audience,
     required_binding=TokenBinding.DPOP,  # or settings.required_binding
     dpop=DPoPVerificationOptions(
-        algorithms=frozenset({"ES256", "PS256", "EdDSA"}),
+        algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS,  # ES256, PS256, EdDSA
         replay_cache=InMemoryDPoPReplayCache(),
     ),
 )

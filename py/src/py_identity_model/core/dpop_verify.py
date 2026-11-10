@@ -30,7 +30,8 @@ import jwt as pyjwt
 from jwt.api_jws import PyJWS
 
 from ..exceptions import TokenValidationException, WeakKeyException
-from .dpop import _SUPPORTED_ALGORITHMS, compute_ath, compute_jwk_thumbprint
+from .dpop import compute_ath, compute_jwk_thumbprint
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from .key_strength import enforce_key_strength
 from .process_local import ProcessLocal
 
@@ -52,7 +53,11 @@ _ALG_KEY_TYPES: types.MappingProxyType[str, tuple[str, str | None]] = (
             "ES384": ("EC", "P-384"),
             "ES512": ("EC", "P-521"),
             "PS256": ("RSA", None),
+            "PS384": ("RSA", None),
+            "PS512": ("RSA", None),
             "RS256": ("RSA", None),
+            "RS384": ("RSA", None),
+            "RS512": ("RSA", None),
             "EdDSA": ("OKP", "Ed25519"),
         }
     )
@@ -295,7 +300,9 @@ def _is_number(value: object) -> bool:
 
 def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
     # Module-level so the mutation gate can reach it; mutmut skips @property bodies.
-    return tuple(sorted(_SUPPORTED_ALGORITHMS if algorithms is None else algorithms))
+    return tuple(
+        sorted(DEFAULT_ALLOWED_ALGORITHMS if algorithms is None else algorithms)
+    )
 
 
 @dataclass(frozen=True)
@@ -303,10 +310,11 @@ class DPoPVerificationOptions:
     """Resource-server settings for :func:`verify_dpop_proof`.
 
     Attributes:
-        algorithms: Allowed proof ``alg`` values, a subset of the asymmetric
-            algorithms DPoP keys support (ES256/384/512, PS256, RS256, EdDSA).
-            ``None`` allows all of them. FAPI 2.0 Security Profile §5.4.1
-            allows ``{"ES256", "PS256", "EdDSA"}``.
+        algorithms: Allowed proof ``alg`` values, a subset of
+            ``DEFAULT_ALLOWED_ALGORITHMS`` (RS256/384/512, PS256/384/512,
+            ES256/384/512, EdDSA). ``None`` allows all of them. For FAPI 2.0
+            (Security Profile §5.4.1) pass
+            ``FAPI2_ALLOWED_SIGNING_ALGORITHMS`` (PS256, ES256, EdDSA).
         max_age: Seconds a proof is accepted after its ``iat``.
         iat_leeway: Accepted clock skew in seconds, either side of the window.
         replay_cache: Where ``jti`` values are recorded. ``None`` uses the
@@ -320,11 +328,11 @@ class DPoPVerificationOptions:
 
     def __post_init__(self) -> None:
         if self.algorithms is not None:
-            unsupported = set(self.algorithms) - _SUPPORTED_ALGORITHMS
+            unsupported = set(self.algorithms) - DEFAULT_ALLOWED_ALGORITHMS
             if unsupported or not self.algorithms:
                 raise ValueError(
                     f"algorithms must be a non-empty subset of "
-                    f"{sorted(_SUPPORTED_ALGORITHMS)}; got unsupported "
+                    f"{sorted(DEFAULT_ALLOWED_ALGORITHMS)}; got unsupported "
                     f"{sorted(unsupported)}"
                 )
         if not _is_number(self.max_age) or self.max_age <= 0:
@@ -521,7 +529,7 @@ def verify_dpop_proof(
         raise DPoPValidationError(DPoPErrorKind.MALFORMED)
 
     allowed = (
-        _SUPPORTED_ALGORITHMS if options.algorithms is None else options.algorithms
+        DEFAULT_ALLOWED_ALGORITHMS if options.algorithms is None else options.algorithms
     )
     alg, jwk = _check_header(proof, allowed)
     payload = _verify_signature(proof, alg, jwk)
