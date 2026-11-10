@@ -172,6 +172,17 @@ class TestCooldownSurvivesShortLivedClients:
         assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
 
 
+@pytest.fixture
+def fresh_default_caches():
+    """Empty default caches, so entries other tests left there can't leak in."""
+    _reset_default_validation_cache()
+    _reset_default_async_validation_cache()
+    yield
+    _reset_default_validation_cache()
+    _reset_default_async_validation_cache()
+
+
+@pytest.mark.usefixtures("fresh_default_caches")
 class TestInjectedCache:
     @respx.mock
     def test_sync_cache_config_sets_ttl_not_client_config(self):
