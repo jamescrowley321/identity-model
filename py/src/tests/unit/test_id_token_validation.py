@@ -31,6 +31,7 @@ from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
     IdTokenValidationException,
+    InvalidAudienceException,
     TokenValidationException,
     UntrustedAudienceException,
 )
@@ -867,7 +868,11 @@ class TestSyncValidateIdToken:
                 )
             return type(exc_info.value), str(exc_info.value)
 
-        assert outcome("") == outcome(None)
+        empty = outcome("")
+        # PyJWT rejects any aud when no audience is configured, before the
+        # trusted_audiences rule runs.
+        assert empty[0] is InvalidAudienceException
+        assert empty == outcome(None)
 
     @respx.mock
     def test_valid_signed_id_token_accepted(self, rsa_keypair):
@@ -1138,7 +1143,9 @@ class TestAsyncValidateIdToken:
                 )
             return type(exc_info.value), str(exc_info.value)
 
-        assert await outcome("") == await outcome(None)
+        empty = await outcome("")
+        assert empty[0] is InvalidAudienceException
+        assert empty == await outcome(None)
 
     @pytest.mark.asyncio
     @respx.mock

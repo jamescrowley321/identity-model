@@ -670,9 +670,12 @@ library. In 4.x it counted as configured:
 
 - `validate_azp=True` with `client_id=""` now raises
   `AzpRequiresClientIdError`.
-- `""` is no longer a trusted audience, so a token whose `aud` lists `""`
-  beside other audiences is rejected with `UntrustedAudienceException` unless
-  `""` is listed in `trusted_audiences`.
+- `""` is no longer a configured audience, so `validate_id_token` rejects any
+  token with an `aud` claim with `InvalidAudienceException`, exactly as with
+  no `client_id`. In 4.x a token whose `aud` listed `""` was accepted.
+- In `validate_id_token_claims`, `client_id=""` no longer makes `""` a trusted
+  audience: a token whose `aud` lists `""` is rejected with
+  `UntrustedAudienceException` unless `""` is listed in `trusted_audiences`.
 
 This applies to `validate_id_token` only. `validate_token` still treats
 `audience=""` as a configured audience, so a token with no `aud` is rejected;
