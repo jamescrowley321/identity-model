@@ -1,7 +1,7 @@
 # Shared Test Infrastructure
 
 A local, multi-provider OIDC stack, run via Docker Compose, that **all**
-language suites (Python at the repo root, `/go`, `/rust`) run their
+language suites (Python under `/py`, `/go`, `/rust`) run their
 integration tests against — plus cloud provider profiles (Ory, Descope) that
 reuse the same test suites. Testing every change against heterogeneous
 providers catches provider-specific behavior a single fixture cannot.
@@ -16,7 +16,7 @@ providers catches provider-specific behavior a single fixture cannot.
 
 > `descope/` in this directory is unrelated **Terraform** (Descope project +
 > GitHub CI wiring), not a docker fixture. A separate Duende IdentityServer
-> stack under `examples/` (ports 5000/5001) serves the packaged examples via
+> stack under `py/examples/` (ports 5000/5001) serves the packaged examples via
 > `make test-examples`; the `identityserver/` fixture here (port 9001) is the
 > Go/Rust cross-provider profile.
 
@@ -38,8 +38,10 @@ responds (Compose `healthcheck`s gate `--wait`, so CI can't race a
 half-booted provider; the Keycloak probe additionally waits for the realm
 import to finish).
 
-> All fixtures share one compose project, so every `make test-integration-*`
-> target's teardown runs `docker compose down` for the whole project —
+> All fixtures share one compose project, so every fixture-backed `make`
+> target's teardown (`test-integration-node-oidc`, `-keycloak`, `-go`, `-rust`,
+> the `test-harness-*` targets that boot a provider) runs `docker compose down`
+> for the whole project —
 > including providers you started separately with `make infra-up`. Re-run
 > `make infra-up` afterwards if you need them back.
 
@@ -47,7 +49,7 @@ import to finish).
 
 All suites read the shared `TEST_*` environment convention:
 
-- **Python** (repo root): `make test-integration-node-oidc` /
+- **Python** (`/py`, via the repo-root `Makefile`): `make test-integration-node-oidc` /
   `make test-integration-keycloak` source the per-provider profiles
   `.env.node-oidc` / `.env.keycloak` at the repo root.
 - **Go** (`/go`): with no `TEST_*` env at all, `go test -tags=integration ./...`
