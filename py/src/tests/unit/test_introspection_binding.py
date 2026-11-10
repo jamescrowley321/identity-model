@@ -246,6 +246,15 @@ class TestUnboundIntrospection:
 
         assert kind is DPoPErrorKind.NOT_BOUND
 
+    def test_required_mtls_without_certificate_rejected(self):
+        message = (
+            "required_binding=mtls but no client certificate was presented "
+            "(RFC 8705 §3)"
+        )
+
+        with pytest.raises(CertificateBindingError, match=f"^{re.escape(message)}$"):
+            _check(_response(), _mtls(None), required_binding=TokenBinding.MTLS)
+
     @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
     def test_required_binding_without_presentation_is_config_error(self, binding):
         with pytest.raises(ConfigurationException):

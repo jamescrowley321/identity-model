@@ -287,6 +287,11 @@ def check_introspection_binding(
     ``true`` (the token "is not active", RFC 7662 §2.2), raises
     :class:`IntrospectedTokenError`.
 
+    A ``cnf`` that is not a JSON object (RFC 7800 §3.1) carries no
+    confirmation method this function can check, so the token is treated as
+    unbound, as on the JWT path. Set *required_binding* to require a sender
+    constraint on every token.
+
     Args:
         response: The ``introspect_token`` response for *access_token*.
         access_token: The access token as received on the request.
