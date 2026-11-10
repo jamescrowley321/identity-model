@@ -124,12 +124,13 @@ def apply_client_auth(
         return None
 
     if method.uses_client_secret:
-        if not client_secret and request.client_auth_method is not None:
+        secret = client_secret or ""
+        if not secret and request.client_auth_method is not None:
             raise _missing(method, "client_secret")
         if method is ClientAuthMethod.CLIENT_SECRET_BASIC:
-            return basic_auth_credentials(request.client_id, client_secret or "")
+            return basic_auth_credentials(request.client_id, secret)
         params[TokenRequest.CLIENT_ID.value] = request.client_id
-        params[TokenRequest.CLIENT_SECRET.value] = client_secret or ""
+        params[TokenRequest.CLIENT_SECRET.value] = secret
         return None
 
     params[TokenRequest.CLIENT_ID.value] = request.client_id
