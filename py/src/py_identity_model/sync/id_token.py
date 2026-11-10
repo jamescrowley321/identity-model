@@ -12,7 +12,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from ..core.id_token_logic import check_azp_config, validate_id_token_claims
+from ..core.id_token_logic import (
+    check_azp_config,
+    unset_empty_client_id,
+    validate_id_token_claims,
+)
 from ..core.parsers import extract_jwt_header_fields
 from .token_validation import _validate_jwt_without_binding
 
@@ -109,6 +113,7 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
             ``token_validation_config.audience``. Raised before any I/O.
         ConfigurationException: If the configuration is invalid.
     """
+    token_validation_config = unset_empty_client_id(token_validation_config)
     check_azp_config(token_validation_config.audience, validate_azp)
     claims = _validate_jwt_without_binding(
         id_token,

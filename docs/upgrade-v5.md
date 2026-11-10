@@ -741,6 +741,27 @@ claims = validate_id_token(
 )
 ```
 
+### An empty `client_id` means no `client_id` ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
+
+`client_id=""` (or `TokenValidationConfig(audience="")` with
+`validate_id_token`) is now the same as passing no `client_id`, as in the Go
+library. In 4.x it counted as configured:
+
+- `validate_azp=True` with `client_id=""` now raises
+  `AzpRequiresClientIdError`.
+- `""` is no longer a configured audience, so `validate_id_token` rejects any
+  token with an `aud` claim with `InvalidAudienceException`, exactly as with
+  no `client_id`. In 4.x a token whose `aud` listed `""` was accepted.
+- In `validate_id_token_claims`, `client_id=""` no longer makes `""` a trusted
+  audience: a token whose `aud` lists `""` is rejected with
+  `UntrustedAudienceException` unless `""` is listed in `trusted_audiences`.
+
+This applies to `validate_id_token` only. `validate_token` still treats
+`audience=""` as a configured audience, so a token with no `aud` is rejected;
+unsetting it there would turn the `aud` check off.
+
+Pass your real `client_id`.
+
 ### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
 
 When you pass `access_token=` or `code=`, the matching hash claim is still
@@ -817,6 +838,25 @@ try:
 except KeyNotFoundException as exc:
     print(exc.details["kid"], exc.details["available_kids"])
 ```
+
+### An empty `kid` or `use` means absent; `key_ops` is accepted ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
+
+5.0 reads JWKs the way the Go and Rust libraries do:
+
+- `"kid": ""` in a token header means the token has no `kid`: the key is
+  chosen as for a token without one (the single signing key, or
+  `AmbiguousKeyException`). In 4.x it was looked up as the key ID `""`. A JWK
+  with `"kid": ""` is parsed with `kid=None`.
+- `"use": ""` on a JWK means `use` is absent, so the key is a signing key. In
+  4.x the key was dropped.
+- A JWK with both `use` and `key_ops`, with `key_ops` values outside the RFC
+  7517 §4.3 registry, or with a `use` other than `sig`, `enc` or an `https://`
+  URI is now accepted. In 4.x it was dropped. A key whose `use` is anything
+  other than `sig` or absent still never verifies a signature.
+
+`key_ops` does not affect whether a key verifies. When a JWK Set is parsed, a
+`key_ops` that is not a list of strings, or a `use` that is not a string,
+still makes the key unusable.
 
 ### `algorithms=None` allows only asymmetric algorithms ([#952](https://github.com/jamescrowley321/identity-model/issues/952))
 

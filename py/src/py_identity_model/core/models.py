@@ -217,6 +217,11 @@ class JsonWebKey:
 
     def __post_init__(self):
         """Validate the JWK after initialization"""
+        # An empty ``kid`` or ``use`` means the member is absent.
+        if self.kid == "":
+            self.kid = None
+        if self.use == "":
+            self.use = None
         if not self.kty:
             raise ConfigurationException(
                 "The 'kty' (Key Type) parameter is required",
@@ -252,38 +257,32 @@ class JsonWebKey:
             )
 
     def _validate_use_parameter(self):
-        """Validate 'use' parameter per RFC 7517 Section 4.2"""
-        if self.use is None:
-            return
+        """Validate 'use' parameter per RFC 7517 Section 4.2.
 
-        valid_use_values = ["sig", "enc"]
-        if self.use not in valid_use_values and not self.use.startswith(
-            "https://",
-        ):
+        Any string is accepted: ``sig`` marks a signing key, and any other
+        value (``enc``, a URI, or an unregistered value) marks a key that
+        never verifies a signature (see ``is_signing_key``).
+        """
+        if self.use is not None and not isinstance(self.use, str):
             raise ConfigurationException(
-                f"Invalid 'use' parameter: {self.use}. Must be 'sig', 'enc', or a URI",
+                f"Invalid 'use' parameter: {self.use!r}. Must be a string",
             )
 
     def _validate_key_ops_parameter(self):
-        """Validate 'key_ops' parameter per RFC 7517 Section 4.3"""
+        """Validate 'key_ops' parameter per RFC 7517 Section 4.3.
+
+        Unregistered operation values are accepted (§4.3 allows them); only
+        a value that is not a list of strings is rejected.
+        """
         if self.key_ops is None:
             return
-
-        valid_key_ops = [
-            "sign",
-            "verify",
-            "encrypt",
-            "decrypt",
-            "wrapKey",
-            "unwrapKey",
-            "deriveKey",
-            "deriveBits",
-        ]
-        for op in self.key_ops:
-            if op not in valid_key_ops:
-                raise ConfigurationException(
-                    f"Invalid key operation: {op}. Valid operations: {valid_key_ops}",
-                )
+        if not isinstance(self.key_ops, list) or not all(
+            isinstance(op, str) for op in self.key_ops
+        ):
+            raise ConfigurationException(
+                f"Invalid 'key_ops' parameter: {self.key_ops!r}. "
+                "Must be a list of strings",
+            )
 
     def _validate_key_parameters(self):
         """Validate required parameters based on the key type"""
@@ -298,12 +297,8 @@ class JsonWebKey:
         # Validate 'use' and 'key_ops' parameters
         self._validate_use_parameter()
         self._validate_key_ops_parameter()
-
-        # Validate mutual exclusivity per RFC 7517 Section 4.3
-        if self.use is not None and self.key_ops is not None:
-            raise ConfigurationException(
-                "The 'use' and 'key_ops' parameters are mutually exclusive",
-            )
+        # RFC 7517 §4.3 says 'use' and 'key_ops' SHOULD NOT be used together;
+        # a key carrying both is accepted.
 
     @classmethod
     def from_json(cls, json_str: str) -> JsonWebKey:
