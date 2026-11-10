@@ -53,6 +53,73 @@ The authorization server advertises its algorithms in
 `FAPI2_ALLOWED_SIGNING_ALGORITHMS` for FAPI 2.0 (Message Signing §5.5.2);
 `none` and `HS*` are refused.
 
+## Sender-Constrained Opaque Tokens
+
+A resource server that authorizes an opaque access token through
+introspection learns its binding from the response: `cnf.jkt` for a DPoP-bound
+token (RFC 9449 §6.2) or `cnf["x5t#S256"]` for a certificate-bound token
+(RFC 8705 §3.2). A resource server "MUST reject a DPoP-bound access token
+received as a bearer token" (RFC 9449 §7.2), and "compares that certificate
+hash to a hash of the client certificate … and rejects the request if they do
+not match" (RFC 8705 §3.2). `check_introspection_binding` applies these checks
+with the same rules and errors as `validate_token` (see
+[DPoP](dpop.md#resource-server-verification)):
+
+```python
+from py_identity_model import (
+    AuthorizationScheme,
+    TokenIntrospectionRequest,
+    TokenPresentation,
+    check_introspection_binding,
+    introspect_token,
+)
+
+scheme, _, access_token = request.headers.get("Authorization", "").partition(" ")
+schemes = {"bearer": AuthorizationScheme.BEARER, "dpop": AuthorizationScheme.DPOP}
+if scheme.lower() not in schemes or not access_token:
+    ...  # 401
+response = introspect_token(
+    TokenIntrospectionRequest(
+        address=disco.introspection_endpoint,
+        token=access_token,
+        client_id="my-api",
+        client_secret=client_secret,
+    )
+)
+check_introspection_binding(  # raises unless active and correctly bound
+    response,
+    access_token,
+    TokenPresentation(
+        scheme=schemes[scheme.lower()],
+        method=request.method,
+        url="https://api.example.com/orders",  # the URI the client addressed
+        dpop_proof=request.headers.get("DPoP"),  # for cnf.jkt
+        client_certificate=client_certificate,  # for cnf["x5t#S256"], from mTLS
+    ),
+)
+```
+
+- `cnf.jkt` with no presentation raises `DPoPValidationError` (`PROOF_REQUIRED`);
+  with one, the scheme must be `DPoP` and the proof must be signed by the bound
+  key, with `ath` the hash of the opaque token.
+- `cnf["x5t#S256"]` with no presentation, no certificate or another
+  certificate raises `CertificateBindingError`.
+- An unbound token passes. `required_binding=TokenBinding.DPOP` or `MTLS`
+  refuses it, and without a presentation raises `ConfigurationException`.
+- `dpop=DPoPVerificationOptions(...)` sets the proof algorithms, `iat` window
+  and replay cache.
+
+It fails closed: it returns normally only for an active token whose binding
+is satisfied. A response whose `active` is not `true` means the token "is not
+active" (RFC 7662 §2.2) and raises `IntrospectedTokenError` with kind
+`INACTIVE`. A failed or refused introspection response raises it with kind
+`INTROSPECTION_FAILED`, with `introspection_error_kind` set to the response's
+`error_kind` for a refused signed response. Both are
+`TokenValidationException`s; answer them with `401`
+`error="invalid_token"` (RFC 6750 §3.1). `introspect_token` itself still
+returns a result and never raises: it is also used by clients that hold no
+request presentation.
+
 ## Request Model
 
 ::: py_identity_model.core.models.TokenIntrospectionRequest
@@ -68,3 +135,9 @@ The authorization server advertises its algorithms in
 ## Functions
 
 ::: py_identity_model.sync.introspection.introspect_token
+
+::: py_identity_model.core.token_binding.check_introspection_binding
+
+::: py_identity_model.core.token_binding.IntrospectedTokenError
+
+::: py_identity_model.core.token_binding.IntrospectedTokenErrorKind
