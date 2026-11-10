@@ -28,6 +28,7 @@ from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
     KeyNotFoundException,
+    TokenValidationException,
     UntrustedAudienceException,
 )
 from py_identity_model.jwks import JwksRequest, get_jwks
@@ -119,6 +120,41 @@ class TestEmptyClientId:
             trusted_audiences=[_OTHER_AUD],
             now=_NOW,
         )
+
+    def test_empty_audience_listed_in_trusted_audiences_is_trusted(self):
+        # As in Go: "" is untrusted only by default; listing it trusts it.
+        validate_id_token_claims(
+            _claims(aud=[_OTHER_AUD, ""]),
+            "RS256",
+            client_id=None,
+            trusted_audiences=[_OTHER_AUD, ""],
+            now=_NOW,
+        )
+
+    @respx.mock
+    def test_validate_token_empty_audience_still_requires_aud(self):
+        # The empty-means-absent rule is scoped to validate_id_token. In
+        # validate_token, audience="" must not disable the aud check: a token
+        # with no aud is still rejected (unsetting it would fail open).
+        clear_discovery_cache()
+        clear_jwks_cache()
+        key_dict, pem = generate_rsa_keypair()
+        issuer = DISCO_RESPONSE_WITH_JWKS["issuer"]
+        respx.get(DISCO_URL).mock(
+            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+        )
+        respx.get(DISCO_RESPONSE_WITH_JWKS["jwks_uri"]).mock(
+            return_value=httpx.Response(200, json={"keys": [key_dict]})
+        )
+        claims = {"iss": issuer, "sub": "u1", "exp": int(time.time()) + 300}
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+        config = TokenValidationConfig(perform_disco=True, issuer=issuer, audience="")
+        try:
+            with pytest.raises(TokenValidationException, match="aud"):
+                validate_token(token, config, DISCO_URL)
+        finally:
+            clear_discovery_cache()
+            clear_jwks_cache()
 
 
 # ---------------------------------------------------------------------- kid

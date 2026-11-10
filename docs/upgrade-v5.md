@@ -674,6 +674,10 @@ library. In 4.x it counted as configured:
   beside other audiences is rejected with `UntrustedAudienceException` unless
   `""` is listed in `trusted_audiences`.
 
+This applies to `validate_id_token` only. `validate_token` still treats
+`audience=""` as a configured audience, so a token with no `aud` is rejected;
+unsetting it there would turn the `aud` check off.
+
 Pass your real `client_id`.
 
 ### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
