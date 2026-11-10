@@ -950,7 +950,16 @@ class TestExpectedOrigin:
             AuthOptions(expected_origin=origin)
 
     @pytest.mark.parametrize(
-        "header", ["", " X-Client-Cert", "X-Client-Cert ", "X-Clïent-Cert"]
+        "header",
+        [
+            "",
+            " X-Client-Cert",
+            "X-Client-Cert ",
+            "X-Clïent-Cert",
+            "X-Client-Cert:",
+            "X Client Cert",
+            "X-Client\x00Cert",
+        ],
     )
     def test_invalid_certificate_header_name_rejected(self, header):
         with pytest.raises(ValueError, match="client_certificate_header"):
@@ -959,6 +968,14 @@ class TestExpectedOrigin:
                 client_id=AUDIENCE,
                 client_certificate_header=header,
             )
+
+    def test_token_character_certificate_header_name_accepted(self):
+        settings = OIDCSettings(
+            discovery_url=DISCOVERY_URL,
+            client_id=AUDIENCE,
+            client_certificate_header="x_ssl.client~cert",
+        )
+        assert settings.client_certificate_header == "x_ssl.client~cert"
 
     def test_invalid_settings_origin_rejected(self):
         with pytest.raises(ValueError, match="expected_origin"):

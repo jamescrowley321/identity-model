@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 from py_identity_model import TokenBinding
 
@@ -14,6 +15,10 @@ def _default_excluded_paths() -> list[str]:
     # append ``/*`` for a subtree). ``/docs/oauth2-redirect`` is listed
     # explicitly because exact matching no longer implies the ``/docs`` subtree.
     return ["/docs", "/docs/oauth2-redirect", "/openapi.json", "/health"]
+
+
+# RFC 9110 §5.1 field-name = token (§5.6.2).
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
 
 @dataclass
@@ -67,14 +72,12 @@ class OIDCSettings:
     def __post_init__(self) -> None:
         self.required_binding = TokenBinding(self.required_binding)
         header = self.client_certificate_header
-        if header is not None and (
-            not header or header != header.strip() or not header.isascii()
-        ):
+        if header is not None and not _HEADER_NAME.fullmatch(header):
             # A name that can never match a request header would refuse every
             # certificate-bound token with no startup error.
             raise ValueError(
-                "client_certificate_header must be a non-empty ASCII header name "
-                f"without surrounding whitespace; got {header!r}"
+                "client_certificate_header must be an RFC 9110 header name "
+                f"(token characters only); got {header!r}"
             )
         if self.expected_origin is not None:
             self.expected_origin = normalize_origin(self.expected_origin)
