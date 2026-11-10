@@ -41,12 +41,12 @@ def test_key_that_does_not_fit_alg_full_contract(caplog):
     cause = exc.__cause__
     assert type(exc) is TokenValidationException
     assert isinstance(cause, pyjwt.InvalidKeyError)
-    assert exc.message == "Key does not fit the token algorithm"
+    assert exc.message == "Key cannot verify the token"
     assert exc.token_part == "header"
     assert exc.details == {"error": str(cause)}
     assert str(cause)
     assert [r.getMessage() for r in caplog.records] == [
-        f"Key does not fit the token algorithm: {cause!s}"
+        f"Key cannot verify the token: {cause!s}"
     ]
 
 

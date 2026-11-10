@@ -257,10 +257,11 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
             details={"error": str(e)},
         ) from e
     except (InvalidKeyError, PyJWKError) as e:
-        # The key does not fit the token's alg (e.g. an RSA key, ES256 header).
-        logger.error(f"Key does not fit the token algorithm: {e!s}")
+        # The key is malformed or does not fit the token's alg (e.g. an RSA
+        # key, ES256 header).
+        logger.error(f"Key cannot verify the token: {e!s}")
         raise TokenValidationException(
-            "Key does not fit the token algorithm",
+            "Key cannot verify the token",
             token_part="header",
             details={"error": str(e)},
         ) from e

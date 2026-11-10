@@ -322,4 +322,4 @@ class TestKeyAlgorithmMismatchIsTyped:
                 _manual_config(jwk, algorithms=algorithms),
             )
 
-        assert exc_info.value.message == "Key does not fit the token algorithm"
+        assert exc_info.value.message == "Key cannot verify the token"

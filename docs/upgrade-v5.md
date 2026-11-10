@@ -783,7 +783,14 @@ verification. The defaults are:
   an HMAC token is refused (`"Algorithm 'HS256' is not in the allowed
   algorithms"`). The error for a missing key is now
   `"TokenValidationConfig.key is required if perform_disco is False"`.
-  `algorithms=[]` raises `ConfigurationException`.
+  `algorithms=[]` raises `ConfigurationException`. A key that declares `alg`
+  verifies only tokens with that header `alg`; any other raises
+  `KeyAlgorithmMismatchException`, as in discovery mode.
+- **Key errors are typed.** A key that is malformed or does not fit the
+  token's algorithm raises `TokenValidationException("Key cannot verify the
+  token", token_part="header")`, with PyJWT's `InvalidKeyError` or
+  `PyJWKError` chained as `__cause__`. In 4.x the raw PyJWT exception
+  escaped, so an `except jwt.InvalidKeyError` handler no longer matches.
 - **DPoP proofs and signed introspection (new in 5.0).**
   `DPoPVerificationOptions(algorithms=None)` and
   `SignedIntrospectionOptions(algorithms=None)` accept the verify set, so a
