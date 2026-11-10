@@ -1547,14 +1547,16 @@ class TokenValidationConfig:
             ``require_https`` (the policy's own ``require_https`` governs). The
             discovery cache is partitioned by the full policy, so a response
             admitted under a lax policy is never served to a stricter caller.
-        required_binding: The sender constraint every token must carry
-            (:class:`TokenBinding`). ``NONE`` (the default) keeps the previous
-            behaviour: without a ``presentation=`` nothing is checked, and with
-            one a bound token is still checked against it. ``DPOP`` requires a
-            ``cnf.jkt`` token with a valid DPoP proof (RFC 9449 §7.1);
-            ``MTLS`` requires a ``cnf["x5t#S256"]`` token and the bound client
-            certificate (RFC 8705 §3). Either needs ``presentation=`` on
-            ``validate_token``, else ``ConfigurationException``.
+        required_binding: The sender constraint every access token must carry
+            (:class:`TokenBinding`). ``NONE`` (the default) requires no
+            binding, but a bound access token is still checked: against
+            ``presentation=`` when one is given, and rejected without one (RFC
+            9449 §7.2, RFC 8705 §3). ``DPOP`` requires a ``cnf.jkt`` token with
+            a valid DPoP proof (RFC 9449 §7.1); ``MTLS`` requires a
+            ``cnf["x5t#S256"]`` token and the bound client certificate (RFC
+            8705 §3). Either needs ``presentation=`` on ``validate_token``,
+            else ``ConfigurationException``. ``validate_id_token`` and
+            ``validate_logout_token`` ignore it.
         dpop: :class:`DPoPVerificationOptions` for DPoP proofs (allowed
             algorithms, ``iat`` window, ``jti`` replay cache). ``None`` uses
             the defaults and the process-wide replay cache.

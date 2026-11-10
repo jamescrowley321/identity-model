@@ -1,7 +1,8 @@
 """Asynchronous OpenID Connect ID Token validation.
 
 Async counterpart of :mod:`py_identity_model.sync.id_token`. Awaits the
-standard async ``validate_token`` then applies the same pure ID-Token profile
+standard async JWT validation (``validate_token`` without its access-token
+sender-constraint check) then applies the same pure ID-Token profile
 rules from ``core.id_token_logic`` — sync/async parity is guaranteed by
 sharing that single pure validation function (OpenID Connect Core 1.0
 §3.1.3.7 / §3.3.2.11).
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..core.id_token_logic import check_azp_config, validate_id_token_claims
 from ..core.parsers import extract_jwt_header_fields
-from .token_validation import validate_token
+from .token_validation import _validate_jwt_without_binding
 
 
 if TYPE_CHECKING:
@@ -43,13 +44,17 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
 ) -> dict:
     """Validate an OpenID Connect ID Token (async) (OIDC Core §3.1.3.7 / §3.3.2.11).
 
-    Runs the standard async JWT validation via ``validate_token`` (signature,
+    Runs the standard async JWT validation of ``validate_token`` (signature,
     ``iss``, ``aud``, ``iat`` and ``exp`` when present) — set
     ``token_validation_config.audience`` to the RP's ``client_id`` so the
     ``aud`` check is enforced there — then applies the ID-Token profile:
     required ``sub``, no audience the client does not trust, and the optional
     ``azp`` / ``nonce`` / ``max_age`` / ``at_hash`` / ``c_hash`` checks, each
     run only when the corresponding argument is supplied.
+
+    The access-token sender-constraint check (RFC 9449 §7, RFC 8705 §3) is not
+    run: an ID Token (OIDC Core §3.1.3.7) arrives with no presentation, so a
+    ``cnf`` claim in it is not checked.
 
     Args:
         id_token: The compact-serialized ID Token JWT.
@@ -106,7 +111,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
         ConfigurationException: If the configuration is invalid.
     """
     check_azp_config(token_validation_config.audience, validate_azp)
-    claims = await validate_token(
+    claims = await _validate_jwt_without_binding(
         id_token,
         token_validation_config,
         disco_doc_address=disco_doc_address,

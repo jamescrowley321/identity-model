@@ -130,6 +130,7 @@ async def test_valid_token_validates_end_to_end() -> None:
         "unknown_kid",
         "wrong_alg",
         "alg_none",
+        "cnf_bound",
     ],
 )
 async def test_forged_tokens_are_rejected(name: str) -> None:
@@ -140,7 +141,7 @@ async def test_forged_tokens_are_rejected(name: str) -> None:
         await _validate(mock, forged.jwt)
 
 
-@pytest.mark.parametrize("name", ["id_as_access", "cnf_bound", "oversized"])
+@pytest.mark.parametrize("name", ["id_as_access", "oversized"])
 async def test_library_accepted_classes_are_signature_valid(name: str) -> None:
     # These are validly signed for the audience — the library ACCEPTS them.
     # Only the RS access-token marker / require_scope layer (F-07/F-02) rejects

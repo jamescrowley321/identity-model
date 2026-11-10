@@ -58,7 +58,7 @@ def _patch(monkeypatch, *, disco=_DISCO, token=None, claims=None, userinfo=None)
     )
     monkeypatch.setattr(
         rp,
-        "validate_token",
+        "validate_id_token",
         AsyncMock(return_value=claims if claims is not None else {"sub": "user-1"}),
     )
     monkeypatch.setattr(
@@ -119,7 +119,7 @@ async def test_full_login_flow(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
 
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
         assert resp.status_code == 302
@@ -135,7 +135,7 @@ async def test_store_tokens_persists_tokens(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app(store_tokens=True)) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         await client.get(f"/auth/callback?code=abc&state={state}")
         me = (await client.get("/me")).json()
     assert me["tokens"]["access_token"] == "at"
@@ -147,7 +147,7 @@ async def test_form_post_callback_full_login_flow(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
 
         resp = await client.post("/auth/callback", data={"code": "abc", "state": state})
         assert resp.status_code == 302
@@ -237,7 +237,7 @@ async def test_fetch_userinfo_disabled_skips_userinfo(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app(fetch_userinfo=False)) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
         assert resp.status_code == 302
         me = (await client.get("/me")).json()
@@ -266,7 +266,7 @@ async def test_callback_invalid_id_token(monkeypatch, caplog):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, _ = await _login(client)
-        rp.validate_token.side_effect = TokenValidationException("bad iss")
+        rp.validate_id_token.side_effect = TokenValidationException("bad iss")
         with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
             resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
@@ -330,7 +330,7 @@ async def test_callback_nonce_mismatch(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, _ = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": "attacker-nonce"}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": "attacker-nonce"}
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
     assert "Nonce mismatch" in resp.json()["detail"]
@@ -342,7 +342,7 @@ async def test_callback_userinfo_failure_is_tolerated(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         rp.get_userinfo.return_value = UserInfoResponse(
             is_successful=False, error="unreachable"
         )
@@ -357,7 +357,7 @@ async def test_callback_userinfo_sub_mismatch_aborts(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         rp.get_userinfo.return_value = UserInfoResponse(
             is_successful=True, claims={"sub": "someone-else"}
         )
@@ -372,7 +372,7 @@ async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app(store_tokens=True)) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         rp.get_userinfo.return_value = parse_userinfo_response(
             httpx.Response(
                 200,
@@ -421,7 +421,7 @@ async def test_logout_clears_session(monkeypatch):
     _patch(monkeypatch)
     async with _client(_app()) as client:
         state, nonce = await _login(client)
-        rp.validate_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         await client.get(f"/auth/callback?code=abc&state={state}")
         assert (await client.get("/me")).json().get("sub") == "user-1"
 

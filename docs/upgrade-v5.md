@@ -552,6 +552,59 @@ disco = process_discovery_response(
 )
 ```
 
+## Access token validation
+
+### A bound access token without a presentation is rejected ([#1062](https://github.com/jamescrowley321/identity-model/issues/1062))
+
+In 4.x, `validate_token` without `presentation=` skipped the sender-constraint
+check, so a DPoP-bound or certificate-bound access token was accepted as a
+plain bearer token. 5.0 rejects it, whatever `required_binding` is: a resource server "MUST
+reject a DPoP-bound access token received as a bearer token" (RFC 9449 §7.2),
+and a certificate-bound token is valid only with the certificate it is bound
+to (RFC 8705 §3).
+
+- A token with `cnf.jkt` raises `DPoPValidationError` with kind
+  `PROOF_REQUIRED`.
+- A token with `cnf["x5t#S256"]` raises `CertificateBindingError`.
+- An unbound token is accepted as before, unless `required_binding` is `DPOP`
+  or `MTLS` (still a `ConfigurationException` without `presentation=`).
+
+To accept a bound token, pass how it arrived, with the scheme from the
+request's `Authorization` header:
+
+```python
+scheme, _, access_token = request.headers["Authorization"].partition(" ")
+claims = validate_token(
+    access_token,
+    config,
+    disco_doc_address,
+    presentation=TokenPresentation(
+        scheme=(
+            AuthorizationScheme.DPOP
+            if scheme.lower() == "dpop"
+            else AuthorizationScheme.BEARER
+        ),
+        method=request.method,
+        url="https://api.example.com/orders",
+        dpop_proof=request.headers.get("DPoP"),  # for cnf.jkt
+        client_certificate=client_certificate,  # for cnf["x5t#S256"], from mTLS
+    ),
+)
+```
+
+The check applies to access tokens only: `validate_token`, and the FastAPI
+middleware and WebSocket authenticator, which already pass a presentation (see
+[DPoP](api/dpop.md)). `validate_id_token` and `validate_logout_token` do not run
+it, so an ID Token or Logout Token carrying `cnf` still validates: neither
+arrives with a presentation (OIDC Core §3.1.3.7, Back-Channel Logout §2.6).
+Validate those tokens with their own functions, not `validate_token`.
+
+The FastAPI `build_oidc_router` callback now validates the ID Token with
+`validate_id_token` instead of `validate_token`, so it also applies the ID
+Token profile (required `sub`, no untrusted additional audience, OIDC Core
+§3.1.3.7). `OIDCSettings` has no `trusted_audiences`, so an ID Token whose `aud`
+lists anything besides `client_id` now fails the login with a 401.
+
 ## ID Token validation
 
 ### Untrusted additional audiences are rejected ([#881](https://github.com/jamescrowley321/identity-model/pull/881))
