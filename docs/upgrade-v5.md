@@ -333,33 +333,94 @@ before.
 
 - A DPoP-bound token (`cnf.jkt`) sent as `Bearer` is refused. Send it as
   `Authorization: DPoP <token>` with a `DPoP` proof for the request.
-- A certificate-bound token (`cnf["x5t#S256"]`) is refused unless you pass
-  `client_certificate=`, a callable that returns the request's client
-  certificate:
+- A certificate-bound token (`cnf["x5t#S256"]`) is refused unless the
+  middleware has a client certificate source: `OIDCSettings.client_certificate_header`
+  (`OIDC_CLIENT_CERTIFICATE_HEADER`), or a `client_certificate` callable on
+  `AuthOptions`. See the next section.
+
+See [DPoP: FastAPI](api/dpop.md#fastapi) for `required_binding` and the
+`DPoP` challenge.
+
+### FastAPI: binding options are one `AuthOptions`, read from `OIDCSettings` ([#1064](https://github.com/jamescrowley321/identity-model/issues/1064))
+
+`TokenValidationMiddleware` and `build_ws_authenticator` no longer take
+`required_binding=`, `dpop=` or `client_certificate=`. Pass one frozen
+`AuthOptions` as `options=` to both, so HTTP and WebSocket routes enforce the
+same binding. New validation options are added to `AuthOptions`, not as
+keyword arguments on either entry point.
+
+Both entry points also take `settings=`. With `settings` and no `options`,
+they use `AuthOptions.from_settings(settings)`, so `OIDCSettings.required_binding`
+and `OIDC_REQUIRED_BINDING` take effect; in 4.x and earlier 5.0 builds the
+setting was never read. `settings` also supplies `discovery_url`, `audience`
+and (middleware only) `excluded_paths` when they are not passed.
+
+Before:
 
 ```python
-from urllib.parse import unquote
-
-
-def client_certificate(request):
-    # nginx: proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
-    escaped = request.headers.get("X-Client-Cert")
-    return unquote(escaped) if escaped else None
-
-
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
     audience=settings.audience,
+    required_binding=settings.required_binding,
+    dpop=DPoPVerificationOptions(replay_cache=replay_cache),
     client_certificate=client_certificate,
+)
+ws_auth = build_ws_authenticator(
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    required_binding=settings.required_binding,
 )
 ```
 
-  Read the certificate only from a header your TLS terminator sets and strips
-  from client requests.
+After:
 
-See [DPoP: FastAPI](api/dpop.md#fastapi) for `required_binding` and the
-`DPoP` challenge.
+```python
+from fastapi_identity_model import AuthOptions
+
+options = AuthOptions.from_settings(
+    settings,
+    dpop=DPoPVerificationOptions(replay_cache=replay_cache),
+    client_certificate=client_certificate,  # or OIDC_CLIENT_CERTIFICATE_HEADER
+)
+app.add_middleware(TokenValidationMiddleware, settings=settings, options=options)
+ws_auth = build_ws_authenticator(settings=settings, options=options)
+```
+
+- `discovery_url` is now optional on both entry points; one of
+  `discovery_url` or `settings` is required.
+- Explicit `options` win over `settings`, but an `options` whose
+  `required_binding` or `expected_origin` differs from a value `settings` sets
+  raises `ValueError`. Build it with `AuthOptions.from_settings(settings, ...)`.
+- `AuthOptions(required_binding=TokenBinding.MTLS)` without a
+  `client_certificate` raises `ValueError`; before, every token was refused at
+  request time.
+- An `options` without `client_certificate` while
+  `settings.client_certificate_header` is set also raises `ValueError`.
+- The middleware attributes `required_binding`, `dpop` and
+  `client_certificate` are removed; read `middleware.options` instead.
+- `OIDCSettings` now validates at construction: `required_binding` is coerced
+  with `TokenBinding(...)` (so `"dpop"` works and `"bearer"` raises), an
+  invalid `expected_origin` raises `ValueError` (a default port such as `:443`
+  is dropped; an internationalized host must be given in punycode), and so does a `client_certificate_header` that is not a valid
+  HTTP header name (RFC 9110 token characters only).
+- `client_certificate` receives the `Request` or the `WebSocket`
+  (`starlette.requests.HTTPConnection`).
+- New settings: `client_certificate_header` (`OIDC_CLIENT_CERTIFICATE_HEADER`)
+  names a header holding the client certificate PEM, URL-decoded before use
+  (nginx `$ssl_client_escaped_cert`). It must carry the leaf certificate
+  only: a request carrying the header more than once, or a value with a comma
+  or more than one PEM block (a folded header or a full chain, as some
+  terminators send), gets no certificate. Use only a header your TLS
+  terminator sets on every request and strips from client requests, and keep
+  the app port unreachable except through it. `expected_origin`
+  (`OIDC_EXPECTED_ORIGIN`) is described below.
+- New, opt-in: `AuthOptions.expected_origin` (`scheme://host[:port]`). When
+  set, a DPoP proof's `htu` is checked against that origin plus the request
+  path and query, not the `Host` header. Unset, the origin still comes from
+  the request, so a client that controls the `Host` header your app sees can
+  get a proof minted for another origin past the `htu` check. Set it unless a
+  trusted proxy pins `Host`.
 
 ## Discovery
 

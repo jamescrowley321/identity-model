@@ -36,6 +36,8 @@ def clean_env(monkeypatch):
         "POST_LOGOUT_REDIRECT",
         "EXCLUDED_PATHS",
         "REQUIRED_BINDING",
+        "CLIENT_CERTIFICATE_HEADER",
+        "EXPECTED_ORIGIN",
     ):
         monkeypatch.delenv(f"OIDC_{name}", raising=False)
         monkeypatch.delenv(f"APP_{name}", raising=False)
@@ -55,6 +57,8 @@ def test_every_setting_is_read(clean_env):
     clean_env.setenv("OIDC_POST_LOGOUT_REDIRECT", "/bye")
     clean_env.setenv("OIDC_EXCLUDED_PATHS", "/a, /b ,/c")
     clean_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
+    clean_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+    clean_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com")
 
     assert oidc_settings_from_env() == OIDCSettings(
         discovery_url="https://op/.well-known/openid-configuration",
@@ -67,6 +71,8 @@ def test_every_setting_is_read(clean_env):
         post_logout_redirect="/bye",
         excluded_paths=["/a", "/b", "/c"],
         required_binding=TokenBinding.DPOP,
+        client_certificate_header="X-Client-Cert",
+        expected_origin="https://api.example.com",
     )
 
 
@@ -81,6 +87,10 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
     assert settings.audience == "cid"
     assert settings.excluded_paths == _DEFAULT_EXCLUDED_PATHS
     assert settings.required_binding is TokenBinding.NONE
+    assert (settings.client_certificate_header, settings.expected_origin) == (
+        None,
+        None,
+    )
 
 
 def test_unknown_required_binding_is_rejected(clean_env):
@@ -89,6 +99,15 @@ def test_unknown_required_binding_is_rejected(clean_env):
     clean_env.setenv("OIDC_REQUIRED_BINDING", "bearer")
 
     with pytest.raises(ValueError, match="'bearer' is not a valid TokenBinding"):
+        oidc_settings_from_env()
+
+
+def test_invalid_expected_origin_is_rejected(clean_env):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com/v1")
+
+    with pytest.raises(ValueError, match="expected_origin"):
         oidc_settings_from_env()
 
 

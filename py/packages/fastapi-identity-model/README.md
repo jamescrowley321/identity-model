@@ -55,7 +55,10 @@ masked as a 401).
 
 Sender-constrained tokens are always checked: a DPoP-bound token (`cnf.jkt`)
 needs the `DPoP` scheme and a valid proof, and a certificate-bound token needs
-its client certificate. `required_binding=TokenBinding.DPOP` also refuses
+its client certificate. Binding options live on one `AuthOptions`, passed as
+`options=` to both `TokenValidationMiddleware` and `build_ws_authenticator`;
+pass `settings=` instead to read `OIDC_REQUIRED_BINDING` and friends from
+`OIDCSettings`. `AuthOptions(required_binding=TokenBinding.DPOP)` also refuses
 unbound tokens. See
 [DPoP resource server verification](https://jamescrowley321.github.io/identity-model/api/dpop/#fastapi).
 

@@ -13,6 +13,7 @@ with :func:`fastapi_identity_model.build_ws_authenticator` instead.
 
 from collections.abc import Callable
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import Request, status  # type: ignore[attr-defined]
 from jwt import InvalidTokenError
@@ -20,6 +21,7 @@ from starlette.datastructures import URL  # type: ignore[attr-defined]
 from starlette.middleware.base import (
     BaseHTTPMiddleware,  # type: ignore[attr-defined]
 )
+from starlette.requests import HTTPConnection
 from starlette.responses import (  # type: ignore[attr-defined]
     JSONResponse,
     Response,
@@ -43,6 +45,9 @@ from py_identity_model.aio import (
     AsyncValidationCache,
     validate_token,
 )
+
+from .config import OIDCSettings
+from .options import AuthOptions, resolve_auth_options
 
 
 logger = logging.getLogger("fastapi_identity_model")
@@ -110,18 +115,54 @@ def parse_authorization(header: str) -> tuple[AuthorizationScheme, str] | None:
     return scheme, parts[1]
 
 
-def request_uri(url: URL, scope: dict) -> str:
+def request_uri(url: URL, scope: dict, expected_origin: str | None = None) -> str:
     """The request URI as the client sent it, for the DPoP ``htu`` check.
 
     Starlette builds ``url`` from the percent-decoded ASGI ``path``, so
     ``/files/a%20b`` reads as ``/files/a b`` and an encoded ``%3F`` or ``%23``
     turns into a query or fragment delimiter. The proof covers the path as
     sent (RFC 9449 §4.3), which is the ASGI ``raw_path``.
+
+    With *expected_origin* (``scheme://host[:port]``) the scheme and authority
+    are that origin rather than the request's ``Host`` header.
     """
+    if expected_origin is not None:
+        origin = urlsplit(expected_origin)
+        url = url.replace(scheme=origin.scheme, netloc=origin.netloc)
     raw_path = scope.get("raw_path")
     if not raw_path:
         return str(url)
     return str(url.replace(path=raw_path.decode("latin-1")))
+
+
+def presentation(
+    connection: HTTPConnection,
+    options: AuthOptions,
+    *,
+    scheme: AuthorizationScheme,
+    method: str,
+    url: URL | None = None,
+) -> TokenPresentation:
+    """The :class:`TokenPresentation` for *connection* under *options*.
+
+    Shared by the HTTP middleware and the WebSocket authenticator. *url*
+    overrides ``connection.url`` (the WebSocket handshake's ``http(s)`` form).
+    """
+    return TokenPresentation(
+        scheme=scheme,
+        method=method,
+        url=request_uri(
+            url if url is not None else connection.url,
+            connection.scope,
+            options.expected_origin,
+        ),
+        dpop_proof=connection.headers.get("DPoP"),
+        client_certificate=(
+            options.client_certificate(connection)
+            if options.client_certificate
+            else None
+        ),
+    )
 
 
 def evaluate_token_type(
@@ -159,8 +200,10 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
     Args:
         app: The FastAPI application
-        discovery_url: The OpenID Connect discovery document URL
-        audience: Expected audience claim in the token. Required — a ``None``
+        discovery_url: The OpenID Connect discovery document URL. Defaults to
+            ``settings.discovery_url``; required without ``settings``.
+        audience: Expected audience claim in the token. Defaults to
+            ``settings.audience``. Required — a ``None``
             audience does not enforce ``aud`` for tokens that omit the claim,
             which on a shared multi-tenant issuer accepts tokens minted for
             other clients.
@@ -170,7 +213,8 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             nested route under an excluded prefix is not silently exposed). To
             exclude a whole subtree, append ``/*`` to the entry: ``/docs/*``
             excludes ``/docs`` and every path beneath it. Pass ``[]`` to
-            exclude nothing. When omitted, defaults to ``/docs``,
+            exclude nothing. When omitted, defaults to
+            ``settings.excluded_paths``, or without ``settings`` to ``/docs``,
             ``/docs/oauth2-redirect`` (the Swagger OAuth2 redirect),
             ``/openapi.json``, ``/health``.
         custom_claims_validator: Optional custom function to validate additional claims
@@ -196,25 +240,27 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             holds this middleware's discovery document, keys and kid-miss
             cooldown; its ``Config`` sets the cache TTLs, size and cooldown.
             ``None`` uses the library default cache.
-        required_binding: The sender constraint every token must carry.
-            ``TokenBinding.NONE`` (default) accepts unbound bearer tokens; a
-            bound token is checked either way (RFC 9449 §7.1, RFC 8705 §3).
-            ``DPOP`` refuses tokens without ``cnf.jkt`` and a valid proof;
-            ``MTLS`` refuses tokens without a matching client certificate.
-        dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
-            proofs (algorithms, ``iat`` window, ``jti`` replay cache). ``None``
-            uses the defaults and the process-wide replay cache. Proofs are
-            checked against ``request.url``; behind a proxy, run Starlette's
-            proxy-headers handling so it is the URI the client addressed.
-        client_certificate: Returns the request's mTLS client certificate (PEM
-            or DER) for certificate-bound tokens, or ``None``. Without it every
-            certificate-bound token is refused.
+        settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
+            ``discovery_url``, ``audience`` and ``excluded_paths`` when those
+            are not passed, and the binding options (``required_binding``,
+            ``client_certificate_header``, ``expected_origin``) when
+            ``options`` is not passed.
+        options: :class:`~fastapi_identity_model.AuthOptions` (binding, DPoP,
+            client certificate, expected origin). Pass the same instance to
+            :func:`~fastapi_identity_model.build_ws_authenticator`. Takes
+            precedence over ``settings``, but must not drop a
+            ``required_binding`` or ``expected_origin`` that ``settings`` sets.
+            ``None`` uses ``AuthOptions.from_settings(settings)``, or the
+            defaults without ``settings``. DPoP proofs are checked against
+            ``request.url`` unless ``expected_origin`` is set; behind a proxy,
+            run Starlette's proxy-headers handling so it is the URI the client
+            addressed.
     """
 
-    def __init__(  # noqa: PLR0913  # opt-in F-07 marker config + http_client
+    def __init__(
         self,
         app,
-        discovery_url: str,
+        discovery_url: str | None = None,
         audience: str | None = None,
         excluded_paths: list[str] | None = None,
         custom_claims_validator: Callable | None = None,
@@ -225,11 +271,19 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         *,
         http_client: AsyncHTTPClient | None = None,
         cache: AsyncValidationCache | None = None,
-        required_binding: TokenBinding = TokenBinding.NONE,
-        dpop: DPoPVerificationOptions | None = None,
-        client_certificate: Callable[[Request], str | bytes | None] | None = None,
+        settings: OIDCSettings | None = None,
+        options: AuthOptions | None = None,
     ):
         super().__init__(app)
+        if settings is not None:
+            discovery_url = discovery_url or settings.discovery_url
+            audience = audience or settings.audience
+            if excluded_paths is None:
+                excluded_paths = list(settings.excluded_paths)
+        if not discovery_url:
+            raise ValueError(
+                "TokenValidationMiddleware requires a discovery_url or settings."
+            )
         if not audience:
             raise ValueError(
                 "TokenValidationMiddleware requires a non-empty 'audience'; a "
@@ -257,17 +311,15 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self.custom_claims_validator = custom_claims_validator
         self.http_client = http_client
         self.cache = cache
-        self.required_binding = required_binding
-        self.dpop = dpop
-        self.client_certificate = client_certificate
+        self.options = resolve_auth_options(settings, options)
         self._dpop_algs = " ".join(
-            (dpop or DPoPVerificationOptions()).accepted_algorithms
+            (self.options.dpop or DPoPVerificationOptions()).accepted_algorithms
         )
         # The scheme a client must use; RFC 9449 §7.1 challenges a DPoP-only
         # resource with ``DPoP``.
         self._challenge = (
             AuthorizationScheme.DPOP
-            if required_binding is TokenBinding.DPOP
+            if self.options.required_binding is TokenBinding.DPOP
             else AuthorizationScheme.BEARER
         )
 
@@ -344,15 +396,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
     def _presentation(
         self, request: Request, scheme: AuthorizationScheme
     ) -> TokenPresentation:
-        return TokenPresentation(
-            scheme=scheme,
-            method=request.method,
-            url=request_uri(request.url, request.scope),
-            dpop_proof=request.headers.get("DPoP"),
-            client_certificate=(
-                self.client_certificate(request) if self.client_certificate else None
-            ),
-        )
+        return presentation(request, self.options, scheme=scheme, method=request.method)
 
     def _wrong_token_type_error(self, claims: dict) -> str | None:
         """A 401 detail if *claims* are the wrong token type for a resource
@@ -386,8 +430,8 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                     perform_disco=True,
                     audience=self.audience,
                     claims_validator=self.custom_claims_validator,
-                    required_binding=self.required_binding,
-                    dpop=self.dpop,
+                    required_binding=self.options.required_binding,
+                    dpop=self.options.dpop,
                 ),
                 disco_doc_address=self.discovery_url,
                 http_client=self.http_client,

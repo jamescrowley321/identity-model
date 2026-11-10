@@ -20,6 +20,7 @@ import os
 from fastapi import Depends, FastAPI, WebSocket
 
 from fastapi_identity_model import (
+    AuthOptions,
     Claims,
     CurrentUser,
     TokenValidationMiddleware,
@@ -65,7 +66,8 @@ def create_app() -> FastAPI:
     Optional env: ``RS_REQUIRE_SCOPE`` (default ``api``),
     ``RS_REQUIRE_ACCESS_TOKEN_MARKER`` (bool, F-07 opt-in),
     ``RS_EXCLUDED_PATHS`` (comma-separated),
-    ``RS_REQUIRED_BINDING`` (``none``/``dpop``/``mtls``, default ``none``).
+    ``RS_REQUIRED_BINDING`` (``none``/``dpop``, default ``none``; ``mtls``
+    needs a client certificate source the harness does not configure).
     """
     discovery_url = os.environ["RS_DISCOVERY_URL"]
     audience = os.environ["RS_AUDIENCE"]
@@ -78,6 +80,11 @@ def create_app() -> FastAPI:
     if _METRICS_PATH not in excluded:
         excluded.append(_METRICS_PATH)
 
+    # One AuthOptions for both entry points, so HTTP and WS enforce one binding.
+    auth_options = AuthOptions(
+        required_binding=TokenBinding(os.environ.get("RS_REQUIRED_BINDING", "none"))
+    )
+
     app = FastAPI(title="token-harness-rs")
     app.add_middleware(
         TokenValidationMiddleware,
@@ -87,7 +94,7 @@ def create_app() -> FastAPI:
         require_access_token_marker=_truthy(
             os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
         ),
-        required_binding=TokenBinding(os.environ.get("RS_REQUIRED_BINDING", "none")),
+        options=auth_options,
     )
 
     @app.get("/health")
@@ -136,6 +143,7 @@ def create_app() -> FastAPI:
         require_access_token_marker=_truthy(
             os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
         ),
+        options=auth_options,
     )
 
     @app.websocket("/ws")

@@ -23,6 +23,7 @@ from .dependencies import (
     require_scope,
 )
 from .middleware import TokenValidationMiddleware
+from .options import AuthOptions
 from .rp import build_oidc_router, oidc_public_paths
 from .token_manager import TokenManager
 from .ws import build_ws_authenticator
@@ -34,6 +35,7 @@ except PackageNotFoundError:  # pragma: no cover - only during local, uninstalle
     __version__ = "0.0.0"
 
 __all__ = [
+    "AuthOptions",
     "Claims",
     "CurrentUser",
     "OIDCSettings",
