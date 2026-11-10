@@ -402,7 +402,7 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
 - `OIDCSettings` now validates at construction: `required_binding` is coerced
   with `TokenBinding(...)` (so `"dpop"` works and `"bearer"` raises), an
   invalid `expected_origin` raises `ValueError` (a default port such as `:443`
-  is dropped), and so does a `client_certificate_header` that is not a valid
+  is dropped; an internationalized host must be given in punycode), and so does a `client_certificate_header` that is not a valid
   HTTP header name (RFC 9110 token characters only).
 - `client_certificate` receives the `Request` or the `WebSocket`
   (`starlette.requests.HTTPConnection`).

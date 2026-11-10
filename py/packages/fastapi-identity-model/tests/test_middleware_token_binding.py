@@ -642,6 +642,34 @@ class TestSettingsWiring:
 
         assert _rejected(resp) == (401, 'Bearer error="invalid_token"', GENERIC_BODY)
 
+    @pytest.mark.parametrize("folded", ["comma", "second_pem"])
+    async def test_folded_certificate_header_refused(
+        self, raw_client, oidc_env, token, client_cert_pem, folded
+    ):
+        # An intermediary may join repeated lines into one comma-separated
+        # value (RFC 9110 §5.3); the client's copy comes first.
+        oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
+        oidc_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
+        settings = oidc_settings_from_env()
+        bound = token({"x5t#S256": compute_certificate_thumbprint(client_cert_pem)})
+        escaped = quote(client_cert_pem.decode())
+        value = (
+            f"{escaped}, {escaped}"
+            if folded == "comma"
+            else quote(client_cert_pem.decode() * 2)
+        )
+
+        async with raw_client(settings=settings) as c:
+            resp = await c.get(
+                "/me",
+                headers=[
+                    ("Authorization", f"Bearer {bound}"),
+                    ("X-Client-Cert", value),
+                ],
+            )
+
+        assert _rejected(resp) == (401, 'Bearer error="invalid_token"', GENERIC_BODY)
+
     def test_env_mtls_without_certificate_source_fails_at_construction(self, oidc_env):
         oidc_env.setenv("OIDC_REQUIRED_BINDING", "mtls")
         settings = oidc_settings_from_env()
@@ -916,6 +944,7 @@ class TestExpectedOrigin:
             ("http://api.example.com:80", "http://api.example.com"),
             ("https://api.example.com:80", "https://api.example.com:80"),
             ("http://api.example.com:443", "http://api.example.com:443"),
+            ("http://my_service:8080", "http://my_service:8080"),
         ],
     )
     def test_origin_is_normalized(self, origin, normalized):
@@ -943,6 +972,8 @@ class TestExpectedOrigin:
             "https://api.example.com:notaport",
             "https://",
             "https://[::1",
+            "https://bücher.example",
+            "https://api%2Eexample.com",
         ],
     )
     def test_invalid_origin_rejected(self, origin):

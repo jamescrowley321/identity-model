@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 __all__ = ["AuthOptions"]
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+_HOST = re.compile(r"[a-z0-9._-]+")
 
 
 def normalize_origin(origin: str) -> str:
@@ -50,6 +52,13 @@ def normalize_origin(origin: str) -> str:
     host = parts.hostname
     if ":" in host:
         host = f"[{host}]"
+    elif not _HOST.fullmatch(host):
+        # A client's htu carries the wire (ASCII/punycode) host, so any other
+        # form never matches and every DPoP proof would be refused.
+        raise ValueError(
+            "expected_origin host must be ASCII letters, digits, '.', '_' and '-' "
+            f"(punycode for internationalized names); got {origin!r}"
+        )
     netloc = host if port in (None, _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
     return f"{scheme}://{netloc}"
 
@@ -59,11 +68,15 @@ def _certificate_from_header(
 ) -> Callable[[HTTPConnection], str | None]:
     def client_certificate(connection: HTTPConnection) -> str | None:
         # More than one copy means the terminator appended rather than
-        # replaced; trust none of them.
+        # replaced; trust none of them. A raw "," or a second PEM block means
+        # an intermediary folded several copies into one line (RFC 9110 §5.3).
         values = connection.headers.getlist(header)
-        if len(values) != 1 or not values[0]:
+        if len(values) != 1 or not values[0] or "," in values[0]:
             return None
-        return unquote(values[0])
+        pem = unquote(values[0])
+        if pem.count("-----BEGIN") > 1:
+            return None
+        return pem
 
     return client_certificate
 
