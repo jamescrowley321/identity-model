@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 
 __all__ = ["AuthOptions"]
 
-_ORIGIN_SCHEMES = frozenset({"http", "https"})
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 def normalize_origin(origin: str) -> str:
-    """*origin* as ``scheme://host[:port]``, lower-cased.
+    """*origin* as ``scheme://host[:port]``, lower-cased, default port dropped.
 
     Raises:
         ValueError: *origin* is not an ``http``/``https`` origin, or carries a
@@ -34,8 +34,9 @@ def normalize_origin(origin: str) -> str:
         port = parts.port
     except ValueError as e:
         raise ValueError(f"expected_origin is not a valid URL: {origin!r}") from e
+    scheme = parts.scheme.lower()
     if (
-        parts.scheme.lower() not in _ORIGIN_SCHEMES
+        scheme not in _DEFAULT_PORTS
         or not parts.hostname
         or parts.path not in ("", "/")
         or parts.query
@@ -49,8 +50,8 @@ def normalize_origin(origin: str) -> str:
     host = parts.hostname
     if ":" in host:
         host = f"[{host}]"
-    netloc = host if port is None else f"{host}:{port}"
-    return f"{parts.scheme.lower()}://{netloc}"
+    netloc = host if port in (None, _DEFAULT_PORTS[scheme]) else f"{host}:{port}"
+    return f"{scheme}://{netloc}"
 
 
 def _certificate_from_header(

@@ -773,7 +773,7 @@ class TestSettingsWiring:
             required_binding=TokenBinding.MTLS,
             dpop=dpop,
             client_certificate=certificate,
-            expected_origin="https://api.example.com:443",
+            expected_origin="https://api.example.com",
         )
 
 
@@ -912,11 +912,23 @@ class TestExpectedOrigin:
             ("HTTPS://API.Example.com/", "https://api.example.com"),
             ("http://localhost:8000", "http://localhost:8000"),
             ("https://[::1]:8443", "https://[::1]:8443"),
+            ("https://api.example.com:443", "https://api.example.com"),
+            ("http://api.example.com:80", "http://api.example.com"),
+            ("https://api.example.com:80", "https://api.example.com:80"),
+            ("http://api.example.com:443", "http://api.example.com:443"),
         ],
     )
     def test_origin_is_normalized(self, origin, normalized):
-        assert AuthOptions(expected_origin=origin) == AuthOptions(
-            expected_origin=normalized
+        assert AuthOptions(expected_origin=origin).expected_origin == normalized
+
+    def test_default_port_origins_do_not_conflict(self, oidc_env):
+        oidc_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com:443")
+        settings = oidc_settings_from_env()
+
+        TokenValidationMiddleware(
+            FastAPI(),
+            settings=settings,
+            options=AuthOptions(expected_origin="https://api.example.com"),
         )
 
     @pytest.mark.parametrize(
@@ -936,6 +948,17 @@ class TestExpectedOrigin:
     def test_invalid_origin_rejected(self, origin):
         with pytest.raises(ValueError, match="expected_origin"):
             AuthOptions(expected_origin=origin)
+
+    @pytest.mark.parametrize(
+        "header", ["", " X-Client-Cert", "X-Client-Cert ", "X-Clïent-Cert"]
+    )
+    def test_invalid_certificate_header_name_rejected(self, header):
+        with pytest.raises(ValueError, match="client_certificate_header"):
+            OIDCSettings(
+                discovery_url=DISCOVERY_URL,
+                client_id=AUDIENCE,
+                client_certificate_header=header,
+            )
 
     def test_invalid_settings_origin_rejected(self):
         with pytest.raises(ValueError, match="expected_origin"):

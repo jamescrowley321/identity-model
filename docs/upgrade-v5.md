@@ -400,8 +400,10 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
 - The middleware attributes `required_binding`, `dpop` and
   `client_certificate` are removed; read `middleware.options` instead.
 - `OIDCSettings` now validates at construction: `required_binding` is coerced
-  with `TokenBinding(...)` (so `"dpop"` works and `"bearer"` raises), and an
-  invalid `expected_origin` raises `ValueError`.
+  with `TokenBinding(...)` (so `"dpop"` works and `"bearer"` raises), an
+  invalid `expected_origin` raises `ValueError` (a default port such as `:443`
+  is dropped), and so does a `client_certificate_header` that is empty, not
+  ASCII, or has surrounding whitespace.
 - `client_certificate` receives the `Request` or the `WebSocket`
   (`starlette.requests.HTTPConnection`).
 - New settings: `client_certificate_header` (`OIDC_CLIENT_CERTIFICATE_HEADER`)
