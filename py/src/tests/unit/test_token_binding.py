@@ -701,6 +701,24 @@ class TestBindingCheckIsAccessTokenOnly:
 
         assert claims["cnf"] == cnf
 
+    @pytest.mark.parametrize("required", [TokenBinding.DPOP, TokenBinding.MTLS])
+    @pytest.mark.parametrize(
+        "validator",
+        [validate_logout_token, avalidate_logout_token],
+        ids=["sync", "async"],
+    )
+    def test_required_binding_does_not_apply_to_logout_tokens(
+        self, signing_key, public_jwk, binding_cnfs, required, validator
+    ):
+        cnf = binding_cnfs[required.value]
+        token = _access_token(
+            signing_key, cnf, {"jti": "logout-1", "events": LOGOUT_EVENT}
+        )
+
+        claims = _run(validator)(token, _config(public_jwk, required))
+
+        assert (claims["events"], claims["cnf"]) == (LOGOUT_EVENT, cnf)
+
     @pytest.mark.parametrize(
         "case",
         [("dpop", DPoPValidationError), ("mtls", CertificateBindingError)],
