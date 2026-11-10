@@ -408,9 +408,12 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
   (`starlette.requests.HTTPConnection`).
 - New settings: `client_certificate_header` (`OIDC_CLIENT_CERTIFICATE_HEADER`)
   names a header holding the client certificate PEM, URL-decoded before use
-  (nginx `$ssl_client_escaped_cert`). A request carrying the header more than
-  once gets no certificate. Use only a header your TLS terminator
-  sets and strips from client requests. `expected_origin`
+  (nginx `$ssl_client_escaped_cert`). It must carry the leaf certificate
+  only: a request carrying the header more than once, or a value with a comma
+  or more than one PEM block (a folded header or a full chain, as some
+  terminators send), gets no certificate. Use only a header your TLS
+  terminator sets on every request and strips from client requests, and keep
+  the app port unreachable except through it. `expected_origin`
   (`OIDC_EXPECTED_ORIGIN`) is described below.
 - New, opt-in: `AuthOptions.expected_origin` (`scheme://host[:port]`). When
   set, a DPoP proof's `htu` is checked against that origin plus the request

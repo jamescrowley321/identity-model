@@ -208,7 +208,7 @@ ws_auth = build_ws_authenticator(settings=settings)
 | Setting | Environment variable | Values |
 |---|---|---|
 | `required_binding` | `OIDC_REQUIRED_BINDING` | `none`, `dpop`, `mtls` |
-| `client_certificate_header` | `OIDC_CLIENT_CERTIFICATE_HEADER` | Header carrying the client certificate PEM, URL-decoded before use (nginx `$ssl_client_escaped_cert`) |
+| `client_certificate_header` | `OIDC_CLIENT_CERTIFICATE_HEADER` | Header carrying the leaf client certificate PEM only, URL-decoded before use (nginx `$ssl_client_escaped_cert`); a repeated header, a comma or a second PEM block yields no certificate |
 | `expected_origin` | `OIDC_EXPECTED_ORIGIN` | `scheme://host[:port]` |
 
 Settings cannot hold callables or a replay cache. Supply those with
