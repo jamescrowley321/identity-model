@@ -134,9 +134,14 @@ def extract_jarm_response_jwt(redirect_uri: str) -> str:
     raise JarmValidationException("redirect_uri contains no JARM 'response' parameter")
 
 
-# The AS-advertised JARM algorithms (authorization_signing_alg_values_supported)
-# that are in the verify default; see advertised_verify_algorithms.
-advertised_jarm_algorithms = advertised_verify_algorithms
+def advertised_jarm_algorithms(advertised: list[str] | None) -> list[str] | None:
+    """Return the AS-advertised JARM algorithms that are in the verify default.
+
+    ``None`` (not advertised) stays ``None``, which
+    :func:`select_jarm_algorithm` reads as ``DEFAULT_ALLOWED_ALGORITHMS``.
+    A value that is not a list allows nothing.
+    """
+    return advertised_verify_algorithms(advertised)
 
 
 def select_jarm_algorithm(
