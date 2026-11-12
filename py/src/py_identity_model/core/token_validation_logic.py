@@ -7,16 +7,24 @@ implementations to reduce code duplication.
 
 import inspect
 
-from ..core.jwt_helpers import decode_and_validate_jwt
+from jwt import PyJWTError
+
+from ..core.jwt_helpers import (
+    _normalize_verification_key,
+    decode_and_validate_jwt,
+)
 from ..core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from ..core.models import (
     DiscoveryDocumentResponse,
+    JsonWebKey,
     JwksResponse,
     TokenValidationConfig,
 )
+from ..core.parsers import extract_jwt_header_fields
 from ..exceptions import (
     ConfigurationException,
     InvalidIssuerException,
+    KeyAlgorithmMismatchException,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -81,25 +89,96 @@ def validate_jwks_response(jwks_response: JwksResponse) -> None:
         raise TokenValidationException(error_msg)
 
 
+_EMPTY_ALGORITHMS_MESSAGE = (
+    "TokenValidationConfig.algorithms must not be empty; "
+    "None allows DEFAULT_ALLOWED_ALGORITHMS"
+)
+
+
 def validate_config_for_manual_validation(
     token_validation_config: TokenValidationConfig,
 ) -> None:
     """
     Validate token configuration for manual validation (non-discovery mode).
 
+    ``algorithms=None`` is valid: the token's ``alg`` must then be in
+    ``DEFAULT_ALLOWED_ALGORITHMS``, as in discovery mode.
+
     Args:
         token_validation_config: Token validation configuration
 
     Raises:
-        ConfigurationException: If required configuration is missing
+        ConfigurationException: If the key is missing or ``algorithms`` is an
+            empty list
     """
     if not token_validation_config.key:
         raise ConfigurationException(
             "TokenValidationConfig.key is required",
         )
-    if not token_validation_config.algorithms:
-        raise ConfigurationException(
-            "TokenValidationConfig.algorithms is required",
+    _reject_empty_algorithms(token_validation_config)
+
+
+def _reject_empty_algorithms(token_validation_config: TokenValidationConfig) -> None:
+    if token_validation_config.algorithms is not None and (
+        not token_validation_config.algorithms
+    ):
+        raise ConfigurationException(_EMPTY_ALGORITHMS_MESSAGE)
+
+
+def _require_allowed_alg(alg: object, allowed: list[str]) -> str:
+    """Return *alg* if it is one of *allowed*; raise otherwise."""
+    if not isinstance(alg, str) or alg not in allowed:
+        raise TokenValidationException(
+            f"Algorithm '{alg}' is not in the allowed algorithms",
+            token_part="header",
+            details={"alg": alg, "allowed": list(allowed)},
+        )
+    return alg
+
+
+def resolve_algorithms(
+    jwt: str,
+    algorithms: list[str] | None,
+    key: dict | JsonWebKey | None = None,
+) -> list[str]:
+    """Return the algorithms to verify *jwt* with.
+
+    An explicit list is returned unchanged. ``None`` pins verification to the
+    token's header ``alg``, which must be in ``DEFAULT_ALLOWED_ALGORITHMS``.
+    That set has no HMAC algorithm, so a public key is never used as an HMAC
+    secret (RFC 8725 §2.1). If *key* declares an ``alg``, the header ``alg``
+    must equal it (RFC 7517 §4.4), as in discovery mode.
+
+    Raises:
+        TokenValidationException: If *algorithms* is ``None`` and the header
+            cannot be read or its ``alg`` is not in the default set.
+        KeyAlgorithmMismatchException: If *algorithms* is ``None`` and *key*
+            declares a different ``alg``.
+    """
+    if algorithms is not None:
+        return algorithms
+    try:
+        _, alg = extract_jwt_header_fields(jwt)
+    except PyJWTError as exc:
+        raise TokenValidationException(
+            f"Invalid token: {exc!s}",
+            token_part="header",
+            details={"error": str(exc)},
+        ) from exc
+    allowed = _require_allowed_alg(alg, sorted(DEFAULT_ALLOWED_ALGORITHMS))
+    if key is not None:
+        _require_key_alg(_normalize_verification_key(key), allowed)
+    return [allowed]
+
+
+def _require_key_alg(key_data: dict, alg: str) -> None:
+    """Raise unless *key_data* declares no ``alg`` or declares *alg*."""
+    key_alg = key_data.get("alg")
+    if key_alg and key_alg != alg:
+        raise KeyAlgorithmMismatchException(
+            f"Key algorithm '{key_alg}' does not match JWT algorithm '{alg}'",
+            token_part="header",
+            details={"kid": key_data.get("kid"), "key_alg": key_alg, "jwt_alg": alg},
         )
 
 
@@ -153,7 +232,8 @@ def decode_with_config(
 
     Args:
         jwt: The JWT token to decode
-        token_validation_config: Token validation configuration with key and algorithms set
+        token_validation_config: Token validation configuration with a key set.
+            ``algorithms=None`` means ``DEFAULT_ALLOWED_ALGORITHMS``.
         issuer: Optional issuer override (from discovery document)
 
     Returns:
@@ -161,12 +241,12 @@ def decode_with_config(
 
     Raises:
         TokenValidationException: If token validation fails
-        ConfigurationException: If key or algorithms are missing
+        ConfigurationException: If the key is missing or ``algorithms`` is an
+            empty list
     """
-    if not token_validation_config.key or not token_validation_config.algorithms:
-        raise ConfigurationException(
-            "Token validation configuration must have key and algorithms set"
-        )
+    if not token_validation_config.key:
+        raise ConfigurationException("Token validation configuration must have a key")
+    _reject_empty_algorithms(token_validation_config)
 
     # Warn when discovery issuer overrides a user-supplied multi-issuer list
     if issuer is not None and isinstance(token_validation_config.issuer, list):
@@ -193,7 +273,9 @@ def decode_with_config(
     return decode_and_validate_jwt(
         jwt=jwt,
         key=token_validation_config.key,
-        algorithms=token_validation_config.algorithms,
+        algorithms=resolve_algorithms(
+            jwt, token_validation_config.algorithms, token_validation_config.key
+        ),
         audience=token_validation_config.audience,
         issuer=issuer if issuer is not None else token_validation_config.issuer,
         options=token_validation_config.options,
@@ -299,17 +381,12 @@ def build_resolved_config(
     # The resolved alg equals the JWT header alg whenever the header carries
     # one (find_key_by_kid rejects a key whose alg differs), and decode pins
     # verification to [alg], so this membership check gates the header alg.
-    allowed = (
+    _require_allowed_alg(
+        alg,
         sorted(DEFAULT_ALLOWED_ALGORITHMS)
         if original_config.algorithms is None
-        else original_config.algorithms
+        else original_config.algorithms,
     )
-    if alg not in allowed:
-        raise TokenValidationException(
-            f"Algorithm '{alg}' is not in the allowed algorithms",
-            token_part="header",
-            details={"alg": alg, "allowed": list(allowed)},
-        )
     return TokenValidationConfig(
         perform_disco=original_config.perform_disco,
         key=key_dict,
@@ -367,6 +444,7 @@ __all__ = [
     "decode_with_config",
     "log_validation_start",
     "log_validation_success",
+    "resolve_algorithms",
     "validate_async_claims",
     "validate_claims",
     "validate_config_for_manual_validation",

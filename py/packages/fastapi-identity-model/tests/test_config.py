@@ -1,6 +1,7 @@
 import pytest
 
 from fastapi_identity_model import OIDCSettings, TokenManager
+from py_identity_model import TokenBinding
 
 
 pytestmark = pytest.mark.unit
@@ -36,6 +37,16 @@ def test_explicit_audience_preserved():
 def test_empty_required_fields_rejected(discovery_url, client_id):
     with pytest.raises(ValueError, match="non-empty"):
         OIDCSettings(discovery_url=discovery_url, client_id=client_id)
+
+
+def test_required_binding_string_is_coerced_to_token_binding():
+    s = OIDCSettings(discovery_url="d", client_id="cid", required_binding="dpop")
+    assert s.required_binding is TokenBinding.DPOP
+
+
+def test_unknown_required_binding_string_is_rejected():
+    with pytest.raises(ValueError, match="'bearer' is not a valid TokenBinding"):
+        OIDCSettings(discovery_url="d", client_id="cid", required_binding="bearer")
 
 
 def test_client_secret_not_in_repr():

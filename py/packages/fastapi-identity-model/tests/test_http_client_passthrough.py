@@ -173,7 +173,7 @@ def _patch_rp(monkeypatch) -> dict[str, AsyncMock]:
                 token={"id_token": "idt", "access_token": "at"},
             )
         ),
-        "validate_token": AsyncMock(),
+        "validate_id_token": AsyncMock(),
         "get_userinfo": AsyncMock(
             return_value=SimpleNamespace(
                 is_successful=True, claims={"sub": "u1"}, error_kind=None
@@ -194,7 +194,7 @@ async def _log_in_through_router(monkeypatch, **kwargs) -> dict[str, AsyncMock]:
     async with _asgi_client(app) as client:
         login = await client.get("/auth/login")
         query = parse_qs(urlparse(login.headers["location"]).query)
-        mocks["validate_token"].return_value = {
+        mocks["validate_id_token"].return_value = {
             "sub": "u1",
             "nonce": query["nonce"][0],
         }
@@ -210,7 +210,7 @@ async def test_router_makes_every_call_with_the_given_client(monkeypatch, http_c
     assert {name: _used_clients(m) for name, m in mocks.items()} == {
         "get_discovery_document": [http_client, http_client],
         "request_authorization_code_token": [http_client],
-        "validate_token": [http_client],
+        "validate_id_token": [http_client],
         "get_userinfo": [http_client],
     }
 
@@ -220,7 +220,7 @@ async def test_router_defaults_to_the_library_client(monkeypatch):
     assert {name: _used_clients(m) for name, m in mocks.items()} == {
         "get_discovery_document": [None, None],
         "request_authorization_code_token": [None],
-        "validate_token": [None],
+        "validate_id_token": [None],
         "get_userinfo": [None],
     }
 

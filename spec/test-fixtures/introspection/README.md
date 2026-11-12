@@ -31,8 +31,9 @@ Fixtures backing the `introspection` conformance suite
   `aud` `cid` and a `token_introspection` claim holding
   `active-response.json`. `signed-response.jwt` is ES256 with
   `typ: token-introspection+jwt` (accepted); `signed-wrong-typ.jwt` has
-  `typ: JWT`; `signed-rs256.jwt` is RS256 (outside the FAPI 2.0 set) with the
-  `validation/signing-key.jwk.json` key; `signed-wrong-audience.jwt` has
+  `typ: JWT`; `signed-rs256.jwt` is RS256 with the
+  `validation/signing-key.jwk.json` key (accepted by the default verify
+  allowlist, rejected when the client passes the FAPI 2.0 set); `signed-wrong-audience.jwt` has
   `aud: other-client`; `signed-tampered.jwt` keeps the signature of
   `signed-response.jwt` over a different payload. `signed-jwks.json` holds the
   ES256 key (`kid` `intr-es256`) and the RS256 key. The ES256 key was generated

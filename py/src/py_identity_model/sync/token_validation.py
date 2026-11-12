@@ -449,7 +449,11 @@ def validate_token(
     presentation: TokenPresentation | None = None,
 ) -> dict:
     """
-    Validate a JWT token.
+    Validate a JWT access token.
+
+    Use ``validate_id_token`` / ``validate_logout_token`` for ID Tokens and
+    Logout Tokens: they skip the sender-constraint check, which applies to
+    access tokens only.
 
     Args:
         jwt: The JWT token to validate
@@ -465,9 +469,10 @@ def validate_token(
             process-wide default cache is used, whichever client is passed.
         presentation: How the token arrived on the request
             (:class:`TokenPresentation`: scheme, method, URL, ``DPoP`` proof,
-            client certificate). When given, a sender-constrained token is
-            checked against it after decoding (RFC 9449 §7.1, RFC 8705 §3);
-            required when ``required_binding`` is not ``NONE``.
+            client certificate). A sender-constrained token is checked
+            against it after decoding (RFC 9449 §7.1, RFC 8705 §3), and is
+            rejected when it is ``None`` (RFC 9449 §7.2). Required when
+            ``required_binding`` is not ``NONE``.
 
     Returns:
         dict: Decoded token claims
@@ -479,9 +484,36 @@ def validate_token(
         ConfigurationException: If configuration is invalid
         RuntimeError: If *http_client* has been closed
     """
-    log_validation_start(jwt, token_validation_config)
+    # Fail on a bad config or a missing presentation before any network I/O.
     validate_token_config(token_validation_config)
     require_presentation(token_validation_config, presentation)
+    claims = _validate_jwt_without_binding(
+        jwt,
+        token_validation_config,
+        disco_doc_address,
+        http_client,
+        cache=cache,
+    )
+    check_token_binding(claims, jwt, token_validation_config, presentation)
+    return claims
+
+
+def _validate_jwt_without_binding(
+    jwt: str,
+    token_validation_config: TokenValidationConfig,
+    disco_doc_address: str | None,
+    http_client: HTTPClient | None,
+    *,
+    cache: ValidationCache | None,
+) -> dict:
+    """Validate a JWT without checking its sender constraint.
+
+    For ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout
+    §2.6), which arrive with no presentation. An access token must go through
+    ``validate_token``, which adds the RFC 9449 §7 / RFC 8705 §3 check.
+    """
+    log_validation_start(jwt, token_validation_config)
+    validate_token_config(token_validation_config)
 
     if token_validation_config.perform_disco:
         policy = resolve_discovery_policy(
@@ -510,7 +542,6 @@ def validate_token(
         validate_config_for_manual_validation(token_validation_config)
         decoded_token = decode_with_config(jwt, token_validation_config)
 
-    check_token_binding(decoded_token, jwt, token_validation_config, presentation)
     validate_claims(decoded_token, token_validation_config)
     log_validation_success(decoded_token)
     return decoded_token

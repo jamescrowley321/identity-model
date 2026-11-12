@@ -43,9 +43,9 @@ _RSA_ALGORITHMS: frozenset[str] = frozenset({"RS256", "PS256"})
 # RFC 8037 §3.1: EdDSA with an Ed25519 key (FAPI 2.0 Security Profile §5.4.1).
 _EDDSA = "EdDSA"
 
-_SUPPORTED_ALGORITHMS: frozenset[str] = frozenset(
-    {*_EC_CURVES, *_RSA_ALGORITHMS, _EDDSA}
-)
+# Algorithms a client DPoPKey can be generated for. Verifying proofs uses
+# DEFAULT_ALLOWED_ALGORITHMS (dpop_verify), not this set.
+_KEY_ALGORITHMS: frozenset[str] = frozenset({*_EC_CURVES, *_RSA_ALGORITHMS, _EDDSA})
 
 
 def _int_to_b64url(n: int, length: int) -> str:
@@ -67,10 +67,10 @@ class DPoPKey:
     __slots__ = ("_algorithm", "_private_key")
 
     def __init__(self, algorithm: str = "ES256") -> None:
-        if algorithm not in _SUPPORTED_ALGORITHMS:
+        if algorithm not in _KEY_ALGORITHMS:
             msg = (
                 f"Unsupported DPoP algorithm: {algorithm}. "
-                f"Supported: {sorted(_SUPPORTED_ALGORITHMS)}"
+                f"Supported: {sorted(_KEY_ALGORITHMS)}"
             )
             raise ValueError(msg)
 

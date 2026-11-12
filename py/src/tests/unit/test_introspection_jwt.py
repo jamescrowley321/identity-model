@@ -11,6 +11,7 @@ import pytest
 import respx
 
 from py_identity_model import (
+    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     DiscoveryDocumentRequest,
     IntrospectionErrorKind,
     JwksResponse,
@@ -182,10 +183,21 @@ class TestSignedIntrospection:
         assert _outcome(introspect_token(_request(jwks))) == (False, kind)
 
     @respx.mock
+    def test_default_allows_rs256(self, jwks, sign, rsa_key):
+        """``algorithms=None`` is the verify default, so a plain RS256 AS works."""
+        _respond(sign(key=rsa_key, alg="RS256", kid="rsa-1"))
+
+        assert _outcome(introspect_token(_request(jwks))) == (True, ACTIVE)
+
+    @respx.mock
     def test_fapi_set_refuses_rs256(self, jwks, sign, rsa_key):
         _respond(sign(key=rsa_key, alg="RS256", kid="rsa-1"))
 
-        assert _outcome(introspect_token(_request(jwks))) == (
+        response = introspect_token(
+            _request(jwks, algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS)
+        )
+
+        assert _outcome(response) == (
             False,
             IntrospectionErrorKind.UNSUPPORTED_ALGORITHM,
         )

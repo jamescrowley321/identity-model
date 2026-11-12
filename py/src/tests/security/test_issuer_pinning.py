@@ -31,6 +31,7 @@ from py_identity_model.core.token_validation_logic import (
 from py_identity_model.exceptions import (
     ConfigurationException,
     InvalidIssuerException,
+    TokenValidationException,
 )
 
 
@@ -65,11 +66,13 @@ class TestChokepointRejectsUnapprovedIssuer:
             perform_disco=True, key={"kty": "RSA"}, algorithms=["RS256"]
         )
         # The flow reaches decode (past the skipped pin) and fails there building
-        # PyJWK from the dummy key — a jwt InvalidKeyError, NOT the
+        # PyJWK from the dummy key — the typed key/alg mismatch error, NOT the
         # InvalidIssuerException pinning would raise. If pinning were not opt-in,
         # InvalidIssuerException would be raised first and this would fail.
-        with pytest.raises(pyjwt.InvalidKeyError):
+        with pytest.raises(TokenValidationException) as exc_info:
             decode_with_config("a.b.c", cfg, issuer=_ATTACKER)
+        assert not isinstance(exc_info.value, InvalidIssuerException)
+        assert isinstance(exc_info.value.__cause__, pyjwt.InvalidKeyError)
 
 
 class TestBuildResolvedConfigCopiesAllFields:
@@ -174,13 +177,13 @@ class TestDecodeWithConfigChokepoint:
         with pytest.raises(ConfigurationException) as exc_info:
             decode_with_config("a.b.c", cfg)
         assert exc_info.value.message == (
-            "Token validation configuration must have key and algorithms set"
+            "Token validation configuration must have a key"
         )
 
-    def test_missing_algorithms_raises_typed_configuration_exception(self):
+    def test_empty_algorithms_raises_typed_configuration_exception(self):
         cfg = TokenValidationConfig(
-            perform_disco=True, key={"kty": "oct", "k": "AA"}
-        )  # algorithms unset
+            perform_disco=True, key={"kty": "oct", "k": "AA"}, algorithms=[]
+        )
         with pytest.raises(ConfigurationException):
             decode_with_config("a.b.c", cfg)
 

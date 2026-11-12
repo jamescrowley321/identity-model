@@ -25,8 +25,8 @@ from ..exceptions import (
     TokenValidationException,
 )
 from ..jwt_claim_types import JwtTypes
-from .fapi import FAPI2_ALLOWED_SIGNING_ALGORITHMS
 from .jwt_helpers import decode_and_validate_jwt
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from .models import (
     IntrospectionErrorKind,
     SignedIntrospectionOptions,
@@ -89,9 +89,7 @@ def _algorithm(header: dict, options: SignedIntrospectionOptions) -> str:
         raise _Refused(IntrospectionErrorKind.INVALID_TYPE, "wrong typ header")
     alg = header.get("alg")
     allowed = (
-        FAPI2_ALLOWED_SIGNING_ALGORITHMS
-        if options.algorithms is None
-        else options.algorithms
+        DEFAULT_ALLOWED_ALGORITHMS if options.algorithms is None else options.algorithms
     )
     if not isinstance(alg, str) or alg not in allowed:
         raise _Refused(

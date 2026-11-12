@@ -15,8 +15,9 @@ coordinated.
 
 When you report, please include as much of the following as you can:
 
-- The affected package (`py-identity-model` or `fastapi-identity-model`) and
-  version / commit.
+- The affected package (`py-identity-model`, `fastapi-identity-model`, the Go
+  module under `go/`, or the Rust crate `rs-identity-model`) and version /
+  commit.
 - A description of the issue and its security impact (e.g. signature bypass,
   audience/issuer confusion, algorithm confusion, DoS).
 - A minimal reproduction — ideally a failing test or a token/JWKS/discovery
@@ -33,18 +34,20 @@ When you report, please include as much of the following as you can:
 
 ## Supported versions
 
-Security fixes are made against the latest released version of each package on
-PyPI and the `main` branch. Older releases are not back-ported; upgrade to the
+Security fixes are made against the latest released version of each package
+(PyPI, the Go module proxy, crates.io) and the `main` branch. Older releases are not back-ported; upgrade to the
 current release to receive fixes.
 
 ## Scope
 
 In scope: the shipped library code — the core package under
-`src/py_identity_model/**` and the FastAPI integration package under
-`packages/fastapi-identity-model/fastapi_identity_model/**` — covering token
+`py/src/py_identity_model/**`, the FastAPI integration package under
+`py/packages/fastapi-identity-model/fastapi_identity_model/**`, the Go library
+under `go/` and the Rust crate under `rust/src/**` — covering token
 validation, JWKS handling, discovery, and the HTTP client behavior they rely on.
 
-Out of scope: the test/conformance harnesses (`src/tests/**`,
-`packages/**/tests/**`, `conformance/`), example applications (`examples/`), and
+Out of scope: the test/conformance harnesses (`py/src/tests/**`,
+`py/packages/**/tests/**`, `conformance/`), example applications
+(`py/examples/`, `go/examples/`, `rust/examples/`), and
 the local provider fixtures under `infra/`, which are
 development-only and never shipped to consumers.

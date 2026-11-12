@@ -220,6 +220,11 @@ class JsonWebKey:
 
     def __post_init__(self):
         """Validate the JWK after initialization"""
+        # An empty ``kid`` or ``use`` means the member is absent.
+        if self.kid == "":
+            self.kid = None
+        if self.use == "":
+            self.use = None
         if not self.kty:
             raise ConfigurationException(
                 "The 'kty' (Key Type) parameter is required",
@@ -255,38 +260,32 @@ class JsonWebKey:
             )
 
     def _validate_use_parameter(self):
-        """Validate 'use' parameter per RFC 7517 Section 4.2"""
-        if self.use is None:
-            return
+        """Validate 'use' parameter per RFC 7517 Section 4.2.
 
-        valid_use_values = ["sig", "enc"]
-        if self.use not in valid_use_values and not self.use.startswith(
-            "https://",
-        ):
+        Any string is accepted: ``sig`` marks a signing key, and any other
+        value (``enc``, a URI, or an unregistered value) marks a key that
+        never verifies a signature (see ``is_signing_key``).
+        """
+        if self.use is not None and not isinstance(self.use, str):
             raise ConfigurationException(
-                f"Invalid 'use' parameter: {self.use}. Must be 'sig', 'enc', or a URI",
+                f"Invalid 'use' parameter: {self.use!r}. Must be a string",
             )
 
     def _validate_key_ops_parameter(self):
-        """Validate 'key_ops' parameter per RFC 7517 Section 4.3"""
+        """Validate 'key_ops' parameter per RFC 7517 Section 4.3.
+
+        Unregistered operation values are accepted (§4.3 allows them); only
+        a value that is not a list of strings is rejected.
+        """
         if self.key_ops is None:
             return
-
-        valid_key_ops = [
-            "sign",
-            "verify",
-            "encrypt",
-            "decrypt",
-            "wrapKey",
-            "unwrapKey",
-            "deriveKey",
-            "deriveBits",
-        ]
-        for op in self.key_ops:
-            if op not in valid_key_ops:
-                raise ConfigurationException(
-                    f"Invalid key operation: {op}. Valid operations: {valid_key_ops}",
-                )
+        if not isinstance(self.key_ops, list) or not all(
+            isinstance(op, str) for op in self.key_ops
+        ):
+            raise ConfigurationException(
+                f"Invalid 'key_ops' parameter: {self.key_ops!r}. "
+                "Must be a list of strings",
+            )
 
     def _validate_key_parameters(self):
         """Validate required parameters based on the key type"""
@@ -301,12 +300,8 @@ class JsonWebKey:
         # Validate 'use' and 'key_ops' parameters
         self._validate_use_parameter()
         self._validate_key_ops_parameter()
-
-        # Validate mutual exclusivity per RFC 7517 Section 4.3
-        if self.use is not None and self.key_ops is not None:
-            raise ConfigurationException(
-                "The 'use' and 'key_ops' parameters are mutually exclusive",
-            )
+        # RFC 7517 §4.3 says 'use' and 'key_ops' SHOULD NOT be used together;
+        # a key carrying both is accepted.
 
     @classmethod
     def from_json(cls, json_str: str) -> JsonWebKey:
@@ -972,9 +967,11 @@ class SignedIntrospectionOptions:
     Attributes:
         issuer: The authorization server's issuer identifier.
         jwks: The authorization server's signing keys (``get_jwks``).
-        algorithms: Allowed signing algorithms. ``None`` (default) allows the
-            FAPI 2.0 set: PS256, ES256, EdDSA (FAPI 2.0 Message Signing
-            §5.5.2). ``none`` and ``HS*`` are refused.
+        algorithms: Allowed signing algorithms. ``None`` (default) allows
+            ``DEFAULT_ALLOWED_ALGORITHMS`` (RS256/384/512, PS256/384/512,
+            ES256/384/512, EdDSA). For FAPI 2.0 (Message Signing §5.5.2) pass
+            ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and ``HS*`` are
+            refused.
     """
 
     issuer: str
@@ -1581,11 +1578,11 @@ class TokenValidationConfig:
             misclassified as private.
         audience: Expected audience claim(s) in the token
         algorithms: Allowed signing algorithms (e.g., ``['PS256', 'ES256']``).
-            When ``None`` (the default), discovery mode allows
+            When ``None`` (the default), discovery and manual mode both allow
             ``DEFAULT_ALLOWED_ALGORITHMS``: RS256/384/512, PS256/384/512,
-            ES256/384/512 and EdDSA, the same set as the Go and Rust libraries.
-            HMAC algorithms (``HS*``) must be listed explicitly. Manual mode
-            (``perform_disco=False``) requires ``algorithms``. Whatever the
+            ES256/384/512 and EdDSA (Go's default; Rust's lacks ES512). The
+            set has no HMAC algorithm, so a public key is never used as an
+            HMAC secret; ``HS*`` must be listed explicitly. Whatever the
             algorithm, an RSA verification key under 2048 bits (RFC 7518
             §3.3) or an EC key under 224 bits (FAPI 2.0 SP §5.4.1) raises
             ``WeakKeyException``.
@@ -1634,14 +1631,16 @@ class TokenValidationConfig:
             ``require_https`` (the policy's own ``require_https`` governs). The
             discovery cache is partitioned by the full policy, so a response
             admitted under a lax policy is never served to a stricter caller.
-        required_binding: The sender constraint every token must carry
-            (:class:`TokenBinding`). ``NONE`` (the default) keeps the previous
-            behaviour: without a ``presentation=`` nothing is checked, and with
-            one a bound token is still checked against it. ``DPOP`` requires a
-            ``cnf.jkt`` token with a valid DPoP proof (RFC 9449 §7.1);
-            ``MTLS`` requires a ``cnf["x5t#S256"]`` token and the bound client
-            certificate (RFC 8705 §3). Either needs ``presentation=`` on
-            ``validate_token``, else ``ConfigurationException``.
+        required_binding: The sender constraint every access token must carry
+            (:class:`TokenBinding`). ``NONE`` (the default) requires no
+            binding, but a bound access token is still checked: against
+            ``presentation=`` when one is given, and rejected without one (RFC
+            9449 §7.2, RFC 8705 §3). ``DPOP`` requires a ``cnf.jkt`` token with
+            a valid DPoP proof (RFC 9449 §7.1); ``MTLS`` requires a
+            ``cnf["x5t#S256"]`` token and the bound client certificate (RFC
+            8705 §3). Either needs ``presentation=`` on ``validate_token``,
+            else ``ConfigurationException``. ``validate_id_token`` and
+            ``validate_logout_token`` ignore it.
         dpop: :class:`DPoPVerificationOptions` for DPoP proofs (allowed
             algorithms, ``iat`` window, ``jti`` replay cache). ``None`` uses
             the defaults and the process-wide replay cache.

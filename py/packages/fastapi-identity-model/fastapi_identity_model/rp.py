@@ -56,7 +56,7 @@ from py_identity_model.aio import (
     parse_authorize_callback_response,
     request_authorization_code_token,
     validate_authorize_callback_state,
-    validate_token,
+    validate_id_token,
 )
 
 
@@ -263,8 +263,10 @@ async def _validate_id_token(
     # otherwise pass ``issuer=None`` and silently disable issuer verification.
     issuer = _require_endpoint(disco.issuer, "issuer")
     try:
-        claims = await validate_token(
-            jwt=id_token,
+        # validate_id_token, not validate_token: the access-token sender
+        # constraint (RFC 9449 §7, RFC 8705 §3) does not apply to ID Tokens.
+        claims = await validate_id_token(
+            id_token,
             token_validation_config=TokenValidationConfig(
                 perform_disco=True,
                 audience=settings.client_id,
@@ -281,7 +283,7 @@ async def _validate_id_token(
             detail="ID token validation failed",
         ) from exc
 
-    # Nonce binding is the RP's responsibility — the library does not check it.
+    # Checked here (not via nonce=) to keep the "Nonce mismatch" 401 detail.
     if claims.get("nonce") != expected_nonce:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

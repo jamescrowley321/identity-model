@@ -9,10 +9,12 @@ Each :class:`ForgedToken` records ``library_rejects`` — whether
 checks) rejects it. Note the distinction from *resource-server* policy, which
 is T302's concern:
 
-* ``id_as_access`` and ``cnf_bound`` are *validly signed JWTs for the audience*
-  — the library ACCEPTS them; only the RS access-token marker / ``require_scope``
-  layer (F-07 / F-02) distinguishes them. They therefore carry
-  ``library_rejects=False`` here.
+* ``id_as_access`` is a *validly signed JWT for the audience* — the library
+  ACCEPTS it; only the RS access-token marker / ``require_scope`` layer (F-07)
+  distinguishes it. It therefore carries ``library_rejects=False`` here.
+* ``cnf_bound`` is validly signed too, but the library rejects a DPoP-bound
+  token validated without a presentation (RFC 9449 §7.2), so it carries
+  ``library_rejects=True``.
 * ``oversized`` / ``multi_aud_untrusted`` are likewise valid to the library.
 
 Real-issuer negatives that cannot be forged (a real OP signing an expired token
@@ -151,8 +153,8 @@ def build_corpus(mock_op: MockOP) -> dict[str, ForgedToken]:
         "cnf_bound",
         mock_op.sign(cnf_claims),
         "DPoP-bound (cnf.jkt) token presented as a plain bearer — library "
-        "accepts without a presentation; the RS refuses it (F-02, RFC 9449 §7.1)",
-        rejects=False,
+        "rejects it without a presentation (F-02, RFC 9449 §7.2)",
+        rejects=True,
     )
     big_claims = _base_claims(mock_op, now)
     for i in range(200):

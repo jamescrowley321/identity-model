@@ -224,9 +224,9 @@ def validate_token_config(
     if token_validation_config.perform_disco:
         return
 
-    if not token_validation_config.key and not token_validation_config.algorithms:
+    if not token_validation_config.key:
         raise ConfigurationException(
-            "TokenValidationConfig.key and TokenValidationConfig.algorithms are required if perform_disco is False",
+            "TokenValidationConfig.key is required if perform_disco is False",
         )
 
 

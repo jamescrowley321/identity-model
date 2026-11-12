@@ -1,7 +1,8 @@
 """Asynchronous Back-Channel Logout token validation.
 
 Async counterpart of :mod:`py_identity_model.sync.logout`. Awaits the standard
-async ``validate_token`` then applies the same pure Logout-Token claim rules
+async JWT validation (``validate_token`` without its access-token
+sender-constraint check) then applies the same pure Logout-Token claim rules
 from ``core.logout_logic`` — sync/async parity is guaranteed by sharing that
 single pure validation function (OpenID Connect Back-Channel Logout 1.0 §2.4).
 """
@@ -11,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.logout_logic import validate_logout_token_claims
-from .token_validation import validate_token
+from .token_validation import _validate_jwt_without_binding
 
 
 if TYPE_CHECKING:
@@ -30,10 +31,14 @@ async def validate_logout_token(
 ) -> dict:
     """Validate a Back-Channel Logout Token (async) (Back-Channel Logout 1.0 §2.4).
 
-    Runs the standard async JWT validation via ``validate_token`` (signature,
+    Runs the standard async JWT validation of ``validate_token`` (signature,
     ``iss``, ``aud``, ``iat`` and ``exp`` when present), then enforces the
     Logout-Token-specific rules: required ``events`` member, ``sub``/``sid``
     presence, and the ``nonce`` prohibition.
+
+    The access-token sender-constraint check (RFC 9449 §7, RFC 8705 §3) is not
+    run: a Logout Token (Back-Channel Logout §2.6) arrives with no
+    presentation, so a ``cnf`` claim in it is not checked.
 
     Args:
         logout_token: The compact-serialized Logout Token JWT received at the
@@ -55,7 +60,7 @@ async def validate_logout_token(
         LogoutTokenValidationException: If a Logout-Token-specific rule fails.
         ConfigurationException: If the configuration is invalid.
     """
-    claims = await validate_token(
+    claims = await _validate_jwt_without_binding(
         logout_token,
         token_validation_config,
         disco_doc_address=disco_doc_address,
