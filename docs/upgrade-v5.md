@@ -529,7 +529,7 @@ capability FAPI 2.0 requires. In 5.0 each of these is a violation:
 | Metadata | Violation when | Requirement |
 |---|---|---|
 | `code_challenge_methods_supported` | absent (RFC 8414 §2: no PKCE) or without `S256` | [FAPI 2.0 Security Profile §5.3.2.2](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.2) |
-| `pushed_authorization_request_endpoint` | absent | §5.3.2.2, RFC 9126 |
+| `pushed_authorization_request_endpoint` | absent, empty, or not a string (`true` used to pass, [#1068](https://github.com/jamescrowley321/identity-model/issues/1068)) | §5.3.2.2, RFC 9126 |
 | `authorization_response_iss_parameter_supported` | absent or `false` | §5.3.2.2, RFC 9207 §3 |
 | `dpop_signing_alg_values_supported`, `tls_client_certificate_bound_access_tokens` | neither a DPoP list with a FAPI algorithm (§5.4.1) nor `true` for MTLS | [§5.3.2.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.1) |
 | `token_endpoint_auth_signing_alg_values_supported` | `private_key_jwt` is offered and the list is absent or has no FAPI algorithm | [§5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1) |

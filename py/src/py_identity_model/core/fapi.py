@@ -424,11 +424,18 @@ def _authorization_endpoint_violations(
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(2): PAR (RFC 9126) is required.
-    if not discovery.pushed_authorization_request_endpoint:
+    # RFC 9126 §5: the endpoint is a URL, so only a non-empty string counts.
+    par_endpoint = discovery.pushed_authorization_request_endpoint
+    if par_endpoint is None or par_endpoint == "":
         violations.append(
             "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
             "Security Profile §5.3.2.2 requires pushed authorization requests "
             "(RFC 9126)"
+        )
+    elif not isinstance(par_endpoint, str) or not par_endpoint.strip():
+        violations.append(
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            f"{par_endpoint!r} (RFC 9126 §5)"
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(7): the server returns iss in the

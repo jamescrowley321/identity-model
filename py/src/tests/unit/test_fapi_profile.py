@@ -458,6 +458,20 @@ class TestFAPI2ClientProfileConstruction:
             "(RFC 9126)"
         ]
 
+    def test_non_string_par_endpoint_refused(self):
+        """971-B: ``true`` is not a PAR endpoint; refused, not passed to urlparse."""
+        with pytest.raises(FAPIProfileError) as exc_info:
+            FAPI2ClientProfile(
+                _discovery(pushed_authorization_request_endpoint=True),
+                client_id=CLIENT_ID,
+                redirect_uri=REDIRECT_URI,
+                client_auth=_pkj(),
+            )
+        assert exc_info.value.violations == [
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            "True (RFC 9126 §5)"
+        ]
+
     def test_failed_discovery_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
