@@ -308,6 +308,30 @@ class TestDPoPBoundToken:
         ):
             validate(token, _config(public_jwk), presentation=presentation)
 
+    @pytest.mark.parametrize(
+        ("request_fields", "message"),
+        [
+            ({"method": "", "url": URL}, "presentation: method must not be empty"),
+            (
+                {"method": METHOD, "url": "/relative/path"},
+                "presentation: url must be an absolute http(s) URI",
+            ),
+        ],
+        ids=["empty-method", "relative-url"],
+    )
+    def test_malformed_request_is_config_error(
+        self, validate, signing_key, public_jwk, request_fields, message
+    ):
+        key = generate_dpop_key()
+        token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
+        proof = create_dpop_proof(key, METHOD, URL, access_token=token)
+        presentation = TokenPresentation(
+            scheme=AuthorizationScheme.DPOP, dpop_proof=proof, **request_fields
+        )
+
+        with pytest.raises(ConfigurationException, match=_exactly(message)):
+            validate(token, _config(public_jwk), presentation=presentation)
+
     def test_expected_nonce_enforced(self, validate, signing_key, public_jwk):
         key = generate_dpop_key()
         token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
