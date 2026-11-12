@@ -463,7 +463,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 error=e.kind.oauth_error,
             )
         if isinstance(e, CertificateBindingError):
-            logger.info("Certificate binding rejected: %s", e)
+            logger.info("Certificate binding rejected: %s", e.kind.value)
             return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
         if isinstance(e, PyIdentityModelException):
             # A provider outage is a transient server fault, not an auth

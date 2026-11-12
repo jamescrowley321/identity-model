@@ -25,6 +25,10 @@ the FAPI 2.0 Security Profile.
 
 ::: py_identity_model.core.fapi.FAPIValidationResult
 
+::: py_identity_model.core.fapi.FAPIViolation
+
+::: py_identity_model.core.fapi.FAPIViolationCode
+
 ## Validation Functions
 
 ::: py_identity_model.core.fapi.validate_fapi_authorization_request

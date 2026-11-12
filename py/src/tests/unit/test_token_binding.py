@@ -51,6 +51,7 @@ from py_identity_model.aio import (
 from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
+    CertificateBindingErrorKind,
     ConfigurationException,
 )
 
@@ -59,6 +60,10 @@ URL = "https://rs.example.com/api/resource"
 METHOD = "GET"
 AUDIENCE = "urn:test:api"
 ISSUER = "https://op.example.com"
+CERTIFICATE_REQUIRED = (
+    "No client certificate was presented for a certificate-bound access token "
+    "or required_binding=mtls (RFC 8705 §3)"
+)
 
 
 def _exactly(message: str) -> str:
@@ -284,7 +289,7 @@ class TestDPoPBoundToken:
         assert len(cache) == 1
 
     @pytest.mark.parametrize("missing", ["method", "url"])
-    def test_proof_without_request_is_value_error(
+    def test_proof_without_request_is_config_error(
         self, validate, signing_key, public_jwk, missing
     ):
         key = generate_dpop_key()
@@ -296,7 +301,7 @@ class TestDPoPBoundToken:
         )
 
         with pytest.raises(
-            ValueError,
+            ConfigurationException,
             match=_exactly(
                 "presentation.method and presentation.url are needed to verify a DPoP proof"
             ),
@@ -495,10 +500,8 @@ class TestMtlsBinding:
                 presentation=self._presentation(None),
             )
 
-        assert str(exc.value) == (
-            "required_binding=mtls but no client certificate was presented "
-            "(RFC 8705 §3)"
-        )
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
+        assert str(exc.value) == CERTIFICATE_REQUIRED
 
     def test_certificate_bound_token_without_certificate_rejected(
         self, validate, signing_key, public_jwk, client_cert_pem
@@ -511,10 +514,8 @@ class TestMtlsBinding:
         with pytest.raises(CertificateBindingError) as exc:
             validate(token, _config(public_jwk), presentation=self._presentation(None))
 
-        assert str(exc.value) == (
-            "Certificate-bound access token was presented without a client "
-            "certificate (RFC 8705 §3)"
-        )
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
+        assert str(exc.value) == CERTIFICATE_REQUIRED
 
     @pytest.mark.parametrize("cert", [b"", "", b"not-a-certificate"])
     def test_unparseable_certificate_rejected(
@@ -526,6 +527,7 @@ class TestMtlsBinding:
         with pytest.raises(CertificateBindingError) as exc:
             validate(token, _config(public_jwk), presentation=self._presentation(cert))
 
+        assert exc.value.kind is CertificateBindingErrorKind.INVALID_CERTIFICATE
         assert str(exc.value) == (
             "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
         )
@@ -552,10 +554,8 @@ class TestMtlsBinding:
         with pytest.raises(CertificateBindingError) as exc:
             validate(token, _config(public_jwk))
 
-        assert str(exc.value) == (
-            "Certificate-bound access token was presented without a client "
-            "certificate (RFC 8705 §3)"
-        )
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
+        assert str(exc.value) == CERTIFICATE_REQUIRED
 
     def test_doubly_bound_token_without_presentation_rejected_as_dpop(
         self, validate, signing_key, public_jwk, client_cert_pem
@@ -614,10 +614,8 @@ class TestCheckTokenBindingWithoutPresentation:
         with pytest.raises(CertificateBindingError) as exc:
             check_token_binding({"cnf": {"x5t#S256": "A" * 43}}, "token", config, None)
 
-        assert str(exc.value) == (
-            "Certificate-bound access token was presented without a client "
-            "certificate (RFC 8705 §3)"
-        )
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
+        assert str(exc.value) == CERTIFICATE_REQUIRED
 
     def test_unbound_accepted(self):
         config = TokenValidationConfig(perform_disco=True)

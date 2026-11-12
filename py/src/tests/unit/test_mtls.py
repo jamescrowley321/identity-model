@@ -23,6 +23,7 @@ import respx
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
     CertificateBindingError,
+    CertificateBindingErrorKind,
     ClientCredentialsTokenRequest,
     Config,
     DeviceAuthorizationRequest,
@@ -236,41 +237,48 @@ class TestValidateCertificateBinding:
         validate_certificate_binding({"cnf": {"x5t#S256": tp}}, cert_pem)
 
     def test_mismatched_thumbprint_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="mismatch"):
+        with pytest.raises(CertificateBindingError, match="mismatch") as exc:
             validate_certificate_binding(
                 {"cnf": {"x5t#S256": "not-the-right-thumbprint"}}, cert_pem
             )
+        assert exc.value.kind is CertificateBindingErrorKind.MISMATCH
 
     def test_wrong_cert_raises(self, cert_pem):
         """A token bound to a different cert must be rejected."""
         other_pem, _ = _make_cert()
         tp = compute_certificate_thumbprint(other_pem)
-        with pytest.raises(CertificateBindingError, match="mismatch"):
+        with pytest.raises(CertificateBindingError, match="mismatch") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": tp}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.MISMATCH
 
     def test_missing_cnf_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="missing 'cnf'"):
+        with pytest.raises(CertificateBindingError, match="no 'cnf' claim") as exc:
             validate_certificate_binding({"sub": "user"}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_cnf_not_dict_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="missing 'cnf'"):
+        with pytest.raises(CertificateBindingError, match="no 'cnf' claim") as exc:
             validate_certificate_binding({"cnf": "oops"}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_cnf_without_x5t_raises(self, cert_pem):
         """A DPoP-only cnf (jkt but no x5t#S256) must be rejected for mTLS."""
-        with pytest.raises(CertificateBindingError, match="x5t#S256"):
+        with pytest.raises(CertificateBindingError, match="x5t#S256") as exc:
             validate_certificate_binding({"cnf": {"jkt": "abc"}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_x5t_not_string_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="x5t#S256"):
+        with pytest.raises(CertificateBindingError, match="x5t#S256") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": 123}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_non_ascii_x5t_raises_binding_error_not_typeerror(self, cert_pem):
         """A crafted non-ASCII thumbprint must fail closed as a
         CertificateBindingError, not escape as a TypeError from
         hmac.compare_digest (which cannot compare non-ASCII str)."""
-        with pytest.raises(CertificateBindingError, match="base64url"):
+        with pytest.raises(CertificateBindingError, match="base64url") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": "abcé"}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.INVALID_THUMBPRINT
 
     def test_binding_error_is_token_validation_exception(self, cert_pem):
         """A cert-binding failure must be catchable as ``TokenValidationException``

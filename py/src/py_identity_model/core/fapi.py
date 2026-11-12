@@ -16,6 +16,7 @@ FAPI 2.0 mandates:
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field, replace
+import enum
 from ipaddress import ip_address
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -80,11 +81,109 @@ def _fapi_algorithms() -> str:
     return ", ".join(sorted(FAPI2_ALLOWED_SIGNING_ALGORITHMS))
 
 
-def _required_metadata_missing(name: str) -> str:
-    """Violation text for an absent REQUIRED OIDC Discovery 1.0 §3 field."""
-    return (
+class FAPIViolationCode(enum.Enum):
+    """Which FAPI 2.0 rule a :class:`FAPIViolation` breaks.
+
+    Match on the code; the violation's ``message`` is for people and may
+    change between releases.
+    """
+
+    # The client's request or configuration.
+    RESPONSE_TYPE_NOT_CODE = "response_type_not_code"
+    """``response_type`` is not ``code`` (Security Profile §5.3.3.2)."""
+    PKCE_CHALLENGE_MISSING = "pkce_challenge_missing"
+    """No PKCE ``code_challenge`` (§5.3.3.2)."""
+    PKCE_METHOD_NOT_S256 = "pkce_method_not_s256"
+    """The PKCE method is absent or not ``S256`` (§5.3.3.2)."""
+    PKCE_VERIFIER_MISSING = "pkce_verifier_missing"
+    """The token request has no PKCE ``code_verifier``."""
+    NONCE_TOO_LONG = "nonce_too_long"
+    """``nonce`` is longer than 64 characters (§5.3.3.2)."""
+    REDIRECT_URI_INVALID = "redirect_uri_invalid"
+    """The redirect URI is not a string or has no host."""
+    REDIRECT_URI_NOT_HTTPS = "redirect_uri_not_https"
+    """The redirect URI is not ``https`` and not a native app's loopback
+    ``http`` URI (§5.3.2.2, RFC 8252 §7.3)."""
+    CLIENT_ID_MISSING = "client_id_missing"
+    """No ``client_id``."""
+    CLIENT_AUTH_MISSING = "client_auth_missing"
+    """No ``private_key_jwt`` or mTLS client authentication (§5.3.3.1)."""
+    CLIENT_AUTH_TYPE_INVALID = "client_auth_type_invalid"
+    """A profile's ``client_auth`` is not ``PrivateKeyJwt`` or ``MtlsClientAuth``."""
+    CLIENT_AUTH_METHOD_NOT_ALLOWED = "client_auth_method_not_allowed"
+    """An explicit ``client_auth_method`` FAPI 2.0 does not allow (§5.3.3.1)."""
+    ALGORITHM_NOT_ALLOWED = "algorithm_not_allowed"
+    """A ``private_key_jwt``, DPoP or request object algorithm other than
+    PS256, ES256 or EdDSA (§5.4.1)."""
+    SENDER_CONSTRAINT_MISSING = "sender_constraint_missing"
+    """Neither a DPoP key nor mTLS sender-constrains the tokens (§5.3.3.1)."""
+    MTLS_WITH_DPOP = "mtls_with_dpop"
+    """An mTLS client also passed a DPoP key."""
+    ASSERTION_AUDIENCE_NOT_ISSUER = "assertion_audience_not_issuer"
+    """The ``private_key_jwt`` assertion ``aud`` would not be the issuer
+    (§5.3.3.1)."""
+    REQUEST_OBJECT_LIFETIME_INVALID = "request_object_lifetime_invalid"
+    """The request object lifetime is not 1 to 3600 seconds (Message Signing
+    §5.3.2)."""
+    REQUEST_URI_MISSING = "request_uri_missing"
+    """No ``request_uri`` for the authorization URL."""
+    REFRESH_TOKEN_MISSING = "refresh_token_missing"
+    """No refresh token for the refresh request."""
+    ENDPOINT_MISSING = "endpoint_missing"
+    """Discovery gives no issuer or endpoint the profile needs."""
+    ENDPOINT_INVALID = "endpoint_invalid"
+    """An issuer or endpoint URL is not ``https`` or has no host."""
+
+    # What the authorization server advertises.
+    DISCOVERY_FAILED = "discovery_failed"
+    """The discovery document could not be fetched."""
+    REQUIRED_METADATA_MISSING = "required_metadata_missing"
+    """Discovery omits a field OIDC Discovery 1.0 §3 marks REQUIRED."""
+    SERVER_GRANT_TYPE_UNSUPPORTED = "server_grant_type_unsupported"
+    """The server does not offer the ``authorization_code`` grant."""
+    SERVER_RESPONSE_TYPE_UNSUPPORTED = "server_response_type_unsupported"
+    """The server does not offer the ``code`` response type."""
+    SERVER_CLIENT_AUTH_UNSUPPORTED = "server_client_auth_unsupported"
+    """The server does not offer a FAPI client authentication method, or the
+    client's own one."""
+    SERVER_AUTH_SIGNING_ALG_UNSUPPORTED = "server_auth_signing_alg_unsupported"
+    """The server does not offer a FAPI ``private_key_jwt`` algorithm, or the
+    client's own one."""
+    SERVER_ID_TOKEN_ALG_UNSUPPORTED = "server_id_token_alg_unsupported"
+    """The server does not sign ID Tokens with a FAPI algorithm."""
+    SERVER_PKCE_UNSUPPORTED = "server_pkce_unsupported"
+    """The server does not offer PKCE ``S256`` (§5.3.2.2)."""
+    SERVER_PAR_UNSUPPORTED = "server_par_unsupported"
+    """The server does not advertise a PAR endpoint (§5.3.2.2, RFC 9126)."""
+    SERVER_ISS_PARAMETER_UNSUPPORTED = "server_iss_parameter_unsupported"
+    """The server does not return ``iss`` in authorization responses
+    (§5.3.2.2, RFC 9207)."""
+    SERVER_SENDER_CONSTRAINT_UNSUPPORTED = "server_sender_constraint_unsupported"
+    """The server offers neither DPoP nor mTLS-bound tokens (§5.3.2.1), or not
+    the binding the client uses."""
+    SERVER_DPOP_ALG_UNSUPPORTED = "server_dpop_alg_unsupported"
+    """The server does not advertise the DPoP key's algorithm (RFC 9449 §5.1)."""
+    SERVER_REQUEST_OBJECT_ALG_UNSUPPORTED = "server_request_object_alg_unsupported"
+    """The server does not advertise the request object's algorithm."""
+
+
+@dataclass(frozen=True)
+class FAPIViolation:
+    """One broken FAPI 2.0 rule: a typed ``code`` and a readable ``message``."""
+
+    code: FAPIViolationCode
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def _required_metadata_missing(name: str) -> FAPIViolation:
+    """Violation for an absent REQUIRED OIDC Discovery 1.0 §3 field."""
+    return FAPIViolation(
+        FAPIViolationCode.REQUIRED_METADATA_MISSING,
         f"{name} not advertised; "
-        "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+        "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default",
     )
 
 
@@ -96,14 +195,21 @@ class FAPIValidationResult:
     ``violations`` is empty.  It cannot be set directly.
     """
 
-    violations: list[str] = field(default_factory=list)
+    violations: list[FAPIViolation] = field(default_factory=list)
     is_compliant: bool = field(init=False)
 
     def __post_init__(self) -> None:
         self.is_compliant = len(self.violations) == 0
 
+    @property
+    def codes(self) -> list[FAPIViolationCode]:
+        """The violations' codes, in order."""
+        return [v.code for v in self.violations]
 
-def _redirect_uri_violations(redirect_uri: object, *, native_app: bool) -> list[str]:
+
+def _redirect_uri_violations(
+    redirect_uri: object, *, native_app: bool
+) -> list[FAPIViolation]:
     """``https`` redirect URIs; ``http`` only for a native app's loopback.
 
     FAPI 2.0 Security Profile §5.3.2.2(8) forbids ``http`` redirect URIs
@@ -111,19 +217,31 @@ def _redirect_uri_violations(redirect_uri: object, *, native_app: bool) -> list[
     (RFC 8252 §7.3).
     """
     if not isinstance(redirect_uri, str):
-        return ["redirect_uri must be a string"]
+        return [
+            FAPIViolation(
+                FAPIViolationCode.REDIRECT_URI_INVALID, "redirect_uri must be a string"
+            )
+        ]
     parsed = urlparse(redirect_uri.strip())
     scheme = parsed.scheme.lower()
     if not parsed.hostname:
-        return [f"redirect_uri must have a host, got '{redirect_uri}'"]
+        return [
+            FAPIViolation(
+                FAPIViolationCode.REDIRECT_URI_INVALID,
+                f"redirect_uri must have a host, got '{redirect_uri}'",
+            )
+        ]
     if scheme == "https":
         return []
     if scheme == "http" and native_app and _is_loopback(parsed.hostname):
         return []
     return [
-        f"redirect_uri must use HTTPS, got '{redirect_uri}'; http is allowed only "
-        "for a native app's loopback redirect (FAPI 2.0 Security Profile "
-        "§5.3.2.2, RFC 8252 §7.3)"
+        FAPIViolation(
+            FAPIViolationCode.REDIRECT_URI_NOT_HTTPS,
+            f"redirect_uri must use HTTPS, got '{redirect_uri}'; http is allowed "
+            "only for a native app's loopback redirect (FAPI 2.0 Security Profile "
+            "§5.3.2.2, RFC 8252 §7.3)",
+        )
     ]
 
 
@@ -136,12 +254,15 @@ def _is_loopback(hostname: str) -> bool:
         return False
 
 
-def _algorithm_violation(what: str, algorithm: str) -> list[str]:
+def _algorithm_violation(what: str, algorithm: str) -> list[FAPIViolation]:
     if algorithm in FAPI2_ALLOWED_SIGNING_ALGORITHMS:
         return []
     return [
-        f"{what} algorithm '{algorithm}' not allowed; use {_fapi_algorithms()} "
-        "(FAPI 2.0 Security Profile §5.4.1)"
+        FAPIViolation(
+            FAPIViolationCode.ALGORITHM_NOT_ALLOWED,
+            f"{what} algorithm '{algorithm}' not allowed; use {_fapi_algorithms()} "
+            "(FAPI 2.0 Security Profile §5.4.1)",
+        )
     ]
 
 
@@ -165,27 +286,48 @@ def validate_fapi_authorization_request(
     Returns:
         FAPIValidationResult with compliance status and any violations.
     """
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     if request.response_type != FAPI2_REQUIRED_RESPONSE_TYPE:
         violations.append(
-            f"response_type must be 'code', got '{request.response_type}'"
+            FAPIViolation(
+                FAPIViolationCode.RESPONSE_TYPE_NOT_CODE,
+                f"response_type must be 'code', got '{request.response_type}'",
+            )
         )
 
     code_challenge = request.code_challenge
     if not code_challenge or not code_challenge.strip():
-        violations.append("PKCE code_challenge is required")
+        violations.append(
+            FAPIViolation(
+                FAPIViolationCode.PKCE_CHALLENGE_MISSING,
+                "PKCE code_challenge is required",
+            )
+        )
 
     method = request.code_challenge_method
     if method is None:
-        violations.append("PKCE code_challenge_method is required")
+        violations.append(
+            FAPIViolation(
+                FAPIViolationCode.PKCE_METHOD_NOT_S256,
+                "PKCE code_challenge_method is required",
+            )
+        )
     elif method != FAPI2_REQUIRED_PKCE_METHOD:
-        violations.append(f"PKCE method must be 'S256', got '{method}'")
+        violations.append(
+            FAPIViolation(
+                FAPIViolationCode.PKCE_METHOD_NOT_S256,
+                f"PKCE method must be 'S256', got '{method}'",
+            )
+        )
 
     if request.nonce is not None and len(request.nonce) > FAPI2_MAX_NONCE_LENGTH:
         violations.append(
-            f"nonce is {len(request.nonce)} characters; FAPI 2.0 Security "
-            f"Profile §5.3.3.2 limits it to {FAPI2_MAX_NONCE_LENGTH}"
+            FAPIViolation(
+                FAPIViolationCode.NONCE_TOO_LONG,
+                f"nonce is {len(request.nonce)} characters; FAPI 2.0 Security "
+                f"Profile §5.3.3.2 limits it to {FAPI2_MAX_NONCE_LENGTH}",
+            )
         )
 
     violations.extend(
@@ -209,7 +351,7 @@ def _client_violations(
     mtls: MtlsClientAuth | None,
     dpop_key: DPoPKey | None,
     client_auth_method: ClientAuthMethod | None = None,
-) -> list[str]:
+) -> list[FAPIViolation]:
     """Client authentication and sender constraint (§5.3.3.1, §5.4.1)."""
     return [
         *_client_authentication_violations(
@@ -226,22 +368,28 @@ def _client_authentication_violations(
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
     client_auth_method: ClientAuthMethod | None = None,
-) -> list[str]:
-    violations: list[str] = []
+) -> list[FAPIViolation]:
+    violations: list[FAPIViolation] = []
     # An explicit method is what gets sent, whatever credentials are present.
     if (
         client_auth_method is not None
         and client_auth_method.value not in FAPI2_ALLOWED_AUTH_METHODS
     ):
         violations.append(
-            f"client_auth_method '{client_auth_method.value}' is not FAPI 2.0 "
-            f"compliant; use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))} "
-            "(FAPI 2.0 Security Profile §5.3.3.1)"
+            FAPIViolation(
+                FAPIViolationCode.CLIENT_AUTH_METHOD_NOT_ALLOWED,
+                f"client_auth_method '{client_auth_method.value}' is not FAPI 2.0 "
+                f"compliant; use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))} "
+                "(FAPI 2.0 Security Profile §5.3.3.1)",
+            )
         )
     if private_key_jwt is None and mtls is None:
         violations.append(
-            "Client authentication is required: private_key_jwt or mTLS "
-            "(FAPI 2.0 Security Profile §5.3.3.1)"
+            FAPIViolation(
+                FAPIViolationCode.CLIENT_AUTH_MISSING,
+                "Client authentication is required: private_key_jwt or mTLS "
+                "(FAPI 2.0 Security Profile §5.3.3.1)",
+            )
         )
     if private_key_jwt is not None:
         violations.extend(
@@ -254,20 +402,23 @@ def _sender_constraint_request_violations(
     *,
     dpop_key: DPoPKey | None,
     mtls: MtlsClientAuth | None,
-) -> list[str]:
+) -> list[FAPIViolation]:
     if dpop_key is not None:
         return _algorithm_violation("DPoP", dpop_key.algorithm)
     if mtls is None:
         return [
-            "Sender-constrained tokens required: a DPoP key or mTLS "
-            "(FAPI 2.0 Security Profile §5.3.3.1)"
+            FAPIViolation(
+                FAPIViolationCode.SENDER_CONSTRAINT_MISSING,
+                "Sender-constrained tokens required: a DPoP key or mTLS "
+                "(FAPI 2.0 Security Profile §5.3.3.1)",
+            )
         ]
     return []
 
 
 def _assertion_audience_violations(
     private_key_jwt: PrivateKeyJwt | None, issuer: str
-) -> list[str]:
+) -> list[FAPIViolation]:
     """§5.3.3.1: the assertion ``aud`` is the issuer, never the endpoint URL."""
     if private_key_jwt is None:
         return []
@@ -275,8 +426,11 @@ def _assertion_audience_violations(
     if aud == issuer:
         return []
     return [
-        f"private_key_jwt assertion aud would be {aud!r}, not the issuer "
-        f"{issuer!r} (FAPI 2.0 Security Profile §5.3.3.1)"
+        FAPIViolation(
+            FAPIViolationCode.ASSERTION_AUDIENCE_NOT_ISSUER,
+            f"private_key_jwt assertion aud would be {aud!r}, not the issuer "
+            f"{issuer!r} (FAPI 2.0 Security Profile §5.3.3.1)",
+        )
     ]
 
 
@@ -315,16 +469,21 @@ def validate_fapi_client_config(
     )
 
 
-def _flow_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
+def _flow_violations(discovery: DiscoveryDocumentResponse) -> list[FAPIViolation]:
     """Grant and response type: the authorization code flow."""
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     # Check supported grant types include authorization_code.
     # OPTIONAL; OIDC Discovery 1.0 §3 and RFC 8414 §2 default when omitted is
     # ["authorization_code", "implicit"] — compliant.
     grants = discovery.grant_types_supported
     if grants is not None and "authorization_code" not in _str_values(grants):
-        violations.append("Server does not support authorization_code grant type")
+        violations.append(
+            FAPIViolation(
+                FAPIViolationCode.SERVER_GRANT_TYPE_UNSUPPORTED,
+                "Server does not support authorization_code grant type",
+            )
+        )
 
     # Check response_types_supported includes "code" (authorization code flow).
     # REQUIRED by OIDC Discovery 1.0 §3, no default.  (The ["code"] default
@@ -334,31 +493,42 @@ def _flow_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
         violations.append(_required_metadata_missing("response_types_supported"))
     elif FAPI2_REQUIRED_RESPONSE_TYPE not in _str_values(response_types):
         violations.append(
-            "Server does not support 'code' response type "
-            "(authorization code flow required)"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_RESPONSE_TYPE_UNSUPPORTED,
+                "Server does not support 'code' response type "
+                "(authorization code flow required)",
+            )
         )
 
     return violations
 
 
-def _client_auth_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
+def _client_auth_violations(
+    discovery: DiscoveryDocumentResponse,
+) -> list[FAPIViolation]:
     """Client authentication methods and their JWT algorithms."""
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     # Check token endpoint auth methods for strong client auth.
     # RFC 8414 §2 default when omitted is ["client_secret_basic"] — FAPI-prohibited.
     auth_methods = discovery.token_endpoint_auth_methods_supported
     if auth_methods is None:
         violations.append(
-            "token_endpoint_auth_methods_supported not advertised; "
-            "RFC 8414 default is client_secret_basic, which FAPI 2.0 prohibits"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_CLIENT_AUTH_UNSUPPORTED,
+                "token_endpoint_auth_methods_supported not advertised; "
+                "RFC 8414 default is client_secret_basic, which FAPI 2.0 prohibits",
+            )
         )
     else:
         supported = _str_values(auth_methods) & FAPI2_ALLOWED_AUTH_METHODS
         if not supported:
             violations.append(
-                "Server does not support FAPI-compliant client auth "
-                "(private_key_jwt or tls_client_auth)"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_CLIENT_AUTH_UNSUPPORTED,
+                    "Server does not support FAPI-compliant client auth "
+                    "(private_key_jwt or tls_client_auth)",
+                )
             )
 
     # The private_key_jwt assertion is a JWT, so FAPI 2.0 Security Profile
@@ -368,22 +538,30 @@ def _client_auth_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
         auth_algs = discovery.token_endpoint_auth_signing_alg_values_supported
         if auth_algs is None:
             violations.append(
-                "token_endpoint_auth_signing_alg_values_supported not advertised; "
-                f"private_key_jwt needs one of {_fapi_algorithms()} "
-                "(FAPI 2.0 Security Profile §5.4.1)"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_AUTH_SIGNING_ALG_UNSUPPORTED,
+                    "token_endpoint_auth_signing_alg_values_supported not "
+                    f"advertised; private_key_jwt needs one of {_fapi_algorithms()} "
+                    "(FAPI 2.0 Security Profile §5.4.1)",
+                )
             )
         elif not _str_values(auth_algs) & FAPI2_ALLOWED_SIGNING_ALGORITHMS:
             violations.append(
-                "Server does not support FAPI-compliant token endpoint auth "
-                f"signing algorithms ({_fapi_algorithms()})"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_AUTH_SIGNING_ALG_UNSUPPORTED,
+                    "Server does not support FAPI-compliant token endpoint auth "
+                    f"signing algorithms ({_fapi_algorithms()})",
+                )
             )
 
     return violations
 
 
-def _id_token_alg_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
+def _id_token_alg_violations(
+    discovery: DiscoveryDocumentResponse,
+) -> list[FAPIViolation]:
     """ID Token signing algorithms."""
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     # ID Token signing algorithms.
     # REQUIRED by OIDC Discovery 1.0 §3, no default.  (The RS256 default
@@ -395,8 +573,11 @@ def _id_token_alg_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
         )
     elif not _str_values(algs) & FAPI2_ALLOWED_SIGNING_ALGORITHMS:
         violations.append(
-            "Server does not support FAPI-compliant signing algorithms "
-            f"({_fapi_algorithms()})"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_ID_TOKEN_ALG_UNSUPPORTED,
+                "Server does not support FAPI-compliant signing algorithms "
+                f"({_fapi_algorithms()})",
+            )
         )
 
     return violations
@@ -404,48 +585,62 @@ def _id_token_alg_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
 
 def _authorization_endpoint_violations(
     discovery: DiscoveryDocumentResponse,
-) -> list[str]:
+) -> list[FAPIViolation]:
     """PKCE, PAR and the RFC 9207 ``iss`` parameter."""
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     # Check PKCE support — FAPI 2.0 Security Profile §5.3.2.2(5) requires S256.
     # RFC 8414 §2: when omitted, the server does not support PKCE.
     pkce_methods = discovery.code_challenge_methods_supported
     if pkce_methods is None:
         violations.append(
-            "code_challenge_methods_supported not advertised; RFC 8414 §2 reads "
-            "that as no PKCE support, and FAPI 2.0 Security Profile §5.3.2.2 "
-            "requires S256"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_PKCE_UNSUPPORTED,
+                "code_challenge_methods_supported not advertised; RFC 8414 §2 "
+                "reads that as no PKCE support, and FAPI 2.0 Security Profile "
+                "§5.3.2.2 requires S256",
+            )
         )
     elif FAPI2_REQUIRED_PKCE_METHOD not in _str_values(pkce_methods):
         violations.append(
-            "Server does not support S256 PKCE "
-            "(FAPI 2.0 requires code_challenge_methods_supported to include S256)"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_PKCE_UNSUPPORTED,
+                "Server does not support S256 PKCE (FAPI 2.0 requires "
+                "code_challenge_methods_supported to include S256)",
+            )
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(2): PAR (RFC 9126) is required.
     if not discovery.pushed_authorization_request_endpoint:
         violations.append(
-            "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
-            "Security Profile §5.3.2.2 requires pushed authorization requests "
-            "(RFC 9126)"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_PAR_UNSUPPORTED,
+                "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
+                "Security Profile §5.3.2.2 requires pushed authorization requests "
+                "(RFC 9126)",
+            )
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(7): the server returns iss in the
     # authorization response.  RFC 9207 §3: absent means false.
     if discovery.authorization_response_iss_parameter_supported is not True:
         violations.append(
-            "authorization_response_iss_parameter_supported is not true; FAPI 2.0 "
-            "Security Profile §5.3.2.2 requires the iss authorization response "
-            "parameter (RFC 9207 §3)"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_ISS_PARAMETER_UNSUPPORTED,
+                "authorization_response_iss_parameter_supported is not true; FAPI "
+                "2.0 Security Profile §5.3.2.2 requires the iss authorization "
+                "response parameter (RFC 9207 §3)",
+            )
         )
 
     return violations
 
 
-def _sender_constraint_violations(discovery: DiscoveryDocumentResponse) -> list[str]:
+def _sender_constraint_violations(
+    discovery: DiscoveryDocumentResponse,
+) -> list[FAPIViolation]:
     """Sender-constrained access tokens."""
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
 
     # FAPI 2.0 Security Profile §5.3.2.1(4-5): access tokens are
     # sender-constrained with DPoP (RFC 9449 §5.1 metadata) or MTLS
@@ -458,10 +653,13 @@ def _sender_constraint_violations(discovery: DiscoveryDocumentResponse) -> list[
     supports_mtls = discovery.tls_client_certificate_bound_access_tokens is True
     if not supports_dpop and not supports_mtls:
         violations.append(
-            "Neither dpop_signing_alg_values_supported with one of "
-            f"{_fapi_algorithms()} nor tls_client_certificate_bound_access_tokens: "
-            "true is advertised; FAPI 2.0 Security Profile §5.3.2.1 requires "
-            "sender-constrained access tokens (DPoP or MTLS)"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_SENDER_CONSTRAINT_UNSUPPORTED,
+                "Neither dpop_signing_alg_values_supported with one of "
+                f"{_fapi_algorithms()} nor tls_client_certificate_bound_access_"
+                "tokens: true is advertised; FAPI 2.0 Security Profile §5.3.2.1 "
+                "requires sender-constrained access tokens (DPoP or MTLS)",
+            )
         )
 
     return violations
@@ -489,7 +687,12 @@ def validate_fapi_discovery(
     """
     if not discovery.is_successful:
         return FAPIValidationResult(
-            violations=["Discovery document fetch failed"],
+            violations=[
+                FAPIViolation(
+                    FAPIViolationCode.DISCOVERY_FAILED,
+                    "Discovery document fetch failed",
+                )
+            ],
         )
 
     return FAPIValidationResult(
@@ -505,16 +708,19 @@ def validate_fapi_discovery(
 
 def _request_object_key_violations(
     key: RequestObjectKey | None, advertised: tuple[str, ...] | None
-) -> list[str]:
+) -> list[FAPIViolation]:
     """Message Signing §5.3.2: FAPI algorithm, lifetime of at most 3600 s."""
     if key is None:
         return []
     violations = _algorithm_violation("request object", key.algorithm)
     if not 0 < key.lifetime <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME:
         violations.append(
-            f"request object lifetime must be 1 to "
-            f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got {key.lifetime} "
-            "(FAPI 2.0 Message Signing §5.3.2)"
+            FAPIViolation(
+                FAPIViolationCode.REQUEST_OBJECT_LIFETIME_INVALID,
+                f"request object lifetime must be 1 to "
+                f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got {key.lifetime} "
+                "(FAPI 2.0 Message Signing §5.3.2)",
+            )
         )
     if (
         # A non-FAPI algorithm is already reported above.
@@ -523,8 +729,11 @@ def _request_object_key_violations(
         and key.algorithm not in advertised
     ):
         violations.append(
-            f"Server does not advertise request object algorithm "
-            f"'{key.algorithm}' in request_object_signing_alg_values_supported"
+            FAPIViolation(
+                FAPIViolationCode.SERVER_REQUEST_OBJECT_ALG_UNSUPPORTED,
+                f"Server does not advertise request object algorithm "
+                f"'{key.algorithm}' in request_object_signing_alg_values_supported",
+            )
         )
     return violations
 
@@ -534,49 +743,65 @@ def _server_support_violations(
     *,
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
-) -> list[str]:
+) -> list[FAPIViolation]:
     """The server must support the client's chosen auth and token binding.
 
     :func:`validate_fapi_discovery` only checks that *some* FAPI method is
     offered; the profile's own method has to be one of them.
     """
-    violations: list[str] = []
+    violations: list[FAPIViolation] = []
     methods = _str_values(discovery.token_endpoint_auth_methods_supported)
     if private_key_jwt is not None:
         if "private_key_jwt" not in methods:
             violations.append(
-                "Server does not advertise private_key_jwt in "
-                "token_endpoint_auth_methods_supported"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_CLIENT_AUTH_UNSUPPORTED,
+                    "Server does not advertise private_key_jwt in "
+                    "token_endpoint_auth_methods_supported",
+                )
             )
         auth_algs = _str_values(
             discovery.token_endpoint_auth_signing_alg_values_supported
         )
         if private_key_jwt.algorithm not in auth_algs:
             violations.append(
-                f"Server does not advertise private_key_jwt algorithm "
-                f"'{private_key_jwt.algorithm}' in "
-                "token_endpoint_auth_signing_alg_values_supported"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_AUTH_SIGNING_ALG_UNSUPPORTED,
+                    f"Server does not advertise private_key_jwt algorithm "
+                    f"'{private_key_jwt.algorithm}' in "
+                    "token_endpoint_auth_signing_alg_values_supported",
+                )
             )
         dpop_algs = _str_values(discovery.dpop_signing_alg_values_supported)
         if not dpop_algs & FAPI2_ALLOWED_SIGNING_ALGORITHMS:
             violations.append(
-                "Server does not advertise DPoP with one of "
-                f"{_fapi_algorithms()} (dpop_signing_alg_values_supported); a "
-                "private_key_jwt client binds its tokens with DPoP"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_DPOP_ALG_UNSUPPORTED,
+                    "Server does not advertise DPoP with one of "
+                    f"{_fapi_algorithms()} (dpop_signing_alg_values_supported); a "
+                    "private_key_jwt client binds its tokens with DPoP",
+                )
             )
     if mtls is not None:
         # RFC 8705 §2.1 and §2.2 share one request shape; the PKI and
         # self-signed variants differ only in how the server checks the cert.
         if not methods & _MTLS_AUTH_METHODS:
             violations.append(
-                "Server does not advertise an mTLS client authentication method "
-                "(tls_client_auth or self_signed_tls_client_auth) in "
-                "token_endpoint_auth_methods_supported"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_CLIENT_AUTH_UNSUPPORTED,
+                    "Server does not advertise an mTLS client authentication "
+                    "method (tls_client_auth or self_signed_tls_client_auth) in "
+                    "token_endpoint_auth_methods_supported",
+                )
             )
         if discovery.tls_client_certificate_bound_access_tokens is not True:
             violations.append(
-                "Server does not advertise tls_client_certificate_bound_access_"
-                "tokens: true; an mTLS client binds its tokens to its certificate"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_SENDER_CONSTRAINT_UNSUPPORTED,
+                    "Server does not advertise tls_client_certificate_bound_access_"
+                    "tokens: true; an mTLS client binds its tokens to its "
+                    "certificate",
+                )
             )
     return violations
 
@@ -585,23 +810,29 @@ def _server_support_violations(
 # the default mode for the response type.
 JARM_RESPONSE_MODE = "jwt"
 
-_MTLS_WITH_DPOP = (
-    "An mTLS client's tokens are bound to its certificate; do not also pass a DPoP key"
+_MTLS_WITH_DPOP = FAPIViolation(
+    FAPIViolationCode.MTLS_WITH_DPOP,
+    "An mTLS client's tokens are bound to its certificate; do not also pass a DPoP key",
 )
 
 
 class FAPIProfileError(ValueError):
     """A FAPI 2.0 client profile refused a configuration or request.
 
-    ``violations`` lists every rule that was broken.
+    ``violations`` lists every rule that was broken; match on their ``code``.
     """
 
-    def __init__(self, violations: list[str]) -> None:
-        super().__init__("; ".join(violations))
+    def __init__(self, violations: list[FAPIViolation]) -> None:
+        super().__init__("; ".join(v.message for v in violations))
         self.violations = violations
 
+    @property
+    def codes(self) -> list[FAPIViolationCode]:
+        """The violations' codes, in order."""
+        return [v.code for v in self.violations]
 
-def _raise_on(violations: list[str]) -> None:
+
+def _raise_on(violations: list[FAPIViolation]) -> None:
     if violations:
         raise FAPIProfileError(violations)
 
@@ -701,8 +932,11 @@ class FAPI2ClientProfile:
         else:
             raise FAPIProfileError(
                 [
-                    "client_auth must be PrivateKeyJwt or MtlsClientAuth "
-                    "(FAPI 2.0 Security Profile §5.3.3.1)"
+                    FAPIViolation(
+                        FAPIViolationCode.CLIENT_AUTH_TYPE_INVALID,
+                        "client_auth must be PrivateKeyJwt or MtlsClientAuth "
+                        "(FAPI 2.0 Security Profile §5.3.3.1)",
+                    )
                 ]
             )
 
@@ -741,7 +975,7 @@ class FAPI2ClientProfile:
         for name, value in derived.items():
             object.__setattr__(self, name, value)
 
-        violations: list[str] = []
+        violations: list[FAPIViolation] = []
         for name in (
             "issuer",
             "authorization_endpoint",
@@ -750,15 +984,33 @@ class FAPI2ClientProfile:
         ):
             url = derived[name]
             if not url:
-                violations.append(f"{name} is required")
+                violations.append(
+                    FAPIViolation(
+                        FAPIViolationCode.ENDPOINT_MISSING, f"{name} is required"
+                    )
+                )
                 continue
             parsed = urlparse(url)
             if parsed.scheme.lower() != "https":
-                violations.append(f"{name} must use https, got {url!r}")
+                violations.append(
+                    FAPIViolation(
+                        FAPIViolationCode.ENDPOINT_INVALID,
+                        f"{name} must use https, got {url!r}",
+                    )
+                )
             elif not parsed.hostname:
-                violations.append(f"{name} must have a host, got {url!r}")
+                violations.append(
+                    FAPIViolation(
+                        FAPIViolationCode.ENDPOINT_INVALID,
+                        f"{name} must have a host, got {url!r}",
+                    )
+                )
         if not self.client_id:
-            violations.append("client_id is required")
+            violations.append(
+                FAPIViolation(
+                    FAPIViolationCode.CLIENT_ID_MISSING, "client_id is required"
+                )
+            )
         violations.extend(
             _client_authentication_violations(
                 private_key_jwt=private_key_jwt, mtls=mtls
@@ -786,7 +1038,7 @@ class FAPI2ClientProfile:
         """Algorithms to accept for ID Tokens, JARM responses and DPoP (§5.4.1)."""
         return sorted(FAPI2_ALLOWED_SIGNING_ALGORITHMS)
 
-    def _request_violations(self, dpop_key: DPoPKey | None) -> list[str]:
+    def _request_violations(self, dpop_key: DPoPKey | None) -> list[FAPIViolation]:
         """Re-check the settings a request carries (they are mutable objects)."""
         violations = _assertion_audience_violations(self.private_key_jwt, self.issuer)
         if dpop_key is None:
@@ -799,8 +1051,12 @@ class FAPI2ClientProfile:
             and dpop_key.algorithm not in self.dpop_signing_algorithms
         ):
             violations.append(
-                f"Server does not advertise DPoP algorithm '{dpop_key.algorithm}' "
-                "in dpop_signing_alg_values_supported (RFC 9449 §5.1)"
+                FAPIViolation(
+                    FAPIViolationCode.SERVER_DPOP_ALG_UNSUPPORTED,
+                    f"Server does not advertise DPoP algorithm "
+                    f"'{dpop_key.algorithm}' in dpop_signing_alg_values_supported "
+                    "(RFC 9449 §5.1)",
+                )
             )
         return violations
 
@@ -925,7 +1181,14 @@ class FAPI2ClientProfile:
             FAPIProfileError: ``request_uri`` is not a non-blank string.
         """
         if not isinstance(request_uri, str) or not request_uri.strip():
-            raise FAPIProfileError(["request_uri is required"])
+            raise FAPIProfileError(
+                [
+                    FAPIViolation(
+                        FAPIViolationCode.REQUEST_URI_MISSING,
+                        "request_uri is required",
+                    )
+                ]
+            )
         return build_par_authorization_url(
             self.authorization_endpoint, self.client_id, request_uri
         )
@@ -961,7 +1224,12 @@ class FAPI2ClientProfile:
             *self._request_violations(dpop_key),
         ]
         if not code_verifier:
-            violations.append("PKCE code_verifier is required")
+            violations.append(
+                FAPIViolation(
+                    FAPIViolationCode.PKCE_VERIFIER_MISSING,
+                    "PKCE code_verifier is required",
+                )
+            )
         _raise_on(violations)
         return AuthorizationCodeTokenRequest(
             address=self.token_endpoint,
@@ -999,7 +1267,11 @@ class FAPI2ClientProfile:
             *self._request_violations(dpop_key),
         ]
         if not isinstance(refresh_token, str) or not refresh_token.strip():
-            violations.append("refresh_token is required")
+            violations.append(
+                FAPIViolation(
+                    FAPIViolationCode.REFRESH_TOKEN_MISSING, "refresh_token is required"
+                )
+            )
         _raise_on(violations)
         return RefreshTokenRequest(
             address=self.token_endpoint,
@@ -1023,6 +1295,8 @@ __all__ = [
     "FAPI2ClientProfile",
     "FAPIProfileError",
     "FAPIValidationResult",
+    "FAPIViolation",
+    "FAPIViolationCode",
     "validate_fapi_authorization_request",
     "validate_fapi_client_config",
     "validate_fapi_discovery",
