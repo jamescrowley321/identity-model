@@ -758,7 +758,11 @@ with a kind.
 raised a bare `ValueError` when a DPoP proof had to be checked but
 `presentation.method` or `presentation.url` was missing, or the URL was not an
 absolute http(s) URI. They now raise `ConfigurationException`, as they already
-did for `required_binding` without a presentation.
+did for `required_binding` without a presentation. Treat it as a server fault
+in your own handler, not as a bad token: it is a `PyIdentityModelException`, so
+a broad `except PyIdentityModelException` that answers 401 would hide it. The
+FastAPI middleware and WebSocket authenticator build the presentation from the
+request's absolute URL and method, so they never hit this.
 
 ## ID Token validation
 
