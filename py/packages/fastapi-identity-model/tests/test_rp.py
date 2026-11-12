@@ -1,10 +1,16 @@
+from dataclasses import replace
+import json
 import logging
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Request
 import httpx
+import jwt as pyjwt
+from jwt.algorithms import RSAAlgorithm
 import pytest
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -20,6 +26,7 @@ from py_identity_model import (
     TokenValidationException,
     UserInfoResponse,
 )
+from py_identity_model.aio import validate_id_token as avalidate_id_token
 from py_identity_model.core.response_processors import parse_userinfo_response
 
 
@@ -499,3 +506,98 @@ def test_oidc_public_paths_root_and_trailing_slash():
         "/auth/callback",
         "/auth/logout",
     ]
+
+
+# --- ID Token audiences on the login callback (OIDC Core §3.1.3.7, #1099) ---
+#
+# ``validate_id_token`` runs for real against a static key instead of
+# discovery, so the audience and ``azp`` rules apply as they would in an app;
+# only the key fetch is skipped.
+
+
+@pytest.fixture(scope="module")
+def id_token_key():
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+@pytest.fixture
+def real_id_token_validation(monkeypatch, id_token_key):
+    jwk = json.loads(RSAAlgorithm.to_jwk(id_token_key.public_key()))
+    _patch(monkeypatch)
+
+    async def _validate(id_token, *, token_validation_config, **kwargs):
+        config = replace(
+            token_validation_config, perform_disco=False, key=jwk, algorithms=["RS256"]
+        )
+        kwargs.pop("disco_doc_address")
+        return await avalidate_id_token(id_token, config, **kwargs)
+
+    monkeypatch.setattr(rp, "validate_id_token", _validate)
+
+
+def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> str:
+    now = int(time.time())
+    claims = {
+        "iss": _DISCO.issuer,
+        "sub": "user-1",
+        "aud": aud,
+        "iat": now,
+        "exp": now + 300,
+        "nonce": nonce,
+    }
+    if azp is not None:
+        claims["azp"] = azp
+    return pyjwt.encode(claims, key, algorithm="RS256")
+
+
+async def _callback(settings: OIDCSettings, key, **token_claims) -> httpx.Response:
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test-secret")
+    app.include_router(build_oidc_router(settings), prefix="/auth")
+    async with _client(app) as client:
+        state, nonce = await _login(client)
+        rp.request_authorization_code_token.return_value.token = {
+            "id_token": _id_token(key, nonce, **token_claims),
+            "access_token": "at",
+        }
+        return await client.get(f"/auth/callback?code=abc&state={state}")
+
+
+@pytest.mark.usefixtures("real_id_token_validation")
+class TestLoginCallbackAudiences:
+    async def test_untrusted_extra_audience_fails_login(self, id_token_key):
+        resp = await _callback(SETTINGS, id_token_key, aud=["cid", "urn:api"])
+        assert (resp.status_code, resp.json()) == (
+            401,
+            {"detail": "ID token validation failed"},
+        )
+
+    async def test_trusted_extra_audience_logs_in(self, id_token_key):
+        settings = replace(SETTINGS, trusted_audiences=["urn:api"])
+        resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
+        assert (resp.status_code, resp.headers["location"]) == (302, "/")
+
+    async def test_single_audience_logs_in(self, id_token_key):
+        resp = await _callback(SETTINGS, id_token_key, aud="cid")
+        assert resp.status_code == 302
+
+    async def test_azp_not_checked_by_default(self, id_token_key):
+        settings = replace(SETTINGS, trusted_audiences=["urn:api"])
+        resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
+        assert resp.status_code == 302
+
+    @pytest.mark.parametrize("azp", [None, "someone-else"])
+    async def test_validate_azp_rejects_missing_or_wrong_azp(self, id_token_key, azp):
+        settings = replace(SETTINGS, trusted_audiences=["urn:api"], validate_azp=True)
+        resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"], azp=azp)
+        assert (resp.status_code, resp.json()) == (
+            401,
+            {"detail": "ID token validation failed"},
+        )
+
+    async def test_validate_azp_accepts_matching_azp(self, id_token_key):
+        settings = replace(SETTINGS, trusted_audiences=["urn:api"], validate_azp=True)
+        resp = await _callback(
+            settings, id_token_key, aud=["cid", "urn:api"], azp="cid"
+        )
+        assert resp.status_code == 302

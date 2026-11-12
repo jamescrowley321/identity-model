@@ -98,6 +98,21 @@ async def me(request: Request):
 Routes added: `GET /auth/login` → provider, `GET /auth/callback` (code exchange,
 ID-token validation, **nonce check**, UserInfo `sub` verification), `POST /auth/logout`.
 
+The callback validates the ID Token with `validate_id_token` (OIDC Core
+§3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` fails
+the login unless that audience is in `trusted_audiences`
+(`OIDC_TRUSTED_AUDIENCES`). If your provider issues multi-audience ID Tokens,
+list the extra audiences and set `validate_azp=True` (`OIDC_VALIDATE_AZP=true`)
+so the token must name your client as its authorized party:
+
+```python
+settings = OIDCSettings(
+    ...,
+    trusted_audiences=["https://api.example.com"],
+    validate_azp=True,
+)
+```
+
 ### Session & security
 
 The router uses Starlette's `SessionMiddleware`, which **signs but does not
@@ -118,8 +133,9 @@ settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID,
 settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
 ```
 
-`DISCOVERY_URL` and `CLIENT_ID` are required. `EXCLUDED_PATHS` is a
-comma-separated list. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
+`DISCOVERY_URL` and `CLIENT_ID` are required. `EXCLUDED_PATHS` and
+`TRUSTED_AUDIENCES` are comma-separated lists; an empty `TRUSTED_AUDIENCES`
+entry raises `ValueError`. `VALIDATE_AZP` is `true` or `false`. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
 `SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
 to the `OIDCSettings` default when unset.
 

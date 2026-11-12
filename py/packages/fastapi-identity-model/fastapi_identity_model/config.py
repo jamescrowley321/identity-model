@@ -21,6 +21,21 @@ def _default_excluded_paths() -> list[str]:
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
 
+def _check_trusted_audiences(audiences: object) -> list[str]:
+    # A bare string would be read as a list of its characters.
+    if isinstance(audiences, str) or not isinstance(audiences, (list, tuple)):
+        raise ValueError(
+            "trusted_audiences must be a list of strings; "
+            f"got {type(audiences).__name__}"
+        )
+    for audience in audiences:
+        if not isinstance(audience, str) or not audience:
+            raise ValueError(
+                f"trusted_audiences entries must be non-empty strings; got {audience!r}"
+            )
+    return list(audiences)
+
+
 @dataclass
 class OIDCSettings:
     """Configuration shared by the RP login router and the resource-server middleware.
@@ -54,6 +69,15 @@ class OIDCSettings:
             for the DPoP ``htu`` check. ``None`` takes the origin from the
             request's ``Host`` header; see
             :class:`~fastapi_identity_model.AuthOptions`.
+        trusted_audiences: Audiences besides ``client_id`` that the login
+            callback accepts in an ID Token's ``aud``. Empty (the default)
+            rejects any additional audience, as OIDC Core §3.1.3.7 requires
+            of audiences the client does not trust. Entries must be non-empty
+            strings.
+        validate_azp: Opt in to the ``azp`` rules on the login callback's ID
+            Token: an ID Token with several audiences must carry ``azp``, and a
+            present ``azp`` must equal ``client_id`` (OIDC Core §3.1.3.7, a
+            SHOULD). Recommended alongside ``trusted_audiences``.
     """
 
     discovery_url: str
@@ -68,9 +92,12 @@ class OIDCSettings:
     required_binding: TokenBinding = TokenBinding.NONE
     client_certificate_header: str | None = None
     expected_origin: str | None = None
+    trusted_audiences: list[str] = field(default_factory=list)
+    validate_azp: bool = False
 
     def __post_init__(self) -> None:
         self.required_binding = TokenBinding(self.required_binding)
+        self.trusted_audiences = _check_trusted_audiences(self.trusted_audiences)
         header = self.client_certificate_header
         if header is not None and not _HEADER_NAME.fullmatch(header):
             # A name that can never match a request header would refuse every

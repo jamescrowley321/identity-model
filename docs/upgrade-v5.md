@@ -11,8 +11,9 @@ Most applications need three edits:
    instead of setting `HTTP_TIMEOUT` and the other environment variables.
 2. If you use the FastAPI package, replace `OIDCSettings.from_env()` with
    `oidc_settings_from_env()`.
-3. Pass `trusted_audiences=` to `validate_id_token` if your provider issues
-   ID Tokens with more than one audience.
+3. Pass `trusted_audiences=` to `validate_id_token` (or set
+   `OIDCSettings.trusted_audiences` for the FastAPI login router) if your
+   provider issues ID Tokens with more than one audience.
 
 The other changes reject provider responses and tokens that the OpenID
 Connect specifications already forbid. A conforming provider is unaffected.
@@ -663,8 +664,22 @@ Validate those tokens with their own functions, not `validate_token`.
 The FastAPI `build_oidc_router` callback now validates the ID Token with
 `validate_id_token` instead of `validate_token`, so it also applies the ID
 Token profile (required `sub`, no untrusted additional audience, OIDC Core
-§3.1.3.7). `OIDCSettings` has no `trusted_audiences`, so an ID Token whose `aud`
-lists anything besides `client_id` now fails the login with a 401.
+§3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` now
+fails the login with a 401. If your provider issues multi-audience ID Tokens,
+list the extra audiences in `OIDCSettings.trusted_audiences`
+(`OIDC_TRUSTED_AUDIENCES`, comma-separated) and set `validate_azp=True`
+(`OIDC_VALIDATE_AZP=true`) so the token must name your client in `azp`
+([#1099](https://github.com/jamescrowley321/identity-model/issues/1099)):
+
+```python
+settings = OIDCSettings(
+    discovery_url=DISCOVERY_URL,
+    client_id="my-client",
+    redirect_uri=REDIRECT_URI,
+    trusted_audiences=["https://api.example.com"],
+    validate_azp=True,
+)
+```
 
 ### Check the introspected `cnf` of an opaque token ([#1094](https://github.com/jamescrowley321/identity-model/issues/1094))
 
