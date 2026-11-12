@@ -667,9 +667,12 @@ Token profile (required `sub`, no untrusted additional audience, OIDC Core
 §3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` now
 fails the login with a 401. If your provider issues multi-audience ID Tokens,
 list the extra audiences in `OIDCSettings.trusted_audiences`
-(`OIDC_TRUSTED_AUDIENCES`, comma-separated) and set `validate_azp=True`
-(`OIDC_VALIDATE_AZP=true`) so the token must name your client in `azp`
-([#1099](https://github.com/jamescrowley321/identity-model/issues/1099)):
+(`OIDC_TRUSTED_AUDIENCES`, comma-separated)
+([#1099](https://github.com/jamescrowley321/identity-model/issues/1099)).
+Whenever you set `OIDC_TRUSTED_AUDIENCES`, also set `OIDC_VALIDATE_AZP=true`
+(`validate_azp=True`), so the token must name your client in `azp`; without
+it, an ID Token issued to another client that also lists yours in `aud` logs
+in. The `azp` check stays off by default because §3.1.3.7 makes it a SHOULD:
 
 ```python
 settings = OIDCSettings(

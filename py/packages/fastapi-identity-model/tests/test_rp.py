@@ -583,7 +583,9 @@ class TestLoginCallbackAudiences:
 
     async def test_azp_not_checked_by_default(self, id_token_key):
         settings = replace(SETTINGS, trusted_audiences=["urn:api"])
-        resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
+        resp = await _callback(
+            settings, id_token_key, aud=["cid", "urn:api"], azp="someone-else"
+        )
         assert resp.status_code == 302
 
     @pytest.mark.parametrize("azp", [None, "someone-else"])

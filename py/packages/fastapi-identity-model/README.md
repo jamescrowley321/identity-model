@@ -102,8 +102,11 @@ The callback validates the ID Token with `validate_id_token` (OIDC Core
 §3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` fails
 the login unless that audience is in `trusted_audiences`
 (`OIDC_TRUSTED_AUDIENCES`). If your provider issues multi-audience ID Tokens,
-list the extra audiences and set `validate_azp=True` (`OIDC_VALIDATE_AZP=true`)
-so the token must name your client as its authorized party:
+list the extra audiences. Whenever you set `OIDC_TRUSTED_AUDIENCES`, also set
+`OIDC_VALIDATE_AZP=true` (`validate_azp=True`), so the token must name your
+client as its authorized party (`azp`). Without it, an ID Token issued to
+another client that also lists yours in `aud` logs in. The `azp` check is off
+by default because OIDC Core §3.1.3.7 makes it a SHOULD:
 
 ```python
 settings = OIDCSettings(

@@ -77,7 +77,9 @@ class OIDCSettings:
         validate_azp: Opt in to the ``azp`` rules on the login callback's ID
             Token: an ID Token with several audiences must carry ``azp``, and a
             present ``azp`` must equal ``client_id`` (OIDC Core §3.1.3.7, a
-            SHOULD). Recommended alongside ``trusted_audiences``.
+            SHOULD), so it is off by default. Set it whenever you set
+            ``trusted_audiences``: otherwise an ID Token issued to another
+            client that also lists yours in ``aud`` logs in.
     """
 
     discovery_url: str
@@ -98,6 +100,11 @@ class OIDCSettings:
     def __post_init__(self) -> None:
         self.required_binding = TokenBinding(self.required_binding)
         self.trusted_audiences = _check_trusted_audiences(self.trusted_audiences)
+        if not isinstance(self.validate_azp, bool):
+            # A truthy string such as "false" would silently turn the check on.
+            raise ValueError(
+                f"validate_azp must be a bool; got {type(self.validate_azp).__name__}"
+            )
         header = self.client_certificate_header
         if header is not None and not _HEADER_NAME.fullmatch(header):
             # A name that can never match a request header would refuse every

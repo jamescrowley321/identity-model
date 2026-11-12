@@ -94,3 +94,9 @@ def test_trusted_audiences_entries_must_be_non_empty_strings(entry):
         OIDCSettings(
             discovery_url="d", client_id="cid", trusted_audiences=["urn:a", entry]
         )
+
+
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_validate_azp_must_be_a_bool(value):
+    with pytest.raises(ValueError, match="validate_azp must be a bool"):
+        OIDCSettings(discovery_url="d", client_id="cid", validate_azp=value)
