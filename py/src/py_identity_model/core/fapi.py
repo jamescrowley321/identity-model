@@ -201,6 +201,10 @@ def validate_fapi_authorization_request(
     return FAPIValidationResult(violations=violations)
 
 
+# Larger lifetimes are not printed: a huge int can exceed Python's
+# int-to-str digit limit and raise while formatting the message.
+_MAX_REPORTED_LIFETIME = 10**15
+
 # A compact JWE has five dot-separated parts (RFC 7516 §7.1).
 _JWE_COMPACT_DOTS = 4
 
@@ -252,6 +256,9 @@ def _request_object_violations(
     request_object: str, client_id: str, *, native_app: bool
 ) -> list[str]:
     """A signed PAR's request object: header alg, lifetime and parameters."""
+    if not isinstance(request_object, str):
+        # The field can be reassigned after construction.
+        return ["request object is not a JWT (RFC 9101 §2.1)"]
     if request_object.count(".") == _JWE_COMPACT_DOTS:
         # A compact JWE (RFC 9101 §6.1): its claims cannot be read here.
         return [
@@ -292,7 +299,8 @@ def _request_object_violations(
     elif not 0 < lifetime <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME:
         violations.append(
             f"request object exp - nbf must be 1 to "
-            f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got {lifetime} "
+            f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got "
+            f"{lifetime if abs(lifetime) < _MAX_REPORTED_LIFETIME else 'a value out of range'} "
             "(FAPI 2.0 Message Signing §5.3.2)"
         )
     violations.extend(

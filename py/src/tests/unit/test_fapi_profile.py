@@ -1288,8 +1288,8 @@ class TestValidateFAPISignedAuthorizationRequest:
             _signed_par(_request_object({"nbf": now, "exp": now + 10**400}))
         )
         assert result.violations == [
-            f"request object exp - nbf must be 1 to 3600 seconds, got {10**400} "
-            "(FAPI 2.0 Message Signing §5.3.2)"
+            "request object exp - nbf must be 1 to 3600 seconds, got a value "
+            "out of range (FAPI 2.0 Message Signing §5.3.2)"
         ]
 
     def test_nonce_that_is_not_a_string_refused(self):
@@ -1347,6 +1347,13 @@ class TestValidateFAPISignedAuthorizationRequest:
             _signed_par(_request_object(drop=("iss",)))
         )
         assert result.violations == []
+
+    @pytest.mark.parametrize("value", [None, b"a.b.c"])
+    def test_request_reassigned_to_non_string_reported(self, value):
+        request = _signed_par(_request_object())
+        request.request = value
+        result = validate_fapi_authorization_request(request)
+        assert result.violations == ["request object is not a JWT (RFC 9101 §2.1)"]
 
     def test_encrypted_request_object_reported(self):
         result = validate_fapi_authorization_request(_signed_par("a.b.c.d.e"))
