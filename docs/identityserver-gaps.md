@@ -4,7 +4,7 @@ This document compares the OIDC test fixtures used by py-identity-model to ident
 
 ## Background
 
-py-identity-model historically used a Duende IdentityServer (.NET) fixture for integration testing (`examples/identity-server/`). As the library expanded to cover advanced OAuth 2.0/OIDC specifications (DPoP, PAR, JAR, Device Authorization, Token Exchange, FAPI 2.0), a node-oidc-provider fixture was added (`infra/node-oidc-provider/`) to provide coverage that IdentityServer cannot.
+py-identity-model historically used a Duende IdentityServer (.NET) fixture for integration testing (`py/examples/identity-server/`, still used by `make test-examples`; a separate `infra/identityserver/` fixture on port 9001 is the Go/Rust cross-provider profile). As the library expanded to cover advanced OAuth 2.0/OIDC specifications (DPoP, PAR, JAR, Device Authorization, Token Exchange, FAPI 2.0), a node-oidc-provider fixture was added (`infra/node-oidc-provider/`) to provide coverage that IdentityServer cannot.
 
 ## Feature Comparison
 
@@ -27,7 +27,7 @@ py-identity-model historically used a Duende IdentityServer (.NET) fixture for i
 | Device Authorization (RFC 8628) | No | Yes | Custom UI handler in node fixture |
 | Token Exchange (RFC 8693) | No | Yes | Custom grant handler in node fixture |
 | **Security Profiles** | | | |
-| FAPI 2.0 Security Profile | No | Planned (T125) | Requires `private_key_jwt`, signed request objects, PAR enforcement |
+| FAPI 2.0 Security Profile | No | Partial | node: `private_key_jwt` client (`test-private-key-jwt`), PAR, signed request objects; no FAPI profile enforcement |
 | Resource Indicators (RFC 8707) | No | Yes | node uses this for JWT vs opaque token selection |
 | **Test Infrastructure** | | | |
 | Custom JWT claims (`dct`, `tenants`) | No | Yes | Descope-style multi-tenant claims via `extraTokenClaims` |
@@ -35,7 +35,7 @@ py-identity-model historically used a Duende IdentityServer (.NET) fixture for i
 | Opaque token support | No | Yes | node: dedicated `test-opaque` client for introspection/revocation tests |
 | Public client (no secret) | No | Yes | node: `test-pkce-public` client |
 
-**Summary:** IdentityServer covers 4 of 14 features. node-oidc-provider covers 13 of 14 (FAPI 2.0 planned).
+**Summary:** IdentityServer covers 4 of 14 features. node-oidc-provider covers 13 of 14 (FAPI 2.0 partial).
 
 ## Client Configuration Comparison
 
@@ -46,7 +46,7 @@ py-identity-model historically used a Duende IdentityServer (.NET) fixture for i
 | `py-identity-model-client` | `client_credentials` | `py-identity-model` |
 | `py-identity-model-test` | `authorization_code` | `openid`, `profile`, `py-identity-model` |
 
-### node-oidc-provider (6 clients)
+### node-oidc-provider (7 clients)
 
 | Client ID | Grant Types | Scopes | Purpose |
 |---|---|---|---|
@@ -56,18 +56,19 @@ py-identity-model historically used a Duende IdentityServer (.NET) fixture for i
 | `test-device` | `device_code`, `refresh_token` | `openid`, `api` | Device flow |
 | `test-token-exchange` | `token-exchange` | `openid`, `api` | RFC 8693 |
 | `test-opaque` | `client_credentials` | `openid`, `api` | Opaque tokens for introspection/revocation |
+| `test-private-key-jwt` | `client_credentials`, `authorization_code`, `refresh_token` | `openid`, `profile`, `email`, `offline_access`, `api` | `private_key_jwt` client auth (RFC 7523) |
 
 ## Infrastructure Comparison
 
 | Aspect | IdentityServer | node-oidc-provider |
 |---|---|---|
-| **Base image** | `mcr.microsoft.com/dotnet/aspnet:8.0` | `node:20-alpine` |
+| **Base image** | `mcr.microsoft.com/dotnet/aspnet:8.0` | `node:22-alpine` |
 | **Image size** | ~400 MB+ (SDK layer + runtime) | ~150 MB |
 | **Startup time** | ~30-60 seconds (cert wait + .NET cold start) | ~2-3 seconds |
 | **TLS requirement** | Yes — requires cert-generator service, shared volumes, PFX files | No — HTTP-only (`proxy = true`) |
 | **Compose services** | 4 (cert-generator + identityserver + fastapi-app + test-runner) | 1 (node-oidc-provider) |
 | **Health check** | `curl -k -f http://localhost:80/.well-known/openid-configuration` | `wget -q --spider http://localhost:9010/.well-known/openid-configuration` |
-| **Dependencies** | .NET 8 SDK (build), ASP.NET runtime, Duende packages | Node.js 20, `oidc-provider`, `jose` |
+| **Dependencies** | .NET 8 SDK (build), ASP.NET runtime, Duende packages | Node.js 22, `oidc-provider`, `jose` |
 | **CI overhead** | High — multi-stage Docker build, cert generation, service orchestration | Low — single container, no TLS setup |
 
 ## Licensing
@@ -96,11 +97,13 @@ Duende IdentityServer transitioned from the open-source IdentityServer4 to a com
 | `test_revocation.py` | No | Yes | Yes | No |
 | `test_dpop_par_jar.py` | No | Yes | No | No |
 | `test_device_token_exchange.py` | No | Yes | No | No |
-| `test_fapi_compliance.py` | No | Planned | No | No |
+| `test_fapi_compliance.py` | Yes | Yes | Yes | Yes |
 | `test_userinfo.py` | Partial | Yes | Yes | No |
 
-**IdentityServer can run:** 6 of 14 test files (core discovery, JWKS, token client, token validation).
-**node-oidc-provider can run:** 13 of 14 test files (all except FAPI 2.0 which is planned).
+**IdentityServer can run:** 7 of 14 test files (core discovery, JWKS, token client, token validation, and the discovery-based FAPI checks).
+**node-oidc-provider can run:** all 14 test files.
+
+`test_fapi_compliance.py` validates the live provider's discovery metadata with the FAPI 2.0 helpers, so it runs against every provider. The table lists a subset of `src/tests/integration/`, which now holds more test files (JARM, mTLS, `private_key_jwt`, logout, dynamic registration, and others).
 
 ## Coverage Gaps to Address
 
@@ -132,7 +135,7 @@ The goal is to validate py-identity-model against multiple real providers to cat
 
 | Provider | Type | Current Coverage | Target |
 |---|---|---|---|
-| node-oidc-provider | Local (Docker) | 13/14 features | Add FAPI 2.0 (T125) |
+| node-oidc-provider | Local (Docker) | 13/14 features | Complete FAPI 2.0 (T125) |
 | IdentityServer | Local (Docker) | 6/14 features | Enable introspection, revocation, PKCE |
 | Ory Hydra | External | 8/14 features | Maintain current coverage |
 | Descope | External | 6/14 features | Add refresh, introspection if supported |
@@ -145,4 +148,4 @@ The goal is to validate py-identity-model against multiple real providers to cat
 1. **Quick wins** — Enable introspection, revocation, and PKCE in the IdentityServer fixture (low effort, closes 3 gaps)
 2. **Cloud provider cassettes** — Build cassette-based integration tests (pytest-recording/vcrpy) for Cognito, Entra ID, and Auth0 with live/replay mode switching
 3. **Nightly CI** — Add a scheduled workflow that runs live tests against cloud providers and creates issues on drift detection
-4. **FAPI 2.0** — Complete T125 (node-oidc-provider FAPI integration tests)
+4. **FAPI 2.0** — Complete T125 (FAPI profile enforcement in the node-oidc-provider fixture)

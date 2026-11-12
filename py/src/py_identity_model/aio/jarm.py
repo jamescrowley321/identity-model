@@ -13,6 +13,7 @@ The pure logic lives in ``core/jarm.py``; this module only performs async I/O.
 from ..core.authorize_response import AuthorizeCallbackResponse
 from ..core.discovery_policy import DiscoveryPolicy
 from ..core.jarm import (
+    advertised_jarm_algorithms,
     build_authorize_response_from_claims,
     decode_jarm_claims,
     extract_jarm_header,
@@ -48,15 +49,19 @@ async def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline inputs
 
     See ``sync.jarm._resolve_jarm_context`` for the offline vs discovery modes.
     """
-    offline = issuer is not None and jwks is not None and algorithms is not None
+    offline = (
+        issuer is not None
+        and jwks is not None
+        and (algorithms is not None or disco_doc_address is None)
+    )
     if offline:
         validate_jwks_response(jwks)
         return issuer, algorithms, jwks
 
     if disco_doc_address is None:
         raise ConfigurationException(
-            "disco_doc_address is required for JARM processing unless issuer, "
-            "jwks, and algorithms are all supplied (offline mode)"
+            "disco_doc_address is required for JARM processing unless issuer "
+            "and jwks are supplied (offline mode)"
         )
 
     policy = DiscoveryPolicy(require_https=require_https)
@@ -72,7 +77,11 @@ async def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline inputs
             "Discovery document does not advertise an issuer; cannot validate JARM"
         )
     allowed_algs = (
-        algorithms or disco_doc_response.authorization_signing_alg_values_supported
+        algorithms
+        if algorithms is not None
+        else advertised_jarm_algorithms(
+            disco_doc_response.authorization_signing_alg_values_supported
+        )
     )
 
     jwks_uri = validate_jwks_uri(disco_doc_response)

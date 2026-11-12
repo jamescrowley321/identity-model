@@ -1,7 +1,7 @@
 # FastAPI example (fastapi-identity-model)
 
 A runnable FastAPI app demonstrating the **`fastapi-identity-model`** package
-(which lives in `packages/fastapi-identity-model/`). It wires up both patterns:
+(which lives in `py/packages/fastapi-identity-model/`). It wires up both patterns:
 
 - **Relying-party browser login** — `GET /auth/login` → provider → `/auth/callback`
   → identity in the session; read it at `GET /me`.
@@ -14,7 +14,7 @@ See `app.py` for the wiring and the package README for the full API.
 
 ```bash
 # from the repo root
-uv sync --all-packages
+cd py && uv sync --all-packages
 
 # configure your provider (Descope shown; any OIDC provider works)
 export DISCOVERY_URL="https://api.descope.com/v1/apps/<project_id>/.well-known/openid-configuration"
@@ -23,7 +23,7 @@ export REDIRECT_URI="http://localhost:8000/auth/callback"
 export AUDIENCE="<client_id>"
 export SESSION_SECRET="$(openssl rand -hex 32)"
 
-cd examples/fastapi
+cd examples/fastapi     # i.e. py/examples/fastapi
 uv run python app.py     # http://localhost:8000
 ```
 
@@ -62,6 +62,7 @@ Interactive docs: <http://localhost:8000/docs>.
 | `REDIRECT_URI` | `http://localhost:8000/auth/callback` | Must match the router's callback |
 | `CLIENT_SECRET` | _(unset)_ | Omit for public/PKCE clients |
 | `AUDIENCE` | `py-identity-model` | Expected token audience |
+| `SCOPE` | `openid profile email` | Scopes requested by `/auth/login` |
 | `SESSION_SECRET` | _(random per run)_ | Set a stable secret so sessions survive restarts; never a shared/committed value |
 | `SESSION_HTTPS_ONLY` | `false` | Set `true` behind TLS to add the cookie `Secure` flag |
 
@@ -69,7 +70,7 @@ Interactive docs: <http://localhost:8000/docs>.
 
 Integration tests (`test_integration.py`) exercise the Bearer-protected `/api/*`
 routes against a real identity server. See the Docker Compose setup at
-`examples/docker-compose.test.yml` and `examples/run-tests.sh`.
+`py/examples/docker-compose.test.yml` and `py/examples/run-tests.sh` (`make test-examples`).
 
 ## License
 

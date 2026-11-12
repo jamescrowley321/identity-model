@@ -106,6 +106,12 @@ def _validate_key_alg_consistency(
         )
 
 
+def _header_kid(headers: dict) -> str | None:
+    """Return the header ``kid``; an empty ``kid`` means absent."""
+    kid = headers.get("kid")
+    return None if kid == "" else kid
+
+
 def extract_kid_from_jwt(jwt: str) -> str | None:
     """
     Extract the 'kid' (key ID) from a JWT header without verification.
@@ -114,10 +120,9 @@ def extract_kid_from_jwt(jwt: str) -> str | None:
         jwt: The JWT token string
 
     Returns:
-        str | None: The key ID from the JWT header, or None if not present
+        str | None: The key ID from the JWT header, or None if absent or empty
     """
-    headers = get_unverified_header(jwt)
-    return headers.get("kid")
+    return _header_kid(get_unverified_header(jwt))
 
 
 def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
@@ -128,10 +133,11 @@ def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
         jwt: The JWT token string
 
     Returns:
-        tuple: (kid, alg) — either may be None if not present
+        tuple: (kid, alg) — either may be None if not present; an empty
+        ``kid`` is returned as None
     """
     headers = get_unverified_header(jwt)
-    return headers.get("kid"), headers.get("alg")
+    return _header_kid(headers), headers.get("alg")
 
 
 # ============================================================================
@@ -184,11 +190,12 @@ def jwks_from_dict(keys_dict: dict) -> JsonWebKey:
 def is_signing_key(key: JsonWebKey) -> bool:
     """Return True when *key* may verify a signature.
 
-    Per RFC 7517 §4.2 a key whose ``use`` is ``sig`` or absent is a signing
-    key; any other ``use`` (``enc``, or a URI) is not, so the key is never
-    used to verify a signature, whether named by ``kid`` or not.
+    Per RFC 7517 §4.2 a key whose ``use`` is ``sig`` or absent (an empty
+    ``use`` counts as absent) is a signing key; any other ``use`` (``enc``,
+    a URI) is not, so the key is never used to verify a signature, whether
+    named by ``kid`` or not.
     """
-    return key.use in (None, "sig")
+    return key.use in (None, "", "sig")
 
 
 def _key_not_found(kid: str | None, keys: list[JsonWebKey]) -> KeyNotFoundException:
@@ -255,6 +262,8 @@ def find_key_by_kid(
 
     This is the core key lookup logic shared by sync and async implementations.
 
+    An empty ``kid`` means the token has no ``kid``.
+
     Only signing keys (``use`` absent or ``sig``, RFC 7517 §4.2) are
     considered: a ``use: enc`` key is never returned, so a ``kid`` naming one
     is key-not-found.
@@ -285,6 +294,8 @@ def find_key_by_kid(
     if not keys:
         raise TokenValidationException("No keys available in JWKS response")
 
+    if kid == "":
+        kid = None
     if kid is None:
         signing_keys = _no_kid_candidates(keys, jwt_alg)
 
@@ -347,7 +358,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     )
 
     headers = get_unverified_header(jwt)
-    kid = headers.get("kid")
+    kid = _header_kid(headers)
     logger.debug(f"Looking for key with kid: {kid}")
 
     if kid is None:

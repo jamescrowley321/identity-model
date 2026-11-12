@@ -55,6 +55,38 @@ An invalid value is rejected when the `Config` (Go: the client; Rust: the
 builder's `build()`) is created. It is never replaced by its default. Errors
 name the setting and the rule, never the value.
 
+## Algorithm allowlists
+
+Each implementation keeps one JWS algorithm allowlist per purpose:
+
+| Purpose | Python | Go | Rust |
+|---|---|---|---|
+| Verify: every inbound JWS (access and ID tokens, DPoP proofs, signed introspection responses, JARM responses) | `DEFAULT_ALLOWED_ALGORITHMS` | `jwt.defaultAllowedAlgorithms` | `DEFAULT_ALLOWED_ALGORITHMS` |
+| Sign: outbound JWTs (client assertions, request objects) | `SUPPORTED_SIGNING_ALGORITHMS` | | |
+| FAPI 2.0 | `FAPI2_ALLOWED_SIGNING_ALGORITHMS` | | |
+
+- **Verify.** RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512 and
+  EdDSA (Ed25519). It is its own set, not derived from the signing set, so
+  adding a signing algorithm never widens verification. It never contains an
+  HMAC algorithm (`HS*`) or `none`, so a public key is never used as an HMAC
+  secret ([RFC 8725 §2.1](https://www.rfc-editor.org/rfc/rfc8725#section-2.1)).
+  Rust's set omits ES512: its verifier cannot check P-521 signatures yet
+  ([#1011](https://github.com/jamescrowley321/identity-model/issues/1011)).
+- **Sign.** The algorithms the library signs with. A DPoP key can be generated
+  for ES256, ES384, ES512, PS256, RS256 or EdDSA.
+- **FAPI 2.0.** PS256, ES256 and EdDSA
+  ([FAPI 2.0 Security Profile §5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1)).
+  It applies only where the caller passes it, or where the FAPI 2.0 profile and
+  validators check against it. It is never a default.
+
+`algorithms` unset (`None` in Python) means the verify set wherever an
+implementation verifies a JWS: discovery and manual (caller-supplied key) token
+validation, DPoP proof verification, signed introspection responses and JARM. A JARM client with no
+`algorithms` accepts the algorithms the authorization server advertises in
+`authorization_signing_alg_values_supported` that are also in the verify set,
+or the verify set when the server advertises none. An explicit list replaces
+the default.
+
 ## Go and Rust today
 
 Until [#757](https://github.com/jamescrowley321/identity-model/issues/757) (Go)

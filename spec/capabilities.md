@@ -166,8 +166,9 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 - A client configured for signed responses MUST send
   `Accept: application/token-introspection+jwt` and MUST accept only an
   `application/token-introspection+jwt` response whose JWT has
-  `typ: token-introspection+jwt`, an allowed asymmetric `alg` (the FAPI 2.0 set,
-  PS256/ES256/EdDSA, by default), a signature that verifies against the
+  `typ: token-introspection+jwt`, an allowed asymmetric `alg` (the verify
+  allowlist of [`config.md`](config.md#algorithm-allowlists) by default; a FAPI
+  2.0 client passes PS256/ES256/EdDSA), a signature that verifies against the
   authorization server's keys, `iss` equal to its issuer, `aud` equal to the
   client's `client_id`, and an `iat`. The introspection response is the
   `token_introspection` claim, with the same `active` rule as above

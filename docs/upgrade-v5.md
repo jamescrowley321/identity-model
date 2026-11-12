@@ -367,33 +367,94 @@ before.
 
 - A DPoP-bound token (`cnf.jkt`) sent as `Bearer` is refused. Send it as
   `Authorization: DPoP <token>` with a `DPoP` proof for the request.
-- A certificate-bound token (`cnf["x5t#S256"]`) is refused unless you pass
-  `client_certificate=`, a callable that returns the request's client
-  certificate:
+- A certificate-bound token (`cnf["x5t#S256"]`) is refused unless the
+  middleware has a client certificate source: `OIDCSettings.client_certificate_header`
+  (`OIDC_CLIENT_CERTIFICATE_HEADER`), or a `client_certificate` callable on
+  `AuthOptions`. See the next section.
+
+See [DPoP: FastAPI](api/dpop.md#fastapi) for `required_binding` and the
+`DPoP` challenge.
+
+### FastAPI: binding options are one `AuthOptions`, read from `OIDCSettings` ([#1064](https://github.com/jamescrowley321/identity-model/issues/1064))
+
+`TokenValidationMiddleware` and `build_ws_authenticator` no longer take
+`required_binding=`, `dpop=` or `client_certificate=`. Pass one frozen
+`AuthOptions` as `options=` to both, so HTTP and WebSocket routes enforce the
+same binding. New validation options are added to `AuthOptions`, not as
+keyword arguments on either entry point.
+
+Both entry points also take `settings=`. With `settings` and no `options`,
+they use `AuthOptions.from_settings(settings)`, so `OIDCSettings.required_binding`
+and `OIDC_REQUIRED_BINDING` take effect; in 4.x and earlier 5.0 builds the
+setting was never read. `settings` also supplies `discovery_url`, `audience`
+and (middleware only) `excluded_paths` when they are not passed.
+
+Before:
 
 ```python
-from urllib.parse import unquote
-
-
-def client_certificate(request):
-    # nginx: proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
-    escaped = request.headers.get("X-Client-Cert")
-    return unquote(escaped) if escaped else None
-
-
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
     audience=settings.audience,
+    required_binding=settings.required_binding,
+    dpop=DPoPVerificationOptions(replay_cache=replay_cache),
     client_certificate=client_certificate,
+)
+ws_auth = build_ws_authenticator(
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    required_binding=settings.required_binding,
 )
 ```
 
-  Read the certificate only from a header your TLS terminator sets and strips
-  from client requests.
+After:
 
-See [DPoP: FastAPI](api/dpop.md#fastapi) for `required_binding` and the
-`DPoP` challenge.
+```python
+from fastapi_identity_model import AuthOptions
+
+options = AuthOptions.from_settings(
+    settings,
+    dpop=DPoPVerificationOptions(replay_cache=replay_cache),
+    client_certificate=client_certificate,  # or OIDC_CLIENT_CERTIFICATE_HEADER
+)
+app.add_middleware(TokenValidationMiddleware, settings=settings, options=options)
+ws_auth = build_ws_authenticator(settings=settings, options=options)
+```
+
+- `discovery_url` is now optional on both entry points; one of
+  `discovery_url` or `settings` is required.
+- Explicit `options` win over `settings`, but an `options` whose
+  `required_binding` or `expected_origin` differs from a value `settings` sets
+  raises `ValueError`. Build it with `AuthOptions.from_settings(settings, ...)`.
+- `AuthOptions(required_binding=TokenBinding.MTLS)` without a
+  `client_certificate` raises `ValueError`; before, every token was refused at
+  request time.
+- An `options` without `client_certificate` while
+  `settings.client_certificate_header` is set also raises `ValueError`.
+- The middleware attributes `required_binding`, `dpop` and
+  `client_certificate` are removed; read `middleware.options` instead.
+- `OIDCSettings` now validates at construction: `required_binding` is coerced
+  with `TokenBinding(...)` (so `"dpop"` works and `"bearer"` raises), an
+  invalid `expected_origin` raises `ValueError` (a default port such as `:443`
+  is dropped; an internationalized host must be given in punycode), and so does a `client_certificate_header` that is not a valid
+  HTTP header name (RFC 9110 token characters only).
+- `client_certificate` receives the `Request` or the `WebSocket`
+  (`starlette.requests.HTTPConnection`).
+- New settings: `client_certificate_header` (`OIDC_CLIENT_CERTIFICATE_HEADER`)
+  names a header holding the client certificate PEM, URL-decoded before use
+  (nginx `$ssl_client_escaped_cert`). It must carry the leaf certificate
+  only: a request carrying the header more than once, or a value with a comma
+  or more than one PEM block (a folded header or a full chain, as some
+  terminators send), gets no certificate. Use only a header your TLS
+  terminator sets on every request and strips from client requests, and keep
+  the app port unreachable except through it. `expected_origin`
+  (`OIDC_EXPECTED_ORIGIN`) is described below.
+- New, opt-in: `AuthOptions.expected_origin` (`scheme://host[:port]`). When
+  set, a DPoP proof's `htu` is checked against that origin plus the request
+  path and query, not the `Host` header. Unset, the origin still comes from
+  the request, so a client that controls the `Host` header your app sees can
+  get a proof minted for another origin past the `htu` check. Set it unless a
+  trusted proxy pins `Host`.
 
 ## Discovery
 
@@ -586,6 +647,85 @@ disco = process_discovery_response(
 )
 ```
 
+## Access token validation
+
+### A bound access token without a presentation is rejected ([#1062](https://github.com/jamescrowley321/identity-model/issues/1062))
+
+In 4.x, `validate_token` without `presentation=` skipped the sender-constraint
+check, so a DPoP-bound or certificate-bound access token was accepted as a
+plain bearer token. 5.0 rejects it, whatever `required_binding` is: a resource server "MUST
+reject a DPoP-bound access token received as a bearer token" (RFC 9449 §7.2),
+and a certificate-bound token is valid only with the certificate it is bound
+to (RFC 8705 §3).
+
+- A token with `cnf.jkt` raises `DPoPValidationError` with kind
+  `PROOF_REQUIRED`.
+- A token with `cnf["x5t#S256"]` raises `CertificateBindingError`.
+- An unbound token is accepted as before, unless `required_binding` is `DPOP`
+  or `MTLS` (still a `ConfigurationException` without `presentation=`).
+
+To accept a bound token, pass how it arrived, with the scheme from the
+request's `Authorization` header:
+
+```python
+scheme, _, access_token = request.headers["Authorization"].partition(" ")
+claims = validate_token(
+    access_token,
+    config,
+    disco_doc_address,
+    presentation=TokenPresentation(
+        scheme=(
+            AuthorizationScheme.DPOP
+            if scheme.lower() == "dpop"
+            else AuthorizationScheme.BEARER
+        ),
+        method=request.method,
+        url="https://api.example.com/orders",
+        dpop_proof=request.headers.get("DPoP"),  # for cnf.jkt
+        client_certificate=client_certificate,  # for cnf["x5t#S256"], from mTLS
+    ),
+)
+```
+
+The check applies to access tokens only: `validate_token`, and the FastAPI
+middleware and WebSocket authenticator, which already pass a presentation (see
+[DPoP](api/dpop.md)). `validate_id_token` and `validate_logout_token` do not run
+it, so an ID Token or Logout Token carrying `cnf` still validates: neither
+arrives with a presentation (OIDC Core §3.1.3.7, Back-Channel Logout §2.6).
+Validate those tokens with their own functions, not `validate_token`.
+
+The FastAPI `build_oidc_router` callback now validates the ID Token with
+`validate_id_token` instead of `validate_token`, so it also applies the ID
+Token profile (required `sub`, no untrusted additional audience, OIDC Core
+§3.1.3.7). `OIDCSettings` has no `trusted_audiences`, so an ID Token whose `aud`
+lists anything besides `client_id` now fails the login with a 401.
+
+### Check the introspected `cnf` of an opaque token ([#1094](https://github.com/jamescrowley321/identity-model/issues/1094))
+
+A resource server that authorizes opaque tokens through `introspect_token`
+learns the token's binding from the response's `cnf` (RFC 9449 §6.2, RFC 8705
+§3.2). 4.x never checked it, so a DPoP-bound or certificate-bound opaque token
+was accepted as a bearer token. Call `check_introspection_binding` after
+introspecting. It has the rules and errors of `validate_token`: a token with
+`cnf.jkt` and no presentation raises `DPoPValidationError` (`PROOF_REQUIRED`), a
+token with `cnf["x5t#S256"]` raises `CertificateBindingError` unless the bound
+certificate is presented, and an unbound token passes. It fails closed: a
+failed introspection, or a token that "is not active" (RFC 7662 §2.2), raises
+`IntrospectedTokenError` (kind `INTROSPECTION_FAILED` / `INACTIVE`), so a
+normal return means the token is active and correctly bound.
+
+```python
+response = introspect_token(request)
+check_introspection_binding(  # raises unless active and correctly bound
+    response,
+    access_token,
+    presentation,  # a TokenPresentation, see Token Introspection
+)
+```
+
+`introspect_token` does not run the check; see
+[Token Introspection](api/introspection.md#sender-constrained-opaque-tokens).
+
 ## ID Token validation
 
 ### Untrusted additional audiences are rejected ([#881](https://github.com/jamescrowley321/identity-model/pull/881))
@@ -696,6 +836,27 @@ claims = validate_id_token(
 )
 ```
 
+### An empty `client_id` means no `client_id` ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
+
+`client_id=""` (or `TokenValidationConfig(audience="")` with
+`validate_id_token`) is now the same as passing no `client_id`, as in the Go
+library. In 4.x it counted as configured:
+
+- `validate_azp=True` with `client_id=""` now raises
+  `AzpRequiresClientIdError`.
+- `""` is no longer a configured audience, so `validate_id_token` rejects any
+  token with an `aud` claim with `InvalidAudienceException`, exactly as with
+  no `client_id`. In 4.x a token whose `aud` listed `""` was accepted.
+- In `validate_id_token_claims`, `client_id=""` no longer makes `""` a trusted
+  audience: a token whose `aud` lists `""` is rejected with
+  `UntrustedAudienceException` unless `""` is listed in `trusted_audiences`.
+
+This applies to `validate_id_token` only. `validate_token` still treats
+`audience=""` as a configured audience, so a token with no `aud` is rejected;
+unsetting it there would turn the `aud` check off.
+
+Pass your real `client_id`.
+
 ### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
 
 When you pass `access_token=` or `code=`, the matching hash claim is still
@@ -773,25 +934,101 @@ except KeyNotFoundException as exc:
     print(exc.details["kid"], exc.details["available_kids"])
 ```
 
+### An empty `kid` or `use` means absent; `key_ops` is accepted ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
+
+5.0 reads JWKs the way the Go and Rust libraries do:
+
+- `"kid": ""` in a token header means the token has no `kid`: the key is
+  chosen as for a token without one (the single signing key, or
+  `AmbiguousKeyException`). In 4.x it was looked up as the key ID `""`. A JWK
+  with `"kid": ""` is parsed with `kid=None`.
+- `"use": ""` on a JWK means `use` is absent, so the key is a signing key. In
+  4.x the key was dropped.
+- A JWK with both `use` and `key_ops`, with `key_ops` values outside the RFC
+  7517 §4.3 registry, or with a `use` other than `sig`, `enc` or an `https://`
+  URI is now accepted. In 4.x it was dropped. A key whose `use` is anything
+  other than `sig` or absent still never verifies a signature.
+
+`key_ops` does not affect whether a key verifies. When a JWK Set is parsed, a
+`key_ops` that is not a list of strings, or a `use` that is not a string,
+still makes the key unusable.
+
 ### `algorithms=None` allows only asymmetric algorithms ([#952](https://github.com/jamescrowley321/identity-model/issues/952))
 
 In 4.x, a discovery-mode `TokenValidationConfig` with `algorithms=None` (the
 default) accepted any algorithm that matched the resolved key, including
 `HS256` with an `oct` key from the JWK Set. In 5.0, `None` means
 `DEFAULT_ALLOWED_ALGORITHMS`: RS256/384/512, PS256/384/512, ES256/384/512 and
-EdDSA, the same default as the Go and Rust libraries. A token signed with any
+EdDSA. Go has the same default; Rust's omits ES512
+([#1011](https://github.com/jamescrowley321/identity-model/issues/1011)). A token signed with any
 other algorithm raises `TokenValidationException`
 (`"Algorithm 'HS256' is not in the allowed algorithms"`).
 
-An explicit `algorithms` list works as before, and manual mode
-(`perform_disco=False`) still requires one. To keep accepting an HMAC-signed
-token, list its algorithm:
+An explicit `algorithms` list works as before. Manual mode is covered in the
+next section. To keep accepting an HMAC-signed token, list its algorithm:
 
 ```python
 config = TokenValidationConfig(
     perform_disco=True,
     audience="my-api",
     algorithms=["HS256"],
+)
+```
+
+### One algorithm allowlist per purpose ([#1058](https://github.com/jamescrowley321/identity-model/issues/1058))
+
+5.0 has one allowlist per purpose, and `algorithms=None` means the verify set
+everywhere (see
+[Algorithm allowlists](api/token-validation.md#algorithm-allowlists)):
+
+| Purpose | Set | Contents |
+|---|---|---|
+| Verify (every inbound JWS) | `DEFAULT_ALLOWED_ALGORITHMS` | RS256/384/512, PS256/384/512, ES256/384/512, EdDSA |
+| Sign (client assertions, request objects) | `SUPPORTED_SIGNING_ALGORITHMS` | RS256/384/512, PS256/384/512, ES256/384/512, EdDSA |
+| FAPI 2.0 (only when passed) | `FAPI2_ALLOWED_SIGNING_ALGORITHMS` | PS256, ES256, EdDSA |
+
+`DEFAULT_ALLOWED_ALGORITHMS` is no longer the same object as
+`SUPPORTED_SIGNING_ALGORITHMS`, so a future signing algorithm will not widen
+verification. The defaults are:
+
+- **Manual mode.** `TokenValidationConfig(perform_disco=False, key=...)` with
+  `algorithms=None` no longer raises `ConfigurationException`. The token's
+  header `alg` must be in `DEFAULT_ALLOWED_ALGORITHMS`, as in discovery mode;
+  an HMAC token is refused (`"Algorithm 'HS256' is not in the allowed
+  algorithms"`). The error for a missing key is now
+  `"TokenValidationConfig.key is required if perform_disco is False"`.
+  `algorithms=[]` raises `ConfigurationException`. A key that declares `alg`
+  verifies only tokens with that header `alg`; any other raises
+  `KeyAlgorithmMismatchException`, as in discovery mode.
+- **Key errors are typed.** A key that is malformed or does not fit the
+  token's algorithm raises `TokenValidationException("Key cannot verify the
+  token", token_part="header")`, with PyJWT's `InvalidKeyError` or
+  `PyJWKError` chained as `__cause__`. In 4.x the raw PyJWT exception
+  escaped, so an `except jwt.InvalidKeyError` handler no longer matches.
+- **DPoP proofs and signed introspection (new in 5.0).**
+  `DPoPVerificationOptions(algorithms=None)` and
+  `SignedIntrospectionOptions(algorithms=None)` accept the verify set, so a
+  plain RS256 authorization server works for signed introspection, and
+  `DPoPVerificationOptions().accepted_algorithms` (the `algs` of a
+  `WWW-Authenticate: DPoP` challenge) lists all ten. Neither defaults to the
+  FAPI 2.0 set: a FAPI 2.0 deployment passes
+  `algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS`.
+- **JARM.** With no `algorithms`, a response must use an algorithm the
+  authorization server advertises in `authorization_signing_alg_values_supported`
+  that is also in `DEFAULT_ALLOWED_ALGORITHMS`. If the server advertises none,
+  `DEFAULT_ALLOWED_ALGORITHMS` applies instead of raising
+  `JarmValidationException`.
+
+```python
+from py_identity_model import (
+    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    DPoPVerificationOptions,
+    SignedIntrospectionOptions,
+)
+
+dpop = DPoPVerificationOptions(algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS)
+signed = SignedIntrospectionOptions(
+    issuer=issuer, jwks=jwks, algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS
 )
 ```
 

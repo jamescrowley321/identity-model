@@ -23,7 +23,7 @@
    - ✅ Proper parameter name mapping for `x5t#S256` ↔ `x5t_s256`
 
 4. **Parameter Validation** (RFC 7517 Section 4 Compliance):
-   - ✅ `use` parameter values validated ("sig", "enc", or URI)
+   - ✅ `use` parameter values validated ("sig", "enc", or an `https://` URI)
    - ✅ `key_ops` parameter values validated against RFC 7517 Section 4.3
    - ✅ Mutual exclusivity validation between `use` and `key_ops` parameters
 
@@ -58,7 +58,7 @@
    - ✅ All parameter names match RFC 7517 exactly
 
 3. **Parameter Validation** ✅ **RESOLVED**:
-   - ✅ `use` parameter validation implemented ("sig", "enc", or custom URI)
+   - ✅ `use` parameter validation implemented ("sig", "enc", or a custom `https://` URI)
    - ✅ `key_ops` parameter validation against RFC 7517 Section 4.3 values
    - ✅ Mutual exclusivity check between `use` and `key_ops` implemented
 
