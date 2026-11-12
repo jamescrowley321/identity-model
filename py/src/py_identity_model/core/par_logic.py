@@ -43,6 +43,7 @@ def prepare_par_request_data(
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
     """
     if isinstance(request, SignedPushedAuthorizationRequest):
+        request.check_request()
         # RFC 9126 §3: only ``request`` and client authentication go in the form.
         params = {"client_id": request.client_id, "request": request.request}
     else:

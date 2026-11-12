@@ -1161,6 +1161,13 @@ class SignedPushedAuthorizationRequest(BaseRequest):
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
+        self.check_request()
+
+    def check_request(self) -> None:
+        """Raise when ``request`` is blank or not a string.
+
+        Also run before sending, because the field can be reassigned.
+        """
         if not isinstance(self.request, str) or not self.request.strip():
             raise ConfigurationException(
                 "SignedPushedAuthorizationRequest.request must be a signed "

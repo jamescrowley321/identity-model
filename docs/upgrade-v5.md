@@ -637,8 +637,10 @@ SignedPushedAuthorizationRequest(
 `validate_fapi_authorization_request` accepts a
 `SignedPushedAuthorizationRequest` and checks the request object's claims
 (`response_type`, PKCE, `nonce`, `redirect_uri`), its header `alg` (FAPI 2.0
-Security Profile §5.4.1) and that `exp - nbf` is at most 3600 seconds (FAPI
-2.0 Message Signing §5.3.2). Before, it read only the plain fields and
+Security Profile §5.4.1), that `exp - nbf` is at most 3600 seconds (FAPI
+2.0 Message Signing §5.3.2), and that its `client_id` and `iss` match the
+request's `client_id` (RFC 9101). An encrypted request object is reported as
+a violation, because its claims cannot be read. Before, it read only the plain fields and
 reported violations for compliant signed requests
 ([#1016](https://github.com/jamescrowley321/identity-model/issues/1016)). It
 does not verify the request object's signature or `aud`.

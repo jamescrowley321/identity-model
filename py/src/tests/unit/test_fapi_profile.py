@@ -1264,6 +1264,7 @@ class TestValidateFAPISignedAuthorizationRequest:
         header, _, signature = token.split(".")
         claims = json.dumps(
             {
+                "client_id": CLIENT_ID,
                 "response_type": "code",
                 "code_challenge": "challenge",
                 "code_challenge_method": "S256",
@@ -1322,6 +1323,36 @@ class TestValidateFAPISignedAuthorizationRequest:
         )
         result = validate_fapi_authorization_request(_signed_par(token))
         assert result.violations == [_alg_violation("request object", "RS256")]
+
+    def test_client_id_mismatch_refused(self):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object({"client_id": "other"}))
+        )
+        assert result.violations == [
+            f"request object client_id 'other' does not match the request's "
+            f"{CLIENT_ID!r} (RFC 9101 §5)"
+        ]
+
+    def test_iss_not_client_id_refused(self):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object({"iss": "other"}))
+        )
+        assert result.violations == [
+            f"request object iss 'other' is not the client_id {CLIENT_ID!r} "
+            "(RFC 9101 §4)"
+        ]
+
+    def test_absent_iss_accepted(self):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object(drop=("iss",)))
+        )
+        assert result.violations == []
+
+    def test_encrypted_request_object_reported(self):
+        result = validate_fapi_authorization_request(_signed_par("a.b.c.d.e"))
+        assert result.violations == [
+            "request object is encrypted; only signed request objects can be checked"
+        ]
 
     def test_not_a_jwt_refused(self):
         result = validate_fapi_authorization_request(_signed_par("not-a-jwt"))

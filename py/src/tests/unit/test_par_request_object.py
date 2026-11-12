@@ -116,6 +116,13 @@ class TestPrepareSignedPar:
         ):
             _signed(request=request_object)
 
+    @pytest.mark.parametrize("request_object", ["", None])
+    def test_request_blanked_after_construction_refused_at_send(self, request_object):
+        request = _signed()
+        request.request = request_object
+        with pytest.raises(ConfigurationException):
+            prepare_par_request_data(request)
+
     def test_repr_hides_secret_and_request_object(self):
         text = repr(_signed(private_key_jwt=None, client_secret="s3cret-value"))
         assert "s3cret-value" not in text

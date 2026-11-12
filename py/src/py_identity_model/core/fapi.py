@@ -163,9 +163,12 @@ def validate_fapi_authorization_request(
     rules of §5.3.2.2.  For a
     :class:`~py_identity_model.core.models.SignedPushedAuthorizationRequest`
     these are read from the request object's claims, and its header ``alg``
-    (§5.4.1) and ``exp - nbf`` of at most 3600 s (FAPI 2.0 Message Signing
-    §5.3.2) are checked too.  The request object's signature and ``aud`` are
-    not checked; the ``aud`` = issuer check needs the issuer.  The request's
+    (§5.4.1), ``exp - nbf`` of at most 3600 s (FAPI 2.0 Message Signing
+    §5.3.2), and ``client_id`` and ``iss`` matching the request's
+    ``client_id`` (RFC 9101 §4, §5) are checked too.  The request object's
+    signature and ``aud`` are not checked; the ``aud`` = issuer check needs
+    the issuer.  An encrypted (JWE) request object is reported as a
+    violation, because its claims cannot be read.  The request's
     client authentication and DPoP key are checked as in
     :func:`validate_fapi_client_config`, without the assertion-audience check
     (that needs the issuer).
@@ -178,7 +181,9 @@ def validate_fapi_authorization_request(
         FAPIValidationResult with compliance status and any violations.
     """
     if isinstance(request, SignedPushedAuthorizationRequest):
-        violations = _request_object_violations(request.request, native_app=native_app)
+        violations = _request_object_violations(
+            request.request, request.client_id, native_app=native_app
+        )
     else:
         violations = _authorization_parameter_violations(
             {name: getattr(request, name) for name in _AUTHORIZATION_PARAMETERS},
@@ -195,6 +200,9 @@ def validate_fapi_authorization_request(
 
     return FAPIValidationResult(violations=violations)
 
+
+# A compact JWE has five dot-separated parts (RFC 7516 §7.1).
+_JWE_COMPACT_DOTS = 4
 
 # The §5.3.3.2 parameters: PAR form fields, or claims of a request object.
 _AUTHORIZATION_PARAMETERS = (
@@ -240,17 +248,40 @@ def _authorization_parameter_violations(
     return violations
 
 
-def _request_object_violations(request_object: str, *, native_app: bool) -> list[str]:
+def _request_object_violations(
+    request_object: str, client_id: str, *, native_app: bool
+) -> list[str]:
     """A signed PAR's request object: header alg, lifetime and parameters."""
+    if request_object.count(".") == _JWE_COMPACT_DOTS:
+        # A compact JWE (RFC 9101 §6.1): its claims cannot be read here.
+        return [
+            "request object is encrypted; only signed request objects can be checked"
+        ]
     try:
         header = pyjwt.get_unverified_header(request_object)
         claims = pyjwt.decode(request_object, options={"verify_signature": False})
     except pyjwt.PyJWTError:
         return ["request object is not a JWT (RFC 9101 §2.1)"]
 
+    violations: list[str] = []
+    # RFC 9101 §5: client_id must match the form; a signed object's iss is it too.
+    if claims.get("client_id") != client_id:
+        violations.append(
+            f"request object client_id {claims.get('client_id')!r} does not "
+            f"match the request's {client_id!r} (RFC 9101 §5)"
+        )
+    if "iss" in claims and claims["iss"] != client_id:
+        violations.append(
+            f"request object iss {claims['iss']!r} is not the client_id "
+            f"{client_id!r} (RFC 9101 §4)"
+        )
+
     algorithm = header.get("alg")
-    violations = _algorithm_violation(
-        "request object", algorithm if isinstance(algorithm, str) else repr(algorithm)
+    violations.extend(
+        _algorithm_violation(
+            "request object",
+            algorithm if isinstance(algorithm, str) else repr(algorithm),
+        )
     )
     lifetime = _lifetime(claims.get("exp"), claims.get("nbf"))
     if lifetime is None:
