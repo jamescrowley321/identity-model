@@ -15,6 +15,7 @@ import jwt as pyjwt
 import pytest
 
 import py_identity_model
+from py_identity_model.aio import verify_dpop_proof as averify_dpop_proof
 from py_identity_model.core import dpop_verify
 from py_identity_model.core.dpop import (
     DPoPKey,
@@ -783,6 +784,26 @@ class TestReplayCache:
         # 1027-B: no process-wide replay cache to share by accident.
         assert not hasattr(dpop_verify, "get_default_dpop_replay_cache")
         assert "get_default_dpop_replay_cache" not in py_identity_model.__all__
+
+    async def test_async_verifier_passes_the_proof_to_an_async_cache(self):
+        calls: list[tuple[str, str, float, float]] = []
+
+        class AsyncRecorder:
+            async def check_and_store(
+                self, jkt: str, jti: str, expires_at: float, now: float
+            ) -> DPoPReplayCheck:
+                calls.append((jkt, jti, expires_at, now))
+                return DPoPReplayCheck.RECORDED
+
+        key = generate_dpop_key()
+        now = int(time.time())
+        proof = _sign(key, payload={"jti": "async-1", "iat": now})
+        options = _options(max_age=40, iat_leeway=7, replay_cache=AsyncRecorder())
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        await averify_dpop_proof(proof, request, options, now=now)
+
+        assert calls == [(key.jwk_thumbprint, "async-1", now + 40 + 7, now)]
 
     def test_sync_verifier_refuses_an_async_cache(self):
         cache = AsyncRecordingCache()

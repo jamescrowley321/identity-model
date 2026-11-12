@@ -57,17 +57,17 @@ py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_26 ba33f4c5ffccb3
 # fallback info line ("JWKS refresh for %s returned 200 with empty keys; falling
 # back to retained cache entry for in-flight validation", jwks_uri). Same
 # rationale as above — pure log text, no control-flow/return/counter effect.
-# (Current set _56–_66; #953 shifted it from _57–_67 and then _58–_68, the kid-miss refresh
+# (Current set _56–_66, rehashed by #1060's private cache attributes; #953 shifted it from _57–_67 and then _58–_68, the kid-miss refresh
 # coalescing fix from _53–_63, and #753 before that from _45–_55. _55 is the
 # killable `retained is None` guard and _67 the killable `return
 # retained.response, False`.)
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56 5782b764cffbfe12
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_56 ca586a4287d32277
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_57 51c20b72cfec8ff1
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_58 c9b55c900c713264
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_58 77e82a7d47e28f93
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_59 27d20ae40cd3dad3
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_60 b13fbbc58888bed4
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_61 1b1c806b138b7054
-py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_62 31f655ecd26e652b
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_60 388d58e7bb704b3a
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_61 7713b43e37d254d8
+py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_62 df89cf0278d7bdc1
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_63 f35558064b93e24d
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_64 b9f710520453d59f
 py_identity_model.aio.token_validation.x__refresh_jwks__mutmut_65 43acaaa6df27be03
@@ -103,8 +103,8 @@ py_identity_model.core.parsers.x__no_kid_candidates__mutmut_27 091199c5c800ca0f
 # `jwks_request.policy or DiscoveryPolicy()` — so `None` and a fresh
 # `DiscoveryPolicy()` produce the identical request. No caller can observe the
 # difference.
-py_identity_model.sync.token_validation.x__get_cached_jwks__mutmut_6 df3673046c9f662d
-py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_6 f2c7b6f76a29b8f1
+py_identity_model.sync.token_validation.x__get_cached_jwks__mutmut_6 f30bb6e617bb6a7f
+py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_6 3801cc94b615dad7
 #
 # Class 2 — log-only. Every mutation confined to the single "Forcing JWKS refresh
 # for %s (possible key rotation)" info line (the sync twin of the aio _19–_25
@@ -129,8 +129,8 @@ py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_26 0a0cc2866b64d
 # that would distinguish them (`require_https=True`, discovery_policy=None)
 # cannot reach the retry over an http scheme, because the initial discovery/JWKS
 # fetch under that same strict config already rejects it. Unobservable.
-py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9 0d87693fce902570
-py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9 0d87693fce902570
+py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9 3d6463bbbfe07541
+py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9 3d6463bbbfe07541
 
 # Discovery failure diagnostics (#832): this exact mutant only decorates
 # "Issuer must use HTTPS scheme" with an XX prefix/suffix. The raised

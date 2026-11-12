@@ -24,7 +24,7 @@ import math
 import threading
 import time
 import types
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
@@ -401,8 +401,8 @@ class _ReplayRecord:
     now: float
 
 
-def _replay_result(result: DPoPReplayCheck) -> None:
-    """Raise for a proof the replay cache did not record."""
+def _replay_result(result: object) -> None:
+    """Raise for a proof the replay cache did not record (any other answer)."""
     if result is DPoPReplayCheck.REPLAYED:
         raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
     if result is not DPoPReplayCheck.RECORDED:
@@ -423,7 +423,7 @@ def record_proof(record: _ReplayRecord) -> None:
     if inspect.iscoroutine(result):
         result.close()  # never run: nothing is recorded, and no warning
         raise ConfigurationException(ASYNC_REPLAY_CACHE_MESSAGE)
-    _replay_result(cast("DPoPReplayCheck", result))
+    _replay_result(result)
 
 
 async def record_proof_async(record: _ReplayRecord) -> None:
