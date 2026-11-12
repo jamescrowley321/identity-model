@@ -9,6 +9,7 @@ from ..core.error_handlers import handle_par_error
 from ..core.models import (
     PushedAuthorizationRequest,
     PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
 )
 from ..core.par_logic import (
     log_par_request,
@@ -35,13 +36,14 @@ async def _push_authorization_request(
 
 
 async def push_authorization_request(
-    request: PushedAuthorizationRequest,
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
     http_client: AsyncHTTPClient | None = None,
 ) -> PushedAuthorizationResponse:
     """Push authorization parameters to the PAR endpoint (RFC 9126, async).
 
     Args:
-        request: PAR request with authorization parameters.
+        request: PAR request with authorization parameters, as plain form
+            fields or as a signed request object.
         http_client: Optional managed HTTP client.
 
     Returns:
@@ -82,5 +84,6 @@ async def push_authorization_request(
 __all__ = [
     "PushedAuthorizationRequest",
     "PushedAuthorizationResponse",
+    "SignedPushedAuthorizationRequest",
     "push_authorization_request",
 ]

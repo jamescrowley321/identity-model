@@ -603,6 +603,46 @@ The request validator now also checks the request's client authentication,
 its DPoP key algorithm and its `nonce` length. The client validator reports
 a `private_key_jwt` whose assertion `aud` would not be the issuer.
 
+### FAPI 2.0: frozen client-auth types and a separate signed PAR type ([#1061](https://github.com/jamescrowley321/identity-model/issues/1061))
+
+`PrivateKeyJwt`, `MtlsClientAuth` and `RequestObjectKey` are frozen
+dataclasses. Assigning a field raises `dataclasses.FrozenInstanceError`; use
+`dataclasses.replace` to derive a changed copy. `FAPI2ClientProfile` now keeps
+the objects you pass instead of copying them, and checks client
+authentication and the request object key once, at construction.
+
+A pushed authorization request sent as a signed request object is now a
+`SignedPushedAuthorizationRequest`. `PushedAuthorizationRequest` no longer has
+a `request` field, and the signed type has no fields for the authorization
+parameters, because RFC 9126 §3 puts them inside the request object. A blank
+`request` raises `ConfigurationException` instead of falling back to a plain
+request. `push_authorization_request` takes either type, and
+`FAPI2ClientProfile.pushed_authorization_request` returns the signed type when
+the profile has a `request_object_key`.
+
+```python
+# Before
+PushedAuthorizationRequest(
+    address=par_endpoint, client_id=client_id, request=request_object,
+    private_key_jwt=private_key_jwt,
+)
+
+# After
+SignedPushedAuthorizationRequest(
+    address=par_endpoint, client_id=client_id, request=request_object,
+    private_key_jwt=private_key_jwt,
+)
+```
+
+`validate_fapi_authorization_request` accepts a
+`SignedPushedAuthorizationRequest` and checks the request object's claims
+(`response_type`, PKCE, `nonce`, `redirect_uri`), its header `alg` (FAPI 2.0
+Security Profile §5.4.1) and that `exp - nbf` is at most 3600 seconds (FAPI
+2.0 Message Signing §5.3.2). Before, it read only the plain fields and
+reported violations for compliant signed requests
+([#1016](https://github.com/jamescrowley321/identity-model/issues/1016)). It
+does not verify the request object's signature or `aud`.
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC

@@ -28,6 +28,7 @@ from py_identity_model import (
     ClientCredentialsTokenRequest,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    SignedPushedAuthorizationRequest,
     create_request_object,
     generate_dpop_key,
     generate_pkce_pair,
@@ -221,7 +222,7 @@ class TestPrivateKeyJwtLive:
 
     def _signed_par(
         self, raw_discovery: dict, signing_key: str
-    ) -> PushedAuthorizationRequest:
+    ) -> SignedPushedAuthorizationRequest:
         _verifier, challenge = generate_pkce_pair()
         request_object = create_request_object(
             private_key=signing_key,
@@ -234,7 +235,7 @@ class TestPrivateKeyJwtLive:
             code_challenge=challenge,
             code_challenge_method="S256",
         )
-        return PushedAuthorizationRequest(
+        return SignedPushedAuthorizationRequest(
             address=raw_discovery["pushed_authorization_request_endpoint"],
             client_id=PKJWT_CLIENT_ID,
             request=request_object,

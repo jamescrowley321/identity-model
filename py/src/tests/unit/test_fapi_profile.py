@@ -1,5 +1,6 @@
 """Unit tests for the FAPI 2.0 client profile and the object-based validators."""
 
+import base64
 from dataclasses import FrozenInstanceError, replace
 import json
 import time
@@ -38,6 +39,7 @@ from py_identity_model.core.models import (
     PushedAuthorizationRequest,
     RefreshTokenRequest,
     RequestObjectKey,
+    SignedPushedAuthorizationRequest,
     TokenErrorKind,
 )
 from py_identity_model.core.parsers import jwks_from_dict
@@ -535,6 +537,7 @@ class TestFAPI2ClientProfilePushedAuthorizationRequest:
         request = _profile(scope="openid accounts").pushed_authorization_request(
             state="state", code_challenge="challenge", dpop_key=DPOP_KEY
         )
+        assert isinstance(request, PushedAuthorizationRequest)
         assert request.scope == "openid accounts"
 
     def test_mtls_request(self):
@@ -792,53 +795,31 @@ class TestFAPI2ClientProfileServerSupport:
 
 
 @pytest.mark.unit
-class TestFAPI2ClientProfileMutation:
-    """Mutable client-auth objects cannot weaken the profile."""
+class TestFAPI2ClientProfileImmutability:
+    """Frozen client-auth types: nothing can change the profile's settings."""
 
-    def test_changing_the_callers_object_does_not_reach_the_profile(self):
-        pkj = _pkj(issuer=ISSUER)
-        profile = _profile(client_auth=pkj)
-        pkj.issuer = None
-        assert profile.private_key_jwt == _pkj(issuer=ISSUER)
+    @pytest.mark.parametrize(
+        ("value", "name"),
+        [
+            (_pkj(issuer=ISSUER), "issuer"),
+            (_pkj(issuer=ISSUER), "audience"),
+            (_pkj(issuer=ISSUER), "algorithm"),
+            (_mtls(), "certificate"),
+            (_mtls(), "auth_method"),
+            (RequestObjectKey(private_key="pem"), "lifetime"),
+            (RequestObjectKey(private_key="pem"), "algorithm"),
+        ],
+    )
+    def test_client_auth_types_are_frozen(self, value, name):
+        with pytest.raises(FrozenInstanceError):
+            setattr(value, name, None)
 
-    def test_changing_a_built_request_does_not_reach_the_profile(self):
-        profile = _profile()
-        request = profile.pushed_authorization_request(
-            state="state", code_challenge="challenge", dpop_key=DPOP_KEY
-        )
-        assert request.private_key_jwt is not None
-        request.private_key_jwt.audience = TOKEN_ENDPOINT
-        assert profile.private_key_jwt == _pkj(issuer=ISSUER)
-
-    def test_endpoint_url_fallback_after_construction_refused_by_par(self):
-        profile = _profile()
-        assert profile.private_key_jwt is not None
-        profile.private_key_jwt.issuer = None
-        with pytest.raises(FAPIProfileError) as exc_info:
-            profile.pushed_authorization_request(
-                state="state", code_challenge="challenge", dpop_key=DPOP_KEY
-            )
-        assert exc_info.value.violations == [AUD_NOT_ISSUER.format(aud=None)]
-
-    def test_endpoint_url_audience_after_construction_refused_by_token(self):
-        profile = _profile()
-        assert profile.private_key_jwt is not None
-        profile.private_key_jwt.audience = TOKEN_ENDPOINT
-        with pytest.raises(FAPIProfileError) as exc_info:
-            profile.authorization_code_token_request(
-                code="code", code_verifier="verifier", dpop_key=DPOP_KEY
-            )
-        assert exc_info.value.violations == [AUD_NOT_ISSUER.format(aud=TOKEN_ENDPOINT)]
-
-    def test_weak_algorithm_after_construction_refused_by_token(self):
-        profile = _profile()
-        assert profile.private_key_jwt is not None
-        profile.private_key_jwt.algorithm = "RS256"
-        with pytest.raises(FAPIProfileError) as exc_info:
-            profile.authorization_code_token_request(
-                code="code", code_verifier="verifier", dpop_key=DPOP_KEY
-            )
-        assert exc_info.value.violations == [_alg_violation("private_key_jwt", "RS256")]
+    def test_profile_keeps_the_callers_mtls_object(self):
+        mtls = _mtls()
+        profile = _profile(client_auth=mtls)
+        assert profile.mtls is mtls
+        request = profile.refresh_token_request(refresh_token="rt")
+        assert request.mtls is mtls
 
 
 def _rs256_signer() -> tuple[rsa.RSAPrivateKey, dict]:
@@ -1058,19 +1039,20 @@ class TestFAPI2ClientProfileSignedRequestObject:
         request = _signed_profile().pushed_authorization_request(
             state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
         )
-        assert request == PushedAuthorizationRequest(
+        assert isinstance(request, SignedPushedAuthorizationRequest)
+        assert request == SignedPushedAuthorizationRequest(
             address=PAR_ENDPOINT,
             client_id=CLIENT_ID,
+            request=request.request,
             private_key_jwt=_pkj(issuer=ISSUER),
             dpop_key=DPOP_KEY,
-            request=request.request,
         )
 
     def test_request_object_claims(self):
         request = _signed_profile().pushed_authorization_request(
             state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
         )
-        assert request.request is not None
+        assert isinstance(request, SignedPushedAuthorizationRequest)
         header, claims = _decode_request_object(request.request)
         assert header == {"alg": "ES256", "typ": "oauth-authz-req+jwt", "kid": "ro-key"}
         dynamic = {name: claims.pop(name) for name in ("iat", "nbf", "exp", "jti")}
@@ -1094,8 +1076,7 @@ class TestFAPI2ClientProfileSignedRequestObject:
         request = _signed_profile(jarm=True).pushed_authorization_request(
             state="state", code_challenge="challenge", dpop_key=DPOP_KEY
         )
-        assert request.request is not None
-        assert request.response_mode is None
+        assert isinstance(request, SignedPushedAuthorizationRequest)
         _, claims = _decode_request_object(request.request)
         assert claims["response_mode"] == "jwt"
 
@@ -1103,11 +1084,12 @@ class TestFAPI2ClientProfileSignedRequestObject:
         request = _signed_profile(client_auth=_mtls()).pushed_authorization_request(
             state="state", code_challenge="challenge"
         )
-        assert request == PushedAuthorizationRequest(
+        assert isinstance(request, SignedPushedAuthorizationRequest)
+        assert request == SignedPushedAuthorizationRequest(
             address=MTLS_PAR_ENDPOINT,
             client_id=CLIENT_ID,
-            mtls=_mtls(),
             request=request.request,
+            mtls=_mtls(),
         )
 
     def test_maximum_lifetime_accepted(self):
@@ -1118,7 +1100,7 @@ class TestFAPI2ClientProfileSignedRequestObject:
         ).pushed_authorization_request(
             state="state", code_challenge="challenge", dpop_key=DPOP_KEY
         )
-        assert request.request is not None
+        assert isinstance(request, SignedPushedAuthorizationRequest)
         _, claims = _decode_request_object(request.request)
         assert claims["exp"] - claims["nbf"] == FAPI2_MAX_REQUEST_OBJECT_LIFETIME
 
@@ -1156,43 +1138,204 @@ class TestFAPI2ClientProfileSignedRequestObject:
     def test_unadvertised_list_not_checked(self):
         assert _signed_profile().request_object_signing_algorithms is None
 
-    def test_caller_key_is_copied(self):
+    def test_profile_keeps_the_callers_key(self):
         key = _request_object_key()
-        profile = _signed_profile(request_object_key=key)
-        key.lifetime = 7200
-        assert profile.request_object_key == _request_object_key()
-
-    @pytest.mark.parametrize(
-        ("change", "violation"),
-        [
-            ({"lifetime": 3601}, _lifetime_violation(3601)),
-            ({"algorithm": "RS256"}, _alg_violation("request object", "RS256")),
-            (
-                {"algorithm": "PS256"},
-                "Server does not advertise request object algorithm 'PS256' in "
-                "request_object_signing_alg_values_supported",
-            ),
-        ],
-    )
-    def test_key_changed_after_construction_refused(self, change, violation):
-        profile = _signed_profile(
-            discovery={"request_object_signing_alg_values_supported": ["ES256"]}
-        )
-        assert profile.request_object_key is not None
-        for name, value in change.items():
-            setattr(profile.request_object_key, name, value)
-        with pytest.raises(FAPIProfileError) as exc_info:
-            profile.pushed_authorization_request(
-                state="state", code_challenge="challenge", dpop_key=DPOP_KEY
-            )
-        assert exc_info.value.violations == [violation]
+        assert _signed_profile(request_object_key=key).request_object_key is key
 
     def test_unsigned_profile_unchanged(self):
         request = _profile().pushed_authorization_request(
             state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
         )
-        assert request.request is None
+        assert isinstance(request, PushedAuthorizationRequest)
         assert request == _par()
+
+
+def _request_object(
+    claims: dict[str, Any] | None = None,
+    *,
+    drop: tuple[str, ...] = (),
+    key_pem: str | bytes = REQUEST_OBJECT_KEY_PEM,
+    algorithm: str = "ES256",
+) -> str:
+    now = int(time.time())
+    payload: dict[str, Any] = {
+        "iss": CLIENT_ID,
+        "aud": ISSUER,
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "scope": "openid",
+        "state": "state",
+        "nonce": "nonce",
+        "code_challenge": "challenge",
+        "code_challenge_method": "S256",
+        "nbf": now,
+        "exp": now + 300,
+        **(claims or {}),
+    }
+    for name in drop:
+        payload.pop(name)
+    return pyjwt.encode(payload, key_pem, algorithm=algorithm)
+
+
+def _signed_par(
+    request_object: str, **overrides: Any
+) -> SignedPushedAuthorizationRequest:
+    fields: dict[str, Any] = {
+        "address": PAR_ENDPOINT,
+        "client_id": CLIENT_ID,
+        "request": request_object,
+        "private_key_jwt": _pkj(issuer=ISSUER),
+        "dpop_key": DPOP_KEY,
+        **overrides,
+    }
+    return SignedPushedAuthorizationRequest(**fields)
+
+
+@pytest.mark.unit
+class TestValidateFAPISignedAuthorizationRequest:
+    """#1016: a signed PAR is checked through its request object's claims."""
+
+    def test_compliant_signed_request_accepted(self):
+        result = validate_fapi_authorization_request(_signed_par(_request_object()))
+        assert result.violations == []
+
+    def test_profile_built_signed_request_accepted(self):
+        request = _signed_profile().pushed_authorization_request(
+            state="state", code_challenge="challenge", nonce="nonce", dpop_key=DPOP_KEY
+        )
+        assert validate_fapi_authorization_request(request).violations == []
+
+    @pytest.mark.parametrize(
+        ("claims", "drop", "violation"),
+        [
+            (
+                {"response_type": "token"},
+                (),
+                "response_type must be 'code', got 'token'",
+            ),
+            ({}, ("code_challenge",), "PKCE code_challenge is required"),
+            ({"code_challenge": 7}, (), "PKCE code_challenge is required"),
+            ({}, ("code_challenge_method",), "PKCE code_challenge_method is required"),
+            (
+                {"code_challenge_method": "plain"},
+                (),
+                "PKCE method must be 'S256', got 'plain'",
+            ),
+            (
+                {"nonce": "n" * 65},
+                (),
+                "nonce is 65 characters; FAPI 2.0 Security Profile §5.3.3.2 "
+                "limits it to 64",
+            ),
+            ({}, ("redirect_uri",), "redirect_uri must be a string"),
+            (
+                {},
+                ("exp",),
+                "request object must carry numeric exp and nbf "
+                "(FAPI 2.0 Message Signing §5.3.2)",
+            ),
+            (
+                {"nbf": True},
+                (),
+                "request object must carry numeric exp and nbf "
+                "(FAPI 2.0 Message Signing §5.3.2)",
+            ),
+        ],
+    )
+    def test_claim_violations(self, claims, drop, violation):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object(claims, drop=drop))
+        )
+        assert result.violations == [violation]
+
+    @pytest.mark.parametrize(
+        ("exp", "nbf"),
+        [(10**400, 0.5), (float("inf"), 0), (0, float("nan"))],
+        ids=["overflow", "infinite", "nan"],
+    )
+    def test_unusable_lifetime_refused(self, exp, nbf):
+        token = pyjwt.encode(
+            {"response_type": "code", "exp": 0, "nbf": 0},
+            REQUEST_OBJECT_KEY_PEM,
+            algorithm="ES256",
+        )
+        # Swap in claims PyJWT cannot encode itself.
+        header, _, signature = token.split(".")
+        claims = json.dumps(
+            {
+                "response_type": "code",
+                "code_challenge": "challenge",
+                "code_challenge_method": "S256",
+                "redirect_uri": REDIRECT_URI,
+                "exp": exp,
+                "nbf": nbf,
+            }
+        ).encode()
+        body = base64.urlsafe_b64encode(claims).rstrip(b"=").decode()
+        result = validate_fapi_authorization_request(
+            _signed_par(f"{header}.{body}.{signature}")
+        )
+        assert result.violations == [
+            "request object must carry numeric exp and nbf "
+            "(FAPI 2.0 Message Signing §5.3.2)"
+        ]
+
+    def test_huge_integer_lifetime_reported_not_raised(self):
+        now = int(time.time())
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object({"nbf": now, "exp": now + 10**400}))
+        )
+        assert result.violations == [
+            f"request object exp - nbf must be 1 to 3600 seconds, got {10**400} "
+            "(FAPI 2.0 Message Signing §5.3.2)"
+        ]
+
+    def test_nonce_that_is_not_a_string_refused(self):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object({"nonce": 5}))
+        )
+        assert result.violations == ["nonce must be a string"]
+
+    @pytest.mark.parametrize(
+        ("lifetime", "accepted"),
+        [(FAPI2_MAX_REQUEST_OBJECT_LIFETIME, True), (3601, False), (0, False)],
+    )
+    def test_lifetime_limit(self, lifetime, accepted):
+        now = int(time.time())
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object({"nbf": now, "exp": now + lifetime}))
+        )
+        expected = (
+            []
+            if accepted
+            else [
+                f"request object exp - nbf must be 1 to 3600 seconds, got "
+                f"{lifetime} (FAPI 2.0 Message Signing §5.3.2)"
+            ]
+        )
+        assert result.violations == expected
+
+    def test_non_fapi_header_algorithm_refused(self):
+        token = _request_object(
+            key_pem=RS256_DPOP_KEY.private_key_pem, algorithm="RS256"
+        )
+        result = validate_fapi_authorization_request(_signed_par(token))
+        assert result.violations == [_alg_violation("request object", "RS256")]
+
+    def test_not_a_jwt_refused(self):
+        result = validate_fapi_authorization_request(_signed_par("not-a-jwt"))
+        assert result.violations == ["request object is not a JWT (RFC 9101 §2.1)"]
+
+    def test_client_auth_still_checked(self):
+        result = validate_fapi_authorization_request(
+            _signed_par(_request_object(), private_key_jwt=None, dpop_key=None)
+        )
+        assert result.violations == [
+            "Client authentication is required: private_key_jwt or mTLS "
+            "(FAPI 2.0 Security Profile §5.3.3.1)",
+            NO_SENDER_CONSTRAINT,
+        ]
 
 
 @pytest.mark.unit

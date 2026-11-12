@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field, replace
 from ipaddress import ip_address
-from typing import TYPE_CHECKING
+import math
+from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlparse
+
+import jwt as pyjwt
 
 from .authorize_url import build_par_authorization_url
 from .client_auth_method import ClientAuthMethod
@@ -30,6 +33,7 @@ from .models import (
     PushedAuthorizationRequest,
     RefreshTokenRequest,
     RequestObjectKey,
+    SignedPushedAuthorizationRequest,
     TokenValidationConfig,
 )
 from .mtls import resolve_mtls_endpoint
@@ -37,6 +41,8 @@ from .state_validation import validate_authorize_callback_issuer
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .authorize_response import AuthorizeCallbackResponse
     from .dpop import DPoPKey
     from .models import DiscoveryDocumentResponse
@@ -146,7 +152,7 @@ def _algorithm_violation(what: str, algorithm: str) -> list[str]:
 
 
 def validate_fapi_authorization_request(
-    request: PushedAuthorizationRequest,
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
     *,
     native_app: bool = False,
 ) -> FAPIValidationResult:
@@ -154,9 +160,15 @@ def validate_fapi_authorization_request(
 
     Checks FAPI 2.0 Security Profile §5.3.3.2: ``response_type=code``, PKCE
     with ``S256``, a ``nonce`` of at most 64 characters, and the redirect URI
-    rules of §5.3.2.2.  The request's client authentication and DPoP key are
-    checked as in :func:`validate_fapi_client_config`, without the
-    assertion-audience check (that needs the issuer).
+    rules of §5.3.2.2.  For a
+    :class:`~py_identity_model.core.models.SignedPushedAuthorizationRequest`
+    these are read from the request object's claims, and its header ``alg``
+    (§5.4.1) and ``exp - nbf`` of at most 3600 s (FAPI 2.0 Message Signing
+    §5.3.2) are checked too.  The request object's signature and ``aud`` are
+    not checked; the ``aud`` = issuer check needs the issuer.  The request's
+    client authentication and DPoP key are checked as in
+    :func:`validate_fapi_client_config`, without the assertion-audience check
+    (that needs the issuer).
 
     Args:
         request: The pushed authorization request (RFC 9126) to send.
@@ -165,32 +177,13 @@ def validate_fapi_authorization_request(
     Returns:
         FAPIValidationResult with compliance status and any violations.
     """
-    violations: list[str] = []
-
-    if request.response_type != FAPI2_REQUIRED_RESPONSE_TYPE:
-        violations.append(
-            f"response_type must be 'code', got '{request.response_type}'"
+    if isinstance(request, SignedPushedAuthorizationRequest):
+        violations = _request_object_violations(request.request, native_app=native_app)
+    else:
+        violations = _authorization_parameter_violations(
+            {name: getattr(request, name) for name in _AUTHORIZATION_PARAMETERS},
+            native_app=native_app,
         )
-
-    code_challenge = request.code_challenge
-    if not code_challenge or not code_challenge.strip():
-        violations.append("PKCE code_challenge is required")
-
-    method = request.code_challenge_method
-    if method is None:
-        violations.append("PKCE code_challenge_method is required")
-    elif method != FAPI2_REQUIRED_PKCE_METHOD:
-        violations.append(f"PKCE method must be 'S256', got '{method}'")
-
-    if request.nonce is not None and len(request.nonce) > FAPI2_MAX_NONCE_LENGTH:
-        violations.append(
-            f"nonce is {len(request.nonce)} characters; FAPI 2.0 Security "
-            f"Profile §5.3.3.2 limits it to {FAPI2_MAX_NONCE_LENGTH}"
-        )
-
-    violations.extend(
-        _redirect_uri_violations(request.redirect_uri, native_app=native_app)
-    )
     violations.extend(
         _client_violations(
             private_key_jwt=request.private_key_jwt,
@@ -201,6 +194,98 @@ def validate_fapi_authorization_request(
     )
 
     return FAPIValidationResult(violations=violations)
+
+
+# The §5.3.3.2 parameters: PAR form fields, or claims of a request object.
+_AUTHORIZATION_PARAMETERS = (
+    "response_type",
+    "code_challenge",
+    "code_challenge_method",
+    "nonce",
+    "redirect_uri",
+)
+
+
+def _authorization_parameter_violations(
+    params: Mapping[str, object], *, native_app: bool
+) -> list[str]:
+    """§5.3.3.2 authorization parameters, as form fields or JWT claims."""
+    violations: list[str] = []
+    response_type = params.get("response_type")
+    code_challenge = params.get("code_challenge")
+    code_challenge_method = params.get("code_challenge_method")
+    nonce = params.get("nonce")
+    redirect_uri = params.get("redirect_uri")
+
+    if response_type != FAPI2_REQUIRED_RESPONSE_TYPE:
+        violations.append(f"response_type must be 'code', got '{response_type}'")
+
+    if not isinstance(code_challenge, str) or not code_challenge.strip():
+        violations.append("PKCE code_challenge is required")
+
+    if code_challenge_method is None:
+        violations.append("PKCE code_challenge_method is required")
+    elif code_challenge_method != FAPI2_REQUIRED_PKCE_METHOD:
+        violations.append(f"PKCE method must be 'S256', got '{code_challenge_method}'")
+
+    if nonce is not None and not isinstance(nonce, str):
+        violations.append("nonce must be a string")
+    elif isinstance(nonce, str) and len(nonce) > FAPI2_MAX_NONCE_LENGTH:
+        violations.append(
+            f"nonce is {len(nonce)} characters; FAPI 2.0 Security "
+            f"Profile §5.3.3.2 limits it to {FAPI2_MAX_NONCE_LENGTH}"
+        )
+
+    violations.extend(_redirect_uri_violations(redirect_uri, native_app=native_app))
+    return violations
+
+
+def _request_object_violations(request_object: str, *, native_app: bool) -> list[str]:
+    """A signed PAR's request object: header alg, lifetime and parameters."""
+    try:
+        header = pyjwt.get_unverified_header(request_object)
+        claims = pyjwt.decode(request_object, options={"verify_signature": False})
+    except pyjwt.PyJWTError:
+        return ["request object is not a JWT (RFC 9101 §2.1)"]
+
+    algorithm = header.get("alg")
+    violations = _algorithm_violation(
+        "request object", algorithm if isinstance(algorithm, str) else repr(algorithm)
+    )
+    lifetime = _lifetime(claims.get("exp"), claims.get("nbf"))
+    if lifetime is None:
+        violations.append(
+            "request object must carry numeric exp and nbf "
+            "(FAPI 2.0 Message Signing §5.3.2)"
+        )
+    elif not 0 < lifetime <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME:
+        violations.append(
+            f"request object exp - nbf must be 1 to "
+            f"{FAPI2_MAX_REQUEST_OBJECT_LIFETIME} seconds, got {lifetime} "
+            "(FAPI 2.0 Message Signing §5.3.2)"
+        )
+    violations.extend(
+        _authorization_parameter_violations(claims, native_app=native_app)
+    )
+    return violations
+
+
+def _lifetime(exp: object, nbf: object) -> int | float | None:
+    """``exp - nbf``, or ``None`` when either is not a usable number."""
+    if not _is_number(exp) or not _is_number(nbf):
+        return None
+    try:
+        lifetime = exp - nbf
+        # A huge int lifetime is finite but cannot be converted to float.
+        return (
+            lifetime if isinstance(lifetime, int) or math.isfinite(lifetime) else None
+        )
+    except OverflowError:
+        return None
+
+
+def _is_number(value: object) -> TypeGuard[int | float]:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 def _client_violations(
@@ -689,7 +774,7 @@ class FAPI2ClientProfile:
         _raise_on(validate_fapi_discovery(discovery).violations)
 
         issuer = discovery.issuer or ""
-        # Copies, so the caller's object cannot change the profile's settings.
+        # The client-auth types are frozen, so the caller's object is safe to keep.
         private_key_jwt: PrivateKeyJwt | None = None
         mtls: MtlsClientAuth | None = None
         if isinstance(self.client_auth, PrivateKeyJwt):
@@ -697,7 +782,7 @@ class FAPI2ClientProfile:
             unset = auth.issuer is None and auth.audience is None
             private_key_jwt = replace(auth, issuer=issuer if unset else auth.issuer)
         elif isinstance(self.client_auth, MtlsClientAuth):
-            mtls = replace(self.client_auth)
+            mtls = self.client_auth
         else:
             raise FAPIProfileError(
                 [
@@ -731,9 +816,6 @@ class FAPI2ClientProfile:
                 tuple(sorted(_str_values(advertised_request_object_algs)))
                 if advertised_request_object_algs is not None
                 else None
-            ),
-            "request_object_key": (
-                replace(self.request_object_key) if self.request_object_key else None
             ),
             "private_key_jwt": private_key_jwt,
             "mtls": mtls,
@@ -775,7 +857,7 @@ class FAPI2ClientProfile:
         )
         violations.extend(
             _request_object_key_violations(
-                derived["request_object_key"],
+                self.request_object_key,
                 derived["request_object_signing_algorithms"],
             )
         )
@@ -786,11 +868,11 @@ class FAPI2ClientProfile:
         """Algorithms to accept for ID Tokens, JARM responses and DPoP (§5.4.1)."""
         return sorted(FAPI2_ALLOWED_SIGNING_ALGORITHMS)
 
-    def _request_violations(self, dpop_key: DPoPKey | None) -> list[str]:
-        """Re-check the settings a request carries (they are mutable objects)."""
-        violations = _assertion_audience_violations(self.private_key_jwt, self.issuer)
+    def _dpop_violations(self, dpop_key: DPoPKey | None) -> list[str]:
+        """Check the request's DPoP key against this client and server."""
         if dpop_key is None:
-            return violations
+            return []
+        violations: list[str] = []
         if self.mtls is not None:
             violations.append(_MTLS_WITH_DPOP)
         elif (
@@ -803,15 +885,6 @@ class FAPI2ClientProfile:
                 "in dpop_signing_alg_values_supported (RFC 9449 §5.1)"
             )
         return violations
-
-    def _client_auth_copies(
-        self,
-    ) -> tuple[PrivateKeyJwt | None, MtlsClientAuth | None]:
-        """Fresh copies for a request, so changing it cannot reach the profile."""
-        return (
-            replace(self.private_key_jwt) if self.private_key_jwt else None,
-            replace(self.mtls) if self.mtls else None,
-        )
 
     def id_token_validation_config(self) -> TokenValidationConfig:
         """ID Token validation settings for this profile.
@@ -839,19 +912,19 @@ class FAPI2ClientProfile:
         code_challenge: str,
         nonce: str | None = None,
         dpop_key: DPoPKey | None = None,
-    ) -> PushedAuthorizationRequest:
+    ) -> PushedAuthorizationRequest | SignedPushedAuthorizationRequest:
         """Build the pushed authorization request (§5.3.3.2).
 
         ``response_type`` is ``code`` and the PKCE method ``S256``; a JARM
         profile asks for ``response_mode=jwt``.  A ``private_key_jwt`` client
         must pass the flow's ``dpop_key``.  With ``request_object_key`` the
         parameters are sent as a signed request object (RFC 9126 §3, FAPI 2.0
-        Message Signing §5.3.2).
+        Message Signing §5.3.2) in a
+        :class:`~py_identity_model.core.models.SignedPushedAuthorizationRequest`.
 
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
         """
-        private_key_jwt, mtls = self._client_auth_copies()
         request = PushedAuthorizationRequest(
             address=self.pushed_authorization_request_endpoint,
             client_id=self.client_id,
@@ -862,9 +935,9 @@ class FAPI2ClientProfile:
             nonce=nonce,
             code_challenge=code_challenge,
             code_challenge_method=FAPI2_REQUIRED_PKCE_METHOD,
-            private_key_jwt=private_key_jwt,
+            private_key_jwt=self.private_key_jwt,
             dpop_key=dpop_key,
-            mtls=mtls,
+            mtls=self.mtls,
             response_mode=JARM_RESPONSE_MODE if self.jarm else None,
         )
         _raise_on(
@@ -872,19 +945,16 @@ class FAPI2ClientProfile:
                 *validate_fapi_authorization_request(
                     request, native_app=self.native_app
                 ).violations,
-                *self._request_violations(dpop_key),
-                *_request_object_key_violations(
-                    self.request_object_key, self.request_object_signing_algorithms
-                ),
+                *self._dpop_violations(dpop_key),
             ]
         )
         if self.request_object_key is None:
             return request
-        return self._signed(request, replace(self.request_object_key))
+        return self._signed(request, self.request_object_key)
 
     def _signed(
         self, request: PushedAuthorizationRequest, key: RequestObjectKey
-    ) -> PushedAuthorizationRequest:
+    ) -> SignedPushedAuthorizationRequest:
         """The request with its parameters moved into a request object."""
         extra_claims = (
             {"response_mode": request.response_mode} if request.response_mode else {}
@@ -906,13 +976,13 @@ class FAPI2ClientProfile:
             kid=key.kid,
             **extra_claims,
         )
-        return PushedAuthorizationRequest(
+        return SignedPushedAuthorizationRequest(
             address=request.address,
             client_id=self.client_id,
+            request=request_object,
             private_key_jwt=request.private_key_jwt,
             dpop_key=request.dpop_key,
             mtls=request.mtls,
-            request=request_object,
         )
 
     def authorization_url(self, request_uri: str) -> str:
@@ -953,12 +1023,11 @@ class FAPI2ClientProfile:
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
         """
-        private_key_jwt, mtls = self._client_auth_copies()
+        # Client authentication was checked at construction and the types
+        # are frozen; only the per-request DPoP key needs checking.
         violations = [
-            *_client_violations(
-                private_key_jwt=private_key_jwt, mtls=mtls, dpop_key=dpop_key
-            ),
-            *self._request_violations(dpop_key),
+            *_sender_constraint_request_violations(dpop_key=dpop_key, mtls=self.mtls),
+            *self._dpop_violations(dpop_key),
         ]
         if not code_verifier:
             violations.append("PKCE code_verifier is required")
@@ -969,9 +1038,9 @@ class FAPI2ClientProfile:
             code=code,
             redirect_uri=self.redirect_uri,
             code_verifier=code_verifier,
-            private_key_jwt=private_key_jwt,
+            private_key_jwt=self.private_key_jwt,
             dpop_key=dpop_key,
-            mtls=mtls,
+            mtls=self.mtls,
             require_dpop_token_type=dpop_key is not None,
         )
 
@@ -991,12 +1060,11 @@ class FAPI2ClientProfile:
         Raises:
             FAPIProfileError: The request would not be FAPI 2.0 compliant.
         """
-        private_key_jwt, mtls = self._client_auth_copies()
+        # Client authentication was checked at construction and the types
+        # are frozen; only the per-request DPoP key needs checking.
         violations = [
-            *_client_violations(
-                private_key_jwt=private_key_jwt, mtls=mtls, dpop_key=dpop_key
-            ),
-            *self._request_violations(dpop_key),
+            *_sender_constraint_request_violations(dpop_key=dpop_key, mtls=self.mtls),
+            *self._dpop_violations(dpop_key),
         ]
         if not isinstance(refresh_token, str) or not refresh_token.strip():
             violations.append("refresh_token is required")
@@ -1006,8 +1074,8 @@ class FAPI2ClientProfile:
             client_id=self.client_id,
             refresh_token=refresh_token,
             scope=scope,
-            private_key_jwt=private_key_jwt,
-            mtls=mtls,
+            private_key_jwt=self.private_key_jwt,
+            mtls=self.mtls,
             dpop_key=dpop_key,
             require_dpop_token_type=dpop_key is not None,
         )
