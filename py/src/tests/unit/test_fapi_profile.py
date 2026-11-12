@@ -368,6 +368,20 @@ class TestValidateFAPIClientConfig:
             _mtls(auth_method=ClientAuthMethod.CLIENT_SECRET_BASIC)
         assert excinfo.value.reason is ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD
 
+    def test_private_key_jwt_with_mtls_bound_tokens_accepted(self):
+        """976-C: §5.3.3.1 allows it; only the profile is narrower."""
+        result = validate_fapi_client_config(
+            issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER), mtls=_mtls()
+        )
+        assert result.violations == []
+
+    def test_mtls_with_dpop_key_accepted(self):
+        """976-C: §5.3.3.1 allows it; the profile refuses it (MTLS_WITH_DPOP)."""
+        result = validate_fapi_client_config(
+            issuer=ISSUER, mtls=_mtls(), dpop_key=DPOP_KEY
+        )
+        assert result.violations == []
+
     def test_private_key_jwt_without_dpop_rejected(self):
         result = validate_fapi_client_config(
             issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER)
