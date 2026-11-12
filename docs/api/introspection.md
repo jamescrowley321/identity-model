@@ -6,52 +6,60 @@ OAuth 2.0 Token Introspection (RFC 7662) for validating tokens and obtaining met
 
 Set `signed_response` to ask for a signed JWT response and verify it. The
 client sends `Accept: application/token-introspection+jwt` and accepts the
-response only if its `typ` is `token-introspection+jwt`, its `alg` is allowed
-(`DEFAULT_ALLOWED_ALGORITHMS` by default; see
-[Algorithm allowlists](token-validation.md#algorithm-allowlists)), its
-signature verifies with a key from `jwks`, `iss` is `issuer`, `aud` is the
-`client_id`, and it has an `iat`. `claims` is then the JWT's
-`token_introspection` object.
+response only if its `typ` is `token-introspection+jwt`, its `alg` is allowed,
+its signature verifies with one of the authorization server's keys, `iss` is
+the issuer, `aud` is the `client_id`, and it has an `iat`. `claims` is then the
+JWT's `token_introspection` object, and `jwt_claims` holds the other verified
+claims of the JWT (`iss`, `aud`, `iat`, ...).
+
+With `discovery_address`, the issuer, keys and allowed algorithms come from
+the discovery document. The keys are fetched through the validation cache
+(`cache=`, default: the default cache), and a `kid` the cached keys don't have
+triggers one refresh, so key rotation is picked up as it is by
+`validate_token`:
 
 ```python
 from py_identity_model import (
-    DiscoveryDocumentRequest,
-    JwksRequest,
     SignedIntrospectionOptions,
     TokenIntrospectionRequest,
-    get_discovery_document,
-    get_jwks,
     introspect_token,
 )
 
-disco = get_discovery_document(DiscoveryDocumentRequest(address=disco_address))
-jwks = get_jwks(JwksRequest(address=disco.jwks_uri))
-
 response = introspect_token(
     TokenIntrospectionRequest(
-        address=disco.introspection_endpoint,
+        address=introspection_endpoint,
         token=access_token,
         client_id="my-api",
         client_secret=client_secret,
-        signed_response=SignedIntrospectionOptions(issuer=disco.issuer, jwks=jwks),
+        signed_response=SignedIntrospectionOptions(discovery_address=disco_address),
     )
 )
 if response.is_successful and response.claims["active"]:
     ...
 ```
 
+Alternatively pass fixed `issuer` and `jwks` (for example from `get_jwks`).
+Those keys are never refreshed.
+
+With no `algorithms`, a response must use an algorithm the discovery document
+advertises in `introspection_signing_alg_values_supported` that is also in
+`DEFAULT_ALLOWED_ALGORITHMS`, or any of `DEFAULT_ALLOWED_ALGORITHMS` when
+nothing is advertised or the keys are fixed (see
+[Algorithm allowlists](token-validation.md#algorithm-allowlists)). An
+advertised value that is not a list allows nothing. Pass `algorithms=` to
+allow a different asymmetric set instead, such as
+`FAPI2_ALLOWED_SIGNING_ALGORITHMS` for FAPI 2.0 (Message Signing §5.5.2);
+`none` and `HS*` are refused. `leeway=` (seconds) tolerates an authorization
+server whose clock runs ahead when checking `iat`.
+
 A refused response has `is_successful=False` and an `error_kind`
 (`IntrospectionErrorKind`): `MALFORMED` (not a
 `application/token-introspection+jwt` JWT, or no `token_introspection` object
 with a boolean `active`), `INVALID_TYPE`, `UNSUPPORTED_ALGORITHM`, `SIGNATURE`
-or `CLAIM_VALIDATION` (`iss`, `aud` or `iat`). An HTTP error response keeps
-`error_kind=None` and the status in `error`.
-
-The authorization server advertises its algorithms in
-`DiscoveryDocumentResponse.introspection_signing_alg_values_supported`. Pass
-`algorithms=` to allow a different asymmetric set, such as
-`FAPI2_ALLOWED_SIGNING_ALGORITHMS` for FAPI 2.0 (Message Signing §5.5.2);
-`none` and `HS*` are refused.
+(no key for the JWT, or a signature that does not verify) or
+`CLAIM_VALIDATION` (`iss`, `aud` or `iat`). An HTTP error response, or a
+discovery document or JWK Set that can't be fetched, keeps `error_kind=None`
+and the reason in `error`.
 
 ## Sender-Constrained Opaque Tokens
 

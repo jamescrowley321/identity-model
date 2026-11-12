@@ -77,8 +77,27 @@ def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> N
         raise ValueError(msg)
 
 
+def advertised_verify_algorithms(advertised: object) -> list[str] | None:
+    """Return the advertised ``*_signing_alg_values_supported`` algorithms that
+    are in :data:`DEFAULT_ALLOWED_ALGORITHMS`.
+
+    ``None`` (not advertised) stays ``None``, which callers read as
+    ``DEFAULT_ALLOWED_ALGORITHMS``. A value that is not a list allows nothing.
+    """
+    if advertised is None:
+        return None
+    if not isinstance(advertised, list):
+        return []
+    return [
+        alg
+        for alg in advertised
+        if isinstance(alg, str) and alg in DEFAULT_ALLOWED_ALGORITHMS
+    ]
+
+
 __all__ = [
     "DEFAULT_ALLOWED_ALGORITHMS",
     "SUPPORTED_SIGNING_ALGORITHMS",
+    "advertised_verify_algorithms",
     "validate_signing_algorithm",
 ]

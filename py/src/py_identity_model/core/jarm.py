@@ -33,7 +33,7 @@ from .authorize_response import (
     _map_params_to_fields,
 )
 from .jwt_helpers import decode_and_validate_jwt
-from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS, advertised_verify_algorithms
 from .parsers import extract_jwt_header_fields
 
 
@@ -134,22 +134,9 @@ def extract_jarm_response_jwt(redirect_uri: str) -> str:
     raise JarmValidationException("redirect_uri contains no JARM 'response' parameter")
 
 
-def advertised_jarm_algorithms(advertised: list[str] | None) -> list[str] | None:
-    """Return the AS-advertised JARM algorithms that are in the verify default.
-
-    ``None`` (not advertised) stays ``None``, which
-    :func:`select_jarm_algorithm` reads as ``DEFAULT_ALLOWED_ALGORITHMS``.
-    A value that is not a list allows nothing.
-    """
-    if advertised is None:
-        return None
-    if not isinstance(advertised, list):
-        return []
-    return [
-        alg
-        for alg in advertised
-        if isinstance(alg, str) and alg in DEFAULT_ALLOWED_ALGORITHMS
-    ]
+# The AS-advertised JARM algorithms (authorization_signing_alg_values_supported)
+# that are in the verify default; see advertised_verify_algorithms.
+advertised_jarm_algorithms = advertised_verify_algorithms
 
 
 def select_jarm_algorithm(
