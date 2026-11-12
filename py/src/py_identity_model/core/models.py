@@ -798,7 +798,7 @@ class ClientCredentialsTokenRequest(BaseRequest):
     """
 
     client_id: str
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     scope: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
@@ -855,10 +855,10 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     """
 
     client_id: str
-    code: str
+    code: str = field(repr=False)
     redirect_uri: str
-    code_verifier: str | None = None
-    client_secret: str | None = None
+    code_verifier: str | None = field(default=None, repr=False)
+    client_secret: str | None = field(default=None, repr=False)
     scope: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
@@ -924,9 +924,9 @@ class RefreshTokenRequest(BaseRequest):
     """
 
     client_id: str
-    refresh_token: str
+    refresh_token: str = field(repr=False)
     scope: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1013,10 +1013,10 @@ class TokenIntrospectionRequest(BaseRequest):
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
-    token: str
+    token: str = field(repr=False)
     client_id: str
     token_type_hint: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1116,13 +1116,13 @@ class PushedAuthorizationRequest(BaseRequest):
     nonce: str | None = None
     code_challenge: str | None = None
     code_challenge_method: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     response_mode: str | None = None
-    request: str | None = None
+    request: str | None = field(default=None, repr=False)
 
 
 @dataclass(repr=False, eq=False)
@@ -1165,7 +1165,7 @@ class DeviceAuthorizationRequest(BaseRequest):
 
     client_id: str
     scope: str = "openid"
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1222,8 +1222,8 @@ class DeviceTokenRequest(BaseRequest):
     """
 
     client_id: str
-    device_code: str
-    client_secret: str | None = None
+    device_code: str = field(repr=False)
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1286,15 +1286,15 @@ class TokenExchangeRequest(BaseRequest):
     """
 
     client_id: str
-    subject_token: str
+    subject_token: str = field(repr=False)
     subject_token_type: str
-    actor_token: str | None = None
+    actor_token: str | None = field(default=None, repr=False)
     actor_token_type: str | None = None
     resource: str | None = None
     audience: str | None = None
     scope: str | None = None
     requested_token_type: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1342,10 +1342,10 @@ class TokenRevocationRequest(BaseRequest):
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
-    token: str
+    token: str = field(repr=False)
     client_id: str
     token_type_hint: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
@@ -1391,7 +1391,7 @@ class UserInfoRequest(BaseRequest):
             certificate-bound access token at the resource server.
     """
 
-    token: str
+    token: str = field(repr=False)
     expected_sub: str | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
@@ -1456,7 +1456,7 @@ class ClientRegistrationRequest(BaseRequest):
     scope: str | None = None
     jwks_uri: str | None = None
     extra_metadata: dict | None = None
-    initial_access_token: str | None = None
+    initial_access_token: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -1468,7 +1468,7 @@ class ClientReadRequest(BaseRequest):
         registration_access_token: Bearer token issued at registration.
     """
 
-    registration_access_token: str
+    registration_access_token: str = field(repr=False)
 
 
 @dataclass
@@ -1487,7 +1487,7 @@ class ClientUpdateRequest(BaseRequest):
         extra_metadata: Additional metadata merged into the request body.
     """
 
-    registration_access_token: str
+    registration_access_token: str = field(repr=False)
     client_id: str
     redirect_uris: list[str]
     response_types: list[str] | None = None
@@ -1502,7 +1502,7 @@ class ClientUpdateRequest(BaseRequest):
     token_endpoint_auth_method: str | None = None
     scope: str | None = None
     jwks_uri: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
     extra_metadata: dict | None = None
 
 
@@ -1515,7 +1515,7 @@ class ClientDeleteRequest(BaseRequest):
         registration_access_token: Bearer token issued at registration.
     """
 
-    registration_access_token: str
+    registration_access_token: str = field(repr=False)
 
 
 @dataclass(repr=False, eq=False)
