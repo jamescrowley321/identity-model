@@ -275,6 +275,8 @@ async def _validate_id_token(
             ),
             disco_doc_address=settings.discovery_url,
             http_client=http_client,
+            trusted_audiences=settings.trusted_audiences,
+            validate_azp=settings.validate_azp,
         )
     except PyIdentityModelException as exc:
         logger.info("ID token validation failed: %s", exc)
