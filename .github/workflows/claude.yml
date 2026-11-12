@@ -225,7 +225,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - id: claude
-        uses: anthropics/claude-code-action@61a9c274fa7110a66dfafc1bbbced03833eb25fe # v1.0.269
+        uses: anthropics/claude-code-action@9eb012b6d0900c2b9eede65ee1758cec4d2973e9 # v1.0.270
         # The lenses are eight subagents. Claude Code runs subagents in the
         # background by default, and two reviews (#148, #149) ended "finished
         # in 54s" with every lens still running and no verdict posted. This
