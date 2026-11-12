@@ -164,7 +164,7 @@ class DPoPKey:
                 loaded, or the key does not fit *algorithm*.
         """
         parsed = _parse_algorithm(algorithm)
-        data = pem.encode("ascii") if isinstance(pem, str) else pem
+        data = pem.encode() if isinstance(pem, str) else pem
         try:
             private_key = load_pem_private_key(data, password=password)
         except (ValueError, TypeError) as e:

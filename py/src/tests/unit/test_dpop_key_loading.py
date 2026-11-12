@@ -5,6 +5,8 @@ refreshes after a restart has to sign with the same key.
 """
 
 import json
+import re
+from unittest import mock
 
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
@@ -19,10 +21,12 @@ from jwt.algorithms import ECAlgorithm, OKPAlgorithm, RSAAlgorithm
 import pytest
 
 from py_identity_model import DPoPAlgorithm, DPoPKey, generate_dpop_key
+from py_identity_model.core import dpop as dpop_module
 from py_identity_model.core.dpop import create_dpop_proof
 
 
 WEAK_RSA_BITS = 1024
+MIN_RSA_BITS = 2048
 TOKEN_URL = "https://auth.example.com/token"
 
 
@@ -112,13 +116,15 @@ class TestFromPem:
         ):
             DPoPKey.from_pem(pem, algorithm)
 
-    def test_weak_rsa_refused(self):
-        weak = rsa.generate_private_key(public_exponent=65537, key_size=WEAK_RSA_BITS)
-        pem = weak.private_bytes(
-            Encoding.PEM, PrivateFormat.PKCS8, BestAvailableEncryption(b"x")
-        )
+    @pytest.mark.parametrize("bits", [WEAK_RSA_BITS, MIN_RSA_BITS - 1])
+    def test_weak_rsa_refused(self, bits, monkeypatch):
+        # Stand in for a loaded RSA key of *bits*, so the test never creates a
+        # weak key: only the size floor in the loader is under test.
+        weak = mock.create_autospec(rsa.RSAPrivateKey, instance=True)
+        weak.key_size = bits
+        monkeypatch.setattr(dpop_module, "load_pem_private_key", lambda *_, **__: weak)
         with pytest.raises(ValueError, match="Key is not a private key PS256"):
-            DPoPKey.from_pem(pem, "PS256", password=b"x")
+            DPoPKey.from_pem(b"pem", "PS256")
 
     def test_unknown_algorithm_refused(self):
         pem = generate_dpop_key("ES256").private_key_pem
@@ -148,7 +154,8 @@ class TestFromJwk:
 
     def test_no_algorithm_refused(self):
         jwk = _private_jwk(generate_dpop_key("ES256"))
-        with pytest.raises(ValueError, match="A DPoP JWK needs an algorithm"):
+        message = "A DPoP JWK needs an algorithm: pass one or set 'alg'"
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
             DPoPKey.from_jwk(jwk)
 
     def test_public_jwk_refused(self):
