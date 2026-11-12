@@ -3,8 +3,8 @@
 Every ``BaseRequest`` subclass that carries a credential, plus the
 client-auth key holders, is built with a distinct sentinel in each
 credential field. The test fails if any sentinel shows up in ``repr`` or
-``str``, so a new request model, or a new credential field on an existing
-one, is covered without editing this file.
+``str``. New request models are discovered automatically; a credential
+field with a new name must be added to ``CREDENTIAL_FIELDS``.
 """
 
 from __future__ import annotations
