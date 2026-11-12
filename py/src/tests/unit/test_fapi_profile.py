@@ -662,7 +662,6 @@ class TestFAPI2ClientProfileTokenRequest:
         assert request.dpop_key is DPOP_KEY
         assert request.mtls is None
         assert request.client_secret is None
-        assert request.require_dpop_token_type is True
 
     def test_mtls_request(self):
         request = _profile(client_auth=_mtls()).authorization_code_token_request(
@@ -672,7 +671,6 @@ class TestFAPI2ClientProfileTokenRequest:
         assert request.mtls == _mtls()
         assert request.private_key_jwt is None
         assert request.dpop_key is None
-        assert request.require_dpop_token_type is False
 
     def test_private_key_jwt_without_dpop_key_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
@@ -1209,7 +1207,6 @@ class TestFAPI2ClientProfileRefreshTokenRequest:
             refresh_token="rt",
             private_key_jwt=_pkj(issuer=ISSUER),
             dpop_key=DPOP_KEY,
-            require_dpop_token_type=True,
         )
 
     def test_scope_passed_through(self):

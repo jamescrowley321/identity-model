@@ -624,9 +624,8 @@ class FAPI2ClientProfile:
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
     weaken them, including a DPoP key whose algorithm the server does not
     advertise (RFC 9449 §5.1).  A DPoP-bound token request (authorization code
-    or refresh) sets ``require_dpop_token_type``, so a response that comes
-    back with ``token_type`` other than ``DPoP`` fails instead of handing the
-    client a Bearer token.  The profile is immutable.
+    or refresh) fails on a response whose ``token_type`` is not ``DPoP``
+    instead of handing the client a Bearer token.  The profile is immutable.
 
     For an mTLS client the PAR and token endpoints (refresh included) are the
     server's ``mtls_endpoint_aliases`` when it advertises them (RFC 8705 §5,
@@ -972,7 +971,6 @@ class FAPI2ClientProfile:
             private_key_jwt=private_key_jwt,
             dpop_key=dpop_key,
             mtls=mtls,
-            require_dpop_token_type=dpop_key is not None,
         )
 
     def refresh_token_request(
@@ -1009,7 +1007,6 @@ class FAPI2ClientProfile:
             private_key_jwt=private_key_jwt,
             mtls=mtls,
             dpop_key=dpop_key,
-            require_dpop_token_type=dpop_key is not None,
         )
 
 

@@ -4,10 +4,27 @@ OAuth 2.0 DPoP (RFC 9449) for binding tokens to a client's private key.
 
 ## Key Management
 
-`generate_dpop_key` supports `ES256` (default), `ES384`, `ES512`, `PS256`,
-`EdDSA` (Ed25519, RFC 8037) and `RS256`. A FAPI 2.0 client must use `ES256`,
-`PS256` or `EdDSA` (FAPI 2.0 Security Profile §5.4.1), and one the server lists
-in `dpop_signing_alg_values_supported`.
+`generate_dpop_key` supports the `DPoPAlgorithm` values: `ES256` (default),
+`ES384`, `ES512`, `PS256`, `EdDSA` (Ed25519, RFC 8037) and `RS256`. A FAPI 2.0
+client must use `ES256`, `PS256` or `EdDSA` (FAPI 2.0 Security Profile §5.4.1),
+and one the server lists in `dpop_signing_alg_values_supported`.
+
+Tokens stay bound to the key, so a client that refreshes after a restart must
+load the same key rather than generate a new one:
+
+```python
+from py_identity_model import DPoPAlgorithm, DPoPKey
+
+dpop_key = DPoPKey.from_pem(pem_bytes, DPoPAlgorithm.ES256)
+# or, from a private JWK whose "alg" names the algorithm:
+dpop_key = DPoPKey.from_jwk(private_jwk)
+```
+
+Store `dpop_key.private_key_pem` (or the JWK) as a secret. The loaders refuse
+a key the algorithm cannot sign with: an EC key on another curve, a
+non-Ed25519 key for `EdDSA`, an RSA key under 2048 bits, or a public key.
+
+::: py_identity_model.core.dpop.DPoPAlgorithm
 
 ::: py_identity_model.core.dpop.DPoPKey
 
@@ -40,17 +57,20 @@ response = refresh_token(
         client_id="my-client",
         refresh_token=tokens["refresh_token"],
         dpop_key=dpop_key,
-        require_dpop_token_type=True,
     )
 )
 ```
 
-A server that ignores the proof can still answer with a Bearer token. With
-`require_dpop_token_type=True` such a response fails: `is_successful` is
-`False` and `error_kind` is `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`.
-`token_type` is compared case-insensitively (RFC 6749 §7.1). The flag is off by
-default; `FAPI2ClientProfile` sets it on every DPoP-bound token request it
-builds.
+A server that ignores the proof can still answer with a Bearer token. A
+request with a `dpop_key` refuses such a response: `is_successful` is `False`,
+`error_kind` is `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the
+server issued, including any rotated refresh token, are on `rejected_token`
+so they can still be used or revoked. `token_type` is compared
+case-insensitively (RFC 6749 §7.1).
+
+Each HTTP attempt mints a fresh proof, including the backoff retries on `429`
+and `5xx`, so a server that remembers `jti` values never sees one twice
+(RFC 9449 §11.1).
 
 ::: py_identity_model.core.models.TokenErrorKind
 

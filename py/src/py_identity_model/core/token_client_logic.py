@@ -56,6 +56,10 @@ def log_token_success(token_response: ClientCredentialsTokenResponse) -> None:
         )
 
 
+RequestParts = tuple[dict, dict, tuple[str, str] | None]
+"""Form data, headers and optional HTTP Basic auth for one request attempt."""
+
+
 def prepare_token_request_data(
     request: ClientCredentialsTokenRequest,
 ) -> tuple[dict, dict, tuple[str, str] | None]:
@@ -184,9 +188,10 @@ def process_auth_code_token_response(
 ) -> AuthorizationCodeTokenResponse:
     """Process authorization code token exchange response.
 
-    With *require_dpop_token_type*, a successful response whose
-    ``token_type`` is not ``DPoP`` fails with
-    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`.
+    With *require_dpop_token_type* (set for DPoP-bound requests), a
+    successful response whose ``token_type`` is not ``DPoP`` fails with
+    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
+    tokens on ``rejected_token``.
     """
     log_token_status(response.status_code)
 
@@ -200,6 +205,7 @@ def process_auth_code_token_response(
                     is_successful=False,
                     error=error,
                     error_kind=TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH,
+                    rejected_token=token_response.token,
                 )
         if token_response.is_successful and token_response.token:
             logger.info("Authorization code token exchange successful")
@@ -258,9 +264,10 @@ def process_refresh_token_response(
 ) -> RefreshTokenResponse:
     """Process refresh token grant response.
 
-    With *require_dpop_token_type*, a successful response whose
-    ``token_type`` is not ``DPoP`` fails with
-    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`.
+    With *require_dpop_token_type* (set for DPoP-bound requests), a
+    successful response whose ``token_type`` is not ``DPoP`` fails with
+    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
+    tokens on ``rejected_token``.
     """
     log_token_status(response.status_code)
 
@@ -274,6 +281,7 @@ def process_refresh_token_response(
                     is_successful=False,
                     error=error,
                     error_kind=TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH,
+                    rejected_token=token_response.token,
                 )
         if token_response.is_successful and token_response.token:
             logger.info("Token refresh successful")

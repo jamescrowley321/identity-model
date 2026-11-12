@@ -647,6 +647,51 @@ disco = process_discovery_response(
 )
 ```
 
+## DPoP client
+
+### A DPoP-bound token request refuses a Bearer answer ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
+
+`require_dpop_token_type` is gone from `AuthorizationCodeTokenRequest` and
+`RefreshTokenRequest`. A request with a `dpop_key` now always checks the
+response: a successful answer whose `token_type` is not `DPoP` (RFC 9449 §5)
+fails with `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`. A request without a
+`dpop_key` accepts any `token_type`, as before.
+
+The refused response keeps the tokens the server issued on the new
+`rejected_token` field, so a rotated refresh token is not lost and the Bearer
+tokens can still be revoked or, if you choose, used. `token` stays guarded on
+a failed response, and `repr` redacts `rejected_token`.
+
+```python
+# 4.x
+RefreshTokenRequest(..., dpop_key=key, require_dpop_token_type=True)
+
+# 5.0
+response = refresh_token(RefreshTokenRequest(..., dpop_key=key))
+if response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH:
+    revoke_or_store(response.rejected_token)
+```
+
+To accept a Bearer token from a server that may ignore DPoP, send the request
+without a `dpop_key`.
+
+### Load a stored DPoP key; algorithms are a `DPoPAlgorithm` ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
+
+`DPoPKey.from_pem(pem, algorithm)` and `DPoPKey.from_jwk(jwk, algorithm=None)`
+load an existing private key, so tokens bound to it stay usable across
+restarts. Both refuse a key the algorithm cannot sign with.
+
+`DPoPKey.algorithm` now returns a `DPoPAlgorithm`. It is a `StrEnum`, so it
+still compares equal to `"ES256"` and the other strings, and
+`generate_dpop_key("ES256")` keeps working.
+
+### Each retry attempt mints a fresh DPoP proof ([#1019](https://github.com/jamescrowley321/identity-model/issues/1019))
+
+The authorization code, refresh, client credentials and PAR calls now build
+the request, including the DPoP proof and any `private_key_jwt` assertion,
+on every `429`/`5xx` backoff attempt. A server that remembers `jti` values
+(RFC 9449 §11.1) no longer rejects the retry as a replay. No API change.
+
 ## Access token validation
 
 ### A bound access token without a presentation is rejected ([#1062](https://github.com/jamescrowley321/identity-model/issues/1062))

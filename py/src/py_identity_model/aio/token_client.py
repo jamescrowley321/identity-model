@@ -4,6 +4,8 @@ Token client (asynchronous implementation).
 This module provides asynchronous HTTP layer for OAuth 2.0 token requests.
 """
 
+from collections.abc import Callable
+
 import httpx
 
 from ..core.dpop import extract_dpop_nonce
@@ -21,6 +23,7 @@ from ..core.models import (
     RefreshTokenResponse,
 )
 from ..core.token_client_logic import (
+    RequestParts,
     log_auth_code_token_request,
     log_refresh_token_request,
     log_token_request,
@@ -39,16 +42,17 @@ from .managed_client import AsyncHTTPClient
 async def _request_token(
     client: httpx.AsyncClient,
     url: str,
-    data: dict,
-    headers: dict,
-    auth: tuple[str, str] | None = None,
+    prepare: Callable[[], RequestParts],
 ) -> httpx.Response:
     """
     Request token with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
     exponential backoff. Retry settings come from the client's Config.
+    *prepare* runs on every attempt, so each one carries a freshly minted
+    DPoP proof and client assertion with a new ``jti`` (RFC 9449 §11.1).
     """
+    data, headers, auth = prepare()
     kwargs: dict = {"data": data, "headers": headers}
     if auth is not None:
         kwargs["auth"] = auth
@@ -75,9 +79,10 @@ async def request_client_credentials_token(
     response = None
     owned_client = None
     try:
-        params, headers, auth = prepare_token_request_data(request)
         client, owned_client = resolve_async_http_client(request.mtls, http_client)
-        response = await _request_token(client, request.address, params, headers, auth)
+        response = await _request_token(
+            client, request.address, lambda: prepare_token_request_data(request)
+        )
         return process_token_response(response)
     except Exception as e:
         return handle_token_error(e)
@@ -106,23 +111,27 @@ async def request_authorization_code_token(
     response = None
     owned_client = None
     try:
-        params, headers, auth = prepare_auth_code_token_request_data(request)
         client, owned_client = resolve_async_http_client(request.mtls, http_client)
-        response = await _request_token(client, request.address, params, headers, auth)
+        response = await _request_token(
+            client,
+            request.address,
+            lambda: prepare_auth_code_token_request_data(request),
+        )
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 await response.aclose()
-                params, headers, auth = prepare_auth_code_token_request_data(
-                    request, dpop_nonce=nonce
-                )
                 response = await _request_token(
-                    client, request.address, params, headers, auth
+                    client,
+                    request.address,
+                    lambda: prepare_auth_code_token_request_data(
+                        request, dpop_nonce=nonce
+                    ),
                 )
         return process_auth_code_token_response(
-            response, require_dpop_token_type=request.require_dpop_token_type
+            response, require_dpop_token_type=request.dpop_key is not None
         )
     except Exception as e:
         return handle_auth_code_token_error(e)
@@ -151,23 +160,25 @@ async def refresh_token(
     response = None
     owned_client = None
     try:
-        params, headers, auth = prepare_refresh_token_request_data(request)
         client, owned_client = resolve_async_http_client(request.mtls, http_client)
-        response = await _request_token(client, request.address, params, headers, auth)
+        response = await _request_token(
+            client, request.address, lambda: prepare_refresh_token_request_data(request)
+        )
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 await response.aclose()
-                params, headers, auth = prepare_refresh_token_request_data(
-                    request, dpop_nonce=nonce
-                )
                 response = await _request_token(
-                    client, request.address, params, headers, auth
+                    client,
+                    request.address,
+                    lambda: prepare_refresh_token_request_data(
+                        request, dpop_nonce=nonce
+                    ),
                 )
         return process_refresh_token_response(
-            response, require_dpop_token_type=request.require_dpop_token_type
+            response, require_dpop_token_type=request.dpop_key is not None
         )
     except Exception as e:
         return handle_refresh_token_error(e)

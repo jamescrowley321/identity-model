@@ -1,11 +1,12 @@
-"""DPoP on the refresh grant and the opt-in Bearer-downgrade check.
+"""DPoP on the refresh grant and the Bearer-downgrade check.
 
 - RFC 9449 §5 / FAPI 2.0 Security Profile §5.3.3.1: a refresh request carries a
   DPoP proof so the refreshed access token stays bound to the client's key.
 - RFC 9449 §8: a single ``use_dpop_nonce`` retry, as on the other token calls.
-- ``require_dpop_token_type``: a 2xx response whose ``token_type`` is not
-  ``DPoP`` (compared case-insensitively, RFC 6749 §7.1) fails with
-  ``TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH``.  Off by default.
+- A DPoP-bound request (one with a ``dpop_key``): a 2xx response whose
+  ``token_type`` is not ``DPoP`` (compared case-insensitively, RFC 6749 §7.1)
+  fails with ``TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`` and keeps the issued
+  tokens on ``rejected_token``.  A request without a key accepts Bearer.
 """
 
 from collections.abc import Awaitable, Callable
@@ -190,20 +191,21 @@ class TestSyncDpopTokenTypeRequired:
     def test_downgrade_fails(self, call: SyncCall, build, token_type):
         token = {**DPOP_TOKEN, "token_type": token_type}
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=token))
-        response = call(build(require_dpop_token_type=True))
+        response = call(build())
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
         assert response.error == (
             f"Expected token_type 'DPoP' for a DPoP-bound request, got "
             f"{token_type!r} (RFC 9449 §5)"
         )
+        assert response.rejected_token == token
 
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
     @respx.mock
     def test_missing_token_type_fails(self, call: SyncCall, build):
         token = {k: v for k, v in DPOP_TOKEN.items() if k != "token_type"}
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=token))
-        response = call(build(require_dpop_token_type=True))
+        response = call(build())
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
 
@@ -213,16 +215,17 @@ class TestSyncDpopTokenTypeRequired:
     def test_dpop_token_type_accepted(self, call: SyncCall, build, token_type):
         token = {**DPOP_TOKEN, "token_type": token_type}
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=token))
-        response = call(build(require_dpop_token_type=True))
+        response = call(build())
         assert response.is_successful is True
         assert response.error_kind is None
+        assert response.rejected_token is None
         assert response.token == token
 
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
     @respx.mock
-    def test_bearer_accepted_when_not_required(self, call: SyncCall, build):
+    def test_bearer_accepted_without_dpop_key(self, call: SyncCall, build):
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=BEARER_TOKEN))
-        response = call(build())
+        response = call(build(dpop_key=None))
         assert response.is_successful is True
         assert response.token == BEARER_TOKEN
 
@@ -232,9 +235,10 @@ class TestSyncDpopTokenTypeRequired:
         respx.post(TOKEN_URL).mock(
             return_value=httpx.Response(400, json={"error": "invalid_grant"})
         )
-        response = call(build(require_dpop_token_type=True))
+        response = call(build())
         assert response.is_successful is False
         assert response.error_kind is None
+        assert response.rejected_token is None
 
 
 @pytest.mark.asyncio
@@ -243,14 +247,26 @@ class TestAsyncDpopTokenTypeRequired:
     @respx.mock
     async def test_downgrade_fails(self, call: AsyncCall, build):
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=BEARER_TOKEN))
-        response = await call(build(require_dpop_token_type=True))
+        response = await call(build())
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
+        assert response.rejected_token == BEARER_TOKEN
 
     @pytest.mark.parametrize(("call", "build"), ASYNC_CALLS)
     @respx.mock
     async def test_dpop_token_type_accepted(self, call: AsyncCall, build):
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=DPOP_TOKEN))
-        response = await call(build(require_dpop_token_type=True))
+        response = await call(build())
         assert response.is_successful is True
         assert response.token == DPOP_TOKEN
+
+
+@pytest.mark.unit
+class TestRejectedTokenRedacted:
+    @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
+    @respx.mock
+    def test_repr_redacts_rejected_token(self, call: SyncCall, build):
+        respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=BEARER_TOKEN))
+        response = call(build())
+        assert "rejected_token='[REDACTED]'" in repr(response)
+        assert BEARER_TOKEN["access_token"] not in repr(response)

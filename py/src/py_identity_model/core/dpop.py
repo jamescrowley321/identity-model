@@ -8,6 +8,7 @@ hash computation for binding OAuth 2.0 tokens to a client's private key.
 from __future__ import annotations
 
 from base64 import urlsafe_b64encode
+from enum import StrEnum
 import hashlib
 import json
 import time
@@ -22,30 +23,79 @@ from cryptography.hazmat.primitives.serialization import (
     NoEncryption,
     PrivateFormat,
     PublicFormat,
+    load_pem_private_key,
 )
 import jwt as pyjwt
+from jwt.algorithms import ECAlgorithm, OKPAlgorithm, RSAAlgorithm
 
 
 if TYPE_CHECKING:
     import httpx
 
 
+class DPoPAlgorithm(StrEnum):
+    """Algorithms a client :class:`DPoPKey` can sign proofs with.
+
+    FAPI 2.0 (Security Profile §5.4.1) allows only ``ES256``, ``PS256`` and
+    ``EdDSA``. Verifying proofs uses ``DEFAULT_ALLOWED_ALGORITHMS``
+    (``dpop_verify``), not this set.
+    """
+
+    ES256 = "ES256"
+    ES384 = "ES384"
+    ES512 = "ES512"
+    RS256 = "RS256"
+    PS256 = "PS256"
+    EDDSA = "EdDSA"
+    """EdDSA with an Ed25519 key (RFC 8037 §3.1)."""
+
+
 # Mapping from JWT algorithm to EC curve (immutable to prevent curve confusion)
 _EC_CURVES: types.MappingProxyType[str, ec.EllipticCurve] = types.MappingProxyType(
     {
-        "ES256": ec.SECP256R1(),
-        "ES384": ec.SECP384R1(),
-        "ES512": ec.SECP521R1(),
+        DPoPAlgorithm.ES256: ec.SECP256R1(),
+        DPoPAlgorithm.ES384: ec.SECP384R1(),
+        DPoPAlgorithm.ES512: ec.SECP521R1(),
     }
 )
 
-_RSA_ALGORITHMS: frozenset[str] = frozenset({"RS256", "PS256"})
-# RFC 8037 §3.1: EdDSA with an Ed25519 key (FAPI 2.0 Security Profile §5.4.1).
-_EDDSA = "EdDSA"
+# RSA keys smaller than this are refused, generated or loaded (RFC 7518 §3.3).
+_MIN_RSA_KEY_BITS = 2048
 
-# Algorithms a client DPoPKey can be generated for. Verifying proofs uses
-# DEFAULT_ALLOWED_ALGORITHMS (dpop_verify), not this set.
-_KEY_ALGORITHMS: frozenset[str] = frozenset({*_EC_CURVES, *_RSA_ALGORITHMS, _EDDSA})
+_PrivateKey = ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey | ed25519.Ed25519PrivateKey
+
+# JWK private-key parsers per ``kty``.
+_JWK_PARSERS = types.MappingProxyType(
+    {"EC": ECAlgorithm, "OKP": OKPAlgorithm, "RSA": RSAAlgorithm}
+)
+
+
+def _parse_algorithm(algorithm: DPoPAlgorithm | str) -> DPoPAlgorithm:
+    try:
+        return DPoPAlgorithm(algorithm)
+    except ValueError:
+        msg = (
+            f"Unsupported DPoP algorithm: {algorithm}. "
+            f"Supported: {sorted(a.value for a in DPoPAlgorithm)}"
+        )
+        raise ValueError(msg) from None
+
+
+def _check_key_fits(algorithm: DPoPAlgorithm, key: object) -> _PrivateKey:
+    """Return *key* if it is a private key *algorithm* can sign with."""
+    curve = _EC_CURVES.get(algorithm)
+    if curve is not None:
+        fits = (
+            isinstance(key, ec.EllipticCurvePrivateKey) and key.curve.name == curve.name
+        )
+    elif algorithm is DPoPAlgorithm.EDDSA:
+        fits = isinstance(key, ed25519.Ed25519PrivateKey)
+    else:
+        fits = isinstance(key, rsa.RSAPrivateKey) and key.key_size >= _MIN_RSA_KEY_BITS
+    if not fits:
+        msg = f"Key is not a private key {algorithm.value} can sign with"
+        raise ValueError(msg)
+    return key  # type: ignore[return-value]
 
 
 def _int_to_b64url(n: int, length: int) -> str:
@@ -56,40 +106,102 @@ def _int_to_b64url(n: int, length: int) -> str:
 class DPoPKey:
     """Manages a DPoP asymmetric key pair.
 
-    Generate via :func:`generate_dpop_key`.  The key pair is immutable
-    and thread-safe after construction.
+    Generate a new pair via :func:`generate_dpop_key`, or load a stored one
+    with :meth:`from_pem` or :meth:`from_jwk` so tokens bound to it stay
+    usable across restarts.  The key pair is immutable and thread-safe after
+    construction.
 
     Args:
-        algorithm: The signing algorithm (``"ES256"``, ``"PS256"``,
-            ``"EdDSA"``, etc.).
+        algorithm: The signing algorithm, as a :class:`DPoPAlgorithm` or its
+            string value.
+
+    Raises:
+        ValueError: If *algorithm* is not a :class:`DPoPAlgorithm`.
     """
 
     __slots__ = ("_algorithm", "_private_key")
 
-    def __init__(self, algorithm: str = "ES256") -> None:
-        if algorithm not in _KEY_ALGORITHMS:
-            msg = (
-                f"Unsupported DPoP algorithm: {algorithm}. "
-                f"Supported: {sorted(_KEY_ALGORITHMS)}"
-            )
-            raise ValueError(msg)
+    _algorithm: DPoPAlgorithm
+    _private_key: _PrivateKey
 
-        self._algorithm = algorithm
-        self._private_key: (
-            ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey | ed25519.Ed25519PrivateKey
-        )
-
-        if algorithm in _EC_CURVES:
-            self._private_key = ec.generate_private_key(_EC_CURVES[algorithm])
-        elif algorithm == _EDDSA:
+    def __init__(self, algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256) -> None:
+        self._algorithm = _parse_algorithm(algorithm)
+        curve = _EC_CURVES.get(self._algorithm)
+        if curve is not None:
+            self._private_key = ec.generate_private_key(curve)
+        elif self._algorithm is DPoPAlgorithm.EDDSA:
             self._private_key = ed25519.Ed25519PrivateKey.generate()
         else:
             self._private_key = rsa.generate_private_key(
-                public_exponent=65537, key_size=2048
+                public_exponent=65537, key_size=_MIN_RSA_KEY_BITS
             )
 
+    @classmethod
+    def _wrap(cls, algorithm: DPoPAlgorithm, private_key: object) -> DPoPKey:
+        key = cls.__new__(cls)
+        key._private_key = _check_key_fits(algorithm, private_key)
+        key._algorithm = algorithm
+        return key
+
+    @classmethod
+    def from_pem(
+        cls,
+        pem: bytes | str,
+        algorithm: DPoPAlgorithm | str,
+        password: bytes | None = None,
+    ) -> DPoPKey:
+        """Load a DPoP key from a PEM-encoded private key.
+
+        Args:
+            pem: The private key, PEM-encoded (PKCS#8 or traditional).
+            algorithm: The algorithm to sign proofs with. It must fit the key:
+                an EC key on that algorithm's curve, an Ed25519 key for
+                ``EdDSA``, or an RSA key of at least 2048 bits.
+            password: The PEM's password, if it is encrypted.
+
+        Raises:
+            ValueError: If *algorithm* is unsupported, the PEM cannot be
+                loaded, or the key does not fit *algorithm*.
+        """
+        parsed = _parse_algorithm(algorithm)
+        data = pem.encode("ascii") if isinstance(pem, str) else pem
+        try:
+            private_key = load_pem_private_key(data, password=password)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Cannot load the DPoP private key: {e}") from e
+        return cls._wrap(parsed, private_key)
+
+    @classmethod
+    def from_jwk(
+        cls, jwk: dict, algorithm: DPoPAlgorithm | str | None = None
+    ) -> DPoPKey:
+        """Load a DPoP key from a private JWK (``EC``, ``OKP`` or ``RSA``).
+
+        Args:
+            jwk: The private JWK, including its private members (``d``, and
+                for RSA the CRT members).
+            algorithm: The algorithm to sign proofs with. Defaults to the
+                JWK's ``alg`` member; one of the two is required.
+
+        Raises:
+            ValueError: If no algorithm is given, it is unsupported, the JWK
+                is not a private key, or the key does not fit the algorithm.
+        """
+        alg = algorithm if algorithm is not None else jwk.get("alg")
+        if not isinstance(alg, str):
+            raise ValueError("A DPoP JWK needs an algorithm: pass one or set 'alg'")
+        parsed = _parse_algorithm(alg)
+        parser = _JWK_PARSERS.get(jwk.get("kty"))  # type: ignore[arg-type]
+        if parser is None:
+            raise ValueError(f"Unsupported JWK kty for DPoP: {jwk.get('kty')!r}")
+        try:
+            private_key = parser.from_jwk(json.dumps(jwk))
+        except (pyjwt.InvalidKeyError, ValueError, TypeError) as e:
+            raise ValueError(f"Cannot load the DPoP JWK: {e}") from e
+        return cls._wrap(parsed, private_key)
+
     @property
-    def algorithm(self) -> str:
+    def algorithm(self) -> DPoPAlgorithm:
         """The signing algorithm."""
         return self._algorithm
 
@@ -193,7 +305,9 @@ def compute_jwk_thumbprint(jwk: dict) -> str:
     return urlsafe_b64encode(digest).decode()[:_SHA256_B64URL_LENGTH]
 
 
-def generate_dpop_key(algorithm: str = "ES256") -> DPoPKey:
+def generate_dpop_key(
+    algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256,
+) -> DPoPKey:
     """Generate a new DPoP key pair.
 
     Args:
