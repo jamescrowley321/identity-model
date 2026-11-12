@@ -138,12 +138,12 @@ def _lax_config() -> TokenValidationConfig:
 
 def _sync_kid_miss_last_attempt() -> dict[str, float]:
     """Kid-miss cooldown state of the default sync cache (no ``cache=``)."""
-    return get_default_validation_cache().kid_miss_last_attempt
+    return get_default_validation_cache()._kid_miss_last_attempt
 
 
 def _async_kid_miss_last_attempt() -> dict[str, float]:
     """Kid-miss cooldown state of the default async cache."""
-    return get_default_async_validation_cache().kid_miss_last_attempt
+    return get_default_async_validation_cache()._kid_miss_last_attempt
 
 
 @pytest.fixture(autouse=True)

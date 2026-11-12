@@ -126,8 +126,8 @@ def _distinct_lock_per_uri(monkeypatch, sync_cache, async_cache):
             aio_locks[uri] = asyncio.Lock()
         return aio_locks[uri]
 
-    monkeypatch.setattr(sync_cache, "jwks_fetch_lock", _sync_per_uri)
-    monkeypatch.setattr(async_cache, "jwks_fetch_lock", _aio_per_uri)
+    monkeypatch.setattr(sync_cache, "_jwks_fetch_lock", _sync_per_uri)
+    monkeypatch.setattr(async_cache, "_jwks_fetch_lock", _aio_per_uri)
 
 
 # Per-fetch sleep. Long enough that serialized vs parallel differ by a
@@ -304,7 +304,7 @@ class TestSharedLockProducesSerialization:
     @respx.mock
     def test_sync_shared_lock_serializes(self, monkeypatch, sync_client, sync_cache):
         shared_lock = threading.Lock()
-        monkeypatch.setattr(sync_cache, "jwks_fetch_lock", lambda _uri: shared_lock)
+        monkeypatch.setattr(sync_cache, "_jwks_fetch_lock", lambda _uri: shared_lock)
 
         url_a = "https://op-a.example/jwks"
         url_b = "https://op-b.example/jwks"

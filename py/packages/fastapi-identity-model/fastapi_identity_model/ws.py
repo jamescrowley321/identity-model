@@ -146,7 +146,7 @@ def build_ws_authenticator(
         access_token_marker_claims: Positive access-token marker claims for
             ``require_access_token_marker``. Defaults to ``("scope", "scp")``.
         http_client: Managed HTTP client for discovery and JWKS, built from
-            your ``Config``. ``None`` uses the library default client.
+            your ``HTTPConfig``. ``None`` uses the library default client.
         cache: The :class:`~py_identity_model.aio.AsyncValidationCache` for
             the discovery document, keys and kid-miss cooldown. ``None`` uses
             the library default cache.

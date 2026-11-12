@@ -3,7 +3,7 @@ Shared HTTP utilities for retry logic.
 
 This module provides common utilities used by both sync and async HTTP clients.
 Timeouts, retry counts and JWKS limits come from the client's injected
-:class:`~py_identity_model.core.config.Config`; nothing here reads the
+:class:`~py_identity_model.core.config.HTTPConfig`; nothing here reads the
 environment.
 """
 

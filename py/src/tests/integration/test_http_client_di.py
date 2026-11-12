@@ -3,9 +3,9 @@
 import pytest
 
 from py_identity_model import (
-    Config,
     DiscoveryDocumentRequest,
     HTTPClient,
+    HTTPConfig,
     JwksRequest,
     get_discovery_document,
     get_jwks,
@@ -58,7 +58,7 @@ class TestSyncDIIntegration:
 
     def test_custom_timeout_client(self, test_config):
         """Use client with custom timeout."""
-        with HTTPClient(config=Config(http_timeout=CUSTOM_TIMEOUT)) as client:
+        with HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT)) as client:
             response = get_discovery_document(
                 DiscoveryDocumentRequest(
                     address=test_config["TEST_DISCO_ADDRESS"],

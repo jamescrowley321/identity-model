@@ -29,7 +29,7 @@ async def _fetch_discovery_document(
     Fetch discovery document with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Retry settings come from the client's Config.
+    exponential backoff. Retry settings come from the client's HTTPConfig.
     """
     return await client.get(url)
 

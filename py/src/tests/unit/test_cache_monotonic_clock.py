@@ -232,7 +232,7 @@ class TestCooldownUsesMonotonicClock:
                 http_client=sync_client,
                 cache=sync_cache,
             )
-        kid_miss_last_attempt = sync_cache.kid_miss_last_attempt
+        kid_miss_last_attempt = sync_cache._kid_miss_last_attempt
         assert JWKS_URL in kid_miss_last_attempt
         # 1 prime + 1 kid-miss refresh.
         baseline_fetches = 2
@@ -293,7 +293,7 @@ class TestCooldownUsesMonotonicClock:
                 http_client=async_client,
                 cache=async_cache,
             )
-        kid_miss_last_attempt = async_cache.kid_miss_last_attempt
+        kid_miss_last_attempt = async_cache._kid_miss_last_attempt
         assert JWKS_URL in kid_miss_last_attempt
         baseline_fetches = 2
         assert jwks_route.call_count == baseline_fetches
@@ -392,7 +392,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         recorder = _EventRecorder()
         tracked_lock = _TrackedSyncLock(recorder)
-        monkeypatch.setattr(sync_cache, "jwks_fetch_lock", lambda _uri: tracked_lock)
+        monkeypatch.setattr(sync_cache, "_jwks_fetch_lock", lambda _uri: tracked_lock)
 
         real_monotonic = time.monotonic
 
@@ -425,7 +425,7 @@ class TestRefreshJwksRequestTimeInsideLock:
 
         recorder = _EventRecorder()
         tracked_lock = _TrackedAsyncLock(recorder)
-        monkeypatch.setattr(async_cache, "jwks_fetch_lock", lambda _uri: tracked_lock)
+        monkeypatch.setattr(async_cache, "_jwks_fetch_lock", lambda _uri: tracked_lock)
 
         real_monotonic = time.monotonic
 

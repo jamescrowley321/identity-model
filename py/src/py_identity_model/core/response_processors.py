@@ -43,7 +43,7 @@ from .validators import (
 if TYPE_CHECKING:
     import httpx
 
-    from .config import Config
+    from .config import HTTPConfig
 
 
 def _get_url_authority(url: str) -> str:
@@ -525,7 +525,7 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     return keys, None
 
 
-def parse_jwks_response(response: httpx.Response, config: Config) -> JwksResponse:
+def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksResponse:
     """
     Parse JWKS HTTP response.
 

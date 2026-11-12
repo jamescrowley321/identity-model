@@ -50,15 +50,15 @@ from ..core.dpop import (
     generate_dpop_key,
 )
 from ..core.dpop_verify import (
+    AsyncDPoPReplayCache,
     DPoPErrorKind,
     DPoPProof,
     DPoPProofRequest,
     DPoPReplayCache,
+    DPoPReplayCheck,
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
-    get_default_dpop_replay_cache,
-    verify_dpop_proof,
 )
 from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
@@ -115,7 +115,6 @@ from ..core.token_binding import (
     IntrospectedTokenErrorKind,
     TokenBinding,
     TokenPresentation,
-    check_introspection_binding,
 )
 from .device_auth import (
     DeviceAuthorizationRequest,
@@ -173,6 +172,7 @@ from .revocation import (
     TokenRevocationResponse,
     revoke_token,
 )
+from .token_binding import check_introspection_binding, verify_dpop_proof
 from .token_client import (
     AuthorizationCodeTokenRequest,
     AuthorizationCodeTokenResponse,
@@ -205,6 +205,7 @@ __all__ = [
     "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
+    "AsyncDPoPReplayCache",
     # HTTP Client
     "AsyncHTTPClient",
     # Auth Code + PKCE
@@ -236,6 +237,7 @@ __all__ = [
     "DPoPProof",
     "DPoPProofRequest",
     "DPoPReplayCache",
+    "DPoPReplayCheck",
     "DPoPValidationError",
     "DPoPVerificationOptions",
     # Device Authorization Grant
@@ -315,7 +317,6 @@ __all__ = [
     "generate_dpop_key",
     "generate_pkce_pair",
     "get_default_async_validation_cache",
-    "get_default_dpop_replay_cache",
     "get_discovery_document",
     "get_jwks",
     "get_userinfo",

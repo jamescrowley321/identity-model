@@ -52,7 +52,9 @@ ISSUER = "https://op"
 AUDIENCE = "urn:api"
 URL = "http://testserver/me"
 GENERIC_BODY = {"detail": "Invalid or unauthorized token"}
-ALGS = " ".join(DPoPVerificationOptions().accepted_algorithms)
+ALGS = " ".join(
+    DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()).accepted_algorithms
+)
 INVALID_TOKEN_DPOP = f'DPoP error="invalid_token", algs="{ALGS}"'
 INVALID_PROOF_DPOP = f'DPoP error="invalid_dpop_proof", algs="{ALGS}"'
 
@@ -846,6 +848,18 @@ class TestSharedOptions:
             (401, INVALID_TOKEN_DPOP, GENERIC_BODY),
             {"jkt": key.jwk_thumbprint},
             status.WS_1008_POLICY_VIOLATION,
+        )
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_default_dpop_options_own_a_replay_cache(self):
+        # 1027-B: no process-wide cache; each AuthOptions owns its own, which
+        # the HTTP middleware and WebSocket routes given it share.
+        first, second = AuthOptions(), AuthOptions()
+        from_settings = AuthOptions.from_settings(oidc_settings_from_env())
+
+        assert isinstance(first.dpop.replay_cache, InMemoryDPoPReplayCache)
+        assert (
+            len({id(o.dpop.replay_cache) for o in (first, second, from_settings)}) == 3
         )
 
     def test_options_are_frozen(self):

@@ -118,10 +118,10 @@ class TestPerLoopLocksAreIndependent:
 
         async def grab_locks():
             return (
-                cache.jwks_write_lock(),
-                cache.jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
-                cache.disco_write_lock(),
-                cache.disco_fetch_lock(disco_cache_key(JWKS_URL)),
+                cache._jwks_write_lock(),
+                cache._jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
+                cache._disco_write_lock(),
+                cache._disco_fetch_lock(disco_cache_key(JWKS_URL)),
             )
 
         loop_a = asyncio.new_event_loop()
@@ -150,10 +150,10 @@ class TestPerLoopLocksAreIndependent:
 
         async def grab_locks():
             return (
-                cache.jwks_write_lock(),
-                cache.jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
-                cache.disco_write_lock(),
-                cache.disco_fetch_lock(disco_cache_key(JWKS_URL)),
+                cache._jwks_write_lock(),
+                cache._jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
+                cache._disco_write_lock(),
+                cache._disco_fetch_lock(disco_cache_key(JWKS_URL)),
             )
 
         async def grab_twice():
@@ -174,7 +174,7 @@ class TestPerLoopLocksAreIndependent:
         cache_b = AsyncValidationCache()
 
         async def grab_both():
-            return cache_a.jwks_write_lock(), cache_b.jwks_write_lock()
+            return cache_a._jwks_write_lock(), cache_b._jwks_write_lock()
 
         loop = asyncio.new_event_loop()
         try:
@@ -223,10 +223,10 @@ class TestPerLoopLocksAreIndependent:
 
         async def touch():
             # Register the loop in every per-loop dict.
-            cache.jwks_write_lock()
-            cache.jwks_fetch_lock(jwks_cache_key("x"))
-            cache.disco_write_lock()
-            cache.disco_fetch_lock(disco_cache_key("x"))
+            cache._jwks_write_lock()
+            cache._jwks_fetch_lock(jwks_cache_key("x"))
+            cache._disco_write_lock()
+            cache._disco_fetch_lock(disco_cache_key("x"))
 
         try:
             loop.run_until_complete(touch())

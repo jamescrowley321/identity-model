@@ -104,7 +104,8 @@ default port normalized (RFC 3986 §6.2.2.1, §6.2.3) and the path compared as s
 `iat` is inside `[now - max_age - iat_leeway, now + iat_leeway]`; `nonce`
 equals `TokenPresentation.expected_nonce` when one is set; `ath` is the hash of
 the access token; the key's RFC 7638 thumbprint equals `cnf.jkt`; and last, the
-`jti` has not been seen. A rejected proof never consumes its `jti`.
+proof has not been seen. A rejected proof, including one whose token fails the
+certificate binding, is never recorded.
 
 What `required_binding` does:
 
@@ -136,15 +137,40 @@ Tokens and Logout Tokens arrive with no presentation.
 typed `kind`. `kind.oauth_error` is the `WWW-Authenticate` error code:
 `invalid_dpop_proof` for a bad proof and `invalid_token` for a failed binding.
 
-Proof algorithms, the `iat` window and the `jti` replay cache are set with
-`TokenValidationConfig(dpop=DPoPVerificationOptions(...))`. The default
-replay cache is an in-memory cache for the process. It holds each `jti` for as
-long as the window would accept its proof and never evicts a live one: when it
-is full, a new proof is refused with `REPLAY_CACHE_FULL`, so size
+Proof algorithms, the `iat` window and the replay cache are set with
+`TokenValidationConfig(dpop=DPoPVerificationOptions(...))`. The replay cache
+is yours and required: there is no process-wide default, so build one
+`DPoPVerificationOptions` at startup and reuse it. A DPoP-bound token with no
+`dpop` options raises `ConfigurationException`.
+
+```python
+from py_identity_model import (
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    TokenValidationConfig,
+)
+
+dpop = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
+```
+
+`InMemoryDPoPReplayCache` holds each proof, keyed by its key thumbprint and
+`jti`, for as long as the window would accept it and never evicts a live one:
+when it is full, a new proof is refused with `REPLAY_CACHE_FULL`, so size
 `InMemoryDPoPReplayCache(max_entries=...)` above the proofs a process accepts
-in one window. A deployment with several
-processes or hosts needs a shared `DPoPReplayCache` so a proof replayed to
-another worker is refused (RFC 9449 §11.1).
+in one window. A deployment with several processes or hosts needs a shared
+store so a proof replayed to another worker is refused (RFC 9449 §11.1).
+
+A store implements `DPoPReplayCache`, whose
+`check_and_store(jkt, jti, expires_at, now)` returns a `DPoPReplayCheck`:
+`RECORDED`, `REPLAYED` or `FULL`. It returns its answer and does not raise for
+a replay or a full store; any answer other than `RECORDED` refuses the proof.
+A store reached over the network can implement `AsyncDPoPReplayCache`
+(`async def check_and_store`) instead, with the async validators
+(`py_identity_model.aio.validate_token`,
+`py_identity_model.aio.check_introspection_binding`,
+`py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
+async cache with `ConfigurationException`.
 
 ### FastAPI
 
@@ -196,7 +222,7 @@ ws_auth = build_ws_authenticator(
 | Field | Default | Meaning |
 |---|---|---|
 | `required_binding` | `TokenBinding.NONE` | The sender constraint every token must carry. |
-| `dpop` | `None` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). `None` uses the defaults. |
+| `dpop` | defaults, with an `InMemoryDPoPReplayCache` owned by this `AuthOptions` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). Pass the same `AuthOptions` to the middleware and the WebSocket authenticator to share the cache; behind a load balancer, pass a shared one. |
 | `client_certificate` | `None` | Callable returning the connection's client certificate (PEM or DER), or `None`. Receives the `Request` or `WebSocket`. |
 | `expected_origin` | `None` | `scheme://host[:port]` the proof's `htu` is checked against. `None` takes the origin from the request. |
 
@@ -280,6 +306,16 @@ headers.
 
 ::: py_identity_model.core.dpop_verify.DPoPReplayCache
 
+::: py_identity_model.core.dpop_verify.AsyncDPoPReplayCache
+
+::: py_identity_model.core.dpop_verify.DPoPReplayCheck
+
 ::: py_identity_model.core.dpop_verify.InMemoryDPoPReplayCache
+
+::: py_identity_model.aio.token_binding.verify_dpop_proof
+
+::: py_identity_model.aio.token_binding.check_token_binding
+
+::: py_identity_model.aio.token_binding.check_introspection_binding
 
 ::: py_identity_model.core.dpop.compute_jwk_thumbprint

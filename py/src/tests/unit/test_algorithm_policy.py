@@ -208,9 +208,9 @@ class TestManualModeNoneIsVerifyDefault:
 @pytest.mark.unit
 class TestDPoPNoneIsVerifyDefault:
     def test_accepted_algorithms_are_the_verify_set(self):
-        assert DPoPVerificationOptions().accepted_algorithms == tuple(
-            sorted(VERIFY_SET)
-        )
+        assert DPoPVerificationOptions(
+            replay_cache=InMemoryDPoPReplayCache()
+        ).accepted_algorithms == tuple(sorted(VERIFY_SET))
 
     @pytest.mark.parametrize("alg", sorted(VERIFY_SET))
     def test_proof_with_every_verify_alg_accepted(self, keys, alg):
@@ -261,7 +261,10 @@ class TestVerifyRefusesSignableAlgOutsideSet:
 
     def test_dpop_options_refuse(self):
         with pytest.raises(ValueError, match="ES256K"):
-            DPoPVerificationOptions(algorithms=frozenset({"ES256K"}))
+            DPoPVerificationOptions(
+                algorithms=frozenset({"ES256K"}),
+                replay_cache=InMemoryDPoPReplayCache(),
+            )
 
     def test_jarm_default_refuses(self):
         with pytest.raises(JarmValidationException, match="not in the allowed set"):

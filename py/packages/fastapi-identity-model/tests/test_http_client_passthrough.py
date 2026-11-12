@@ -1,6 +1,6 @@
 """Every library call the package makes uses the ``http_client`` the app passed.
 
-The app builds an ``AsyncHTTPClient`` from its own ``Config`` and hands it to
+The app builds an ``AsyncHTTPClient`` from its own ``HTTPConfig`` and hands it to
 the middleware, the WebSocket authenticator, the login router and the token
 manager. Without one, the library default client is used (``None``).
 
@@ -29,7 +29,7 @@ from fastapi_identity_model import (
 )
 import fastapi_identity_model.middleware as mw
 import fastapi_identity_model.token_manager as tm_mod
-from py_identity_model import Config
+from py_identity_model import CacheConfig, HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
 
 
@@ -46,13 +46,13 @@ _ACCESS_CLAIMS = {"sub": "u1", "scope": "read"}
 
 @pytest.fixture
 async def http_client():
-    async with AsyncHTTPClient(config=Config(http_timeout=7.0)) as client:
+    async with AsyncHTTPClient(config=HTTPConfig(http_timeout=7.0)) as client:
         yield client
 
 
 @pytest.fixture
 def cache() -> AsyncValidationCache:
-    return AsyncValidationCache(config=Config(jwks_cache_ttl=900.0))
+    return AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))
 
 
 def _asgi_client(app: FastAPI) -> httpx.AsyncClient:

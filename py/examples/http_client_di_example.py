@@ -8,9 +8,9 @@ Demonstrates three patterns for managing HTTP client lifecycle:
 """
 
 from py_identity_model import (
-    Config,
     DiscoveryDocumentRequest,
     HTTPClient,
+    HTTPConfig,
     JwksRequest,
     get_discovery_document,
     get_jwks,
@@ -85,8 +85,8 @@ def custom_timeout_example():
     print("=" * 60)
 
     # Settings come from a Config; a CA bundle is set the same way, e.g.
-    # Config(http_timeout=60.0, ca_bundle="/path/to/ca-bundle.crt").
-    with HTTPClient(config=Config(http_timeout=60.0)) as client:
+    # HTTPConfig(http_timeout=60.0, ca_bundle="/path/to/ca-bundle.crt").
+    with HTTPClient(config=HTTPConfig(http_timeout=60.0)) as client:
         response = get_discovery_document(
             DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL),
             http_client=client,

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
-from py_identity_model import DPoPVerificationOptions, TokenBinding
+from py_identity_model import (
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    TokenBinding,
+)
 
 
 if TYPE_CHECKING:
@@ -81,6 +85,10 @@ def _certificate_from_header(
     return client_certificate
 
 
+def _default_dpop_options() -> DPoPVerificationOptions:
+    return DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+
+
 @dataclass(frozen=True)
 class AuthOptions:
     """Token-binding and validation options for one resource server.
@@ -98,8 +106,12 @@ class AuthOptions:
             ``MTLS`` refuses tokens without a matching client certificate and
             needs ``client_certificate``.
         dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
-            proofs (algorithms, ``iat`` window, ``jti`` replay cache). ``None``
-            uses the defaults and the process-wide replay cache.
+            proofs (algorithms, ``iat`` window, replay cache). The default is
+            the library defaults with an
+            :class:`~py_identity_model.InMemoryDPoPReplayCache` owned by this
+            options value, so the HTTP middleware and WebSocket routes given
+            the same ``AuthOptions`` share one cache. Behind a load balancer,
+            pass a shared cache.
         client_certificate: Returns the connection's mTLS client certificate
             (PEM or DER) for certificate-bound tokens, or ``None``. It receives
             the ``Request`` (HTTP) or ``WebSocket`` (handshake). Without it
@@ -119,7 +131,7 @@ class AuthOptions:
     """
 
     required_binding: TokenBinding = TokenBinding.NONE
-    dpop: DPoPVerificationOptions | None = None
+    dpop: DPoPVerificationOptions = field(default_factory=_default_dpop_options)
     client_certificate: Callable[[HTTPConnection], str | bytes | None] | None = None
     expected_origin: str | None = None
 
@@ -161,7 +173,7 @@ class AuthOptions:
             )
         return cls(
             required_binding=settings.required_binding,
-            dpop=dpop,
+            dpop=dpop if dpop is not None else _default_dpop_options(),
             client_certificate=client_certificate,
             expected_origin=settings.expected_origin,
         )

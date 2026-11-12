@@ -2,7 +2,7 @@
 
 ``os.environ`` is replaced by a trap that fails on any access made by library
 code (``py_identity_model`` or ``fastapi_identity_model``), then client
-operations run with an injected ``Config``. A reintroduced ``os.getenv`` or
+operations run with an injected ``HTTPConfig``. A reintroduced ``os.getenv`` or
 ``os.environ`` read anywhere on these paths turns the tests red.
 
 Reads made by httpx itself (``trust_env``: proxy variables, ``SSL_CERT_FILE``)
@@ -20,7 +20,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config, PyIdentityModelException
+from py_identity_model import HTTPConfig, PyIdentityModelException
 from py_identity_model.aio.discovery import (
     get_discovery_document as aio_get_discovery_document,
 )
@@ -107,8 +107,8 @@ def env_trap(monkeypatch) -> EnvironmentTrap:
     return trap
 
 
-def _config() -> Config:
-    return Config(
+def _config() -> HTTPConfig:
+    return HTTPConfig(
         http_timeout=5.0,
         http_retry_max_attempts=1,
         http_retry_base_delay=0,
@@ -210,7 +210,7 @@ class TestSyncReadsNoEnvironment:
 
     def test_default_config_client(self, env_trap):
         with HTTPClient() as client:
-            assert client.config == Config()
+            assert client.config == HTTPConfig()
         assert env_trap.library_reads == []
 
 
@@ -252,5 +252,5 @@ class TestAsyncReadsNoEnvironment:
 
     async def test_default_config_client(self, env_trap):
         async with AsyncHTTPClient() as client:
-            assert client.config == Config()
+            assert client.config == HTTPConfig()
         assert env_trap.library_reads == []

@@ -1,8 +1,9 @@
-"""The settings table in ``spec/config.md`` matches Python's ``Config``.
+"""The settings table in ``spec/config.md`` matches Python's configs.
 
-Python defines the settings; the spec page states them for Go and Rust to
-match. This test keeps the page honest: every ``Config`` field has exactly one
-row, and each row's default and valid range are the ones ``Config`` enforces.
+Python defines the settings (``HTTPConfig`` and ``CacheConfig``); the spec page
+states them for Go and Rust to match. This test keeps the page honest: every
+field of either config has exactly one row, and each row's default and valid
+range are the ones its config enforces.
 """
 
 from dataclasses import fields
@@ -12,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from py_identity_model import Config, ConfigError
+from py_identity_model import CacheConfig, ConfigError, HTTPConfig
 
 
 pytestmark = pytest.mark.unit
@@ -50,6 +51,11 @@ def _settings_rows() -> dict[str, dict[str, str]]:
 
 
 ROWS = _settings_rows()
+_CACHE_FIELDS = frozenset(f.name for f in fields(CacheConfig))
+
+
+def _config(name: str) -> type[HTTPConfig] | type[CacheConfig]:
+    return CacheConfig if name in _CACHE_FIELDS else HTTPConfig
 
 
 def _number(text: str) -> float:
@@ -57,7 +63,8 @@ def _number(text: str) -> float:
 
 
 def test_one_row_per_config_field() -> None:
-    assert sorted(ROWS) == sorted(f.name for f in fields(Config))
+    names = [f.name for f in (*fields(HTTPConfig), *fields(CacheConfig))]
+    assert sorted(ROWS) == sorted(names)
 
 
 def test_every_row_names_go_and_rust() -> None:
@@ -68,7 +75,7 @@ def test_every_row_names_go_and_rust() -> None:
 
 @pytest.mark.parametrize("name", sorted(ROWS))
 def test_default_matches_config(name: str) -> None:
-    expected = getattr(Config(), name)
+    expected = getattr(_config(name)(), name)
     default = ROWS[name]["default"]
     if expected is None:
         assert default == "none"
@@ -77,13 +84,13 @@ def test_default_matches_config(name: str) -> None:
 
 
 def _accepts(name: str, value: float) -> bool:
-    if isinstance(getattr(Config(), name), int):
+    if isinstance(getattr(_config(name)(), name), int):
         if value != int(value):
             return True  # not representable; the integer neighbours decide
         value = int(value)
     kwargs: dict[str, Any] = {name: value}
     try:
-        Config(**kwargs)
+        _config(name)(**kwargs)
     except ConfigError:
         return False
     return True
@@ -98,7 +105,7 @@ def test_valid_range_matches_config(name: str) -> None:
     valid = row["valid"]
     step = _STEP.get(row["unit"], 1)
     if valid == "readable file":
-        assert getattr(Config(), name) is None
+        assert getattr(_config(name)(), name) is None
         return
     if m := re.fullmatch(r"> ([\d ]+)", valid):
         lo = _number(m[1])

@@ -18,22 +18,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import enum
 import hmac
+import inspect
 import json
 import math
 import threading
 import time
 import types
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
 from jwt.api_jws import PyJWS
 
-from ..exceptions import TokenValidationException, WeakKeyException
+from ..exceptions import (
+    ConfigurationException,
+    TokenValidationException,
+    WeakKeyException,
+)
 from .dpop import compute_ath, compute_jwk_thumbprint
 from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from .key_strength import enforce_key_strength
-from .process_local import ProcessLocal
 
 
 DPOP_PROOF_TYPE = "dpop+jwt"
@@ -44,6 +48,12 @@ DEFAULT_DPOP_PROOF_MAX_AGE = 60
 DEFAULT_DPOP_IAT_LEEWAY = 30
 DEFAULT_DPOP_REPLAY_CACHE_MAX_ENTRIES = 100_000
 _MAX_ENTRIES_MESSAGE = "max_entries must be a positive integer"
+_REPLAY_CACHE_MESSAGE = (
+    "replay_cache must be a DPoPReplayCache or an AsyncDPoPReplayCache (RFC 9449 §11.1)"
+)
+ASYNC_REPLAY_CACHE_MESSAGE = (
+    "An AsyncDPoPReplayCache needs the async validators (py_identity_model.aio)"
+)
 
 # RFC 9449 §4.3 check 6: the key family each allowed ``alg`` requires.
 _ALG_KEY_TYPES: types.MappingProxyType[str, tuple[str, str | None]] = (
@@ -191,45 +201,86 @@ class DPoPValidationError(TokenValidationException):
         )
 
 
-@runtime_checkable
-class DPoPReplayCache(Protocol):
-    """Records proof ``jti`` values to refuse a replay (RFC 9449 §11.1).
+class DPoPReplayCheck(enum.Enum):
+    """What a replay cache did with one proof (RFC 9449 §11.1).
 
-    The verifier calls :meth:`check_and_store` once per proof, after every
-    other check passed. Implementations must be atomic: two concurrent calls
-    with the same ``jti`` admit at most one. They must never forget a ``jti``
-    before its ``expires_at``; one that cannot record a ``jti`` refuses the
-    proof (returns ``False`` or raises :class:`DPoPValidationError`).
+    The one way a :class:`DPoPReplayCache` reports its answer: it returns one
+    of these and does not raise for a replay or a full cache.
     """
 
-    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
-        """Record *jti* until *expires_at* (epoch seconds), inclusive.
+    RECORDED = "recorded"
+    """The proof was unseen (or its record expired) and is now recorded."""
+    REPLAYED = "replayed"
+    """The proof was already recorded and its record is still live."""
+    FULL = "full"
+    """The proof could not be recorded, so it is refused rather than risk a
+    replay."""
+
+
+@runtime_checkable
+class DPoPReplayCache(Protocol):
+    """Records DPoP proofs to refuse a replay (RFC 9449 §11.1).
+
+    The verifier calls :meth:`check_and_store` once per proof, after every
+    other check passed, so a rejected proof is never recorded. A proof is
+    identified by its key thumbprint and its ``jti``, so one client's proofs
+    can never block another's. Implementations must be atomic: two concurrent
+    calls for the same proof record at most one. They must never forget a
+    proof before its ``expires_at``.
+
+    Use with the sync validators. The async validators accept this or an
+    :class:`AsyncDPoPReplayCache`.
+    """
+
+    def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        """Record the proof until *expires_at* (epoch seconds), inclusive.
 
         Args:
+            jkt: The RFC 7638 thumbprint of the proof key.
             jti: The proof identifier.
             expires_at: The last instant the proof is inside the verifier's
                 acceptance window.
-            now: The verifier's current time; entries with
+            now: The verifier's current time; records with
                 ``expires_at < now`` may be dropped.
 
         Returns:
-            ``True`` if *jti* was unseen (or expired), ``False`` on a replay.
+            ``RECORDED``, ``REPLAYED`` or ``FULL``.
         """
+        ...
+
+
+@runtime_checkable
+class AsyncDPoPReplayCache(Protocol):
+    """An async :class:`DPoPReplayCache`, for a store reached over the network.
+
+    The same contract, with an awaitable :meth:`check_and_store`. Use with the
+    async validators (``py_identity_model.aio``); the sync validators refuse
+    it with a :class:`~py_identity_model.exceptions.ConfigurationException`.
+    """
+
+    async def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        """Record the proof (see :meth:`DPoPReplayCache.check_and_store`)."""
         ...
 
 
 class InMemoryDPoPReplayCache:
     """Thread-safe, bounded, per-process :class:`DPoPReplayCache`.
 
-    Expired entries are dropped on every insert. A live entry is never
+    Expired records are dropped on every insert. A live record is never
     evicted (that would let its proof replay): when the cache is full of live
-    entries, a new proof is refused with ``REPLAY_CACHE_FULL``, so
-    *max_entries* should exceed the proofs a process accepts within one
-    window. A deployment with several processes behind a load balancer needs a
-    shared cache instead.
+    records, a new proof gets ``FULL`` and is refused, so *max_entries* should
+    exceed the proofs a process accepts within one window. A deployment with
+    several processes behind a load balancer needs a shared cache instead.
+
+    Build one per resource server and keep it for the life of the process;
+    a cache built per request records nothing that outlives the request.
 
     Args:
-        max_entries: The most ``jti`` values held at once.
+        max_entries: The most proofs held at once.
     """
 
     def __init__(
@@ -243,50 +294,34 @@ class InMemoryDPoPReplayCache:
         ):
             raise ValueError(_MAX_ENTRIES_MESSAGE)
         self._max_entries = max_entries
-        self._entries: dict[str, float] = {}
+        self._entries: dict[tuple[str, str], float] = {}
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)
 
-    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
-        """Record *jti* (see :meth:`DPoPReplayCache.check_and_store`).
-
-        Raises:
-            DPoPValidationError: ``REPLAY_CACHE_FULL`` if *jti* is new and
-                every held entry is still live.
-        """
+    def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        """Record the proof (see :meth:`DPoPReplayCache.check_and_store`)."""
+        key = (jkt, jti)
         with self._lock:
-            # Purging first drops an expired record of *jti*, so only a live
-            # one is a replay.
+            # Purging first drops an expired record of this proof, so only a
+            # live one is a replay.
             self._purge(now)
-            if jti in self._entries:
-                return False
+            if key in self._entries:
+                return DPoPReplayCheck.REPLAYED
             if len(self._entries) >= self._max_entries:
-                raise DPoPValidationError(DPoPErrorKind.REPLAY_CACHE_FULL)
-            self._entries[jti] = expires_at
-            return True
+                return DPoPReplayCheck.FULL
+            self._entries[key] = expires_at
+            return DPoPReplayCheck.RECORDED
 
     def _purge(self, now: float) -> None:
         # Live through ``expires_at`` inclusive, as the verifier's window is.
-        expired = [jti for jti, until in self._entries.items() if until < now]
-        for jti in expired:
-            del self._entries[jti]
-
-
-_default_replay_cache: ProcessLocal[InMemoryDPoPReplayCache] = ProcessLocal(
-    lambda _parent: InMemoryDPoPReplayCache()
-)
-
-
-def get_default_dpop_replay_cache() -> InMemoryDPoPReplayCache:
-    """Return this process's default :class:`InMemoryDPoPReplayCache`.
-
-    Used when :class:`DPoPVerificationOptions` sets no ``replay_cache``. A
-    forked child builds its own.
-    """
-    return _default_replay_cache.get()
+        expired = [key for key, until in self._entries.items() if until < now]
+        for key in expired:
+            del self._entries[key]
 
 
 def _is_number(value: object) -> bool:
@@ -306,9 +341,12 @@ def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class DPoPVerificationOptions:
     """Resource-server settings for :func:`verify_dpop_proof`.
+
+    The replay cache is the caller's: there is no process-wide default. Build
+    one options value (and so one cache) per resource server and reuse it.
 
     Attributes:
         algorithms: Allowed proof ``alg`` values, a subset of
@@ -318,16 +356,20 @@ class DPoPVerificationOptions:
             ``FAPI2_ALLOWED_SIGNING_ALGORITHMS`` (PS256, ES256, EdDSA).
         max_age: Seconds a proof is accepted after its ``iat``.
         iat_leeway: Accepted clock skew in seconds, either side of the window.
-        replay_cache: Where ``jti`` values are recorded. ``None`` uses the
-            process default (:func:`get_default_dpop_replay_cache`).
+        replay_cache: Where proofs are recorded (required). An
+            :class:`InMemoryDPoPReplayCache` for one process, or a shared
+            store behind a load balancer. An :class:`AsyncDPoPReplayCache`
+            works only with the async validators.
     """
 
+    replay_cache: DPoPReplayCache | AsyncDPoPReplayCache = field(compare=False)
     algorithms: frozenset[str] | None = None
     max_age: float = DEFAULT_DPOP_PROOF_MAX_AGE
     iat_leeway: float = DEFAULT_DPOP_IAT_LEEWAY
-    replay_cache: DPoPReplayCache | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
+        if not callable(getattr(self.replay_cache, "check_and_store", None)):
+            raise TypeError(_REPLAY_CACHE_MESSAGE)
         if self.algorithms is not None:
             unsupported = set(self.algorithms) - DEFAULT_ALLOWED_ALGORITHMS
             if unsupported or not self.algorithms:
@@ -346,6 +388,56 @@ class DPoPVerificationOptions:
         """The proof ``alg`` values accepted, sorted: the ``algs`` parameter of
         a ``WWW-Authenticate: DPoP`` challenge (RFC 9449 §7.1)."""
         return _sorted_algorithms(self.algorithms)
+
+
+@dataclass(frozen=True)
+class _ReplayRecord:
+    """A verified proof waiting for its replay check, the verifier's last."""
+
+    cache: DPoPReplayCache | AsyncDPoPReplayCache
+    jkt: str
+    jti: str
+    expires_at: float
+    now: float
+
+
+def _replay_result(result: DPoPReplayCheck) -> None:
+    """Raise for a proof the replay cache did not record."""
+    if result is DPoPReplayCheck.REPLAYED:
+        raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
+    if result is not DPoPReplayCheck.RECORDED:
+        raise DPoPValidationError(DPoPErrorKind.REPLAY_CACHE_FULL)
+
+
+def record_proof(record: _ReplayRecord) -> None:
+    """Run the replay check with a sync cache.
+
+    Raises:
+        ConfigurationException: If the cache is an
+            :class:`AsyncDPoPReplayCache`; use the async validators.
+        DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
+    """
+    result = record.cache.check_and_store(
+        record.jkt, record.jti, record.expires_at, record.now
+    )
+    if inspect.iscoroutine(result):
+        result.close()  # never run: nothing is recorded, and no warning
+        raise ConfigurationException(ASYNC_REPLAY_CACHE_MESSAGE)
+    _replay_result(cast("DPoPReplayCheck", result))
+
+
+async def record_proof_async(record: _ReplayRecord) -> None:
+    """Run the replay check with a sync or an async cache.
+
+    Raises:
+        DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
+    """
+    result = record.cache.check_and_store(
+        record.jkt, record.jti, record.expires_at, record.now
+    )
+    if inspect.isawaitable(result):
+        result = await result
+    _replay_result(result)
 
 
 @dataclass(frozen=True)
@@ -493,7 +585,7 @@ class DPoPProofRequest:
 def verify_dpop_proof(
     proof: str,
     request: DPoPProofRequest,
-    options: DPoPVerificationOptions | None = None,
+    options: DPoPVerificationOptions,
     *,
     now: float | None = None,
 ) -> DPoPProof:
@@ -509,13 +601,14 @@ def verify_dpop_proof(
     ``[now - max_age - iat_leeway, now + iat_leeway]``; ``nonce`` equals the
     expected nonce when one is set; ``ath`` is the hash of the access token
     when one is set (§7.1); the key thumbprint equals the expected ``jkt``
-    when one is set; and last, ``jti`` is unseen, so a rejected proof never
-    consumes its ``jti``.
+    when one is set; and last, the proof is unseen, so a rejected proof is
+    never recorded. The async counterpart is
+    ``py_identity_model.aio.verify_dpop_proof``.
 
     Args:
         proof: The ``DPoP`` request header value.
         request: The request the proof must match.
-        options: Algorithms, window and replay cache. ``None`` uses defaults.
+        options: Algorithms, window and the replay cache.
         now: Current time in epoch seconds (defaults to ``time.time()``).
 
     Returns:
@@ -523,9 +616,26 @@ def verify_dpop_proof(
 
     Raises:
         DPoPValidationError: If any check fails; ``kind`` says which.
+        ConfigurationException: If ``options.replay_cache`` is an
+            :class:`AsyncDPoPReplayCache`.
     """
-    if options is None:
-        options = DPoPVerificationOptions()
+    verified, record = check_dpop_proof(proof, request, options, now=now)
+    record_proof(record)
+    return verified
+
+
+def check_dpop_proof(
+    proof: str,
+    request: DPoPProofRequest,
+    options: DPoPVerificationOptions,
+    *,
+    now: float | None = None,
+) -> tuple[DPoPProof, _ReplayRecord]:
+    """Run every check of :func:`verify_dpop_proof` except the replay check.
+
+    Returns the verified proof and the record the caller must pass to
+    :func:`record_proof` or :func:`record_proof_async` before accepting it.
+    """
     if not isinstance(proof, str) or not proof.isascii() or not proof.strip():
         raise DPoPValidationError(DPoPErrorKind.MALFORMED)
 
@@ -568,20 +678,7 @@ def verify_dpop_proof(
     ):
         raise DPoPValidationError(DPoPErrorKind.JKT_MISMATCH)
 
-    # ``is None``, not truthiness: an empty cache with ``__len__`` is falsy.
-    cache = (
-        get_default_dpop_replay_cache()
-        if options.replay_cache is None
-        else options.replay_cache
-    )
-    # The cache works on this call's clock, so the jti is held exactly as long
-    # as the window would accept the proof again.
-    if not cache.check_and_store(
-        jti, iat + options.max_age + options.iat_leeway, current
-    ):
-        raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
-
-    return DPoPProof(
+    verified = DPoPProof(
         jkt=jkt,
         jti=jti,
         htm=htm,
@@ -590,19 +687,30 @@ def verify_dpop_proof(
         public_jwk=jwk,
         nonce=nonce if isinstance(nonce, str) else None,
     )
+    # The cache works on this call's clock, so the proof is held exactly as
+    # long as the window would accept it again.
+    record = _ReplayRecord(
+        cache=options.replay_cache,
+        jkt=jkt,
+        jti=jti,
+        expires_at=iat + options.max_age + options.iat_leeway,
+        now=current,
+    )
+    return verified, record
 
 
 __all__ = [
     "DEFAULT_DPOP_IAT_LEEWAY",
     "DEFAULT_DPOP_PROOF_MAX_AGE",
     "DPOP_PROOF_TYPE",
+    "AsyncDPoPReplayCache",
     "DPoPErrorKind",
     "DPoPProof",
     "DPoPProofRequest",
     "DPoPReplayCache",
+    "DPoPReplayCheck",
     "DPoPValidationError",
     "DPoPVerificationOptions",
     "InMemoryDPoPReplayCache",
-    "get_default_dpop_replay_cache",
     "verify_dpop_proof",
 ]

@@ -15,11 +15,11 @@ Two pre-existing structural bugs the cache primitive shipped with:
    headers) could grow the dict forever. At ~5KB per entry, a few thousand
    unique addresses leaked tens of MB.
 
-Settings now come from :class:`~py_identity_model.Config`, which is validated
+Settings now come from :class:`~py_identity_model.CacheConfig`, which is validated
 on creation. These tests pin the fixes:
 - TTL and cooldown values outside [MIN, MAX] (or non-finite / non-numeric) are
   rejected with ``ConfigError``; in-range values are used as configured.
-- Each ``ValidationCache``'s size is capped at its ``Config.cache_max_entries``
+- Each ``ValidationCache``'s size is capped at its ``CacheConfig.cache_max_entries``
   (default 64).
 - LRU eviction targets the least recently *used* entry, not the newest or a
   random one.
@@ -38,7 +38,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config, ConfigError
+from py_identity_model import CacheConfig, ConfigError
 from py_identity_model.core.jwks_cache import (
     DEFAULT_DISCO_CACHE_TTL_SECONDS,
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
@@ -96,7 +96,7 @@ def _reset_state():
 @pytest.fixture
 def small_cache() -> ValidationCache:
     """An injected cache holding at most ``E2E_MAX_ENTRIES`` per cache."""
-    return ValidationCache(config=Config(cache_max_entries=E2E_MAX_ENTRIES))
+    return ValidationCache(config=CacheConfig(cache_max_entries=E2E_MAX_ENTRIES))
 
 
 def _setting_names(err: ConfigError) -> list[str]:
@@ -134,30 +134,30 @@ class TestConfigTtlBounds:
     @pytest.mark.parametrize("value", TTL_REJECTED_CASES)
     def test_out_of_range_ttl_rejected(self, setting, value):
         """Values outside [MIN, MAX] or not finite numbers must fail fast at
-        Config creation, never be honored raw by the cache."""
+        CacheConfig creation, never be honored raw by the cache."""
         with pytest.raises(ConfigError) as exc_info:
-            Config(**{setting: value})
+            CacheConfig(**{setting: value})
         assert _setting_names(exc_info.value) == [setting]
 
     @pytest.mark.parametrize("value", TTL_ACCEPTED_CASES)
     def test_jwks_ttl_in_range_used_without_max_age(self, value):
         """resolve_ttl with no Cache-Control falls back to the configured TTL."""
-        config = Config(jwks_cache_ttl=value)
+        config = CacheConfig(jwks_cache_ttl=value)
         assert resolve_ttl(None, config.jwks_cache_ttl) == value
 
     @pytest.mark.parametrize("value", TTL_ACCEPTED_CASES)
     def test_disco_ttl_in_range_used_without_max_age(self, value):
-        config = Config(discovery_cache_ttl=value)
+        config = CacheConfig(discovery_cache_ttl=value)
         assert resolve_disco_ttl(None, config.discovery_cache_ttl) == value
 
     def test_default_jwks_ttl(self):
-        assert Config().jwks_cache_ttl == DEFAULT_JWKS_CACHE_TTL_SECONDS
+        assert CacheConfig().jwks_cache_ttl == DEFAULT_JWKS_CACHE_TTL_SECONDS
 
     def test_default_disco_ttl(self):
-        assert Config().discovery_cache_ttl == DEFAULT_DISCO_CACHE_TTL_SECONDS
+        assert CacheConfig().discovery_cache_ttl == DEFAULT_DISCO_CACHE_TTL_SECONDS
 
     def test_configured_jwks_ttl_applied_to_cache_entry(self):
-        """A response without max-age is stored with ``Config.jwks_cache_ttl``."""
+        """A response without max-age is stored with ``CacheConfig.jwks_cache_ttl``."""
         uri = "https://op.example/jwks"
         cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         response = _make_jwks_response("kid-ttl", cache_control=None)
@@ -166,7 +166,7 @@ class TestConfigTtlBounds:
             jwks_cache_key(uri),
             response,
             time.monotonic(),
-            Config(jwks_cache_ttl=MID_TTL_SECONDS),
+            CacheConfig(jwks_cache_ttl=MID_TTL_SECONDS),
         )
         assert cache[jwks_cache_key(uri)].ttl == MID_TTL_SECONDS
 
@@ -202,17 +202,18 @@ class TestKidMissCooldownConfig:
     @pytest.mark.parametrize("value", COOLDOWN_REJECTED_CASES)
     def test_invalid_cooldown_rejected(self, value):
         with pytest.raises(ConfigError) as exc_info:
-            Config(jwks_kid_miss_cooldown=value)
+            CacheConfig(jwks_kid_miss_cooldown=value)
         assert _setting_names(exc_info.value) == ["jwks_kid_miss_cooldown"]
 
     @pytest.mark.parametrize("value", COOLDOWN_ACCEPTED_CASES)
     def test_in_range_cooldown_reaches_cache(self, value):
-        cache = ValidationCache(config=Config(jwks_kid_miss_cooldown=value))
+        cache = ValidationCache(config=CacheConfig(jwks_kid_miss_cooldown=value))
         assert cache.config.jwks_kid_miss_cooldown == value
 
     def test_default_cooldown(self):
         assert (
-            Config().jwks_kid_miss_cooldown == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
+            CacheConfig().jwks_kid_miss_cooldown
+            == DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
         )
 
 
@@ -249,12 +250,12 @@ def _op_uri(i: int) -> str:
 class TestBoundedCacheSize:
     def test_max_entries_from_config(self):
         assert (
-            Config(cache_max_entries=SMALL_MAX_ENTRIES).cache_max_entries
+            CacheConfig(cache_max_entries=SMALL_MAX_ENTRIES).cache_max_entries
             == SMALL_MAX_ENTRIES
         )
 
     def test_max_entries_default(self):
-        assert Config().cache_max_entries == DEFAULT_MAX_CACHE_ENTRIES
+        assert CacheConfig().cache_max_entries == DEFAULT_MAX_CACHE_ENTRIES
 
     @pytest.mark.parametrize(
         "value",
@@ -267,13 +268,13 @@ class TestBoundedCacheSize:
     )
     def test_invalid_max_entries_rejected(self, value):
         with pytest.raises(ConfigError) as exc_info:
-            Config(cache_max_entries=value)
+            CacheConfig(cache_max_entries=value)
         assert _setting_names(exc_info.value) == ["cache_max_entries"]
 
     def test_jwks_cache_size_capped_under_overflow(self):
         """Insert max+5 distinct URIs into the cache via the apply helper —
         post-insert the cache holds exactly ``max`` entries."""
-        config = Config(cache_max_entries=OVERFLOW_MAX_ENTRIES)
+        config = CacheConfig(cache_max_entries=OVERFLOW_MAX_ENTRIES)
         cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         total = OVERFLOW_MAX_ENTRIES + OVERFLOW_EXTRA
 
@@ -294,7 +295,7 @@ class TestBoundedCacheSize:
     def test_overflow_returns_evicted_uris(self):
         """apply_jwks_cache_outcome reports the URIs that left the cache so the
         caller can drop their kid-miss cooldown stamps."""
-        config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
+        config = CacheConfig(cache_max_entries=REFRESH_MAX_ENTRIES)
         cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
         evicted: list[tuple[TrustScope, str]] = []
         for i in range(REFRESH_MAX_ENTRIES + 1):
@@ -311,7 +312,7 @@ class TestBoundedCacheSize:
         """Re-storing a URI must move it to the end of insertion order so
         a subsequent overflow doesn't immediately evict a just-refreshed
         entry."""
-        config = Config(cache_max_entries=REFRESH_MAX_ENTRIES)
+        config = CacheConfig(cache_max_entries=REFRESH_MAX_ENTRIES)
         cache: dict[tuple[TrustScope, str], JwksCacheEntry] = {}
 
         # Fill to capacity in known order.
@@ -380,7 +381,7 @@ class TestBoundedCacheSize:
             assert response.is_successful is True
 
         # Newest URIs are the survivors.
-        assert set(small_cache.jwks.keys()) == {
+        assert set(small_cache._jwks.keys()) == {
             jwks_cache_key(url) for url in urls_to_visit[-E2E_MAX_ENTRIES:]
         }
 
@@ -391,10 +392,10 @@ class TestBoundedCacheSize:
         key_dict, _ = generate_rsa_keypair()
         url = _op_uri(0)
         respx.get(url).mock(return_value=httpx.Response(200, json={"keys": [key_dict]}))
-        other = ValidationCache(config=Config())
+        other = ValidationCache(config=CacheConfig())
         _get_cached_jwks(url, cache=other)
-        assert list(other.jwks.keys()) == [jwks_cache_key(url)]
-        assert list(small_cache.jwks.keys()) == []
+        assert list(other._jwks.keys()) == [jwks_cache_key(url)]
+        assert list(small_cache._jwks.keys()) == []
 
 
 # ============================================================================
@@ -449,7 +450,7 @@ class TestLruReadHitEviction:
         Fill the cache to capacity, re-read the oldest-by-insertion entry (a
         cache hit → LRU touch), then push one more distinct URI. FIFO would
         evict the just-read entry; LRU evicts the oldest *unread* one."""
-        cache = small_cache.jwks
+        cache = small_cache._jwks
         urls = [f"https://op-{i}.example/jwks" for i in range(E2E_MAX_ENTRIES + 1)]
         key_dict, _ = generate_rsa_keypair()
         for url in urls:
@@ -496,7 +497,7 @@ class TestLruReadHitEviction:
         caught. The cache key is ``(trust_scope, address, policy.cache_key())``
         — a tuple, exactly the shape a multi-tenant gateway attacker
         influences."""
-        cache = small_cache.disco
+        cache = small_cache._disco
         bases = [f"https://op-{i}.example" for i in range(E2E_MAX_ENTRIES + 1)]
         addresses = [f"{b}/.well-known/openid-configuration" for b in bases]
         for base, address in zip(bases, addresses, strict=True):

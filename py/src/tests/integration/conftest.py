@@ -33,9 +33,9 @@ from py_identity_model import (
     AuthorizationCodeTokenRequest,
     ClientCredentialsTokenRequest,
     ClientCredentialsTokenResponse,
-    Config,
     DiscoveryDocumentRequest,
     DPoPKey,
+    HTTPConfig,
     JsonWebKey,
     JwksRequest,
     JwksResponse,
@@ -141,7 +141,9 @@ RATE_LIMIT_ERROR_MESSAGE = "Rate limited"
 # Library default for integration runs: a real retry backoff (see
 # _integration_retry_backoff).
 INTEGRATION_RETRY_BASE_DELAY = 1.0
-INTEGRATION_DEFAULT_CONFIG = Config(http_retry_base_delay=INTEGRATION_RETRY_BASE_DELAY)
+INTEGRATION_DEFAULT_CONFIG = HTTPConfig(
+    http_retry_base_delay=INTEGRATION_RETRY_BASE_DELAY
+)
 MAX_REDIRECTS = 20
 
 
@@ -431,7 +433,7 @@ def _integration_retry_backoff():
     """Give the library default clients a real retry backoff for integration tests.
 
     The root conftest installs default clients with
-    ``Config(http_retry_base_delay=0)`` so unit tests that exercise retry paths
+    ``HTTPConfig(http_retry_base_delay=0)`` so unit tests that exercise retry paths
     don't sleep. Integration tests hit live, rate-limited providers, so a
     genuine discovery/JWKS fetch that draws a transient 429 must actually back
     off (and honor ``Retry-After``) to recover instead of hammering the

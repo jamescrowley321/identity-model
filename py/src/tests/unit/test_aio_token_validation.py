@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config
+from py_identity_model import CacheConfig
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks,
@@ -696,10 +696,10 @@ class TestAsyncLruReadHitEviction:
             )
 
         validation_cache = AsyncValidationCache(
-            config=Config(cache_max_entries=len(capacity_urls))
+            config=CacheConfig(cache_max_entries=len(capacity_urls))
         )
         async with AsyncHTTPClient() as client:
-            cache = validation_cache.jwks
+            cache = validation_cache._jwks
 
             # Fill to capacity: hot (oldest) .. op-3 (newest).
             for url in capacity_urls:

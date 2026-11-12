@@ -81,12 +81,12 @@ CDN_KEY = disco_cache_key(DISCO_ADDR, CDN_POLICY)
 
 def _sync_disco_cache() -> dict:
     """The default sync validation cache's discovery entries (no ``cache=``)."""
-    return get_default_validation_cache().disco
+    return get_default_validation_cache()._disco
 
 
 def _async_disco_cache() -> dict:
     """The default async validation cache's discovery entries."""
-    return get_default_async_validation_cache().disco
+    return get_default_async_validation_cache()._disco
 
 
 @pytest.fixture(autouse=True)

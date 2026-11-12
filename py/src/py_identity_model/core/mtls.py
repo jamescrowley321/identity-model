@@ -37,7 +37,7 @@ from ..oidc_constants import TokenRequest
 
 
 if TYPE_CHECKING:
-    from .config import Config
+    from .config import HTTPConfig
     from .models import DiscoveryDocumentResponse, MtlsClientAuth
 
 
@@ -191,7 +191,7 @@ def build_httpx_cert(mtls: MtlsClientAuth) -> tuple[str, str] | tuple[str, str, 
     return (mtls.certificate, mtls.private_key)
 
 
-def build_mtls_ssl_context(mtls: MtlsClientAuth, config: Config) -> ssl.SSLContext:
+def build_mtls_ssl_context(mtls: MtlsClientAuth, config: HTTPConfig) -> ssl.SSLContext:
     """Build an ``ssl.SSLContext`` that presents the client certificate.
 
     httpx 0.28 no longer reliably applies a ``cert=`` argument when ``verify``

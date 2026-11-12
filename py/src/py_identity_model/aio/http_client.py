@@ -3,11 +3,11 @@ Asynchronous HTTP client with connection pooling and retry logic.
 
 This module provides the library default async client and automatic retry
 logic for transient failures like rate limiting. Timeouts, TLS and retry
-settings come from the client's :class:`~py_identity_model.core.config.Config`;
+settings come from the client's :class:`~py_identity_model.core.config.HTTPConfig`;
 the library reads no environment variables.
 
 The library default client (:func:`get_default_async_http_client`) is one
-process-wide :class:`AsyncHTTPClient` built from ``Config()`` and used by
+process-wide :class:`AsyncHTTPClient` built from ``HTTPConfig()`` and used by
 every entry point called without ``http_client=``. A forked child gets a new
 default client rather than the parent's connections.
 """
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Concatenate, ParamSpec
 
 import httpx
 
-from ..core.config import Config
+from ..core.config import HTTPConfig
 from ..core.http_utils import (
     calculate_delay,
     check_no_redirect,
@@ -56,7 +56,7 @@ class _DefaultAsyncHTTPClient(AsyncHTTPClient):
     only the caller that took it closes it.
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: HTTPConfig) -> None:
         self._config = config
         self._owned = True
         self._trust_scope = owned_trust_scope(config)
@@ -88,7 +88,7 @@ class _DefaultAsyncHTTPClient(AsyncHTTPClient):
 
 _default_client: ProcessLocal[_DefaultAsyncHTTPClient] = ProcessLocal(
     lambda inherited: _DefaultAsyncHTTPClient(
-        inherited.config if inherited is not None else Config()
+        inherited.config if inherited is not None else HTTPConfig()
     )
 )
 
@@ -98,7 +98,7 @@ def _get_default() -> _DefaultAsyncHTTPClient:
 
 
 def get_default_async_http_client() -> AsyncHTTPClient:
-    """Return the library default async client, built from ``Config()``.
+    """Return the library default async client, built from ``HTTPConfig()``.
 
     Used by every async entry point called without ``http_client=``. One
     instance and one connection pool per process; a forked child builds its
@@ -107,15 +107,15 @@ def get_default_async_http_client() -> AsyncHTTPClient:
     return _get_default()
 
 
-def _reset_default_async_http_client(config: Config | None = None) -> None:
+def _reset_default_async_http_client(config: HTTPConfig | None = None) -> None:
     """Replace the default client with a fresh one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``). Does
+    The new default is built from *config* (``HTTPConfig()`` when ``None``). Does
     NOT close the previous default's connections;
     ``await close_async_http_client()`` first for that.
     """
     _default_client.replace(
-        _DefaultAsyncHTTPClient(config if config is not None else Config())
+        _DefaultAsyncHTTPClient(config if config is not None else HTTPConfig())
     )
 
 
@@ -139,9 +139,9 @@ def retry_with_backoff_async(
 
     Args:
         max_retries: Maximum number of retry attempts (default: the client's
-            ``Config.http_retry_max_attempts``). Must not be negative.
+            ``HTTPConfig.http_retry_max_attempts``). Must not be negative.
         base_delay: Base delay in seconds for exponential backoff (default: the
-            client's ``Config.http_retry_base_delay``). Must not be negative.
+            client's ``HTTPConfig.http_retry_base_delay``). Must not be negative.
 
     Returns:
         Decorated async function that retries on 429 and 5xx errors
@@ -215,7 +215,7 @@ def get_async_http_client() -> httpx.AsyncClient:
     Get the ``httpx.AsyncClient`` of the library default client.
 
     Returns:
-        httpx.AsyncClient: Connection-pooled client built from ``Config()``
+        httpx.AsyncClient: Connection-pooled client built from ``HTTPConfig()``
 
     Note:
         The client uses default limits:
@@ -229,7 +229,7 @@ def get_async_http_client() -> httpx.AsyncClient:
     return _get_default().client
 
 
-def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.AsyncClient:
+def build_mtls_client(mtls: MtlsClientAuth, config: HTTPConfig) -> httpx.AsyncClient:
     """Build a short-lived async HTTP client presenting a client certificate.
 
     Used for RFC 8705 mutual-TLS client authentication: the certificate is
@@ -254,7 +254,7 @@ def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.AsyncClient
 _WRAPPED_CLIENT_MTLS_ERROR = (
     "mtls cannot be combined with a wrapped httpx client: its own TLS "
     "settings cannot be carried over to the certificate client. Pass "
-    "AsyncHTTPClient(config=Config(ca_bundle=...)) instead."
+    "AsyncHTTPClient(config=HTTPConfig(ca_bundle=...)) instead."
 )
 
 
@@ -265,7 +265,7 @@ def resolve_async_http_client(
     """Resolve the async HTTP client to use for a client-authenticating request.
 
     When *mtls* is configured, a short-lived cert-configured client is built
-    (RFC 8705) and wrapped with the ``Config`` of *http_client* when one is
+    (RFC 8705) and wrapped with the ``HTTPConfig`` of *http_client* when one is
     given, else of the library default client. The request then goes through
     that cert client, never through *http_client*'s own connection pool,
     which cannot be guaranteed to present the certificate; *http_client*

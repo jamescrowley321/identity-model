@@ -24,7 +24,11 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config, ValidationCache, get_default_validation_cache
+from py_identity_model import (
+    CacheConfig,
+    ValidationCache,
+    get_default_validation_cache,
+)
 from py_identity_model.aio import (
     AsyncValidationCache,
     get_default_async_validation_cache,
@@ -66,10 +70,9 @@ ATTACKER_REQUEST_COUNT = 10
 # One fetch to prime the cache, one forced refresh for the first unknown kid;
 # every later unknown kid is inside the cooldown window.
 PRIME_AND_ONE_REFRESH = 2
-HIGH_COOLDOWN = Config(jwks_kid_miss_cooldown=MAX_KID_MISS_COOLDOWN_SECONDS)
+HIGH_COOLDOWN = CacheConfig(jwks_kid_miss_cooldown=MAX_KID_MISS_COOLDOWN_SECONDS)
 VALIDATION = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
 CACHE_JWKS_TTL = 600.0
-CLIENT_JWKS_TTL = 60.0
 
 
 def _unknown_kid_tokens(count: int = ATTACKER_REQUEST_COUNT) -> list[str]:
@@ -156,7 +159,7 @@ class TestCooldownSurvivesShortLivedClients:
                     token, VALIDATION, DISCO_URL, http_client=client, cache=cache
                 )
         assert jwks_route.call_count == PRIME_AND_ONE_REFRESH
-        assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+        assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
     @respx.mock
     async def test_async_injected_cache_shared_by_short_lived_clients(self):
@@ -169,7 +172,7 @@ class TestCooldownSurvivesShortLivedClients:
                         token, VALIDATION, DISCO_URL, http_client=client, cache=cache
                     )
         assert jwks_route.call_count == PRIME_AND_ONE_REFRESH
-        assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+        assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
 
 @pytest.fixture
@@ -185,42 +188,42 @@ def fresh_default_caches():
 @pytest.mark.usefixtures("fresh_default_caches")
 class TestInjectedCache:
     @respx.mock
-    def test_sync_cache_config_sets_ttl_not_client_config(self):
+    def test_sync_cache_config_sets_the_ttl(self):
         _mock_provider()
-        cache = ValidationCache(config=Config(jwks_cache_ttl=CACHE_JWKS_TTL))
+        cache = ValidationCache(config=CacheConfig(jwks_cache_ttl=CACHE_JWKS_TTL))
         [token] = _unknown_kid_tokens(count=1)
         with (
-            HTTPClient(config=Config(jwks_cache_ttl=CLIENT_JWKS_TTL)) as client,
+            HTTPClient() as client,
             pytest.raises(TokenValidationException),
         ):
             validate_token(
                 token, VALIDATION, DISCO_URL, http_client=client, cache=cache
             )
-        assert cache.jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
+        assert cache._jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
             CACHE_JWKS_TTL
         )
-        assert jwks_cache_key(JWKS_URL) not in get_default_validation_cache().jwks
+        assert jwks_cache_key(JWKS_URL) not in get_default_validation_cache()._jwks
 
     @respx.mock
-    async def test_async_cache_config_sets_ttl_not_client_config(self):
+    async def test_async_cache_config_sets_the_ttl(self):
         _mock_provider()
-        cache = AsyncValidationCache(config=Config(jwks_cache_ttl=CACHE_JWKS_TTL))
+        cache = AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=CACHE_JWKS_TTL))
         [token] = _unknown_kid_tokens(count=1)
-        async with AsyncHTTPClient(
-            config=Config(jwks_cache_ttl=CLIENT_JWKS_TTL)
-        ) as client:
+        async with AsyncHTTPClient() as client:
             with pytest.raises(TokenValidationException):
                 await async_validate_token(
                     token, VALIDATION, DISCO_URL, http_client=client, cache=cache
                 )
-        assert cache.jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
+        assert cache._jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
             CACHE_JWKS_TTL
         )
-        assert jwks_cache_key(JWKS_URL) not in get_default_async_validation_cache().jwks
+        assert (
+            jwks_cache_key(JWKS_URL) not in get_default_async_validation_cache()._jwks
+        )
 
     def test_config_defaults_to_config_defaults(self):
-        assert ValidationCache().config == Config()
-        assert AsyncValidationCache().config == Config()
+        assert ValidationCache().config == CacheConfig()
+        assert AsyncValidationCache().config == CacheConfig()
 
     def test_default_cache_is_one_object_per_process(self):
         assert get_default_validation_cache() is get_default_validation_cache()
@@ -255,21 +258,21 @@ def _fork_and_check(check) -> int:
 class TestForkResetsDefaults:
     def test_default_cache_is_rebuilt_in_child(self):
         parent_cache = get_default_validation_cache()
-        parent_cache.kid_miss_last_attempt[JWKS_URL] = 1.0
+        parent_cache._kid_miss_last_attempt[JWKS_URL] = 1.0
         try:
 
             def check() -> bool:
                 child_cache = get_default_validation_cache()
                 return (
                     child_cache is not parent_cache
-                    and child_cache.kid_miss_last_attempt == {}
+                    and child_cache._kid_miss_last_attempt == {}
                     and get_default_validation_cache() is child_cache
                 )
 
             assert _fork_and_check(check) == 0
             assert get_default_validation_cache() is parent_cache
         finally:
-            parent_cache.kid_miss_last_attempt.clear()
+            parent_cache._kid_miss_last_attempt.clear()
 
     def test_default_async_cache_is_rebuilt_in_child(self):
         parent_cache = get_default_async_validation_cache()
@@ -365,7 +368,7 @@ class TestJwksFallbackTtl:
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
             validate_token(token, VALIDATION, DISCO_URL, cache=cache)
-        assert cache.jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS
+        assert cache._jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS
 
     @respx.mock
     async def test_async_jwks_without_cache_control_is_kept_one_hour(self):
@@ -374,4 +377,4 @@ class TestJwksFallbackTtl:
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
             await async_validate_token(token, VALIDATION, DISCO_URL, cache=cache)
-        assert cache.jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS
+        assert cache._jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS

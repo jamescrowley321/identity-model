@@ -123,8 +123,9 @@ comma-separated list. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
 `SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
 to the `OIDCSettings` default when unset.
 
-HTTP and cache settings belong to the `py-identity-model` `Config`. Build an
-`AsyncHTTPClient` from it (timeouts, retries, CA bundle) and pass it as
+HTTP settings belong to a `py-identity-model` `HTTPConfig`, and cache settings
+to a `CacheConfig`. Build an `AsyncHTTPClient` from the first (timeouts,
+retries, CA bundle) and pass it as
 `http_client=` to `TokenValidationMiddleware`, `build_oidc_router`,
 `build_ws_authenticator` and `TokenManager`. Without it, the library default
 client is used.
@@ -136,11 +137,11 @@ TTLs, size or cooldown. Without it, and in `build_oidc_router`, the library
 default cache is used.
 
 ```python
-from py_identity_model import Config
+from py_identity_model import CacheConfig, HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
 
-http_client = AsyncHTTPClient(config=Config(http_timeout=10.0))
-cache = AsyncValidationCache(config=Config(jwks_cache_ttl=900.0))
+http_client = AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0))
+cache = AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,

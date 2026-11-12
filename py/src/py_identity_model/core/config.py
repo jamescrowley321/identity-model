@@ -1,13 +1,18 @@
 """Plain, typed configuration for py-identity-model.
 
-:class:`Config` is a frozen value holding the library's settings, each with
-the library's default. It is validated when it is created: every invalid
-setting is collected into one :class:`ConfigError`, and no ``Config`` value is
-returned. An invalid value is never replaced by its default.
+Two frozen values hold the library's settings, each with the library's
+default: :class:`HTTPConfig` for an HTTP client (timeout, retries, TLS, JWKS
+size limits) and :class:`CacheConfig` for a validation cache (TTLs, size,
+kid-miss cooldown). Each consumer takes only the config it reads, so a setting
+can't be passed somewhere that silently ignores it.
 
-``Config`` has no loaders and parses no strings. Where the values come from
-(environment, files, a secrets manager) is the caller's decision; build the
-``Config`` in your own code and pass it in.
+Each is validated when it is created: every invalid setting is collected into
+one :class:`ConfigError`, and no value is returned. An invalid value is never
+replaced by its default.
+
+Neither has loaders or parses strings. Where the values come from
+(environment, files, a secrets manager) is the caller's decision; build them
+in your own code and pass them in.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from dataclasses import dataclass, fields
 import math
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .client_auth_method import ClientAuthMethod
 from .http_utils import (
@@ -43,10 +48,11 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "CacheConfig",
     "ClientAuthMethod",
-    "Config",
     "ConfigError",
     "ConfigIssue",
+    "HTTPConfig",
 ]
 
 
@@ -67,7 +73,7 @@ class ConfigIssue:
 
 
 class ConfigError(ValueError):
-    """Raised when a :class:`Config` is invalid. Carries every issue at once."""
+    """Raised when an :class:`HTTPConfig` or :class:`CacheConfig` is invalid. Carries every issue at once."""
 
     def __init__(self, issues: Sequence[ConfigIssue]) -> None:
         self.issues: tuple[ConfigIssue, ...] = tuple(issues)
@@ -77,8 +83,27 @@ class ConfigError(ValueError):
         )
 
 
+def require_config[C: (HTTPConfig, CacheConfig)](
+    config: object, expected: type[C], consumer: str
+) -> C:
+    """Return *config*, or ``expected()`` when it is ``None``.
+
+    Raises:
+        TypeError: If *config* is another type, for example a
+            :class:`CacheConfig` passed to an HTTP client, which would
+            otherwise be ignored.
+    """
+    if config is None:
+        return expected()
+    if not isinstance(config, expected):
+        raise TypeError(
+            f"{consumer} takes config={expected.__name__}, not {type(config).__name__}"
+        )
+    return config
+
+
 # --------------------------------------------------------------------------- #
-# Config                                                                       #
+# HTTPConfig and CacheConfig                                                   #
 # --------------------------------------------------------------------------- #
 
 
@@ -162,12 +187,35 @@ def _check_ca_bundle(value: object) -> str | None:
     return None if readable else problem
 
 
-@dataclass(frozen=True, kw_only=True)
-class Config:
-    """The library's settings, validated on creation.
+class _ValidatedConfig:
+    """Validates every field of a frozen settings dataclass on creation."""
 
-    Every field has the library's default, so ``Config()`` is a complete,
-    valid configuration. Pass typed values (``Config(http_timeout=5.0)``);
+    def __post_init__(self) -> None:
+        issues: list[ConfigIssue] = []
+        for f in fields(cast("Any", self)):  # field order: issues report in that order
+            value = getattr(self, f.name)
+            rule = _RANGES.get(f.name)
+            problem = (
+                _check_number(value, rule)
+                if rule is not None
+                else _check_ca_bundle(value)
+            )
+            if problem is not None:
+                issues.append(ConfigIssue(f.name, problem))
+        if issues:
+            raise ConfigError(issues)
+
+
+@dataclass(frozen=True, kw_only=True)
+class HTTPConfig(_ValidatedConfig):
+    """Settings for an HTTP client, validated on creation.
+
+    Read only by :class:`~py_identity_model.sync.managed_client.HTTPClient`
+    and :class:`~py_identity_model.aio.managed_client.AsyncHTTPClient`. Cache
+    settings live on :class:`CacheConfig`, which the validation caches read.
+
+    Every field has the library's default, so ``HTTPConfig()`` is a complete,
+    valid configuration. Pass typed values (``HTTPConfig(http_timeout=5.0)``);
     strings are not parsed. Fields are keyword-only.
 
     Attributes:
@@ -181,6 +229,31 @@ class Config:
             file.
         jwks_max_size: Largest JWKS response accepted, in bytes.
         jwks_max_keys: Most keys accepted in one JWKS.
+
+    Raises:
+        ConfigError: one error naming every invalid setting.
+    """
+
+    http_timeout: float = DEFAULT_HTTP_TIMEOUT
+    http_retry_max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS
+    http_retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY
+    ca_bundle: str | None = None
+    jwks_max_size: int = DEFAULT_MAX_JWKS_SIZE
+    jwks_max_keys: int = DEFAULT_MAX_JWKS_KEYS
+
+
+@dataclass(frozen=True, kw_only=True)
+class CacheConfig(_ValidatedConfig):
+    """Settings for a validation cache, validated on creation.
+
+    Read only by :class:`~py_identity_model.sync.validation_cache.ValidationCache`
+    and :class:`~py_identity_model.aio.validation_cache.AsyncValidationCache`.
+    Transport settings live on :class:`HTTPConfig`.
+
+    Every field has the library's default, so ``CacheConfig()`` is a complete,
+    valid configuration. Fields are keyword-only.
+
+    Attributes:
         jwks_cache_ttl: JWKS cache lifetime in seconds, used only when the
             response has no ``Cache-Control: max-age``. 60 to 86400; default
             3600 (1 hour).
@@ -196,28 +269,7 @@ class Config:
         ConfigError: one error naming every invalid setting.
     """
 
-    http_timeout: float = DEFAULT_HTTP_TIMEOUT
-    http_retry_max_attempts: int = DEFAULT_RETRY_MAX_ATTEMPTS
-    http_retry_base_delay: float = DEFAULT_RETRY_BASE_DELAY
-    ca_bundle: str | None = None
-    jwks_max_size: int = DEFAULT_MAX_JWKS_SIZE
-    jwks_max_keys: int = DEFAULT_MAX_JWKS_KEYS
     jwks_cache_ttl: float = DEFAULT_JWKS_CACHE_TTL_SECONDS
     jwks_kid_miss_cooldown: float = DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS
     discovery_cache_ttl: float = DEFAULT_DISCO_CACHE_TTL_SECONDS
     cache_max_entries: int = DEFAULT_MAX_CACHE_ENTRIES
-
-    def __post_init__(self) -> None:
-        issues: list[ConfigIssue] = []
-        for f in fields(self):  # field order: issues report in that order
-            value = getattr(self, f.name)
-            rule = _RANGES.get(f.name)
-            problem = (
-                _check_number(value, rule)
-                if rule is not None
-                else _check_ca_bundle(value)
-            )
-            if problem is not None:
-                issues.append(ConfigIssue(f.name, problem))
-        if issues:
-            raise ConfigError(issues)

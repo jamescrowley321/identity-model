@@ -1,11 +1,15 @@
-"""Optional helpers that build a :class:`~py_identity_model.Config` from strings.
+"""Optional helpers that build an :class:`~py_identity_model.HTTPConfig` or a
+:class:`~py_identity_model.CacheConfig` from strings.
 
 The library never imports this module. Nothing reads the environment unless
-you call :func:`config_from_env`. Use these helpers, or write your own, and
-pass the resulting ``Config`` in yourself.
+you call :func:`http_config_from_env` or :func:`cache_config_from_env`. Use
+these helpers, or write your own, and pass the results in yourself: the
+``HTTPConfig`` to an HTTP client, the ``CacheConfig`` to a validation cache.
 
-Both helpers read the library's environment variable names. Where a setting
-has several, the first one that is set wins:
+The helpers read the library's environment variable names. Where a setting
+has several, the first one that is set wins.
+
+HTTP settings (:func:`http_config_from_mapping`, :func:`http_config_from_env`):
 
 - ``http_timeout``: ``HTTP_TIMEOUT``
 - ``http_retry_max_attempts``: ``HTTP_RETRY_MAX_ATTEMPTS``, then ``HTTP_RETRY_COUNT``
@@ -13,6 +17,9 @@ has several, the first one that is set wins:
 - ``ca_bundle``: ``SSL_CERT_FILE``, then ``CURL_CA_BUNDLE``, then ``REQUESTS_CA_BUNDLE``
 - ``jwks_max_size``: ``MAX_JWKS_SIZE``
 - ``jwks_max_keys``: ``MAX_JWKS_KEYS``
+
+Cache settings (:func:`cache_config_from_mapping`, :func:`cache_config_from_env`):
+
 - ``jwks_cache_ttl``: ``JWKS_CACHE_TTL``
 - ``jwks_kid_miss_cooldown``: ``KID_MISS_REFRESH_COOLDOWN``
 - ``discovery_cache_ttl``: ``DISCO_CACHE_TTL``
@@ -25,19 +32,24 @@ from dataclasses import dataclass
 import os
 from typing import TYPE_CHECKING, Any
 
-from .core.config import Config, ConfigError, ConfigIssue
+from .core.config import CacheConfig, ConfigError, ConfigIssue, HTTPConfig
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 
-__all__ = ["config_from_env", "config_from_mapping"]
+__all__ = [
+    "cache_config_from_env",
+    "cache_config_from_mapping",
+    "http_config_from_env",
+    "http_config_from_mapping",
+]
 
 
 @dataclass(frozen=True)
 class _Setting:
-    """One ``Config`` field and the keys that set it."""
+    """One config field and the keys that set it."""
 
     field: str
     keys: tuple[str, ...]  # highest priority first
@@ -53,8 +65,8 @@ def _setting(field: str, *keys: str, kind: type) -> _Setting:
     return _Setting(field, keys, str, "")
 
 
-# In Config's field order, so issues report in the same order as Config's.
-_SETTINGS: tuple[_Setting, ...] = (
+# In each config's field order, so issues report in the same order as its own.
+_HTTP_SETTINGS: tuple[_Setting, ...] = (
     _setting("http_timeout", "HTTP_TIMEOUT", kind=float),
     _setting(
         "http_retry_max_attempts",
@@ -72,6 +84,8 @@ _SETTINGS: tuple[_Setting, ...] = (
     ),
     _setting("jwks_max_size", "MAX_JWKS_SIZE", kind=int),
     _setting("jwks_max_keys", "MAX_JWKS_KEYS", kind=int),
+)
+_CACHE_SETTINGS: tuple[_Setting, ...] = (
     _setting("jwks_cache_ttl", "JWKS_CACHE_TTL", kind=float),
     _setting("jwks_kid_miss_cooldown", "KID_MISS_REFRESH_COOLDOWN", kind=float),
     _setting("discovery_cache_ttl", "DISCO_CACHE_TTL", kind=float),
@@ -79,10 +93,10 @@ _SETTINGS: tuple[_Setting, ...] = (
 )
 
 
-def config_from_mapping(
+def http_config_from_mapping(
     values: Mapping[str, str | None], *, prefix: str = ""
-) -> Config:
-    """Build a :class:`Config` from string values keyed by variable name.
+) -> HTTPConfig:
+    """Build an :class:`HTTPConfig` from string values keyed by variable name.
 
     Each key is looked up as ``prefix + name``. A key that is missing, empty
     or ``None`` is unset, and its setting keeps the default. When a setting has
@@ -97,17 +111,82 @@ def config_from_mapping(
         prefix: Prepended to every key name, for example ``"APP_"``.
 
     Returns:
-        The validated ``Config``.
+        The validated ``HTTPConfig``.
 
     Raises:
         ConfigError: one error naming every key whose value can't be
             converted or is out of range. Each issue names the key as it
             appears in ``values``, never the value.
     """
+    return _build(HTTPConfig, _HTTP_SETTINGS, values, prefix)
+
+
+def cache_config_from_mapping(
+    values: Mapping[str, str | None], *, prefix: str = ""
+) -> CacheConfig:
+    """Build a :class:`CacheConfig` from string values keyed by variable name.
+
+    Reads the keys the same way as :func:`http_config_from_mapping`.
+
+    Args:
+        values: String values, for example ``os.environ`` or a parsed
+            ``.env`` file.
+        prefix: Prepended to every key name, for example ``"APP_"``.
+
+    Returns:
+        The validated ``CacheConfig``.
+
+    Raises:
+        ConfigError: one error naming every invalid key, never its value.
+    """
+    return _build(CacheConfig, _CACHE_SETTINGS, values, prefix)
+
+
+def http_config_from_env(prefix: str = "") -> HTTPConfig:
+    """Build an :class:`HTTPConfig` from the environment.
+
+    The same as ``http_config_from_mapping(os.environ, prefix=prefix)``.
+
+    Args:
+        prefix: Prepended to every variable name, for example ``"APP_"``.
+
+    Returns:
+        The validated ``HTTPConfig``.
+
+    Raises:
+        ConfigError: one error naming every invalid variable.
+    """
+    return http_config_from_mapping(os.environ, prefix=prefix)
+
+
+def cache_config_from_env(prefix: str = "") -> CacheConfig:
+    """Build a :class:`CacheConfig` from the environment.
+
+    The same as ``cache_config_from_mapping(os.environ, prefix=prefix)``.
+
+    Args:
+        prefix: Prepended to every variable name, for example ``"APP_"``.
+
+    Returns:
+        The validated ``CacheConfig``.
+
+    Raises:
+        ConfigError: one error naming every invalid variable.
+    """
+    return cache_config_from_mapping(os.environ, prefix=prefix)
+
+
+def _build[C: (HTTPConfig, CacheConfig)](
+    cls: type[C],
+    settings: tuple[_Setting, ...],
+    values: Mapping[str, str | None],
+    prefix: str,
+) -> C:
+    """Convert the set keys of *settings* and build *cls* from them."""
     kwargs: dict[str, Any] = {}
     key_for: dict[str, str] = {}
     problems: dict[str, str] = {}
-    for setting in _SETTINGS:
+    for setting in settings:
         found = _first_set(values, prefix, setting.keys)
         if found is None:
             continue
@@ -119,37 +198,20 @@ def config_from_mapping(
             problems[setting.field] = setting.invalid
 
     try:
-        config = Config(**kwargs)
+        config = cls(**kwargs)
     except ConfigError as exc:
         problems.update({issue.setting: issue.message for issue in exc.issues})
     else:
         if not problems:
             return config
-    # Report under the key the caller wrote, in Config's field order.
+    # Report under the key the caller wrote, in the config's field order.
     raise ConfigError(
         [
             ConfigIssue(key_for[s.field], problems[s.field])
-            for s in _SETTINGS
+            for s in settings
             if s.field in problems
         ]
     ) from None
-
-
-def config_from_env(prefix: str = "") -> Config:
-    """Build a :class:`Config` from the environment.
-
-    The same as ``config_from_mapping(os.environ, prefix=prefix)``.
-
-    Args:
-        prefix: Prepended to every variable name, for example ``"APP_"``.
-
-    Returns:
-        The validated ``Config``.
-
-    Raises:
-        ConfigError: one error naming every invalid variable.
-    """
-    return config_from_mapping(os.environ, prefix=prefix)
 
 
 def _first_set(

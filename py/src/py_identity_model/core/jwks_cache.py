@@ -6,14 +6,14 @@ supporting automatic cache expiry and forced refresh on key rotation (RFC 7517 Â
 
 JWKS TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's JWKS HTTP response
-2. ``Config.jwks_cache_ttl`` (default: 3600, 1 hour)
+2. ``CacheConfig.jwks_cache_ttl`` (default: 3600, 1 hour)
 
 Discovery TTL resolution order:
 1. ``Cache-Control: max-age=N`` from the provider's discovery HTTP response
-2. ``Config.discovery_cache_ttl`` (default: 3600, 1 hour)
+2. ``CacheConfig.discovery_cache_ttl`` (default: 3600, 1 hour)
 
 Cache size and the kid-miss cooldown also come from the validation cache's
-:class:`~py_identity_model.core.config.Config`. Nothing here reads the
+:class:`~py_identity_model.core.config.CacheConfig`. Nothing here reads the
 environment.
 
 Cached documents are keyed by the fetching client's
@@ -41,7 +41,7 @@ from ..logging_config import logger
 if TYPE_CHECKING:
     from collections import OrderedDict
 
-    from ..core.config import Config
+    from ..core.config import CacheConfig
     from ..core.models import DiscoveryDocumentResponse, JwksResponse
     from ..core.trust_scope import TrustScope
 
@@ -78,7 +78,7 @@ DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS: float = 5.0
 
 # Caps the number of distinct (trust scope, jwks_uri) or (trust scope,
 # disco_address, policy) entries each of a validation cache's two caches holds
-# (``Config.cache_max_entries``).
+# (``CacheConfig.cache_max_entries``).
 # Bounds an unbounded-growth attack where attacker-controlled discovery
 # addresses (multi-tenant gateways, attacker-supplied issuer headers) accumulate cache entries forever â€” at
 # ~5KB per DiscoveryDocumentResponse, a few thousand unique entries is tens
@@ -239,7 +239,7 @@ def should_attempt_kid_miss_refresh(
 
     The state is keyed by ``jwks_uri`` so an attacker spamming kids against
     one OP cannot suppress legitimate refreshes for a different OP.
-    ``cooldown`` is the validation cache's ``Config.jwks_kid_miss_cooldown``; 0
+    ``cooldown`` is the validation cache's ``CacheConfig.jwks_kid_miss_cooldown``; 0
     disables it.
     """
     if not has_cached_keys:
@@ -326,7 +326,7 @@ def resolve_ttl(cache_control: str | None, default_ttl: float) -> float:
     """Determine the JWKS cache TTL from HTTP headers or config.
 
     Priority: Cache-Control max-age (clamped to [60s, 86400s]) >
-    ``default_ttl`` (the validation cache's ``Config.jwks_cache_ttl``).
+    ``default_ttl`` (the validation cache's ``CacheConfig.jwks_cache_ttl``).
     """
     max_age = parse_max_age(cache_control)
     if max_age is not None:
@@ -342,7 +342,7 @@ def resolve_disco_ttl(cache_control: str | None, default_ttl: float) -> float:
     """Determine the discovery cache TTL from HTTP headers or config.
 
     Priority: Cache-Control max-age (clamped to [60s, 86400s]) >
-    ``default_ttl`` (the validation cache's ``Config.discovery_cache_ttl``).
+    ``default_ttl`` (the validation cache's ``CacheConfig.discovery_cache_ttl``).
     """
     max_age = parse_max_age(cache_control)
     if max_age is not None:
@@ -400,7 +400,7 @@ def apply_jwks_cache_outcome(
     cache_key: JwksCacheKey,
     response: JwksResponse,
     now: float,
-    config: Config,
+    config: CacheConfig,
 ) -> list[JwksCacheKey]:
     """Apply the cache-write/invalidate/retain decision for a JWKS response.
 
@@ -458,7 +458,7 @@ def apply_disco_cache_outcome(
     cache_key: DiscoCacheKey,
     response: DiscoveryDocumentResponse,
     now: float,
-    config: Config,
+    config: CacheConfig,
 ) -> None:
     """Apply the cache-write/invalidate/retain decision for a discovery response.
 
@@ -505,7 +505,7 @@ def store_jwks_response(
     kid_miss_last_attempt: dict[str, float],
     cache_key: JwksCacheKey,
     response: JwksResponse,
-    config: Config,
+    config: CacheConfig,
 ) -> None:
     """Apply *response* to the JWKS cache and prune the kid-miss cooldown.
 

@@ -112,12 +112,12 @@ class TestSyncFailedResponseNotCached:
 
         failed = _get_cached_jwks(JWKS_URL)
         assert failed.is_successful is False
-        assert jwks_cache_key(JWKS_URL) not in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _sync_caches()._jwks
 
         # Next call must re-fetch and succeed.
         success = _get_cached_jwks(JWKS_URL)
         assert success.is_successful is True
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
         assert len(call_log) == 2  # noqa: PLR2004
 
     @respx.mock
@@ -135,11 +135,11 @@ class TestSyncFailedResponseNotCached:
 
         failed = _get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
 
         success = _get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert disco_cache_key(DISCO_URL) in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) in _sync_caches()._disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -160,11 +160,11 @@ class TestAsyncFailedResponseNotCached:
 
         failed = await async_get_cached_jwks(JWKS_URL)
         assert failed.is_successful is False
-        assert jwks_cache_key(JWKS_URL) not in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _async_caches()._jwks
 
         success = await async_get_cached_jwks(JWKS_URL)
         assert success.is_successful is True
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
         assert len(call_log) == 2  # noqa: PLR2004
 
     @pytest.mark.asyncio
@@ -182,11 +182,11 @@ class TestAsyncFailedResponseNotCached:
 
         failed = await async_get_disco_response(DISCO_URL)
         assert failed.is_successful is False
-        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
 
         success = await async_get_disco_response(DISCO_URL)
         assert success.is_successful is True
-        assert disco_cache_key(DISCO_URL) in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) in _async_caches()._disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -211,7 +211,7 @@ class TestSyncNoStoreCachedForJwks:
         response = _get_cached_jwks(JWKS_URL)
         assert response.is_successful is True
         assert response.keys is not None
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
 
     @respx.mock
     def test_disco_no_store_skips_cache(self):
@@ -225,7 +225,7 @@ class TestSyncNoStoreCachedForJwks:
 
         response = _get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
 
 
 class TestAsyncNoStoreCachedForJwks:
@@ -244,7 +244,7 @@ class TestAsyncNoStoreCachedForJwks:
 
         response = await async_get_cached_jwks(JWKS_URL)
         assert response.is_successful is True
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
 
     @pytest.mark.asyncio
     @respx.mock
@@ -259,7 +259,7 @@ class TestAsyncNoStoreCachedForJwks:
 
         response = await async_get_disco_response(DISCO_URL)
         assert response.is_successful is True
-        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
 
 
 # ============================================================================
@@ -284,7 +284,7 @@ class TestSyncNoCacheCachedForJwks:
             response = _get_cached_jwks(JWKS_URL)
             assert response.is_successful is True
 
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
         assert jwks_route.call_count == 1
 
     @respx.mock
@@ -301,7 +301,7 @@ class TestSyncNoCacheCachedForJwks:
             response = _get_disco_response(DISCO_URL)
             assert response.is_successful is True
 
-        assert disco_cache_key(DISCO_URL) not in _sync_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -323,7 +323,7 @@ class TestAsyncNoCacheCachedForJwks:
             response = await async_get_cached_jwks(JWKS_URL)
             assert response.is_successful is True
 
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
         assert jwks_route.call_count == 1
 
     @pytest.mark.asyncio
@@ -340,7 +340,7 @@ class TestAsyncNoCacheCachedForJwks:
         for _ in range(3):
             await async_get_disco_response(DISCO_URL)
 
-        assert disco_cache_key(DISCO_URL) not in _async_caches().disco
+        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -398,8 +398,8 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         primed = _get_cached_jwks(JWKS_URL)
         assert primed.is_successful is True
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
+        assert _kids(_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "old-kid"
         }
 
@@ -410,8 +410,8 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
         # … and the cache is updated with the new key (not popped).
         # See #396: pop-on-uncacheable caused the kid-miss-refresh-loop
         # this branch was meant to prevent.
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
+        assert _kids(_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "new-kid"
         }
         # Real refresh (not an empty-fallback) — see #403 contract.
@@ -452,7 +452,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
         primed = _get_disco_response(DISCO_URL)
         assert primed.is_successful is True
         cache_key = disco_cache_key(DISCO_URL)
-        assert cache_key in _sync_caches().disco
+        assert cache_key in _sync_caches()._disco
 
         # Manually expire the entry without removing it — this is the state
         # the cache lands in when the entry's TTL elapses naturally. Backdate
@@ -460,8 +460,8 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
         # the cache compares ages via time.monotonic, not time.time, so a
         # literal 0.0 is just process-startup time and may still be fresh in
         # short-running tests).
-        stale_entry = _sync_caches().disco[cache_key]
-        _sync_caches().disco[cache_key] = type(stale_entry)(
+        stale_entry = _sync_caches()._disco[cache_key]
+        _sync_caches()._disco[cache_key] = type(stale_entry)(
             response=stale_entry.response,
             cached_at=time.monotonic() - stale_entry.ttl - 1,
             ttl=stale_entry.ttl,
@@ -469,7 +469,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         _get_disco_response(DISCO_URL)
         # The expired entry must be popped, not left as dead weight.
-        assert cache_key not in _sync_caches().disco
+        assert cache_key not in _sync_caches()._disco
 
 
 class TestAsyncRefreshReplacesStaleOnUncacheable:
@@ -501,8 +501,8 @@ class TestAsyncRefreshReplacesStaleOnUncacheable:
 
         primed = await async_get_cached_jwks(JWKS_URL)
         assert primed.is_successful is True
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
-        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
+        assert _kids(_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "old-kid"
         }
 
@@ -510,8 +510,8 @@ class TestAsyncRefreshReplacesStaleOnUncacheable:
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"new-kid"}
         # Cache updated with new key, not popped (see #396).
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
-        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
+        assert _kids(_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "new-kid"
         }
         # Real refresh (not an empty-fallback) — see #403 contract.
@@ -560,8 +560,8 @@ class TestSyncEmptyKeysNotCached:
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"retained-kid"}
         assert from_retained_cache is True
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
+        assert _kids(_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }
 
@@ -580,7 +580,7 @@ class TestSyncEmptyKeysNotCached:
         assert response.keys == []
         # Empty-keys responses are never stored, so a subsequent call must
         # re-fetch rather than serve a poisoned entry.
-        assert jwks_cache_key(JWKS_URL) not in _sync_caches().jwks
+        assert jwks_cache_key(JWKS_URL) not in _sync_caches()._jwks
 
 
 class TestAsyncEmptyKeysNotCached:
@@ -612,8 +612,8 @@ class TestAsyncEmptyKeysNotCached:
         assert refreshed.is_successful is True
         assert _kids(refreshed) == {"retained-kid"}
         assert from_retained_cache is True
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
-        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
+        assert _kids(_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }
 
@@ -660,8 +660,8 @@ class TestEmptyKeysWithUncacheableHeaderRetains:
         # Return is now a tuple — discard both halves; the test pins cache
         # state, not what _refresh_jwks surfaces to the caller.
         sync_tv._refresh_jwks(JWKS_URL)
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
+        assert _kids(_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }
 
@@ -696,8 +696,8 @@ class TestEmptyKeysWithUncacheableHeaderRetains:
         # Return is now a tuple — discard both halves; the test pins cache
         # state, not what _refresh_jwks surfaces to the caller.
         await aio_tv._refresh_jwks(JWKS_URL)
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
-        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
+        assert _kids(_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }
 
@@ -734,8 +734,8 @@ class TestRetainOnError:
         assert refreshed.is_successful is False
         # Failed refresh does not trigger the empty-keys fallback.
         assert from_retained_cache is False
-        assert jwks_cache_key(JWKS_URL) in _sync_caches().jwks
-        assert _kids(_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _sync_caches()._jwks
+        assert _kids(_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }
 
@@ -762,7 +762,7 @@ class TestRetainOnError:
         assert refreshed.is_successful is False
         # Failed refresh does not trigger the empty-keys fallback.
         assert from_retained_cache is False
-        assert jwks_cache_key(JWKS_URL) in _async_caches().jwks
-        assert _kids(_async_caches().jwks[jwks_cache_key(JWKS_URL)].response) == {
+        assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
+        assert _kids(_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response) == {
             "retained-kid"
         }

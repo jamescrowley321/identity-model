@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.aio.http_client import (
     _reset_async_http_client,
     close_async_http_client,
@@ -34,17 +34,17 @@ EXPLICIT_RETRIES = 1
 CALLS_WITHOUT_RETRY = 1
 
 
-def _retry_config(max_attempts: int) -> Config:
-    """Config with *max_attempts* retries and no backoff sleep."""
-    return Config(http_retry_max_attempts=max_attempts, http_retry_base_delay=0)
+def _retry_config(max_attempts: int) -> HTTPConfig:
+    """HTTPConfig with *max_attempts* retries and no backoff sleep."""
+    return HTTPConfig(http_retry_max_attempts=max_attempts, http_retry_base_delay=0)
 
 
 @pytest.fixture
 def sync_client_factory():
-    """Build managed sync clients from a Config; closes them after the test."""
+    """Build managed sync clients from an HTTPConfig; closes them after the test."""
     clients: list[HTTPClient] = []
 
-    def factory(config: Config) -> HTTPClient:
+    def factory(config: HTTPConfig) -> HTTPClient:
         client = HTTPClient(config=config)
         clients.append(client)
         return client
@@ -56,10 +56,10 @@ def sync_client_factory():
 
 @pytest.fixture
 async def async_client_factory():
-    """Build managed async clients from a Config; closes them after the test."""
+    """Build managed async clients from an HTTPConfig; closes them after the test."""
     clients: list[AsyncHTTPClient] = []
 
-    def factory(config: Config) -> AsyncHTTPClient:
+    def factory(config: HTTPConfig) -> AsyncHTTPClient:
         client = AsyncHTTPClient(config=config)
         clients.append(client)
         return client
@@ -263,7 +263,7 @@ class TestRetrySettingsFromConfig:
         return calls, failing_request
 
     def test_default_config_retry_count(self, sync_client_factory):
-        client = sync_client_factory(Config(http_retry_base_delay=0))
+        client = sync_client_factory(HTTPConfig(http_retry_base_delay=0))
         calls, request = self._counting_failure()
 
         with pytest.raises(httpx.RequestError):

@@ -40,7 +40,6 @@ from ..core.parsers import (
 )
 from ..core.token_binding import (
     TokenPresentation,
-    check_token_binding,
     require_presentation,
 )
 from ..core.token_validation_logic import (
@@ -61,6 +60,7 @@ from .discovery import get_discovery_document
 from .http_client import get_default_async_http_client
 from .jwks import get_jwks
 from .managed_client import AsyncHTTPClient
+from .token_binding import check_token_binding
 from .validation_cache import AsyncValidationCache, get_default_async_validation_cache
 
 
@@ -135,25 +135,25 @@ async def _get_disco_response(
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, disco_doc_address, policy.cache_key())
-    entry = cache.disco.get(cache_key)
+    entry = cache._disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency — touch_cache_entry serializes the reorder against
         # _enforce_size_limit via the process-wide structure lock. The async
         # write locks are keyed per event loop, so they cannot guard reordering
         # against an eviction on another loop sharing this cache;
         # the process-wide lock inside touch_cache_entry does (#397).
-        touch_cache_entry(cache.disco, cache_key)
+        touch_cache_entry(cache._disco, cache_key)
         get_cache_counters().record_disco_hit()
         return entry.response
 
-    async with cache.disco_fetch_lock(cache_key):
-        entry = cache.disco.get(cache_key)
+    async with cache._disco_fetch_lock(cache_key):
+        entry = cache._disco.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
             # Double-checked hit: another coroutine populated the entry while we
             # waited on the fetch lock. This is a genuine cache hit, not a miss —
             # counting it as a miss would inflate the miss rate under concurrent
             # warmup.
-            touch_cache_entry(cache.disco, cache_key)
+            touch_cache_entry(cache._disco, cache_key)
             get_cache_counters().record_disco_hit()
             return entry.response
 
@@ -170,9 +170,9 @@ async def _get_disco_response(
         # zero upstream volume.
         if _upstream_fetch_attempted(disco_doc_address, policy):
             get_cache_counters().record_disco_miss()
-        async with cache.disco_write_lock():
+        async with cache._disco_write_lock():
             apply_disco_cache_outcome(
-                cache.disco, cache_key, response, time.monotonic(), cache.config
+                cache._disco, cache_key, response, time.monotonic(), cache.config
             )
         return response
 
@@ -190,8 +190,8 @@ async def clear_discovery_cache(cache: AsyncValidationCache | None = None) -> No
     writes on a different loop are not coordinated with this clear (#399).
     """
     cache = _resolve_cache(cache)
-    async with cache.disco_write_lock():
-        clear_cache_locked(cache.disco)
+    async with cache._disco_write_lock():
+        clear_cache_locked(cache._disco)
 
 
 # ============================================================================
@@ -214,20 +214,20 @@ async def _get_cached_jwks(
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, jwks_uri)
-    entry = cache.jwks.get(cache_key)
+    entry = cache._jwks.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency (see _get_disco_response) — self-serializing via
         # the process-wide structure lock, no per-loop write lock needed.
-        touch_cache_entry(cache.jwks, cache_key)
+        touch_cache_entry(cache._jwks, cache_key)
         get_cache_counters().record_jwks_hit()
         return entry.response
 
-    async with cache.jwks_fetch_lock(cache_key):
-        entry = cache.jwks.get(cache_key)
+    async with cache._jwks_fetch_lock(cache_key):
+        entry = cache._jwks.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
             # Double-checked hit populated by a concurrent fetch (see
             # _get_disco_response) — count as a hit, not a miss.
-            touch_cache_entry(cache.jwks, cache_key)
+            touch_cache_entry(cache._jwks, cache_key)
             get_cache_counters().record_jwks_hit()
             return entry.response
 
@@ -243,10 +243,10 @@ async def _get_cached_jwks(
         # does zero network work and is excluded; see _upstream_fetch_attempted.
         if _upstream_fetch_attempted(jwks_uri, policy):
             get_cache_counters().record_jwks_miss()
-        async with cache.jwks_write_lock():
+        async with cache._jwks_write_lock():
             store_jwks_response(
-                cache.jwks,
-                cache.kid_miss_last_attempt,
+                cache._jwks,
+                cache._kid_miss_last_attempt,
                 cache_key,
                 response,
                 cache.config,
@@ -284,9 +284,9 @@ async def _refresh_jwks(
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, jwks_uri)
-    async with cache.jwks_fetch_lock(cache_key):
+    async with cache._jwks_fetch_lock(cache_key):
         request_time = time.monotonic()
-        entry = cache.jwks.get(cache_key)
+        entry = cache._jwks.get(cache_key)
         # A waiter whose stale entry another refresh replaced while it was
         # blocked returns the replacement. The stale entry itself is never
         # returned: only a successful, non-empty fetch replaces an entry.
@@ -307,16 +307,16 @@ async def _refresh_jwks(
         # does zero network work and is excluded via _upstream_fetch_attempted.
         if _upstream_fetch_attempted(jwks_uri, policy):
             get_cache_counters().record_jwks_refresh()
-        async with cache.jwks_write_lock():
+        async with cache._jwks_write_lock():
             store_jwks_response(
-                cache.jwks,
-                cache.kid_miss_last_attempt,
+                cache._jwks,
+                cache._kid_miss_last_attempt,
                 cache_key,
                 response,
                 cache.config,
             )
             if response.is_successful and not response.keys:
-                retained = cache.jwks.get(cache_key)
+                retained = cache._jwks.get(cache_key)
                 if retained is not None and retained.response.keys:
                     logger.info(
                         "JWKS refresh for %s returned 200 with empty keys; "
@@ -337,9 +337,9 @@ async def clear_jwks_cache(cache: AsyncValidationCache | None = None) -> None:
     lock for the same reason. Callers must ``await``.
     """
     cache = _resolve_cache(cache)
-    async with cache.jwks_write_lock():
-        clear_cache_locked(cache.jwks)
-        cache.kid_miss_last_attempt.clear()
+    async with cache._jwks_write_lock():
+        clear_cache_locked(cache._jwks)
+        cache._kid_miss_last_attempt.clear()
 
 
 # ============================================================================
@@ -380,7 +380,7 @@ async def _discover_and_resolve_key(
         k.kid == kid and is_signing_key(k) for k in cached_keys
     ):
         if should_attempt_kid_miss_refresh(
-            cache.kid_miss_last_attempt,
+            cache._kid_miss_last_attempt,
             jwks_uri,
             has_cached_keys=bool(cached_keys),
             now=time.monotonic(),
@@ -403,11 +403,11 @@ async def _discover_and_resolve_key(
                 # retained-cache fallback (empty upstream is not
                 # attacker-amplifiable). Mirror of sync.
                 if not from_retained_cache:
-                    async with cache.jwks_write_lock():
+                    async with cache._jwks_write_lock():
                         if kid_found:
-                            cache.kid_miss_last_attempt.pop(jwks_uri, None)
+                            cache._kid_miss_last_attempt.pop(jwks_uri, None)
                         else:
-                            cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+                            cache._kid_miss_last_attempt[jwks_uri] = time.monotonic()
             else:
                 kid_found = False
             validate_jwks_response(jwks_response)
@@ -446,7 +446,7 @@ async def _retry_with_refreshed_jwks(
         token_validation_config.require_https,
     )
     if not should_attempt_kid_miss_refresh(
-        cache.kid_miss_last_attempt,
+        cache._kid_miss_last_attempt,
         jwks_uri,
         has_cached_keys=True,
         now=time.monotonic(),
@@ -476,12 +476,12 @@ async def _retry_with_refreshed_jwks(
         # Skip cooldown stamp when refresh degraded to a retained-cache
         # fallback. See sync._retry_with_refreshed_jwks.
         if not from_retained_cache:
-            async with cache.jwks_write_lock():
-                cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+            async with cache._jwks_write_lock():
+                cache._kid_miss_last_attempt[jwks_uri] = time.monotonic()
         raise
     if not from_retained_cache:
-        async with cache.jwks_write_lock():
-            cache.kid_miss_last_attempt.pop(jwks_uri, None)
+        async with cache._jwks_write_lock():
+            cache._kid_miss_last_attempt.pop(jwks_uri, None)
     return decoded
 
 
@@ -507,10 +507,10 @@ async def validate_token(
         disco_doc_address: Discovery document address (required if perform_disco=True)
         http_client: Optional managed HTTP client. When ``None`` (the default),
             the library default client is used. It sends the discovery and
-            JWKS requests; its ``Config`` sets the timeout, retries, TLS and
+            JWKS requests; its ``HTTPConfig`` sets the timeout, retries, TLS and
             JWKS size limits.
         cache: Optional :class:`AsyncValidationCache` holding the discovery
-            document, the JWKS and the kid-miss cooldown. Its ``Config`` sets
+            document, the JWKS and the kid-miss cooldown. Its ``CacheConfig`` sets
             their TTLs, size and cooldown. When ``None`` (the default), the
             process-wide default cache is used, whichever client is passed.
         presentation: How the token arrived on the request
@@ -540,7 +540,7 @@ async def validate_token(
         http_client,
         cache=cache,
     )
-    check_token_binding(claims, jwt, token_validation_config, presentation)
+    await check_token_binding(claims, jwt, token_validation_config, presentation)
     return claims
 
 

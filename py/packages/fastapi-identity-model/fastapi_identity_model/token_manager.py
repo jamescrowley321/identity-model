@@ -56,7 +56,7 @@ class TokenManager:
             client_secret: The OAuth2 client secret (omit for public clients).
             refresh_before_seconds: Refresh this many seconds before expiry.
             http_client: Managed HTTP client for discovery and the refresh
-                grant, built from your ``Config``. ``None`` uses the library
+                grant, built from your ``HTTPConfig``. ``None`` uses the library
                 default client.
         """
         self.discovery_url = discovery_url

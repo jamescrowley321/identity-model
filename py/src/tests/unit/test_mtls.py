@@ -24,10 +24,10 @@ from py_identity_model import (
     AuthorizationCodeTokenRequest,
     CertificateBindingError,
     ClientCredentialsTokenRequest,
-    Config,
     DeviceAuthorizationRequest,
     DeviceTokenRequest,
     DiscoveryDocumentRequest,
+    HTTPConfig,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
@@ -140,17 +140,17 @@ class TestBuildMtlsSslContext:
 
     def test_returns_ssl_context_with_client_cert_loaded(self, mtls):
         # load_cert_chain would raise if the cert/key failed to load.
-        assert isinstance(build_mtls_ssl_context(mtls, Config()), ssl.SSLContext)
+        assert isinstance(build_mtls_ssl_context(mtls, HTTPConfig()), ssl.SSLContext)
 
     def test_default_config_verifies_server(self, mtls):
-        ctx = build_mtls_ssl_context(mtls, Config())
+        ctx = build_mtls_ssl_context(mtls, HTTPConfig())
         assert ctx.verify_mode == ssl.CERT_REQUIRED
         assert ctx.check_hostname is True
 
     def test_config_ca_bundle_is_loaded_and_required(self, mtls, cert_files):
         # Reuse the client cert PEM path as a CA bundle to exercise the str path.
         ca_bundle, _, _ = cert_files
-        ctx = build_mtls_ssl_context(mtls, Config(ca_bundle=ca_bundle))
+        ctx = build_mtls_ssl_context(mtls, HTTPConfig(ca_bundle=ca_bundle))
         assert ctx.verify_mode == ssl.CERT_REQUIRED
         assert ctx.cert_store_stats()["x509"] == CERTS_IN_SINGLE_CERT_BUNDLE
 
@@ -645,13 +645,13 @@ class TestEndToEndMtls:
 @pytest.mark.unit
 class TestResolveClientMtls:
     """mTLS requests go through a short-lived cert client (RFC 8705 §2). A
-    caller's ``http_client`` supplies that cert client's ``Config``
+    caller's ``http_client`` supplies that cert client's ``HTTPConfig``
     (``ca_bundle``, ``http_timeout``, retries) but never its own connection
     pool, which cannot be guaranteed to present the certificate."""
 
     def test_sync_mtls_with_managed_client_uses_its_config(self, mtls, cert_files):
         ca_bundle, _, _ = cert_files
-        config = Config(ca_bundle=ca_bundle, http_timeout=7.0)
+        config = HTTPConfig(ca_bundle=ca_bundle, http_timeout=7.0)
         managed = HTTPClient(config=config)
         try:
             client, owned = sync_http.resolve_http_client(mtls, managed)
@@ -715,12 +715,12 @@ class TestResolveClientMtls:
     def test_sync_mtls_request_applies_managed_client_config(
         self, mtls, cert_files, monkeypatch
     ):
-        """End to end: the cert client is built from the caller's Config, and
-        that Config's retry count governs the request (0 retries: one call on
-        a 503, where the default Config would retry)."""
+        """End to end: the cert client is built from the caller's HTTPConfig, and
+        that HTTPConfig's retry count governs the request (0 retries: one call on
+        a 503, where the default HTTPConfig would retry)."""
         ca_bundle, _, _ = cert_files
-        config = Config(ca_bundle=ca_bundle, http_retry_max_attempts=0)
-        built: list[tuple[httpx.Client, Config]] = []
+        config = HTTPConfig(ca_bundle=ca_bundle, http_retry_max_attempts=0)
+        built: list[tuple[httpx.Client, HTTPConfig]] = []
         real_build = sync_http.build_mtls_client
 
         def _tracking_build(cfg, build_config):
@@ -747,7 +747,7 @@ class TestResolveClientMtls:
         self, mtls, cert_files
     ):
         ca_bundle, _, _ = cert_files
-        config = Config(ca_bundle=ca_bundle, http_timeout=7.0)
+        config = HTTPConfig(ca_bundle=ca_bundle, http_timeout=7.0)
         managed = AsyncHTTPClient(config=config)
         try:
             client, owned = aio_http.resolve_async_http_client(mtls, managed)
@@ -816,8 +816,8 @@ class TestResolveClientMtls:
         self, mtls, cert_files, monkeypatch
     ):
         ca_bundle, _, _ = cert_files
-        config = Config(ca_bundle=ca_bundle, http_retry_max_attempts=0)
-        built: list[tuple[httpx.AsyncClient, Config]] = []
+        config = HTTPConfig(ca_bundle=ca_bundle, http_retry_max_attempts=0)
+        built: list[tuple[httpx.AsyncClient, HTTPConfig]] = []
         real_build = aio_http.build_mtls_client
 
         def _tracking_build(cfg, build_config):

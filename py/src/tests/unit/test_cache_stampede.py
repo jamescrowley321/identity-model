@@ -180,8 +180,8 @@ class TestSyncStampedeAfterExpiry:
         assert jwks_route.call_count == 1
 
         # Expire the entry by setting cached_at far in the past
-        _sync_caches().jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
-            response=_sync_caches().jwks[jwks_cache_key(JWKS_URL)].response,
+        _sync_caches()._jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
+            response=_sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response,
             cached_at=time.monotonic() - 86401,
             ttl=86400.0,
         )
@@ -220,8 +220,8 @@ class TestSyncStampedeAfterExpiry:
         assert disco_route.call_count == 1
 
         cache_key = disco_cache_key(DISCO_URL)
-        _sync_caches().disco[cache_key] = DiscoCacheEntry(
-            response=_sync_caches().disco[cache_key].response,
+        _sync_caches()._disco[cache_key] = DiscoCacheEntry(
+            response=_sync_caches()._disco[cache_key].response,
             cached_at=time.monotonic() - 3601,
             ttl=3600.0,
         )
@@ -304,8 +304,8 @@ class TestAsyncStampedeAfterExpiry:
         assert jwks_route.call_count == 1
 
         # Expire the entry
-        _async_caches().jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
-            response=_async_caches().jwks[jwks_cache_key(JWKS_URL)].response,
+        _async_caches()._jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
+            response=_async_caches()._jwks[jwks_cache_key(JWKS_URL)].response,
             cached_at=time.monotonic() - 86401,
             ttl=86400.0,
         )
@@ -332,8 +332,8 @@ class TestAsyncStampedeAfterExpiry:
 
         # Expire the entry
         cache_key = disco_cache_key(DISCO_URL)
-        _async_caches().disco[cache_key] = DiscoCacheEntry(
-            response=_async_caches().disco[cache_key].response,
+        _async_caches()._disco[cache_key] = DiscoCacheEntry(
+            response=_async_caches()._disco[cache_key].response,
             cached_at=time.monotonic() - 3601,
             ttl=3600.0,
         )
@@ -363,8 +363,8 @@ class TestSyncRefreshJwksFreshnessGuard:
 
         # Manually set cached_at to a future time to simulate another thread
         # having just refreshed the cache
-        entry = _sync_caches().jwks[jwks_cache_key(JWKS_URL)]
-        _sync_caches().jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
+        entry = _sync_caches()._jwks[jwks_cache_key(JWKS_URL)]
+        _sync_caches()._jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
             response=entry.response,
             cached_at=time.monotonic() + 100,
             ttl=entry.ttl,
@@ -411,7 +411,7 @@ class TestSyncRefreshJwksFreshnessGuard:
 
         result, from_retained_cache = _refresh_jwks(JWKS_URL, stale_response=stale)
 
-        assert result is _sync_caches().jwks[jwks_cache_key(JWKS_URL)].response
+        assert result is _sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response
         assert result is not stale
         assert from_retained_cache is False
         assert jwks_route.call_count == FETCH_AFTER_EXPIRY
@@ -441,7 +441,7 @@ class TestSyncRefreshJwksFreshnessGuard:
 
         result, _ = _refresh_jwks(JWKS_URL, stale_response=stale)
 
-        assert result is _sync_caches().jwks[jwks_cache_key(JWKS_URL)].response
+        assert result is _sync_caches()._jwks[jwks_cache_key(JWKS_URL)].response
         assert jwks_route.call_count == FETCH_AFTER_EXPIRY
 
 
@@ -462,8 +462,8 @@ class TestAsyncRefreshJwksFreshnessGuard:
         assert jwks_route.call_count == 1
 
         # Set cached_at to future time to simulate another coroutine refresh
-        entry = _async_caches().jwks[jwks_cache_key(JWKS_URL)]
-        _async_caches().jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
+        entry = _async_caches()._jwks[jwks_cache_key(JWKS_URL)]
+        _async_caches()._jwks[jwks_cache_key(JWKS_URL)] = JwksCacheEntry(
             response=entry.response,
             cached_at=time.monotonic() + 100,
             ttl=entry.ttl,
@@ -506,7 +506,7 @@ class TestAsyncRefreshJwksFreshnessGuard:
             JWKS_URL, stale_response=stale
         )
 
-        assert result is _async_caches().jwks[jwks_cache_key(JWKS_URL)].response
+        assert result is _async_caches()._jwks[jwks_cache_key(JWKS_URL)].response
         assert result is not stale
         assert from_retained_cache is False
         assert jwks_route.call_count == FETCH_AFTER_EXPIRY
@@ -537,7 +537,7 @@ class TestAsyncRefreshJwksFreshnessGuard:
 
         result, _ = await async_refresh_jwks(JWKS_URL, stale_response=stale)
 
-        assert result is _async_caches().jwks[jwks_cache_key(JWKS_URL)].response
+        assert result is _async_caches()._jwks[jwks_cache_key(JWKS_URL)].response
         assert jwks_route.call_count == FETCH_AFTER_EXPIRY
 
 

@@ -19,6 +19,8 @@ import pytest
 from py_identity_model import (
     AuthorizationScheme,
     DPoPErrorKind,
+    DPoPProofRequest,
+    DPoPReplayCheck,
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
@@ -34,6 +36,10 @@ from py_identity_model import (
     create_dpop_proof,
     generate_dpop_key,
 )
+from py_identity_model.aio import (
+    check_introspection_binding as acheck_introspection_binding,
+)
+from py_identity_model.aio import verify_dpop_proof as averify_dpop_proof
 from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
@@ -370,3 +376,84 @@ class TestSameRulesAsJwtPath:
 
         assert type(intr_exc.value) is type(jwt_exc.value)
         assert str(intr_exc.value) == str(jwt_exc.value)
+
+
+class _AsyncCache:
+    """An AsyncDPoPReplayCache over an in-memory cache, counting awaits."""
+
+    def __init__(self) -> None:
+        self.inner = InMemoryDPoPReplayCache()
+        self.awaited = 0
+
+    async def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        self.awaited += 1
+        return self.inner.check_and_store(jkt, jti, expires_at, now)
+
+
+@pytest.mark.unit
+class TestAsyncIntrospectionBinding:
+    """The aio counterparts await the replay cache (1027-B)."""
+
+    async def test_async_check_awaits_an_async_cache(self):
+        key = generate_dpop_key()
+        cache = _AsyncCache()
+        options = DPoPVerificationOptions(replay_cache=cache)
+        response = _response({"jkt": key.jwk_thumbprint})
+        presentation = _dpop(key)
+
+        await acheck_introspection_binding(
+            response, OPAQUE_TOKEN, presentation, dpop=options
+        )
+        with pytest.raises(DPoPValidationError) as exc:
+            await acheck_introspection_binding(
+                response, OPAQUE_TOKEN, presentation, dpop=options
+            )
+
+        assert (exc.value.kind, cache.awaited) == (DPoPErrorKind.REPLAYED_JTI, 2)
+
+    async def test_async_check_fails_closed_like_the_sync_one(self):
+        with pytest.raises(IntrospectedTokenError) as exc:
+            await acheck_introspection_binding(
+                _response(active=False), OPAQUE_TOKEN, None, dpop=_options()
+            )
+
+        assert exc.value.kind is IntrospectedTokenErrorKind.INACTIVE
+
+    async def test_async_verify_dpop_proof_awaits_an_async_cache(self):
+        key = generate_dpop_key()
+        cache = _AsyncCache()
+        options = DPoPVerificationOptions(replay_cache=cache)
+        proof = create_dpop_proof(key, METHOD, URL)
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        verified = await averify_dpop_proof(proof, request, options)
+        with pytest.raises(DPoPValidationError) as exc:
+            await averify_dpop_proof(proof, request, options)
+
+        assert (verified.jkt, exc.value.kind, cache.awaited) == (
+            key.jwk_thumbprint,
+            DPoPErrorKind.REPLAYED_JTI,
+            2,
+        )
+
+    def test_sync_check_refuses_an_async_cache(self):
+        key = generate_dpop_key()
+        options = DPoPVerificationOptions(replay_cache=_AsyncCache())
+
+        with pytest.raises(ConfigurationException, match="AsyncDPoPReplayCache"):
+            check_introspection_binding(
+                _response({"jkt": key.jwk_thumbprint}),
+                OPAQUE_TOKEN,
+                _dpop(key),
+                dpop=options,
+            )
+
+    def test_bound_token_without_dpop_options_is_a_config_error(self):
+        key = generate_dpop_key()
+
+        with pytest.raises(ConfigurationException, match="replay_cache"):
+            check_introspection_binding(
+                _response({"jkt": key.jwk_thumbprint}), OPAQUE_TOKEN, _dpop(key)
+            )

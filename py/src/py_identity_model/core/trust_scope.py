@@ -13,8 +13,8 @@ so short-lived clients still share it (#945).
 Two scopes:
 
 - A client that builds its own ``httpx`` client from a
-  :class:`~py_identity_model.core.config.Config` verifies TLS against
-  ``Config.ca_bundle`` and never follows redirects, so its scope is the
+  :class:`~py_identity_model.core.config.HTTPConfig` verifies TLS against
+  ``HTTPConfig.ca_bundle`` and never follows redirects, so its scope is the
   ``ca_bundle`` value. Every such client with the same ``ca_bundle`` (the
   library default client included) shares documents.
 - A client that wraps an ``httpx`` client you built keeps that client's TLS,
@@ -35,14 +35,14 @@ from .jwks_cache import _ForkSafeRLock
 
 
 if TYPE_CHECKING:
-    from .config import Config
+    from .config import HTTPConfig
 
 
 @dataclass(frozen=True)
 class TrustScope:
     """The trust scope of an HTTP client's transport.
 
-    ``ca_bundle`` is set for a client built from a ``Config`` (``None`` means
+    ``ca_bundle`` is set for a client built from an ``HTTPConfig`` (``None`` means
     httpx's default bundle); ``wrapped_client`` numbers a wrapped ``httpx``
     client and is ``None`` otherwise.
     """
@@ -58,7 +58,7 @@ _wrapped_lock = _ForkSafeRLock()
 _wrapped_counter = itertools.count(1)
 
 
-def owned_trust_scope(config: Config) -> TrustScope:
+def owned_trust_scope(config: HTTPConfig) -> TrustScope:
     """Return the scope of a client built from *config*."""
     return TrustScope(ca_bundle=config.ca_bundle)
 
