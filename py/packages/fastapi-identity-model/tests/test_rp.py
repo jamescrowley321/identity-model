@@ -446,7 +446,7 @@ def _composed_app(excluded_paths) -> FastAPI:
     app.add_middleware(
         TokenValidationMiddleware,
         discovery_url=SETTINGS.discovery_url,
-        audience=SETTINGS.audience,
+        audience=SETTINGS.expected_audience,
         excluded_paths=excluded_paths,
     )
 

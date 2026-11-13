@@ -273,12 +273,12 @@ options = AuthOptions(
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
-    audience=settings.audience,
+    audience=settings.expected_audience,
     options=options,
 )
 ws_auth = build_ws_authenticator(
     discovery_url=settings.discovery_url,
-    audience=settings.audience,
+    audience=settings.expected_audience,
     options=options,
 )
 ```

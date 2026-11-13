@@ -49,8 +49,9 @@ class OIDCSettings:
         client_secret: Client secret; omit for public/PKCE clients. Kept out
             of ``repr()``.
         scope: Space-delimited scopes requested at authorization.
-        audience: Expected ``aud`` for the resource-server middleware. Defaults
-            to ``client_id`` when not set.
+        audience: Expected ``aud`` for the resource-server middleware.
+            ``None`` (default) means ``client_id``; read the resolved value
+            from :attr:`expected_audience`.
         post_login_redirect: Where ``/callback`` redirects after a successful login.
         post_logout_redirect: Where ``/logout`` redirects after clearing the session.
         excluded_paths: Paths the resource-server middleware skips (health/docs).
@@ -127,7 +128,12 @@ class OIDCSettings:
         for name in ("discovery_url", "client_id"):
             if not getattr(self, name):
                 raise ValueError(f"OIDCSettings requires a non-empty {name}")
-        # The middleware validates the ID/access token audience; default it to
-        # the client_id, which is the audience Descope and most OPs mint.
-        if self.audience is None:
-            object.__setattr__(self, "audience", self.client_id)
+
+    @property
+    def expected_audience(self) -> str:
+        """``audience``, or ``client_id`` when ``audience`` is ``None``.
+
+        Worked out on read, so a copy made with :func:`dataclasses.replace`
+        and a new ``client_id`` follows it.
+        """
+        return self.client_id if self.audience is None else self.audience

@@ -17,7 +17,7 @@ def test_audience_defaults_to_client_id():
         client_id="cid",
         redirect_uri="http://localhost/cb",
     )
-    assert s.audience == "cid"
+    assert (s.audience, s.expected_audience) == (None, "cid")
     assert s.scope == "openid profile email"
     assert s.excluded_paths == [
         "/docs",
@@ -132,4 +132,22 @@ def test_auth_options_replace_keeps_shared_replay_cache():
     assert (
         dataclasses.replace(opts, expected_origin="https://api.example.com").dpop
         is opts.dpop
+    )
+
+
+def test_replace_client_id_moves_the_default_audience():
+    s = OIDCSettings(
+        discovery_url="https://op/.well-known/openid-configuration", client_id="app-a"
+    )
+    assert dataclasses.replace(s, client_id="app-b").expected_audience == "app-b"
+
+
+def test_explicit_audience_survives_replace():
+    s = OIDCSettings(
+        discovery_url="https://op/.well-known/openid-configuration",
+        client_id="app-a",
+        audience="api://resource",
+    )
+    assert dataclasses.replace(s, client_id="app-b").expected_audience == (
+        "api://resource"
     )

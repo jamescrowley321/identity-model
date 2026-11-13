@@ -90,7 +90,7 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
 
     assert settings == OIDCSettings(discovery_url="d", client_id="cid")
     assert settings.redirect_uri == ""
-    assert settings.audience == "cid"
+    assert settings.expected_audience == "cid"
     assert settings.excluded_paths == _DEFAULT_EXCLUDED_PATHS
     assert settings.required_binding is TokenBinding.NONE
     assert (settings.client_certificate_header, settings.expected_origin) == (
