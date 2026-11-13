@@ -4,7 +4,6 @@ Pushed Authorization Request (PAR) business logic per RFC 9126.
 Pure functions for preparing PAR requests and processing responses.
 """
 
-from dataclasses import fields
 import json
 
 import httpx
@@ -13,32 +12,23 @@ from ..logging_config import logger
 from ..logging_utils import redact_url
 from .client_auth import apply_client_auth
 from .dpop import create_dpop_proof
-from .models import PushedAuthorizationRequest, PushedAuthorizationResponse
-
-
-# Authorization parameters; with a request object they are claims of the JWT.
-_AUTHORIZATION_FIELDS = frozenset(
-    {
-        "redirect_uri",
-        "scope",
-        "response_type",
-        "state",
-        "nonce",
-        "code_challenge",
-        "code_challenge_method",
-        "response_mode",
-    }
+from .models import (
+    PushedAuthorizationRequest,
+    PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
 )
 
 
-def log_par_request(request: PushedAuthorizationRequest) -> None:
+def log_par_request(
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
+) -> None:
     """Log pushed authorization request."""
     logger.info(f"Pushing authorization request to {redact_url(request.address)}")
     logger.debug(f"Client ID: {request.client_id}")
 
 
 def prepare_par_request_data(
-    request: PushedAuthorizationRequest,
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
     dpop_nonce: str | None = None,
 ) -> tuple[dict, dict, tuple[str, str] | None]:
     """Prepare request data, headers, and optional auth for PAR.
@@ -52,8 +42,10 @@ def prepare_par_request_data(
     Returns:
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
     """
-    if request.request:
-        params = _request_object_params(request)
+    if isinstance(request, SignedPushedAuthorizationRequest):
+        request.check_request()
+        # RFC 9126 §3: only ``request`` and client authentication go in the form.
+        params = {"client_id": request.client_id, "request": request.request}
     else:
         params = _plain_params(request)
 
@@ -71,24 +63,6 @@ def prepare_par_request_data(
     )
 
     return params, headers, auth
-
-
-def _request_object_params(request: PushedAuthorizationRequest) -> dict[str, str]:
-    """RFC 9126 §3: only ``request`` and client authentication go in the form.
-
-    Every authorization parameter must be a claim of the request object, so a
-    plain field set alongside it is refused rather than silently dropped.
-    """
-    for spec in fields(PushedAuthorizationRequest):
-        if spec.name not in _AUTHORIZATION_FIELDS:
-            continue
-        value = getattr(request, spec.name)
-        if value and value != spec.default:
-            raise ValueError(
-                f"{spec.name} must be a claim of the request object, not a "
-                "separate parameter (RFC 9126 §3)"
-            )
-    return {"client_id": request.client_id, "request": request.request or ""}
 
 
 def _plain_params(request: PushedAuthorizationRequest) -> dict[str, str]:

@@ -11,8 +11,9 @@ Most applications need three edits:
    instead of setting `HTTP_TIMEOUT` and the other environment variables.
 2. If you use the FastAPI package, replace `OIDCSettings.from_env()` with
    `oidc_settings_from_env()`.
-3. Pass `trusted_audiences=` to `validate_id_token` if your provider issues
-   ID Tokens with more than one audience.
+3. Pass `trusted_audiences=` to `validate_id_token` (or set
+   `OIDCSettings.trusted_audiences` for the FastAPI login router) if your
+   provider issues ID Tokens with more than one audience.
 
 The other changes reject provider responses and tokens that the OpenID
 Connect specifications already forbid. A conforming provider is unaffected.
@@ -529,7 +530,7 @@ capability FAPI 2.0 requires. In 5.0 each of these is a violation:
 | Metadata | Violation when | Requirement |
 |---|---|---|
 | `code_challenge_methods_supported` | absent (RFC 8414 §2: no PKCE) or without `S256` | [FAPI 2.0 Security Profile §5.3.2.2](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.2) |
-| `pushed_authorization_request_endpoint` | absent | §5.3.2.2, RFC 9126 |
+| `pushed_authorization_request_endpoint` | absent, empty, or not a string (`true` used to pass, [#1068](https://github.com/jamescrowley321/identity-model/issues/1068)) | §5.3.2.2, RFC 9126 |
 | `authorization_response_iss_parameter_supported` | absent or `false` | §5.3.2.2, RFC 9207 §3 |
 | `dpop_signing_alg_values_supported`, `tls_client_certificate_bound_access_tokens` | neither a DPoP list with a FAPI algorithm (§5.4.1) nor `true` for MTLS | [§5.3.2.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.1) |
 | `token_endpoint_auth_signing_alg_values_supported` | `private_key_jwt` is offered and the list is absent or has no FAPI algorithm | [§5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1) |
@@ -602,6 +603,71 @@ validate_fapi_client_config(
 The request validator now also checks the request's client authentication,
 its DPoP key algorithm and its `nonce` length. The client validator reports
 a `private_key_jwt` whose assertion `aud` would not be the issuer.
+
+### FAPI 2.0: violations are typed ([#1059](https://github.com/jamescrowley321/identity-model/issues/1059))
+
+`FAPIValidationResult.violations` and `FAPIProfileError.violations` were
+`list[str]`. They are now `list[FAPIViolation]`: each has a `code` (a
+`FAPIViolationCode`) and a `message`. Match on the code; the message is for
+people and may change. Both also have `codes`, the codes in order.
+`str(violation)` is the message, and `str(FAPIProfileError)` is unchanged.
+
+```python
+# Before
+except FAPIProfileError as exc:
+    if any(v.startswith("PKCE") for v in exc.violations):
+        ...
+
+# After
+except FAPIProfileError as exc:
+    if FAPIViolationCode.PKCE_METHOD_NOT_S256 in exc.codes:
+        ...
+```
+
+### FAPI 2.0: frozen client-auth types and a separate signed PAR type ([#1061](https://github.com/jamescrowley321/identity-model/issues/1061))
+
+`PrivateKeyJwt`, `MtlsClientAuth` and `RequestObjectKey` are frozen
+dataclasses. Assigning a field raises `dataclasses.FrozenInstanceError`; use
+`dataclasses.replace` to derive a changed copy. `FAPI2ClientProfile` now keeps
+the objects you pass instead of copying them, and checks client
+authentication and the request object key once, at construction.
+
+A pushed authorization request sent as a signed request object is now a
+`SignedPushedAuthorizationRequest`. `PushedAuthorizationRequest` no longer has
+a `request` field, and the signed type has no fields for the authorization
+parameters, because RFC 9126 §3 puts them inside the request object. A blank
+`request` raises `ConfigurationException` instead of falling back to a plain
+request. `push_authorization_request` takes either type, and
+`FAPI2ClientProfile.pushed_authorization_request` returns the signed type when
+the profile has a `request_object_key`.
+
+```python
+# Before
+PushedAuthorizationRequest(
+    address=par_endpoint, client_id=client_id, request=request_object,
+    private_key_jwt=private_key_jwt,
+)
+
+# After
+SignedPushedAuthorizationRequest(
+    address=par_endpoint, client_id=client_id, request=request_object,
+    private_key_jwt=private_key_jwt,
+)
+```
+
+`validate_fapi_authorization_request` accepts a
+`SignedPushedAuthorizationRequest` and checks the request object's claims
+(`response_type`, PKCE, `nonce`, `redirect_uri`), its header `alg` (FAPI 2.0
+Security Profile §5.4.1), that `exp - nbf` is at most 3600 seconds (FAPI
+2.0 Message Signing §5.3.2), and that its `client_id` and `iss` match the
+request's `client_id` (RFC 9101). An encrypted request object is reported as
+a violation, because its claims cannot be read. These carry the codes
+`REQUEST_OBJECT_INVALID`, `REQUEST_OBJECT_ENCRYPTED`,
+`REQUEST_OBJECT_CLIENT_ID_MISMATCH`, `REQUEST_OBJECT_ISSUER_MISMATCH`,
+`REQUEST_OBJECT_LIFETIME_INVALID` and `NONCE_INVALID`. Before, it read only the plain fields and
+reported violations for compliant signed requests
+([#1016](https://github.com/jamescrowley321/identity-model/issues/1016)). It
+does not verify the request object's signature or `aud`.
 
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
@@ -697,8 +763,25 @@ Validate those tokens with their own functions, not `validate_token`.
 The FastAPI `build_oidc_router` callback now validates the ID Token with
 `validate_id_token` instead of `validate_token`, so it also applies the ID
 Token profile (required `sub`, no untrusted additional audience, OIDC Core
-§3.1.3.7). `OIDCSettings` has no `trusted_audiences`, so an ID Token whose `aud`
-lists anything besides `client_id` now fails the login with a 401.
+§3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` now
+fails the login with a 401. If your provider issues multi-audience ID Tokens,
+list the extra audiences in `OIDCSettings.trusted_audiences`
+(`OIDC_TRUSTED_AUDIENCES`, comma-separated)
+([#1099](https://github.com/jamescrowley321/identity-model/issues/1099)).
+Whenever you set `OIDC_TRUSTED_AUDIENCES`, also set `OIDC_VALIDATE_AZP=true`
+(`validate_azp=True`), so the token must name your client in `azp`; without
+it, an ID Token issued to another client that also lists yours in `aud` logs
+in. The `azp` check stays off by default because §3.1.3.7 makes it a SHOULD:
+
+```python
+settings = OIDCSettings(
+    discovery_url=DISCOVERY_URL,
+    client_id="my-client",
+    redirect_uri=REDIRECT_URI,
+    trusted_audiences=["https://api.example.com"],
+    validate_azp=True,
+)
+```
 
 ### Check the introspected `cnf` of an opaque token ([#1094](https://github.com/jamescrowley321/identity-model/issues/1094))
 
@@ -725,6 +808,24 @@ check_introspection_binding(  # raises unless active and correctly bound
 
 `introspect_token` does not run the check; see
 [Token Introspection](api/introspection.md#sender-constrained-opaque-tokens).
+
+### Certificate binding errors have a kind; a bad presentation is a `ConfigurationException` ([#1059](https://github.com/jamescrowley321/identity-model/issues/1059))
+
+`CertificateBindingError` now takes a `CertificateBindingErrorKind` and has a
+`kind`: `NOT_BOUND`, `INVALID_THUMBPRINT`, `MISMATCH`, `CERTIFICATE_REQUIRED`
+or `INVALID_CERTIFICATE`. The message is fixed per kind, so match on `kind`,
+not on the text. `CertificateBindingError(message)` no longer works; raise it
+with a kind.
+
+`check_token_binding`, `check_introspection_binding` and `validate_token`
+raised a bare `ValueError` when a DPoP proof had to be checked but
+`presentation.method` or `presentation.url` was missing, or the URL was not an
+absolute http(s) URI. They now raise `ConfigurationException`, as they already
+did for `required_binding` without a presentation. Treat it as a server fault
+in your own handler, not as a bad token: it is a `PyIdentityModelException`, so
+a broad `except PyIdentityModelException` that answers 401 would hide it. The
+FastAPI middleware and WebSocket authenticator build the presentation from the
+request's absolute URL and method, so they never hit this.
 
 ## ID Token validation
 

@@ -70,6 +70,8 @@ from ..core.fapi import (
     FAPI2ClientProfile,
     FAPIProfileError,
     FAPIValidationResult,
+    FAPIViolation,
+    FAPIViolationCode,
     validate_fapi_authorization_request,
     validate_fapi_client_config,
     validate_fapi_discovery,
@@ -154,6 +156,7 @@ from .managed_client import AsyncHTTPClient
 from .par import (
     PushedAuthorizationRequest,
     PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
     push_authorization_request,
 )
 from .registration import (
@@ -253,6 +256,8 @@ __all__ = [
     "FAPI2ClientProfile",
     "FAPIProfileError",
     "FAPIValidationResult",
+    "FAPIViolation",
+    "FAPIViolationCode",
     "InMemoryDPoPReplayCache",
     "IntrospectedTokenError",
     "IntrospectedTokenErrorKind",
@@ -274,6 +279,7 @@ __all__ = [
     "RefreshTokenResponse",
     "RequestObjectKey",
     "SignedIntrospectionOptions",
+    "SignedPushedAuthorizationRequest",
     "StateValidationResult",
     "TokenBinding",
     "TokenErrorKind",

@@ -7,13 +7,18 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import ClientAuthMethod, PushedAuthorizationRequest
+from py_identity_model import (
+    ClientAuthMethod,
+    PushedAuthorizationRequest,
+    SignedPushedAuthorizationRequest,
+)
 from py_identity_model.aio.par import (
     push_authorization_request as async_push_authorization_request,
 )
 from py_identity_model.core.dpop import generate_dpop_key
 from py_identity_model.core.models import MtlsClientAuth, PrivateKeyJwt
 from py_identity_model.core.par_logic import prepare_par_request_data
+from py_identity_model.exceptions import ConfigurationException
 from py_identity_model.sync.par import push_authorization_request
 
 
@@ -27,7 +32,7 @@ JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 KEY = generate_dpop_key("ES256")
 
 
-def _signed(**overrides: Any) -> PushedAuthorizationRequest:
+def _signed(**overrides: Any) -> SignedPushedAuthorizationRequest:
     fields: dict[str, Any] = {
         "address": PAR_URL,
         "client_id": "app1",
@@ -39,7 +44,7 @@ def _signed(**overrides: Any) -> PushedAuthorizationRequest:
         ),
         **overrides,
     }
-    return PushedAuthorizationRequest(**fields)
+    return SignedPushedAuthorizationRequest(**fields)
 
 
 @pytest.mark.unit
@@ -84,27 +89,54 @@ class TestPrepareSignedPar:
         assert set(headers) == {"Content-Type", "DPoP"}
 
     @pytest.mark.parametrize(
-        ("field", "value"),
+        "field",
         [
-            ("redirect_uri", "https://app.com/cb"),
-            ("scope", "openid accounts"),
-            ("response_type", "code id_token"),
-            ("state", "s"),
-            ("nonce", "n"),
-            ("code_challenge", "c"),
-            ("code_challenge_method", "S256"),
-            ("response_mode", "jwt"),
+            "redirect_uri",
+            "scope",
+            "response_type",
+            "state",
+            "nonce",
+            "code_challenge",
+            "code_challenge_method",
+            "response_mode",
         ],
     )
-    def test_plain_authorization_parameter_with_request_raises(self, field, value):
+    def test_signed_request_has_no_plain_authorization_parameters(self, field):
+        # RFC 9126 §3: they are claims of the request object, so the type
+        # cannot carry them.
+        with pytest.raises(TypeError, match=field):
+            _signed(**{field: "x"})
+
+    @pytest.mark.parametrize("request_object", ["", "   ", None, 42])
+    def test_blank_request_object_refused(self, request_object):
         with pytest.raises(
-            ValueError,
-            match=(
-                rf"^{field} must be a claim of the request object, not a "
-                r"separate parameter \(RFC 9126 §3\)$"
-            ),
+            ConfigurationException,
+            match=r"^SignedPushedAuthorizationRequest\.request must be a signed "
+            r"request object \(RFC 9126 §3\)$",
         ):
-            prepare_par_request_data(_signed(**{field: value}))
+            _signed(request=request_object)
+
+    @pytest.mark.parametrize("request_object", ["", None])
+    def test_request_blanked_after_construction_refused_at_send(self, request_object):
+        request = _signed()
+        request.request = request_object
+        with pytest.raises(ConfigurationException):
+            prepare_par_request_data(request)
+
+    def test_repr_hides_secret_and_request_object(self):
+        text = repr(_signed(private_key_jwt=None, client_secret="s3cret-value"))
+        assert "s3cret-value" not in text
+        assert REQUEST_OBJECT not in text
+
+    def test_plain_request_has_no_request_field(self):
+        fields: dict[str, Any] = {
+            "address": PAR_URL,
+            "client_id": "app1",
+            "redirect_uri": "https://app.com/cb",
+            "request": REQUEST_OBJECT,
+        }
+        with pytest.raises(TypeError, match="request"):
+            PushedAuthorizationRequest(**fields)
 
     def test_missing_redirect_uri_without_request_raises(self):
         with pytest.raises(ValueError, match=r"^redirect_uri is required$"):

@@ -100,6 +100,7 @@ def test_model_discovery_covers_every_request_model() -> None:
         "AuthorizationCodeTokenRequest",
         "ClientCredentialsTokenRequest",
         "PushedAuthorizationRequest",
+        "SignedPushedAuthorizationRequest",
         "TokenExchangeRequest",
         "UserInfoRequest",
     } <= names

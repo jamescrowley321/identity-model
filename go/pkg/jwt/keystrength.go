@@ -1,8 +1,10 @@
 package jwt
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"encoding/base64"
-	"math/big"
 
 	"github.com/jamescrowley321/identity-model/go/pkg/jwks"
 )
@@ -15,30 +17,41 @@ const (
 	MinECKeyBits  = 224
 )
 
-// checkKeyStrength rejects an RSA or EC verification key below the floor with a
-// [WeakKeyError]. RSA strength is the bit length of the modulus n; EC strength is
-// 8 times the octet length of the x coordinate, which RFC 7518 §6.2.1.2 requires
-// to be the full coordinate size for the curve. OKP keys (fixed size) and oct
-// keys have no floor, and material that doesn't decode is left to key
-// conversion.
+// checkKeyStrength rejects, before conversion, an EC verification key below the
+// floor with a [WeakKeyError]. go-jose converts only P-256, P-384 and P-521, so a
+// smaller curve is measured on the JWK: 8 times the octet length of the x
+// coordinate, which RFC 7518 §6.2.1.2 requires to be the full coordinate size
+// for the curve. RSA keys are measured after conversion by
+// [checkConvertedKeyStrength]. Material that is missing or doesn't decode is
+// left to key conversion.
 func checkKeyStrength(k *jwks.JSONWebKey) error {
-	var bits, minBits int
-	switch k.Kty {
-	case "RSA":
-		n, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			return nil
-		}
-		bits, minBits = new(big.Int).SetBytes(n).BitLen(), MinRSAKeyBits
-	case "EC":
-		x, err := base64.RawURLEncoding.DecodeString(k.X)
-		if err != nil {
-			return nil
-		}
-		bits, minBits = len(x)*8, MinECKeyBits
+	if k.Kty != "EC" {
+		return nil
+	}
+	x, err := base64.RawURLEncoding.DecodeString(k.X)
+	if err != nil || len(x) == 0 {
+		return nil
+	}
+	return floor(k, len(x)*8, MinECKeyBits)
+}
+
+// checkConvertedKeyStrength rejects a converted verification key below the
+// floor with a [WeakKeyError]. It measures the key that verifies the
+// signature — the RSA modulus bit length and the EC curve size — so no
+// spelling of the JWK members can skip the floor (CWE-326). OKP keys are fixed
+// size and have no floor.
+func checkConvertedKeyStrength(k *jwks.JSONWebKey, pub crypto.PublicKey) error {
+	switch key := pub.(type) {
+	case *rsa.PublicKey:
+		return floor(k, key.N.BitLen(), MinRSAKeyBits)
+	case *ecdsa.PublicKey:
+		return floor(k, key.Curve.Params().BitSize, MinECKeyBits)
 	default:
 		return nil
 	}
+}
+
+func floor(k *jwks.JSONWebKey, bits, minBits int) error {
 	if bits < minBits {
 		return &WeakKeyError{Kid: k.Kid, Kty: k.Kty, Bits: bits, MinBits: minBits}
 	}
