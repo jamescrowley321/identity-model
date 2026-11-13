@@ -866,7 +866,9 @@ credentials, authorization code and refresh token calls now fail a `2xx`
 response that is not a JSON object with non-empty string `access_token` and
 `token_type` members, with `error_kind` `TokenErrorKind.INVALID_TOKEN_RESPONSE`.
 In 4.x `{}` was a successful response. `ClientCredentialsTokenResponse` gains
-the `error_kind` field. The value of `token_type` is not checked here; compare
+the `error_kind` field. On the authorization code and refresh token responses
+a JSON object body is kept on `rejected_token`, so a rotated refresh token is
+not lost. The value of `token_type` is not checked here; compare
 it with the types you support before using the token.
 
 ### Public clients must send a `code_verifier`
@@ -874,9 +876,12 @@ it with the types you support before using the token.
 RFC 9700 §2.1.1: "Public clients MUST use PKCE". An authorization code
 redemption whose client authenticates with `ClientAuthMethod.NONE` (no secret,
 no `private_key_jwt`, no mTLS, or `client_auth_method=ClientAuthMethod.NONE`)
-and has no `code_verifier` raises `ProtocolParameterError` with reason
-`ProtocolParameterErrorReason.PKCE_REQUIRED` before anything is sent; the call
-returns it as an unsuccessful response. Confidential clients are unchanged.
+and has no non-empty `code_verifier` is refused before anything is sent:
+`request_authorization_code_token` returns an unsuccessful response whose
+`error` is the `ProtocolParameterError` message ("a public client must send a
+code_verifier (PKCE)"; reason `PKCE_REQUIRED` from
+`prepare_auth_code_token_request_data`). An empty `client_secret` counts as no
+secret. Confidential clients are unchanged.
 
 ```python
 verifier, challenge = generate_pkce_pair()
@@ -895,10 +900,11 @@ response = request_authorization_code_token(
 ### `redirect_uri` and `resource` must be absolute URIs without a fragment
 
 RFC 6749 §3.1.2 and RFC 8707 §2 require both to be absolute URIs (RFC 3986
-§4.3) with no fragment component. `build_authorization_url` (`redirect_uri`,
-and a `resource` passed as an extra parameter), PAR (`redirect_uri`) and token
-exchange (`resource`) raise `ProtocolParameterError` with reason
-`NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`. In 4.x `redirect_uri="cb#frag"` was
+§4.3) with no fragment component. `build_authorization_url` raises
+`ProtocolParameterError` (reason `NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`) for
+its `redirect_uri` and for a `resource` passed as an extra parameter. PAR
+(`redirect_uri`) and token exchange (`resource`) are refused before anything
+is sent and return an unsuccessful response carrying that error's message. In 4.x `redirect_uri="cb#frag"` was
 sent as is. A query component is still allowed.
 
 ### A client update leaves out server-issued fields and keeps its `client_id`
@@ -908,8 +914,9 @@ RFC 7592 §2.2: the update request "MUST NOT include the
 `client_secret_expires_at`, or `client_id_issued_at` fields", and its
 `client_id` "MUST be the same as its currently issued client identifier".
 `update_client` now drops those four fields from `extra_metadata`, so the
-metadata of a read response can be passed back as is, and fails with
-`ProtocolParameterError` (`CLIENT_ID_MISMATCH`) when `extra_metadata` names a
+metadata of a read response can be passed back as is, and returns an
+unsuccessful response (the `ProtocolParameterError` message, reason
+`CLIENT_ID_MISMATCH`) without sending anything when `extra_metadata` names a
 different `client_id`. In 4.x both reached the server.
 
 ## DPoP client
@@ -968,10 +975,11 @@ token request and for all subsequent token requests until the authorization
 server supplies a new nonce." In 4.x a nonce sent on a `200` response was
 dropped, and a nonce from a `use_dpop_nonce` challenge was used only for that
 call's retry. Now a `DPoPKey` remembers the latest `DPoP-Nonce` each server
-(scheme, host and port) sent, on any response, and the token, PAR and UserInfo
-calls put it in their next proof to that server. A resource server's nonce is
-never sent to the authorization server (§9). `DPoPKey.nonce_for(uri)` returns
-the nonce for a server. No code change is needed.
+(scheme, host and port) and role sent, on any response, and the token, PAR
+and UserInfo calls put it in their next proof to that server. A resource
+server's nonce is never sent to the authorization server, even on a shared
+origin (§9). `DPoPKey.nonce_for(uri, resource_server=...)` returns the nonce
+for a server. No code change is needed.
 
 ## Access token validation
 

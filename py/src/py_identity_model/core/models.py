@@ -899,7 +899,9 @@ class TokenErrorKind(Enum):
 
     INVALID_TOKEN_RESPONSE = "invalid_token_response"
     """A success response that is not a JSON object with non-empty string
-    ``access_token`` and ``token_type`` members (RFC 6749 §5.1)."""
+    ``access_token`` and ``token_type`` members (RFC 6749 §5.1). On the
+    authorization code and refresh token responses a JSON object body is kept
+    on ``rejected_token``."""
 
 
 @dataclass(repr=False, eq=False)

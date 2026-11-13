@@ -674,7 +674,9 @@ def parse_auth_code_token_response(
     """Parse authorization code token exchange HTTP response.
 
     A success response without ``access_token`` and ``token_type`` fails with
-    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1).
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
     """
     if response.is_success:
         response_json = response.json()
@@ -684,6 +686,9 @@ def parse_auth_code_token_response(
                 is_successful=False,
                 error=error,
                 error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
             )
         return AuthorizationCodeTokenResponse(
             is_successful=True,
@@ -706,7 +711,9 @@ def parse_refresh_token_response(
     """Parse refresh token grant HTTP response.
 
     A success response without ``access_token`` and ``token_type`` fails with
-    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1).
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
     """
     if response.is_success:
         response_json = response.json()
@@ -716,6 +723,9 @@ def parse_refresh_token_response(
                 is_successful=False,
                 error=error,
                 error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
             )
         return RefreshTokenResponse(is_successful=True, token=response_json)
 

@@ -58,7 +58,8 @@ def prepare_userinfo_headers(
         "GET",
         request.address,
         access_token=request.token,
-        nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
+        nonce=dpop_nonce
+        or request.dpop_key.nonce_for(request.address, resource_server=True),
     )
     return {"Authorization": f"DPoP {request.token}", "DPoP": proof}
 

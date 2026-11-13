@@ -106,8 +106,8 @@ class TestExtractDpopNonce:
         resp = httpx.Response(200, json={}, headers={"DPoP-Nonce": "n"})
         key = generate_dpop_key()
         assert extract_dpop_nonce(resp) is None
-        remember_dpop_nonce(key, TOKEN_URL, resp)
-        assert key.nonce_for(TOKEN_URL) == "n"
+        remember_dpop_nonce(key, TOKEN_URL, resp, resource_server=False)
+        assert key.nonce_for(TOKEN_URL, resource_server=False) == "n"
 
     def test_none_on_unrelated_error(self):
         resp = httpx.Response(

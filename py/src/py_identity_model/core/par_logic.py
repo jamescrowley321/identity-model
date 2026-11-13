@@ -64,7 +64,8 @@ def prepare_par_request_data(
             request.dpop_key,
             "POST",
             request.address,
-            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
+            nonce=dpop_nonce
+            or request.dpop_key.nonce_for(request.address, resource_server=False),
         )
 
     auth = apply_client_auth(

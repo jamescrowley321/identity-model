@@ -213,7 +213,7 @@ class TestSyncDpopTokenTypeRequired:
         response = call(build(require_dpop_token_type=True))
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
-        assert response.rejected_token is None
+        assert response.rejected_token == token
 
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
     @respx.mock

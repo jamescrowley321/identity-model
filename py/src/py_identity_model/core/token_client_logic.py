@@ -139,13 +139,14 @@ def prepare_auth_code_token_request_data(
 
     Raises:
         ProtocolParameterError: The client is public (it resolves to
-            ``ClientAuthMethod.NONE``) and has no ``code_verifier``
+            ``ClientAuthMethod.NONE``, an empty ``client_secret`` counting as
+            none) and has no non-empty ``code_verifier``
             (:attr:`ProtocolParameterErrorReason.PKCE_REQUIRED`): RFC 9700
             §2.1.1 requires public clients to use PKCE. Raised before
             anything is sent.
     """
-    if request.code_verifier is None and (
-        resolve_client_auth_method(request, client_secret=request.client_secret)
+    if not request.code_verifier and (
+        resolve_client_auth_method(request, client_secret=request.client_secret or None)
         is ClientAuthMethod.NONE
     ):
         raise ProtocolParameterError(
@@ -171,7 +172,8 @@ def prepare_auth_code_token_request_data(
             request.dpop_key,
             "POST",
             request.address,
-            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
+            nonce=dpop_nonce
+            or request.dpop_key.nonce_for(request.address, resource_server=False),
         )
 
     auth = apply_client_auth(params, request, client_secret=request.client_secret)
@@ -273,7 +275,8 @@ def prepare_refresh_token_request_data(
             request.dpop_key,
             "POST",
             request.address,
-            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
+            nonce=dpop_nonce
+            or request.dpop_key.nonce_for(request.address, resource_server=False),
         )
 
     auth = apply_client_auth(params, request, client_secret=request.client_secret)

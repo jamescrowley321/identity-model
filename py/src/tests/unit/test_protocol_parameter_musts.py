@@ -173,6 +173,8 @@ class TestPublicClientRequiresPkce:
                 {"client_auth_method": ClientAuthMethod.NONE, "client_secret": "s"},
                 id="explicit_none",
             ),
+            pytest.param({"code_verifier": ""}, id="empty_verifier"),
+            pytest.param({"client_secret": ""}, id="empty_secret"),
         ],
     )
     def test_public_client_without_verifier_rejected(self, kwargs):

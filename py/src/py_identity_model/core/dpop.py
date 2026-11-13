@@ -129,7 +129,7 @@ class DPoPKey:
 
     _algorithm: DPoPAlgorithm
     _private_key: _PrivateKey
-    _nonces: dict[str, str]
+    _nonces: dict[tuple[bool, str], str]
     _nonce_lock: threading.Lock
 
     def __init__(self, algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256) -> None:
@@ -157,24 +157,31 @@ class DPoPKey:
         self._nonces = {}
         self._nonce_lock = threading.Lock()
 
-    def nonce_for(self, uri: str) -> str | None:
+    def nonce_for(self, uri: str, *, resource_server: bool) -> str | None:
         """The latest ``DPoP-Nonce`` the server at *uri*'s origin supplied.
 
         RFC 9449 §8.2: the client MUST use a nonce the server supplied, also
         on a ``200`` response, for all subsequent requests until the server
-        supplies a new one. Nonces are kept per origin (scheme, host, port),
-        so one server's nonce is never sent to another (§9).
+        supplies a new one. Nonces are kept per origin (scheme, host, port)
+        and per role, so a resource server's nonce is never sent to the
+        authorization server, even on a shared origin, and one server's nonce
+        never reaches another (§9).
+
+        Args:
+            uri: The request URI.
+            resource_server: ``True`` for a resource request (e.g. UserInfo),
+                ``False`` for an authorization-server request (token, PAR).
 
         Returns:
             The nonce, or ``None`` when that server has supplied none.
         """
         with self._nonce_lock:
-            return self._nonces.get(_origin(uri))
+            return self._nonces.get(_nonce_key(uri, resource_server))
 
-    def remember_nonce(self, uri: str, nonce: str) -> None:
-        """Record *nonce* as the latest ``DPoP-Nonce`` from *uri*'s origin."""
+    def remember_nonce(self, uri: str, nonce: str, *, resource_server: bool) -> None:
+        """Record *nonce* as the latest ``DPoP-Nonce`` from *uri*'s server."""
         with self._nonce_lock:
-            self._nonces[_origin(uri)] = nonce
+            self._nonces[_nonce_key(uri, resource_server)] = nonce
 
     @classmethod
     def from_pem(
@@ -471,12 +478,14 @@ def build_dpop_headers(
     return headers
 
 
-def _origin(uri: str) -> str:
+def _nonce_key(uri: str, resource_server: bool) -> tuple[bool, str]:
     parts = urlsplit(uri)
-    return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    return resource_server, f"{parts.scheme.lower()}://{parts.netloc.lower()}"
 
 
-def remember_dpop_nonce(key: DPoPKey, uri: str, response: httpx.Response) -> None:
+def remember_dpop_nonce(
+    key: DPoPKey, uri: str, response: httpx.Response, *, resource_server: bool
+) -> None:
     """Record a ``DPoP-Nonce`` header from *response* on *key* for *uri*'s server.
 
     Any status counts: a server may supply the next nonce on a ``200``
@@ -484,7 +493,7 @@ def remember_dpop_nonce(key: DPoPKey, uri: str, response: httpx.Response) -> Non
     """
     nonce = response.headers.get("DPoP-Nonce")
     if nonce:
-        key.remember_nonce(uri, nonce)
+        key.remember_nonce(uri, nonce, resource_server=resource_server)
 
 
 def extract_dpop_nonce(response: httpx.Response) -> str | None:

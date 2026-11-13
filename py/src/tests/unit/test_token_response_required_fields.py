@@ -82,3 +82,26 @@ class TestParsersRequireFields:
         response = parse(_response(body))
         assert response.is_successful is True
         assert response.token == body
+
+
+@pytest.mark.unit
+class TestRejectedTokenKept:
+    """A rotated refresh token in an invalid response is not lost."""
+
+    @pytest.mark.parametrize(
+        "parse",
+        [
+            pytest.param(parse_auth_code_token_response, id="auth_code"),
+            pytest.param(parse_refresh_token_response, id="refresh"),
+        ],
+    )
+    def test_object_body_kept_on_rejected_token(self, parse):
+        body = {"access_token": "at-1", "refresh_token": "rt-2"}
+        response = parse(_response(body))
+        assert response.is_successful is False
+        assert response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
+        assert response.rejected_token == body
+
+    def test_non_object_body_not_kept(self):
+        response = parse_refresh_token_response(_response([1, 2]))
+        assert response.rejected_token is None
