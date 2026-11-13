@@ -577,7 +577,7 @@ proof window is accepted, with no error. Build them once at startup.
 
 ## Models
 
-### Request, options and result types are frozen and keyword-only
+### Request, options and result types are frozen and keyword-only ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
 
 Every request type (`DiscoveryDocumentRequest`, `JwksRequest`, every
 `*TokenRequest`, `PushedAuthorizationRequest`, `UserInfoRequest`, the client
@@ -627,7 +627,7 @@ are not frozen themselves; replace the object rather than editing them.
 `CacheCounters` stays mutable: it is a live, thread-safe tally that the caches
 update.
 
-### `MtlsClientAuth` takes `certificate_path` and `private_key_path`
+### `MtlsClientAuth` takes `certificate_path` and `private_key_path` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
 
 `MtlsClientAuth.certificate` and `MtlsClientAuth.private_key` are renamed to
 `certificate_path` and `private_key_path`. They are filesystem paths to PEM
@@ -643,7 +643,7 @@ MtlsClientAuth(certificate="/etc/client.crt", private_key="/etc/client.key")
 MtlsClientAuth(certificate_path="/etc/client.crt", private_key_path="/etc/client.key")
 ```
 
-### `PushedAuthorizationRequest.redirect_uri` is required
+### `PushedAuthorizationRequest.redirect_uri` is required ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
 
 `redirect_uri` has no default. Leaving it out raises `TypeError` when you build
 the request, instead of an error when it is sent. An empty `redirect_uri`
@@ -659,7 +659,7 @@ PushedAuthorizationRequest(
 
 ## Discovery
 
-### `parse_discovery_url` is replaced by `discovery_document_url`
+### `parse_discovery_url` is replaced by `discovery_document_url` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
 
 `DiscoveryDocumentRequest.address`, `disco_doc_address` and
 `OIDCSettings.discovery_url` are the discovery document URL, the same as
@@ -731,7 +731,7 @@ if not disco.is_successful and disco.error_kind is DiscoveryErrorKind.MISSING_FI
 A missing `jwks_uri` now reports `Missing required parameters: jwks_uri`.
 
 `DiscoveryPolicy` is keyword-only (see
-[Request, options and result types are frozen and keyword-only](#request-options-and-result-types-are-frozen-and-keyword-only)).
+[Request, options and result types are frozen and keyword-only](#request-options-and-result-types-are-frozen-and-keyword-only-1128)).
 A call that passed `require_key_set` positionally raises `TypeError`: drop it
 and pass the other fields by name.
 
@@ -933,7 +933,7 @@ disco = get_discovery_document(
 
 `address` is the discovery document URL; the library does not append the
 well-known path. See
-[`parse_discovery_url` is replaced by `discovery_document_url`](#parse_discovery_url-is-replaced-by-discovery_document_url).
+[`parse_discovery_url` is replaced by `discovery_document_url`](#parse_discovery_url-is-replaced-by-discovery_document_url-1128).
 
 Use the issuer exactly as your provider publishes it. If you call
 `process_discovery_response` (`py_identity_model.core.discovery_logic`) or
