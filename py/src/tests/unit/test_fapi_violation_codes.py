@@ -28,7 +28,9 @@ from .test_fapi_profile import (
     _pkj,
     _profile,
     _profile_from,
+    _request_object,
     _request_object_key,
+    _signed_par,
     _signed_profile,
 )
 
@@ -38,6 +40,10 @@ Codes = list[FAPIViolationCode]
 
 def _request(**overrides) -> Codes:
     return validate_fapi_authorization_request(_par(**overrides)).codes
+
+
+def _signed(request_object: str) -> Codes:
+    return validate_fapi_authorization_request(_signed_par(request_object)).codes
 
 
 def _server(**overrides) -> Codes:
@@ -62,6 +68,7 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
         )
     ),
     FAPIViolationCode.NONCE_TOO_LONG: lambda: _request(nonce="n" * 65),
+    FAPIViolationCode.NONCE_INVALID: lambda: _signed(_request_object({"nonce": 5})),
     FAPIViolationCode.REDIRECT_URI_INVALID: lambda: _request(
         redirect_uri="https:///cb"
     ),
@@ -94,6 +101,14 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
     ),
     FAPIViolationCode.REQUEST_OBJECT_LIFETIME_INVALID: lambda: _refused(
         lambda: _signed_profile(request_object_key=_request_object_key(lifetime=0))
+    ),
+    FAPIViolationCode.REQUEST_OBJECT_INVALID: lambda: _signed("not-a-jwt"),
+    FAPIViolationCode.REQUEST_OBJECT_ENCRYPTED: lambda: _signed("a.b.c.d.e"),
+    FAPIViolationCode.REQUEST_OBJECT_CLIENT_ID_MISMATCH: lambda: _signed(
+        _request_object({"client_id": "other"}, drop=("iss",))
+    ),
+    FAPIViolationCode.REQUEST_OBJECT_ISSUER_MISMATCH: lambda: _signed(
+        _request_object({"iss": "other"})
     ),
     FAPIViolationCode.REQUEST_URI_MISSING: lambda: _refused(
         lambda: _profile().authorization_url("")

@@ -137,6 +137,7 @@ from .managed_client import HTTPClient
 from .par import (
     PushedAuthorizationRequest,
     PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
     push_authorization_request,
 )
 from .registration import (
@@ -260,6 +261,7 @@ __all__ = [
     "RefreshTokenResponse",
     "RequestObjectKey",
     "SignedIntrospectionOptions",
+    "SignedPushedAuthorizationRequest",
     "StateValidationResult",
     "TokenBinding",
     "TokenErrorKind",

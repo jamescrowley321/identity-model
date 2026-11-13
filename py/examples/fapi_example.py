@@ -70,7 +70,6 @@ def build_requests_example(profile: FAPI2ClientProfile) -> None:
         state="state-value", code_challenge=challenge, dpop_key=dpop_key
     )
     print(f"\n  PAR endpoint: {request.address}")
-    print(f"  PKCE method: {request.code_challenge_method}")
     print(f"  Authorization URL: {profile.authorization_url('urn:example:request')}")
 
 

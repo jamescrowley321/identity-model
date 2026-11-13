@@ -242,7 +242,8 @@ class TestValidateFAPIDiscovery:
         result = validate_fapi_discovery(
             _discovery(pushed_authorization_request_endpoint="")
         )
-        assert result.violations == [PAR_ABSENT]
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [PAR_ABSENT]
 
     @pytest.mark.parametrize(
         "endpoint", [True, 1, ["https://auth.example.com/par"], {}, "   "]
@@ -252,7 +253,8 @@ class TestValidateFAPIDiscovery:
         result = validate_fapi_discovery(
             _discovery(pushed_authorization_request_endpoint=endpoint)
         )
-        assert result.violations == [
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [
             "pushed_authorization_request_endpoint must be a URL string, got "
             f"{endpoint!r} (RFC 9126 §5)"
         ]
