@@ -174,13 +174,13 @@ A store implements `DPoPReplayCache`, whose
 `check_and_store(jkt, jti, expires_at, now)` returns a `DPoPReplayCheck`:
 `RECORDED`, `REPLAYED` or `FULL`. It returns its answer and does not raise for
 a replay or a full store; `REPLAYED` and `FULL` refuse the proof, and an
-answer that is not a `DPoPReplayCheck` raises `ConfigurationException`.
+answer that is not a `DPoPReplayCheck` raises `DPoPReplayCacheError` (a `ConfigurationException`).
 A store reached over the network can implement `AsyncDPoPReplayCache`
 (`async def check_and_store`) instead, with the async validators
 (`py_identity_model.aio.validate_token`,
 `py_identity_model.aio.check_introspection_binding`,
 `py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
-async cache with `ConfigurationException`.
+async cache with `DPoPReplayCacheError`.
 
 `py_identity_model.aio.verify_dpop_proof` and
 `py_identity_model.aio.check_introspection_binding` are coroutines and must be
@@ -317,10 +317,10 @@ Starlette's `TrustedHostMiddleware` restricts it). Behind a
   path and query as sent.
 - Certificate-bound tokens need a `client_certificate` source. Without one,
   every certificate-bound token is refused.
-- A `ConfigurationException` while validating (for example a replay cache
-  whose `check_and_store` does not return a `DPoPReplayCheck`) is a server
-  fault: `500` on HTTP, close code `1011` on a WebSocket, logged with its
-  traceback.
+- A `DPoPReplayCacheError` (a `ConfigurationException`: an async replay cache
+  on a sync path, or one whose `check_and_store` does not return a
+  `DPoPReplayCheck`) is a server fault: `500` on HTTP, close code `1011` on a
+  WebSocket, logged with its traceback.
 
 On a WebSocket, a DPoP proof for the handshake has `htm` `GET` and `htu` the
 handshake URI written with `http`/`https` in place of `ws`/`wss` (or

@@ -531,9 +531,9 @@ proof window is accepted, with no error. Build them once at startup.
   `py_identity_model.aio.check_introspection_binding`,
   `py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
   async cache, or any cache that returns an awaitable, with
-  `ConfigurationException`.
-- A cache answer that is not a `DPoPReplayCheck` raises
-  `ConfigurationException`.
+  `DPoPReplayCacheError` (a `ConfigurationException`).
+- A cache answer that is not a `DPoPReplayCheck` raises `DPoPReplayCacheError`.
+  The FastAPI middleware answers it with `500` (WebSocket close `1011`).
 - `py_identity_model.aio.check_introspection_binding` and
   `py_identity_model.aio.verify_dpop_proof` are coroutines, like every `aio`
   function, and must be awaited. A call without `await` runs no check and

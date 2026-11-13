@@ -32,7 +32,7 @@ import jwt as pyjwt
 from jwt.api_jws import PyJWS
 
 from ..exceptions import (
-    ConfigurationException,
+    DPoPReplayCacheError,
     TokenValidationException,
     WeakKeyException,
 )
@@ -268,7 +268,7 @@ class AsyncDPoPReplayCache(Protocol):
 
     The same contract, with an awaitable :meth:`check_and_store`. Use with the
     async validators (``py_identity_model.aio``); the sync validators refuse
-    it with a :class:`~py_identity_model.exceptions.ConfigurationException`.
+    it with a :class:`~py_identity_model.exceptions.DPoPReplayCacheError`.
     Not ``runtime_checkable``: ``isinstance`` could not tell it from a
     :class:`DPoPReplayCache`.
     """
@@ -454,11 +454,11 @@ def _replay_result(result: object) -> None:
     """Raise for a proof the replay cache did not record (any other answer).
 
     Raises:
-        ConfigurationException: If *result* is not a :class:`DPoPReplayCheck`.
+        DPoPReplayCacheError: If *result* is not a :class:`DPoPReplayCheck`.
         DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
     """
     if not isinstance(result, DPoPReplayCheck):
-        raise ConfigurationException(REPLAY_ANSWER_MESSAGE)
+        raise DPoPReplayCacheError(REPLAY_ANSWER_MESSAGE)
     if result is DPoPReplayCheck.REPLAYED:
         raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
     if result is not DPoPReplayCheck.RECORDED:
@@ -469,7 +469,7 @@ def record_proof(record: _ReplayRecord) -> None:
     """Run the replay check with a sync cache.
 
     Raises:
-        ConfigurationException: If the cache is an
+        DPoPReplayCacheError: If the cache is an
             :class:`AsyncDPoPReplayCache` (use the async validators), or its
             answer is not a :class:`DPoPReplayCheck`.
         DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
@@ -483,7 +483,7 @@ def record_proof(record: _ReplayRecord) -> None:
             result.close()
         elif isinstance(result, asyncio.Future):
             result.cancel()
-        raise ConfigurationException(ASYNC_REPLAY_CACHE_MESSAGE)
+        raise DPoPReplayCacheError(ASYNC_REPLAY_CACHE_MESSAGE)
     _replay_result(result)
 
 
@@ -491,7 +491,7 @@ async def record_proof_async(record: _ReplayRecord) -> None:
     """Run the replay check with a sync or an async cache.
 
     Raises:
-        ConfigurationException: If the cache's answer is not a
+        DPoPReplayCacheError: If the cache's answer is not a
             :class:`DPoPReplayCheck`.
         DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
     """
@@ -679,7 +679,7 @@ def verify_dpop_proof(
 
     Raises:
         DPoPValidationError: If any check fails; ``kind`` says which.
-        ConfigurationException: If ``options.replay_cache`` is an
+        DPoPReplayCacheError: If ``options.replay_cache`` is an
             :class:`AsyncDPoPReplayCache`.
     """
     verified, record = _check_dpop_proof(proof, request, options, now=now)
