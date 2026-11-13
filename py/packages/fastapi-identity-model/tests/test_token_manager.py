@@ -195,11 +195,14 @@ async def test_refresh_grant_failure_raises(monkeypatch):
 
 async def test_refresh_without_access_token_raises(monkeypatch):
     _patch_refresh(monkeypatch, _refresh_response(token={"refresh_token": "r2"}))
+    tm = _stale()
     with pytest.raises(TokenManagerError) as exc:
-        await _stale().get_access_token()
-    assert _error(exc) == (
+        await tm.get_access_token()
+    assert (*_error(exc), tm.access_token, tm.refresh_token) == (
         TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
         {"kind": "missing_access_token"},
+        "stale",
+        "r2",
     )
 
 

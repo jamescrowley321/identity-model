@@ -419,8 +419,8 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     issuer_check = validate_authorize_callback_issuer(
         cb,
         disco.issuer,
-        iss_parameter_supported=bool(
-            disco.authorization_response_iss_parameter_supported
+        iss_parameter_supported=(
+            disco.authorization_response_iss_parameter_supported is True
         ),
     )
     if not issuer_check.is_valid:

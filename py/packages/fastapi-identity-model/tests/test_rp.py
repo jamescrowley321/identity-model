@@ -647,6 +647,16 @@ async def test_callback_rejects_issuer(monkeypatch, disco, iss_param):
         pytest.param(_ISS_ADVERTISED, "&iss=https%3A%2F%2Fop", id="advertised-match"),
         pytest.param(_DISCO, "&iss=https%3A%2F%2Fop", id="not-advertised-match"),
         pytest.param(_DISCO, "", id="not-advertised-absent"),
+        pytest.param(
+            SimpleNamespace(
+                **{
+                    **vars(_DISCO),
+                    "authorization_response_iss_parameter_supported": "false",
+                }
+            ),
+            "",
+            id="non-bool-flag-is-not-advertised",
+        ),
     ],
 )
 async def test_callback_accepts_issuer(monkeypatch, disco, iss_param):
