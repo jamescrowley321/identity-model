@@ -9,11 +9,17 @@ import respx
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 from py_identity_model.core.fapi import (
     FAPIValidationResult,
+    FAPIViolation,
+    FAPIViolationCode,
     validate_fapi_discovery,
 )
 from py_identity_model.core.models import DiscoveryDocumentResponse
 
 from ..constants import DISCO_URL, ISSUER
+
+
+def _messages(violations: list[FAPIViolation]) -> list[str]:
+    return [v.message for v in violations]
 
 
 @pytest.mark.unit
@@ -23,13 +29,15 @@ class TestFAPIValidationResult:
         assert result.is_compliant is True
 
     def test_violations_is_not_compliant(self):
-        result = FAPIValidationResult(violations=["problem"])
+        problem = FAPIViolation(FAPIViolationCode.DISCOVERY_FAILED, "problem")
+        result = FAPIValidationResult(violations=[problem])
         assert result.is_compliant is False
+        assert result.codes == [FAPIViolationCode.DISCOVERY_FAILED]
 
     def test_default_is_compliant(self):
         result = FAPIValidationResult()
         assert result.is_compliant is True
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
 
 # Discovery metadata a FAPI 2.0 authorization server advertises. Each test
@@ -112,13 +120,13 @@ class TestValidateFAPIDiscovery:
     def test_compliant_discovery(self):
         result = validate_fapi_discovery(_discovery())
         assert result.is_compliant is True
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_missing_auth_code_grant(self):
         result = validate_fapi_discovery(
             _discovery(grant_types_supported=["client_credentials"])
         )
-        assert result.violations == [
+        assert _messages(result.violations) == [
             "Server does not support authorization_code grant type"
         ]
 
@@ -126,7 +134,7 @@ class TestValidateFAPIDiscovery:
         result = validate_fapi_discovery(
             _discovery(token_endpoint_auth_methods_supported=["client_secret_basic"])
         )
-        assert result.violations == [
+        assert _messages(result.violations) == [
             "Server does not support FAPI-compliant client auth "
             "(private_key_jwt or tls_client_auth)"
         ]
@@ -135,7 +143,7 @@ class TestValidateFAPIDiscovery:
         result = validate_fapi_discovery(
             _discovery(id_token_signing_alg_values_supported=["RS256"])
         )
-        assert result.violations == [
+        assert _messages(result.violations) == [
             "Server does not support FAPI-compliant signing algorithms "
             "(ES256, EdDSA, PS256)"
         ]
@@ -148,25 +156,25 @@ class TestValidateFAPIDiscovery:
                 token_endpoint_auth_signing_alg_values_supported=["EdDSA"],
             )
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_failed_discovery_returns_non_compliant(self):
         result = validate_fapi_discovery(DiscoveryDocumentResponse(is_successful=False))
-        assert result.violations == ["Discovery document fetch failed"]
+        assert _messages(result.violations) == ["Discovery document fetch failed"]
 
     def test_none_auth_methods_non_compliant(self):
         """RFC 8414 §2 default is client_secret_basic — FAPI-prohibited."""
         result = validate_fapi_discovery(
             _discovery(token_endpoint_auth_methods_supported=None)
         )
-        assert result.violations == [AUTH_METHODS_DEFAULT]
+        assert _messages(result.violations) == [AUTH_METHODS_DEFAULT]
 
     def test_none_signing_algs_non_compliant(self):
         """OIDC Discovery §3: REQUIRED, no RS256 (or any other) default."""
         result = validate_fapi_discovery(
             _discovery(id_token_signing_alg_values_supported=None)
         )
-        assert result.violations == [REQUIRED_ID_TOKEN_ALGS]
+        assert _messages(result.violations) == [REQUIRED_ID_TOKEN_ALGS]
 
     def test_none_fields_non_compliant(self):
         """All-None metadata: every FAPI requirement is reported."""
@@ -175,7 +183,7 @@ class TestValidateFAPIDiscovery:
             issuer="https://auth.example.com",
         )
         result = validate_fapi_discovery(disco)
-        assert result.violations == [
+        assert _messages(result.violations) == [
             REQUIRED_RESPONSE_TYPES,
             AUTH_METHODS_DEFAULT,
             REQUIRED_ID_TOKEN_ALGS,
@@ -187,7 +195,7 @@ class TestValidateFAPIDiscovery:
 
     def test_response_types_missing_code(self):
         result = validate_fapi_discovery(_discovery(response_types_supported=["token"]))
-        assert result.violations == [
+        assert _messages(result.violations) == [
             "Server does not support 'code' response type "
             "(authorization code flow required)"
         ]
@@ -195,18 +203,18 @@ class TestValidateFAPIDiscovery:
     def test_response_types_none_is_non_compliant(self):
         """OIDC Discovery §3: response_types_supported is REQUIRED, no default."""
         result = validate_fapi_discovery(_discovery(response_types_supported=None))
-        assert result.violations == [REQUIRED_RESPONSE_TYPES]
+        assert _messages(result.violations) == [REQUIRED_RESPONSE_TYPES]
 
     def test_grant_types_none_is_compliant(self):
         """OIDC Discovery §3 default is ["authorization_code", "implicit"]."""
         result = validate_fapi_discovery(_discovery(grant_types_supported=None))
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_pkce_methods_without_s256(self):
         result = validate_fapi_discovery(
             _discovery(code_challenge_methods_supported=["plain"])
         )
-        assert result.violations == [
+        assert _messages(result.violations) == [
             "Server does not support S256 PKCE "
             "(FAPI 2.0 requires code_challenge_methods_supported to include S256)"
         ]
@@ -215,27 +223,48 @@ class TestValidateFAPIDiscovery:
         result = validate_fapi_discovery(
             _discovery(code_challenge_methods_supported=["S256", "plain"])
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_pkce_methods_none_is_non_compliant(self):
         """RFC 8414 §2: omitted code_challenge_methods_supported means no PKCE."""
         result = validate_fapi_discovery(
             _discovery(code_challenge_methods_supported=None)
         )
-        assert result.violations == [PKCE_ABSENT]
+        assert _messages(result.violations) == [PKCE_ABSENT]
 
     def test_par_endpoint_none_is_non_compliant(self):
         result = validate_fapi_discovery(
             _discovery(pushed_authorization_request_endpoint=None)
         )
-        assert result.violations == [PAR_ABSENT]
+        assert _messages(result.violations) == [PAR_ABSENT]
+
+    def test_par_endpoint_empty_is_non_compliant(self):
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint="")
+        )
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [PAR_ABSENT]
+
+    @pytest.mark.parametrize(
+        "endpoint", [True, 1, ["https://auth.example.com/par"], {}, "   "]
+    )
+    def test_par_endpoint_not_a_url_string_is_non_compliant(self, endpoint):
+        """971-B: a truthy non-string (``true``) used to pass."""
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint=endpoint)
+        )
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            f"{endpoint!r} (RFC 9126 §5)"
+        ]
 
     @pytest.mark.parametrize("supported", [None, False], ids=["absent", "false"])
     def test_iss_parameter_not_supported_is_non_compliant(self, supported):
         result = validate_fapi_discovery(
             _discovery(authorization_response_iss_parameter_supported=supported)
         )
-        assert result.violations == [ISS_NOT_SUPPORTED]
+        assert _messages(result.violations) == [ISS_NOT_SUPPORTED]
 
     @pytest.mark.parametrize(
         ("dpop_algs", "mtls_bound"),
@@ -254,7 +283,7 @@ class TestValidateFAPIDiscovery:
                 tls_client_certificate_bound_access_tokens=mtls_bound,
             )
         )
-        assert result.violations == [NO_SENDER_CONSTRAINT]
+        assert _messages(result.violations) == [NO_SENDER_CONSTRAINT]
 
     def test_mtls_bound_tokens_satisfy_sender_constraint(self):
         result = validate_fapi_discovery(
@@ -263,19 +292,19 @@ class TestValidateFAPIDiscovery:
                 tls_client_certificate_bound_access_tokens=True,
             )
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_auth_signing_algs_none_with_private_key_jwt(self):
         result = validate_fapi_discovery(
             _discovery(token_endpoint_auth_signing_alg_values_supported=None)
         )
-        assert result.violations == [AUTH_SIGNING_ALGS_ABSENT]
+        assert _messages(result.violations) == [AUTH_SIGNING_ALGS_ABSENT]
 
     def test_auth_signing_algs_without_fapi_algorithm(self):
         result = validate_fapi_discovery(
             _discovery(token_endpoint_auth_signing_alg_values_supported=["RS256"])
         )
-        assert result.violations == [AUTH_SIGNING_ALGS_WEAK]
+        assert _messages(result.violations) == [AUTH_SIGNING_ALGS_WEAK]
 
     def test_auth_signing_algs_ignored_without_private_key_jwt(self):
         """RFC 8414 §2: the field governs JWT client authentication only."""
@@ -285,7 +314,7 @@ class TestValidateFAPIDiscovery:
                 token_endpoint_auth_signing_alg_values_supported=None,
             )
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     @pytest.mark.parametrize(
         ("field", "violation"),
@@ -329,7 +358,7 @@ class TestValidateFAPIDiscovery:
     def test_malformed_list_metadata_is_a_violation(self, field, violation, malformed):
         """Server metadata is untrusted: a non-list or non-string value fails closed."""
         result = validate_fapi_discovery(_discovery(**{field: malformed}))
-        assert result.violations == [violation]
+        assert _messages(result.violations) == [violation]
 
 
 @pytest.mark.unit
@@ -341,7 +370,7 @@ class TestValidateFAPIDiscoveryAuthMethods:
         result = validate_fapi_discovery(
             _discovery(token_endpoint_auth_methods_supported=[auth_method])
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
 
 @pytest.mark.unit
@@ -363,4 +392,4 @@ class TestValidateFAPIDiscoveryFromDocument:
         disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
 
         assert disco.dpop_signing_alg_values_supported == ["ES256"]
-        assert validate_fapi_discovery(disco).violations == []
+        assert _messages(validate_fapi_discovery(disco).violations) == []

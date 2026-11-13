@@ -461,7 +461,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 error=e.kind.oauth_error,
             )
         if isinstance(e, CertificateBindingError):
-            logger.info("Certificate binding rejected: %s", e)
+            logger.info("Certificate binding rejected: %s", e.kind.value)
             return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
         # A replay cache that cannot be used is the server's fault, not a bad
         # token: it falls through to the 500 below.

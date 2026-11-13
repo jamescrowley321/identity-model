@@ -233,13 +233,53 @@ class JarmValidationException(AuthorizeCallbackException):
     """
 
 
+class CertificateBindingErrorKind(Enum):
+    """Why a certificate-bound access token was rejected (RFC 8705 §3)."""
+
+    NOT_BOUND = "not_bound"
+    """The token has no ``cnf`` claim with a string ``x5t#S256`` thumbprint,
+    but a certificate binding was required or checked."""
+    INVALID_THUMBPRINT = "invalid_thumbprint"
+    """``cnf["x5t#S256"]`` is not a base64url thumbprint (non-ASCII)."""
+    MISMATCH = "mismatch"
+    """``cnf["x5t#S256"]`` does not match the presented client certificate."""
+    CERTIFICATE_REQUIRED = "certificate_required"
+    """No client certificate was presented, but the token is certificate-bound
+    or ``required_binding`` is ``mtls``."""
+    INVALID_CERTIFICATE = "invalid_certificate"
+    """The presented client certificate is not valid PEM or DER X.509."""
+
+
+_CERTIFICATE_BINDING_MESSAGES = {
+    CertificateBindingErrorKind.NOT_BOUND: (
+        "Access token is not certificate-bound: no 'cnf' claim with an "
+        "'x5t#S256' thumbprint (RFC 8705 §3.1)"
+    ),
+    CertificateBindingErrorKind.INVALID_THUMBPRINT: (
+        "Access token 'cnf[x5t#S256]' is not a valid base64url thumbprint "
+        "(RFC 8705 §3.1)"
+    ),
+    CertificateBindingErrorKind.MISMATCH: (
+        "Certificate binding mismatch: token 'cnf[x5t#S256]' does not match the "
+        "presented client certificate (RFC 8705 §3)"
+    ),
+    CertificateBindingErrorKind.CERTIFICATE_REQUIRED: (
+        "No client certificate was presented for a certificate-bound access "
+        "token or required_binding=mtls (RFC 8705 §3)"
+    ),
+    CertificateBindingErrorKind.INVALID_CERTIFICATE: (
+        "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
+    ),
+}
+
+
 class CertificateBindingError(TokenValidationException):
     """Raised when mTLS certificate-bound access token validation fails.
 
     Covers the RFC 8705 §3 confirmation-method check: the token's
     ``cnf["x5t#S256"]`` thumbprint must match the client certificate
-    presented at the TLS layer. Absent ``cnf``/``x5t#S256`` or a thumbprint
-    mismatch raises this error.
+    presented at the TLS layer. ``kind`` says which rule failed; the message
+    is fixed per kind.
 
     Subclasses ``TokenValidationException`` (not ``ValidationException``
     directly): a certificate-binding failure is a token-validation failure,
@@ -248,8 +288,13 @@ class CertificateBindingError(TokenValidationException):
     fail open — the exact replay it is meant to stop.
     """
 
-    def __init__(self, message: str, details: dict | None = None):
-        super().__init__(message, token_part="payload", details=details)
+    def __init__(self, kind: CertificateBindingErrorKind) -> None:
+        self.kind = kind
+        super().__init__(
+            _CERTIFICATE_BINDING_MESSAGES[kind],
+            token_part="payload",
+            details={"kind": kind.value},
+        )
 
 
 class NetworkException(PyIdentityModelException):

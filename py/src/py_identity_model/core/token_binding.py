@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ..exceptions import (
     CertificateBindingError,
+    CertificateBindingErrorKind,
     ConfigurationException,
     TokenValidationException,
 )
@@ -62,16 +63,6 @@ NO_DPOP_OPTIONS_MESSAGE = (
 )
 PROOF_REQUEST_MESSAGE = (
     "presentation.method and presentation.url are needed to verify a DPoP proof"
-)
-NO_CERTIFICATE_MESSAGE = (
-    "required_binding=mtls but no client certificate was presented (RFC 8705 §3)"
-)
-BOUND_WITHOUT_CERTIFICATE_MESSAGE = (
-    "Certificate-bound access token was presented without a client certificate "
-    "(RFC 8705 §3)"
-)
-INVALID_CERTIFICATE_MESSAGE = (
-    "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
 )
 
 
@@ -210,16 +201,19 @@ def _check_dpop_binding(
     if not isinstance(jkt, str):
         raise DPoPValidationError(DPoPErrorKind.JKT_MISMATCH)
     if presentation.method is None or presentation.url is None:
-        raise ValueError(PROOF_REQUEST_MESSAGE)
+        raise ConfigurationException(PROOF_REQUEST_MESSAGE)
     if options is None:
         raise ConfigurationException(NO_DPOP_OPTIONS_MESSAGE)
-    request = DPoPProofRequest(
-        method=presentation.method,
-        url=presentation.url,
-        access_token=access_token,
-        expected_jkt=jkt,
-        expected_nonce=presentation.expected_nonce,
-    )
+    try:
+        request = DPoPProofRequest(
+            method=presentation.method,
+            url=presentation.url,
+            access_token=access_token,
+            expected_jkt=jkt,
+            expected_nonce=presentation.expected_nonce,
+        )
+    except ValueError as exc:
+        raise ConfigurationException(f"presentation: {exc}") from exc
     _, record = _check_dpop_proof(presentation.dpop_proof, request, options)
     return record
 
@@ -265,8 +259,8 @@ def check_token_binding(
         CertificateBindingError: If the certificate binding fails, including
             a ``cnf["x5t#S256"]`` token with no *presentation* and an
             unparseable ``presentation.client_certificate``.
-        ValueError: If a DPoP proof is checked without an absolute
-            ``presentation.url`` or a ``presentation.method``.
+        ConfigurationException: If a DPoP proof is checked without an
+            absolute ``presentation.url`` or a ``presentation.method``.
     """
     record = _check_binding_before_replay(
         claims, access_token, config.required_binding, config.dpop, presentation
@@ -323,8 +317,8 @@ def check_introspection_binding(
             ``cnf.jkt`` token with no *presentation*.
         CertificateBindingError: If the certificate binding fails, including
             a ``cnf["x5t#S256"]`` token with no *presentation*.
-        ValueError: If a DPoP proof is checked without an absolute
-            ``presentation.url`` or a ``presentation.method``.
+        ConfigurationException: If a DPoP proof is checked without an
+            absolute ``presentation.url`` or a ``presentation.method``.
     """
     record = _introspection_binding_before_replay(
         response, access_token, presentation, required_binding, dpop
@@ -381,7 +375,9 @@ def _check_binding_before_replay(
         if jkt_member in cnf:
             raise DPoPValidationError(DPoPErrorKind.PROOF_REQUIRED)
         if certificate_bound:
-            raise CertificateBindingError(BOUND_WITHOUT_CERTIFICATE_MESSAGE)
+            raise CertificateBindingError(
+                CertificateBindingErrorKind.CERTIFICATE_REQUIRED
+            )
         return None
 
     record = None
@@ -396,15 +392,13 @@ def _check_binding_before_replay(
         return record
     certificate = presentation.client_certificate
     if certificate is None:
-        raise CertificateBindingError(
-            NO_CERTIFICATE_MESSAGE
-            if binding is TokenBinding.MTLS
-            else BOUND_WITHOUT_CERTIFICATE_MESSAGE
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.CERTIFICATE_REQUIRED)
     try:
         validate_certificate_binding(claims, certificate)
     except ValueError as exc:
-        raise CertificateBindingError(INVALID_CERTIFICATE_MESSAGE) from exc
+        raise CertificateBindingError(
+            CertificateBindingErrorKind.INVALID_CERTIFICATE
+        ) from exc
     return record
 
 

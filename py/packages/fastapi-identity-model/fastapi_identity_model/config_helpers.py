@@ -17,6 +17,23 @@ from .config import OIDCSettings
 __all__ = ["oidc_settings_from_env"]
 
 
+def _audiences(value: str | None) -> list[str]:
+    # Entries are kept as given (stripped); an empty entry ("a,,b" or a
+    # trailing comma) reaches OIDCSettings and is rejected there.
+    if not value:
+        return []
+    return [entry.strip() for entry in value.split(",")]
+
+
+def _flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    if value.lower() in ("", "false"):
+        return False
+    if value.lower() == "true":
+        return True
+    raise ValueError(f"{name} must be 'true' or 'false'; got {value!r}")
+
+
 def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
     """Build settings from environment variables (e.g. ``OIDC_DISCOVERY_URL``).
 
@@ -26,12 +43,16 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
     ``REQUIRED_BINDING`` is ``none``, ``dpop`` or ``mtls``.
     ``CLIENT_CERTIFICATE_HEADER`` names the header carrying the mTLS client
     certificate; ``EXPECTED_ORIGIN`` is the ``scheme://host[:port]`` for the
-    DPoP ``htu`` check. Others fall back to the ``OIDCSettings`` defaults.
+    DPoP ``htu`` check. ``TRUSTED_AUDIENCES`` is a comma-separated list of
+    extra ID Token audiences the login callback accepts; ``VALIDATE_AZP`` is
+    ``true`` or ``false``. Others fall back to the ``OIDCSettings`` defaults.
 
     Raises:
         ValueError: A required variable is unset or empty,
-            ``REQUIRED_BINDING`` is not a ``TokenBinding`` value, or
-            ``EXPECTED_ORIGIN`` is not an http(s) origin.
+            ``REQUIRED_BINDING`` is not a ``TokenBinding`` value,
+            ``EXPECTED_ORIGIN`` is not an http(s) origin,
+            ``TRUSTED_AUDIENCES`` has an empty entry, or ``VALIDATE_AZP`` is
+            not ``true`` or ``false``.
     """
 
     def _req(name: str) -> str:
@@ -63,5 +84,7 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
             os.environ.get(f"{prefix}CLIENT_CERTIFICATE_HEADER") or None
         ),
         expected_origin=os.environ.get(f"{prefix}EXPECTED_ORIGIN") or None,
+        trusted_audiences=_audiences(os.environ.get(f"{prefix}TRUSTED_AUDIENCES")),
+        validate_azp=_flag(f"{prefix}VALIDATE_AZP"),
         **extra,
     )

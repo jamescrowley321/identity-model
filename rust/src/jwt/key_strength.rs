@@ -25,17 +25,18 @@ pub const MIN_EC_KEY_BITS: usize = 224;
 /// RSA strength is the bit length of the modulus `n`; EC strength is 8 times
 /// the octet length of the `x` coordinate, which RFC 7518 §6.2.1.2 requires to
 /// be the full coordinate size for the curve. `OKP` keys (fixed size) and `oct`
-/// keys have no floor, and material that doesn't decode is left to key
-/// conversion.
+/// keys have no floor, and material that is missing or doesn't decode is left
+/// to key conversion. `jsonwebtoken` decodes `n` and `x` with the same strict
+/// unpadded base64url engine, so what is measured is what verifies.
 pub(super) fn check_key_strength(key: &JsonWebKey) -> Result<()> {
     let (bits, min_bits) = match key.kty.as_str() {
         "RSA" => match URL_SAFE_NO_PAD.decode(&key.n) {
-            Ok(n) => (bit_length(&n), MIN_RSA_KEY_BITS),
-            Err(_) => return Ok(()),
+            Ok(n) if !n.is_empty() => (bit_length(&n), MIN_RSA_KEY_BITS),
+            _ => return Ok(()),
         },
         "EC" => match URL_SAFE_NO_PAD.decode(&key.x) {
-            Ok(x) => (x.len() * 8, MIN_EC_KEY_BITS),
-            Err(_) => return Ok(()),
+            Ok(x) if !x.is_empty() => (x.len() * 8, MIN_EC_KEY_BITS),
+            _ => return Ok(()),
         },
         _ => return Ok(()),
     };
