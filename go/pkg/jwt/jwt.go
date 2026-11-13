@@ -70,9 +70,10 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 		return nil, err
 	}
 
-	// RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies.
-	// Checked on the JWK before conversion, so the rule holds whichever curves
-	// go-jose knows (JWT-014).
+	// RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies
+	// (JWT-014). An EC key is first measured on the JWK, so the rule holds for
+	// curves go-jose can't convert; the converted key is then measured, so the
+	// floor applies to the key that actually verifies.
 	if err := checkKeyStrength(key); err != nil {
 		return nil, err
 	}
@@ -80,6 +81,9 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 	pub, err := toPublicKey(key)
 	if err != nil {
 		return nil, &KeyConversionError{Kid: header.Kid, Err: err}
+	}
+	if err := checkConvertedKeyStrength(key, pub); err != nil {
+		return nil, err
 	}
 
 	// JWT-001/009: parse and verify the signature. ParseSigned re-enforces the
