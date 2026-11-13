@@ -39,6 +39,7 @@ from fastapi_identity_model import (
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
+    ConfigurationException,
     DPoPErrorKind,
     DPoPReplayCheck,
     DPoPVerificationOptions,
@@ -672,6 +673,19 @@ class TestSettingsWiring:
             {"detail": "Internal server error during authentication"},
             status.WS_1011_INTERNAL_ERROR,
         )
+
+    async def test_other_configuration_errors_stay_401(self, raw_client, monkeypatch):
+        # Only an unusable replay cache is a 500; a ConfigurationException from
+        # the provider's data keeps the generic 401.
+        async def bad_discovery(*_args: object, **_kwargs: object) -> dict:
+            raise ConfigurationException("Discovery document missing jwks_uri")
+
+        monkeypatch.setattr(mw, "validate_token", bad_discovery)
+
+        async with raw_client(discovery_url=DISCOVERY_URL, audience=AUDIENCE) as c:
+            resp = await c.get("/me", headers={"Authorization": "Bearer t"})
+
+        assert (resp.status_code, resp.json()) == (401, GENERIC_BODY)
 
     async def test_env_mtls_reads_certificate_header(
         self, raw_client, oidc_env, token, client_cert_pem

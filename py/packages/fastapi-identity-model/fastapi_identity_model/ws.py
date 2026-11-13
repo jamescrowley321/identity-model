@@ -46,7 +46,7 @@ from jwt import InvalidTokenError
 
 from py_identity_model import (
     AuthorizationScheme,
-    ConfigurationException,
+    DPoPReplayCacheError,
     NetworkException,
     PyIdentityModelException,
     TokenValidationConfig,
@@ -237,9 +237,9 @@ def build_ws_authenticator(
                     ),
                 ),
             )
-        except ConfigurationException as e:
-            # A server misconfiguration, not a bad token.
-            logger.exception("Configuration error during WS token validation")
+        except DPoPReplayCacheError as e:
+            # A replay cache that cannot be used is the server's fault.
+            logger.exception("Replay cache error during WS token validation")
             raise WebSocketException(
                 code=_WS_INTERNAL_ERROR,
                 reason="Internal error during authentication",
