@@ -30,6 +30,7 @@ from starlette.responses import (  # type: ignore[attr-defined]
 from py_identity_model import (
     AuthorizationScheme,
     CertificateBindingError,
+    ConfigurationException,
     DPoPErrorKind,
     DPoPValidationError,
     NetworkException,
@@ -462,7 +463,12 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         if isinstance(e, CertificateBindingError):
             logger.info("Certificate binding rejected: %s", e)
             return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
-        if isinstance(e, PyIdentityModelException):
+        # A ConfigurationException is a server misconfiguration (for example a
+        # replay cache that does not answer with a DPoPReplayCheck), not a bad
+        # token: it falls through to the 500 below.
+        if isinstance(e, PyIdentityModelException) and not isinstance(
+            e, ConfigurationException
+        ):
             # A provider outage is a transient server fault, not an auth
             # decision: surface 503 so callers retry instead of treating it as a
             # bad token. This covers both a real NetworkException (a

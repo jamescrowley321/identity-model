@@ -643,6 +643,36 @@ class TestSettingsWiring:
             in caplog.messages
         )
 
+    async def test_misconfigured_replay_cache_is_a_server_error(
+        self, raw_client, raw_ws_authenticate, token
+    ):
+        # A cache answering True instead of a DPoPReplayCheck is the server's
+        # fault: 500 / 1011, not a 401 that blames the client.
+        class BoolCache:
+            def check_and_store(self, *_args: object) -> bool:
+                return True
+
+        options = AuthOptions(dpop=DPoPVerificationOptions(replay_cache=BoolCache()))
+        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+
+        async with raw_client(options=options, **common) as c:
+            http = await c.get("/me", headers=_dpop_headers(bound, key))
+        with pytest.raises(WebSocketException) as ws_exc:
+            await raw_ws_authenticate(
+                list(_dpop_headers(bound, key).items()),
+                url="ws://testserver/me",
+                options=options,
+                **common,
+            )
+
+        assert (http.status_code, http.json(), ws_exc.value.code) == (
+            500,
+            {"detail": "Internal server error during authentication"},
+            status.WS_1011_INTERNAL_ERROR,
+        )
+
     async def test_env_mtls_reads_certificate_header(
         self, raw_client, oidc_env, token, client_cert_pem
     ):

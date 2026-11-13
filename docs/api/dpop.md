@@ -317,6 +317,10 @@ Starlette's `TrustedHostMiddleware` restricts it). Behind a
   path and query as sent.
 - Certificate-bound tokens need a `client_certificate` source. Without one,
   every certificate-bound token is refused.
+- A `ConfigurationException` while validating (for example a replay cache
+  whose `check_and_store` does not return a `DPoPReplayCheck`) is a server
+  fault: `500` on HTTP, close code `1011` on a WebSocket, logged with its
+  traceback.
 
 On a WebSocket, a DPoP proof for the handshake has `htm` `GET` and `htu` the
 handshake URI written with `http`/`https` in place of `ws`/`wss` (or
