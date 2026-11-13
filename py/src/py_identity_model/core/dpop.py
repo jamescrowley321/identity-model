@@ -29,6 +29,13 @@ from cryptography.hazmat.primitives.serialization import (
 import jwt as pyjwt
 from jwt.algorithms import ECAlgorithm, OKPAlgorithm, RSAAlgorithm
 
+from ..exceptions import (
+    DPoPKeyError,
+    DPoPKeyErrorKind,
+    InvalidArgumentError,
+    InvalidArgumentKind,
+)
+
 
 if TYPE_CHECKING:
     import httpx
@@ -79,7 +86,7 @@ def _parse_algorithm(algorithm: DPoPAlgorithm | str) -> DPoPAlgorithm:
             f"Unsupported DPoP algorithm: {algorithm}. "
             f"Supported: {sorted(a.value for a in DPoPAlgorithm)}"
         )
-        raise ValueError(msg) from None
+        raise DPoPKeyError(DPoPKeyErrorKind.UNSUPPORTED_ALGORITHM, msg) from None
 
 
 def _check_key_fits(algorithm: DPoPAlgorithm, key: object) -> _PrivateKey:
@@ -95,7 +102,7 @@ def _check_key_fits(algorithm: DPoPAlgorithm, key: object) -> _PrivateKey:
         fits = isinstance(key, rsa.RSAPrivateKey) and key.key_size >= _MIN_RSA_KEY_BITS
     if not fits:
         msg = f"Key is not a private key {algorithm.value} can sign with"
-        raise ValueError(msg)
+        raise DPoPKeyError(DPoPKeyErrorKind.KEY_ALGORITHM_MISMATCH, msg)
     return key  # type: ignore[return-value]
 
 
@@ -117,7 +124,7 @@ class DPoPKey:
             string value.
 
     Raises:
-        ValueError: If *algorithm* is not a :class:`DPoPAlgorithm`.
+        DPoPKeyError: If *algorithm* is not a :class:`DPoPAlgorithm`.
     """
 
     __slots__ = ("_algorithm", "_private_key")
@@ -161,7 +168,7 @@ class DPoPKey:
             password: The PEM's password, if it is encrypted.
 
         Raises:
-            ValueError: If *algorithm* is unsupported, the PEM cannot be
+            DPoPKeyError: If *algorithm* is unsupported, the PEM cannot be
                 loaded, or the key does not fit *algorithm*.
         """
         parsed = _parse_algorithm(algorithm)
@@ -169,7 +176,9 @@ class DPoPKey:
         try:
             private_key = load_pem_private_key(data, password=password)
         except (ValueError, TypeError, UnsupportedAlgorithm) as e:
-            raise ValueError(f"Cannot load the DPoP private key: {e}") from e
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, f"Cannot load the DPoP private key: {e}"
+            ) from e
         return cls._wrap(parsed, private_key)
 
     @classmethod
@@ -185,24 +194,34 @@ class DPoPKey:
                 JWK's ``alg`` member; one of the two is required.
 
         Raises:
-            ValueError: If *jwk* is not a dict, no algorithm is given, it is
+            DPoPKeyError: If *jwk* is not a dict, no algorithm is given, it is
                 unsupported, the JWK is not a private key, or the key does
                 not fit the algorithm.
         """
         if not isinstance(jwk, dict):
-            raise ValueError("A DPoP JWK must be a dict")
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, "A DPoP JWK must be a dict"
+            )
         alg = algorithm if algorithm is not None else jwk.get("alg")
         if not isinstance(alg, str):
-            raise ValueError("A DPoP JWK needs an algorithm: pass one or set 'alg'")
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.ALGORITHM_REQUIRED,
+                "A DPoP JWK needs an algorithm: pass one or set 'alg'",
+            )
         parsed = _parse_algorithm(alg)
         kty = jwk.get("kty")
         parser = _JWK_PARSERS.get(kty) if isinstance(kty, str) else None
         if parser is None:
-            raise ValueError(f"Unsupported JWK kty for DPoP: {kty!r}")
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.UNSUPPORTED_KEY_TYPE,
+                f"Unsupported JWK kty for DPoP: {kty!r}",
+            )
         try:
             private_key = parser.from_jwk(json.dumps(jwk))
         except (pyjwt.InvalidKeyError, ValueError, TypeError) as e:
-            raise ValueError(f"Cannot load the DPoP JWK: {e}") from e
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, f"Cannot load the DPoP JWK: {e}"
+            ) from e
         return cls._wrap(parsed, private_key)
 
     @property
@@ -240,7 +259,10 @@ class DPoPKey:
             }
             curve_name = _curve_names.get(pub.curve.name)
             if curve_name is None:
-                raise ValueError(f"Unsupported EC curve: {pub.curve.name}")
+                raise DPoPKeyError(
+                    DPoPKeyErrorKind.UNSUPPORTED_CURVE,
+                    f"Unsupported EC curve: {pub.curve.name}",
+                )
             key_size = (pub.curve.key_size + 7) // 8
             return {
                 "kty": "EC",
@@ -292,16 +314,22 @@ def compute_jwk_thumbprint(jwk: dict) -> str:
         The base64url-encoded (no padding) SHA-256 thumbprint.
 
     Raises:
-        ValueError: If the key type is unsupported or a required member is
+        DPoPKeyError: If the key type is unsupported or a required member is
             missing or not a string.
     """
     kty = jwk.get("kty")
     members = _THUMBPRINT_MEMBERS.get(kty) if isinstance(kty, str) else None
     if members is None:
-        raise ValueError(f"Unsupported JWK kty for thumbprint: {kty!r}")
+        raise DPoPKeyError(
+            DPoPKeyErrorKind.UNSUPPORTED_KEY_TYPE,
+            f"Unsupported JWK kty for thumbprint: {kty!r}",
+        )
     required = {name: jwk.get(name) for name in members}
     if not all(isinstance(value, str) and value for value in required.values()):
-        raise ValueError(f"JWK thumbprint needs string members {members}")
+        raise DPoPKeyError(
+            DPoPKeyErrorKind.MISSING_THUMBPRINT_MEMBERS,
+            f"JWK thumbprint needs string members {members}",
+        )
     # RFC 7638 §3: lexicographically ordered members (_THUMBPRINT_MEMBERS lists
     # them in that order), no whitespace.
     thumbprint_input = json.dumps(required, separators=(",", ":"))
@@ -340,14 +368,22 @@ def compute_ath(access_token: str) -> str:
         Base64url-encoded SHA-256 hash of the access token.
 
     Raises:
-        ValueError: If *access_token* is empty.
+        InvalidArgumentError: If *access_token* is empty.
     """
     if not access_token or not access_token.strip():
-        raise ValueError("access_token must not be empty")
+        raise InvalidArgumentError(
+            "access_token",
+            InvalidArgumentKind.MISSING,
+            "access_token must not be empty",
+        )
     try:
         token_bytes = access_token.encode("ascii")
     except UnicodeEncodeError:
-        raise ValueError("access_token must contain only ASCII characters") from None
+        raise InvalidArgumentError(
+            "access_token",
+            InvalidArgumentKind.INVALID_VALUE,
+            "access_token must contain only ASCII characters",
+        ) from None
     digest = hashlib.sha256(token_bytes).digest()
     return urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
@@ -374,17 +410,23 @@ def create_dpop_proof(
         The signed DPoP proof JWT string.
 
     Raises:
-        ValueError: If *method* or *uri* is empty, or *uri* is not absolute.
+        InvalidArgumentError: If *method* or *uri* is empty, or *uri* is not absolute.
     """
     if not method or not method.strip():
-        raise ValueError("method must not be empty")
+        raise InvalidArgumentError(
+            "method", InvalidArgumentKind.MISSING, "method must not be empty"
+        )
     if not uri or not uri.strip():
-        raise ValueError("uri must not be empty")
+        raise InvalidArgumentError(
+            "uri", InvalidArgumentKind.MISSING, "uri must not be empty"
+        )
 
     # RFC 9449 §4.2: htu must be an absolute HTTP URI without query or fragment
     parsed = urlparse(uri)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError("uri must be an absolute HTTP URI")
+        raise InvalidArgumentError(
+            "uri", InvalidArgumentKind.INVALID_VALUE, "uri must be an absolute HTTP URI"
+        )
     htu = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, "", ""))
 
     headers = {
@@ -429,10 +471,12 @@ def build_dpop_headers(
         Dict of HTTP headers to include in the request.
 
     Raises:
-        ValueError: If *proof* is empty.
+        InvalidArgumentError: If *proof* is empty.
     """
     if not proof or not proof.strip():
-        raise ValueError("proof must not be empty")
+        raise InvalidArgumentError(
+            "proof", InvalidArgumentKind.MISSING, "proof must not be empty"
+        )
     headers: dict[str, str] = {"DPoP": proof}
     if access_token and access_token.strip():
         headers["Authorization"] = f"DPoP {access_token}"

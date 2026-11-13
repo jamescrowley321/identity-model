@@ -25,7 +25,9 @@ from py_identity_model.core.token_validation_logic import (
 from py_identity_model.core.validators import validate_token_config
 from py_identity_model.exceptions import (
     ConfigurationException,
-    TokenValidationException,
+    DiscoveryException,
+    JwksException,
+    JwksValidationError,
 )
 
 
@@ -50,7 +52,7 @@ class TestValidateDiscoResponse:
             is_successful=False,
             error="Discovery failed",
         )
-        with pytest.raises(TokenValidationException, match="Discovery failed"):
+        with pytest.raises(DiscoveryException, match="Discovery failed"):
             validate_disco_response(response)
 
     def test_validate_disco_response_no_error_message(self):
@@ -59,7 +61,7 @@ class TestValidateDiscoResponse:
             is_successful=False,
         )
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryException,
             match="Discovery document request failed",
         ):
             validate_disco_response(response)
@@ -91,7 +93,7 @@ class TestValidateJwksResponse:
             is_successful=False,
             error="JWKS fetch failed",
         )
-        with pytest.raises(TokenValidationException, match="JWKS fetch failed"):
+        with pytest.raises(JwksException, match="JWKS fetch failed"):
             validate_jwks_response(response)
 
     def test_validate_jwks_response_no_error_message(self):
@@ -99,7 +101,7 @@ class TestValidateJwksResponse:
         response = JwksResponse(
             is_successful=False,
         )
-        with pytest.raises(TokenValidationException, match="JWKS request failed"):
+        with pytest.raises(JwksException, match="JWKS request failed"):
             validate_jwks_response(response)
 
     def test_validate_jwks_response_no_keys(self):
@@ -109,7 +111,7 @@ class TestValidateJwksResponse:
             keys=[],
         )
         with pytest.raises(
-            TokenValidationException,
+            JwksValidationError,
             match="No keys available in JWKS response",
         ):
             validate_jwks_response(response)

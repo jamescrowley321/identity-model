@@ -13,6 +13,7 @@ from ..core.models import (
     JsonWebAlgorithmsKeyTypes,
     JsonWebKey,
     JsonWebKeyParameterNames,
+    JwksErrorKind,
     JwksRequest,
     JwksResponse,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "JsonWebAlgorithmsKeyTypes",
     "JsonWebKey",
     "JsonWebKeyParameterNames",
+    "JwksErrorKind",
     "JwksRequest",
     "JwksResponse",
     "get_jwks",

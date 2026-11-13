@@ -42,9 +42,11 @@ from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import (
     AmbiguousKeyException,
+    JwksValidationError,
     KeyAlgorithmMismatchException,
     KeyNotFoundException,
     TokenValidationException,
+    ValidationException,
 )
 from py_identity_model.sync import token_validation
 from py_identity_model.sync.introspection import (
@@ -549,17 +551,13 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
-#: Message each canonical reject code is surfaced with.
-_JWKS_ERRORS = {
-    "malformed": "Invalid JSON",
-    "empty_key_set": "No keys available",
-}
-
 #: Canonical reject codes surfaced as their own exception type.
-_JWKS_TYPED_ERRORS: dict[str, type[TokenValidationException]] = {
+_JWKS_TYPED_ERRORS: dict[str, type[ValidationException]] = {
     "key_not_found": KeyNotFoundException,
     "ambiguous_key": AmbiguousKeyException,
     "key_alg_mismatch": KeyAlgorithmMismatchException,
+    "malformed": JwksValidationError,
+    "empty_key_set": JwksValidationError,
 }
 
 
@@ -607,7 +605,7 @@ def _jwks_step(
     pytest.fail(f"unknown jwks step {step!r}")
 
 
-def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
+def _jwks_call(base: str, inp: dict) -> list[dict] | ValidationException:
     # A fresh cache per vector: empty discovery/JWKS caches and no kid-miss
     # cooldown carried over from another vector.
     with HTTPClient(config=HTTPConfig(http_retry_base_delay=0)) as client:
@@ -620,7 +618,7 @@ def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
             kid = next(kids, inp.get("kid")) if step == "resolve" else None
             try:
                 keys = _jwks_step(stack, base, step, kid, inp.get("alg"))
-            except TokenValidationException as exc:
+            except (TokenValidationException, JwksValidationError) as exc:
                 # A key-not-found miss before the last step does not end the run.
                 if n == len(steps) or not isinstance(exc, KeyNotFoundException):
                     return exc
@@ -633,21 +631,8 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
         assert not isinstance(result, Exception), f"{case_id}: {result}"
         assert result == expect["keys"]
         return
-    assert isinstance(result, TokenValidationException), f"{case_id}: {result!r}"
-    typed = _JWKS_TYPED_ERRORS.get(expect["error"])
-    if typed is not None:
-        assert isinstance(result, typed), f"{case_id}: {result!r}"
-        return
-    assert not isinstance(result, tuple(_JWKS_TYPED_ERRORS.values())), (
-        f"{case_id}: {result!r}"
-    )
-    message = str(result)
-    if expect["error"] == "malformed" and "Unhandled exception" in message:
-        raise KnownGap(
-            f"{case_id}: a non-JSON JWKS body is reported as {message!r}, "
-            "not a parse error (#770)"
-        )
-    assert _JWKS_ERRORS[expect["error"]] in message
+    typed = _JWKS_TYPED_ERRORS[expect["error"]]
+    assert isinstance(result, typed), f"{case_id}: {result!r}"
 
 
 ADAPTERS: dict[str, Adapter] = {
@@ -690,7 +675,6 @@ _KNOWN_GAPS = {
     "UI-005": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-006": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-007": "UserInfoResponse has no typed standard claims (#768)",
-    "JWKS-007-malformed-json": "non-JSON JWKS body is not a parse error (#770)",
 }
 
 

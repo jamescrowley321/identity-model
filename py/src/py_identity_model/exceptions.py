@@ -322,14 +322,29 @@ class NetworkException(PyIdentityModelException):
 
 
 class DiscoveryException(NetworkException):
-    """Raised when discovery document cannot be fetched or parsed."""
+    """Raised when the discovery document cannot be fetched.
+
+    A transport failure, a non-success HTTP status (``status_code``) or an
+    unclassified failure during the fetch: the provider is unavailable, so
+    retrying later may succeed. A document that was fetched but is invalid
+    raises :class:`DiscoveryValidationError` instead.
+    """
 
 
-class DiscoveryParseError(DiscoveryException):
-    """The discovery response could not be decoded as JSON."""
+class DiscoveryValidationError(ValidationException):
+    """Raised when a fetched discovery document fails validation.
+
+    The document is wrong, not unavailable: retrying returns the same
+    document. A ``ValidationException``, never a ``NetworkException``, so a
+    retry policy keyed on ``NetworkException`` does not retry it.
+    """
 
 
-class DiscoveryMissingFieldsError(DiscoveryException):
+class DiscoveryParseError(DiscoveryValidationError):
+    """The discovery response could not be decoded as a JSON object."""
+
+
+class DiscoveryMissingFieldsError(DiscoveryValidationError):
     """Discovery validation rejected these missing fields."""
 
     def __init__(self, message: str, fields: tuple[str, ...]) -> None:
@@ -337,7 +352,7 @@ class DiscoveryMissingFieldsError(DiscoveryException):
         self.fields = fields
 
 
-class DiscoveryIssuerMismatchError(DiscoveryException):
+class DiscoveryIssuerMismatchError(DiscoveryValidationError):
     """The document's issuer differs from the requested issuer."""
 
     def __init__(self, requested: str, returned: str) -> None:
@@ -350,7 +365,20 @@ class DiscoveryIssuerMismatchError(DiscoveryException):
 
 
 class JwksException(NetworkException):
-    """Raised when JWKS cannot be fetched or parsed."""
+    """Raised when the JWK Set cannot be fetched.
+
+    A transport failure, a non-success HTTP status (``status_code``) or an
+    unclassified failure during the fetch. A JWK Set that was fetched but is
+    unusable raises :class:`JwksValidationError` instead.
+    """
+
+
+class JwksValidationError(ValidationException):
+    """Raised when a fetched JWK Set is unusable.
+
+    Too large, the wrong content type, not JSON, or with no usable key. A
+    ``ValidationException``, never a ``NetworkException``.
+    """
 
 
 class TokenRequestException(NetworkException):
@@ -404,6 +432,10 @@ class ClientAuthMethodErrorReason(Enum):
     NOT_AN_MTLS_METHOD = "not_an_mtls_method"
     """``MtlsClientAuth.auth_method`` is not an RFC 8705 §2 method."""
 
+    NOT_A_CLIENT_AUTH_METHOD = "not_a_client_auth_method"
+    """The value is not a :class:`ClientAuthMethod` member (for example the
+    string ``"tls_client_auth"``); ``method`` holds the value passed."""
+
 
 class ClientAuthMethodError(ConfigurationException):
     """A client authentication method can't be applied as configured.
@@ -421,25 +453,91 @@ class ClientAuthMethodError(ConfigurationException):
     def __init__(
         self,
         reason: ClientAuthMethodErrorReason,
-        method: ClientAuthMethod,
+        method: ClientAuthMethod | object,
         credential: str | None = None,
     ) -> None:
         self.reason = reason
         self.method = method
         self.credential = credential
+        name = getattr(method, "value", method)
         messages = {
             ClientAuthMethodErrorReason.MISSING_CREDENTIAL: (
-                f"client_auth_method {method.value!r} requires {credential}"
+                f"client_auth_method {name!r} requires {credential}"
             ),
             ClientAuthMethodErrorReason.MTLS_METHOD_MISMATCH: (
-                f"client_auth_method {method.value!r} does not match mtls.auth_method"
+                f"client_auth_method {name!r} does not match mtls.auth_method"
             ),
             ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD: (
-                f"{method.value!r} is not an mTLS client authentication method "
+                f"{name!r} is not an mTLS client authentication method "
                 "(use tls_client_auth or self_signed_tls_client_auth)"
+            ),
+            ClientAuthMethodErrorReason.NOT_A_CLIENT_AUTH_METHOD: (
+                f"auth_method must be a ClientAuthMethod, got {method!r} "
+                f"({type(method).__name__})"
             ),
         }
         super().__init__(messages[reason])
+
+
+class InvalidArgumentKind(Enum):
+    """Why an argument was refused, set on :attr:`InvalidArgumentError.kind`."""
+
+    MISSING = "missing"
+    """A required argument is absent or empty."""
+    INVALID_TYPE = "invalid_type"
+    """The argument has the wrong type."""
+    INVALID_VALUE = "invalid_value"
+    """The argument is out of range or malformed."""
+    CONFLICT = "conflict"
+    """The argument cannot be combined with another one that was given."""
+
+
+class InvalidArgumentError(ConfigurationException):
+    """An argument to a library function or options class is invalid.
+
+    Raised before any request is sent or token is checked: it is a
+    programming error, not a protocol outcome.
+
+    Attributes:
+        argument: The parameter that was refused.
+        kind: Why it was refused.
+    """
+
+    def __init__(self, argument: str, kind: InvalidArgumentKind, message: str) -> None:
+        super().__init__(message)
+        self.argument = argument
+        self.kind = kind
+
+
+class DPoPKeyErrorKind(Enum):
+    """Why a DPoP key could not be used, set on :attr:`DPoPKeyError.kind`."""
+
+    UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
+    """The algorithm is not a :class:`DPoPAlgorithm`."""
+    ALGORITHM_REQUIRED = "algorithm_required"
+    """A JWK has no ``alg`` and no algorithm was passed."""
+    UNSUPPORTED_KEY_TYPE = "unsupported_key_type"
+    """The JWK ``kty`` is not ``EC``, ``OKP`` or ``RSA``."""
+    INVALID_KEY = "invalid_key"
+    """The PEM or JWK could not be loaded as a private key."""
+    KEY_ALGORITHM_MISMATCH = "key_algorithm_mismatch"
+    """The key cannot sign with the algorithm (wrong type, curve or size)."""
+    UNSUPPORTED_CURVE = "unsupported_curve"
+    """The EC key's curve has no JWK name."""
+    MISSING_THUMBPRINT_MEMBERS = "missing_thumbprint_members"
+    """A JWK lacks a string member the RFC 7638 thumbprint needs."""
+
+
+class DPoPKeyError(ConfigurationException):
+    """A DPoP key cannot be loaded, used or thumbprinted.
+
+    Attributes:
+        kind: Why the key was refused.
+    """
+
+    def __init__(self, kind: DPoPKeyErrorKind, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class FailedResponseAccessError(PyIdentityModelException):
@@ -475,17 +573,23 @@ __all__ = [
     "ClientAuthMethodError",
     "ClientAuthMethodErrorReason",
     "ConfigurationException",
+    "DPoPKeyError",
+    "DPoPKeyErrorKind",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",
     "DiscoveryIssuerMismatchError",
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
+    "DiscoveryValidationError",
     "FailedResponseAccessError",
     "IdTokenValidationException",
+    "InvalidArgumentError",
+    "InvalidArgumentKind",
     "InvalidAudienceException",
     "InvalidIssuerException",
     "JarmValidationException",
     "JwksException",
+    "JwksValidationError",
     "KeyAlgorithmMismatchException",
     "KeyNotFoundException",
     "LogoutStateValidationException",

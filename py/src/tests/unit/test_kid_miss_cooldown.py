@@ -19,6 +19,7 @@ These tests pin the contract:
 """
 
 import asyncio
+import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -742,9 +743,27 @@ class TestAsyncCooldownStateMirrorsSync:
 # ============================================================================
 
 
+#: Warnings for a kid-miss refresh that fails: the fetch failure, then the
+#: kid still missing from the cached keys the token is judged on.
+REFRESH_FAILED_WARNINGS = [
+    f"JWKS refresh of {JWKS_URL} failed: Network error during JWKS request: "
+    "simulated upstream connect failure",
+    f"kid new-kid still absent after JWKS refresh of {JWKS_URL}",
+]
+
+
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        # By source module: mutation testing renames functions, not files.
+        if r.levelno == logging.WARNING and r.module == "token_validation"
+    ]
+
+
 class TestCooldownNotWedgedByTransientError:
     @respx.mock
-    def test_sync_refresh_exception_does_not_stamp_cooldown(self):
+    def test_sync_refresh_exception_does_not_stamp_cooldown(self, caplog):
         """The cooldown timestamp must be set on the success path, not on
         attempted-but-failed refreshes. A single network blip otherwise
         wedges rotation discovery for the entire cooldown window."""
@@ -771,10 +790,12 @@ class TestCooldownNotWedgedByTransientError:
             perform_disco=True, audience=None, issuer="https://example.com"
         )
 
-        # Trigger a kid-miss; refresh fails mid-flight. get_jwks wraps the
-        # httpx error into a failed JwksResponse, and validate_jwks_response
-        # raises TokenValidationException from the unsuccessful response.
-        with pytest.raises(TokenValidationException):
+        # Trigger a kid-miss; refresh fails mid-flight. The token is judged
+        # on the cached keys: a key miss, not a provider outage.
+        with (
+            caplog.at_level(logging.WARNING, logger="py_identity_model"),
+            pytest.raises(KeyNotFoundException),
+        ):
             validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
@@ -785,10 +806,11 @@ class TestCooldownNotWedgedByTransientError:
         # complete, so charging the budget would suppress recovery once
         # upstream returns.
         assert JWKS_URL not in _sync_caches()._kid_miss_last_attempt
+        assert _warnings(caplog) == REFRESH_FAILED_WARNINGS
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_async_refresh_exception_does_not_stamp_cooldown(self):
+    async def test_async_refresh_exception_does_not_stamp_cooldown(self, caplog):
         old_key_dict, _ = generate_rsa_keypair()
         old_key_dict["kid"] = "old-kid"
 
@@ -810,7 +832,10 @@ class TestCooldownNotWedgedByTransientError:
             perform_disco=True, audience=None, issuer="https://example.com"
         )
 
-        with pytest.raises(TokenValidationException):
+        with (
+            caplog.at_level(logging.WARNING, logger="py_identity_model"),
+            pytest.raises(KeyNotFoundException),
+        ):
             await async_validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
@@ -818,6 +843,7 @@ class TestCooldownNotWedgedByTransientError:
             )
 
         assert JWKS_URL not in _async_caches()._kid_miss_last_attempt
+        assert _warnings(caplog) == REFRESH_FAILED_WARNINGS
 
 
 # ============================================================================

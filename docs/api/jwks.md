@@ -16,6 +16,15 @@ JSON Web Key Set operations per RFC 7517.
 
 ::: py_identity_model.core.models.JwksResponse
 
+::: py_identity_model.core.models.JwksErrorKind
+
+A failed `JwksResponse` sets `error_kind`, and `status_code` for
+`UNEXPECTED_STATUS`. `validate_token` raises `JwksException` (a
+`NetworkException`) for `UNEXPECTED_STATUS`, `NETWORK_ERROR` and
+`UNEXPECTED_ERROR`, `JwksValidationError` for `INVALID_JSON`,
+`INVALID_DOCUMENT` or a set with no keys, and `ConfigurationException` for
+`INVALID_CONFIGURATION`.
+
 ## Signing key selection
 
 Token validation picks the verification key from the JWK Set. Only signing

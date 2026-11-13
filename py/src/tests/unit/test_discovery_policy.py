@@ -18,7 +18,7 @@ from py_identity_model.core.validators import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    DiscoveryException,
+    DiscoveryValidationError,
 )
 
 
@@ -223,7 +223,7 @@ class TestValidateEndpointAuthority:
     def test_mismatched_authority_raises(self):
         """Endpoint from different authority than issuer is rejected."""
         policy = DiscoveryPolicy(validate_endpoints=True)
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://evil.com/token",
                 "token_endpoint",
@@ -263,7 +263,7 @@ class TestValidateEndpointAuthority:
             validate_endpoints=True,
             additional_endpoint_base_addresses=["https://cdn.example.com"],
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://attacker.com/keys",
                 "jwks_uri",
@@ -291,7 +291,7 @@ class TestValidateEndpointAuthority:
             validate_endpoints=True,
             authority="https://gateway.example.com",
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://auth.example.com/token",
                 "token_endpoint",
@@ -318,7 +318,7 @@ class TestValidateEndpointAuthority:
         """Empty issuer with no authority constraint raises DiscoveryException."""
         policy = DiscoveryPolicy(validate_endpoints=True)
         with pytest.raises(
-            DiscoveryException, match="no authority constraint available"
+            DiscoveryValidationError, match="no authority constraint available"
         ):
             _validate_endpoint_authority(
                 "https://anything.com/keys",

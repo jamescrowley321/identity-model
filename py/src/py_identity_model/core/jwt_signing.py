@@ -16,6 +16,8 @@ widens what the library accepts.
 
 from __future__ import annotations
 
+from ..exceptions import InvalidArgumentError, InvalidArgumentKind
+
 
 # Asymmetric signing algorithms supported for signed JWTs. Symmetric (HS*)
 # and ``none`` are intentionally excluded: request objects and client
@@ -66,7 +68,7 @@ def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> N
             (e.g. ``"JAR"`` or ``"client assertion"``).
 
     Raises:
-        ValueError: If *algorithm* is not in
+        InvalidArgumentError: If *algorithm* is not in
             :data:`SUPPORTED_SIGNING_ALGORITHMS`.
     """
     if algorithm not in SUPPORTED_SIGNING_ALGORITHMS:
@@ -74,7 +76,7 @@ def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> N
             f"Unsupported {context} algorithm: {algorithm}. "
             f"Supported: {sorted(SUPPORTED_SIGNING_ALGORITHMS)}"
         )
-        raise ValueError(msg)
+        raise InvalidArgumentError("algorithm", InvalidArgumentKind.INVALID_VALUE, msg)
 
 
 def advertised_verify_algorithms(advertised: object) -> list[str] | None:

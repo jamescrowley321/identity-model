@@ -24,6 +24,7 @@ import pytest
 from py_identity_model import DPoPAlgorithm, DPoPKey, generate_dpop_key
 from py_identity_model.core import dpop as dpop_module
 from py_identity_model.core.dpop import create_dpop_proof
+from py_identity_model.exceptions import DPoPKeyError
 
 
 WEAK_RSA_BITS = 1024
@@ -60,7 +61,7 @@ class TestAlgorithmEnum:
         assert DPoPKey().algorithm is DPoPAlgorithm.ES256
 
     def test_unknown_algorithm_refused(self):
-        with pytest.raises(ValueError, match="Unsupported DPoP algorithm: HS256"):
+        with pytest.raises(DPoPKeyError, match="Unsupported DPoP algorithm: HS256"):
             DPoPKey("HS256")
 
 
@@ -92,7 +93,7 @@ class TestFromPem:
         pem = private.private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, BestAvailableEncryption(b"pw")
         )
-        with pytest.raises(ValueError, match="Cannot load the DPoP private key"):
+        with pytest.raises(DPoPKeyError, match="Cannot load the DPoP private key"):
             DPoPKey.from_pem(pem, DPoPAlgorithm.ES256, password=b"other")
 
     def test_unsupported_algorithm_wrapped(self, monkeypatch):
@@ -103,14 +104,14 @@ class TestFromPem:
 
         monkeypatch.setattr(dpop_module, "load_pem_private_key", _raise)
         with pytest.raises(
-            ValueError,
+            DPoPKeyError,
             match=r"^Cannot load the DPoP private key: legacy PEM cipher$",
         ) as exc_info:
             DPoPKey.from_pem(b"pem", "ES256")
         assert exc_info.value.__cause__ is cause
 
     def test_garbage_refused(self):
-        with pytest.raises(ValueError, match="Cannot load the DPoP private key"):
+        with pytest.raises(DPoPKeyError, match="Cannot load the DPoP private key"):
             DPoPKey.from_pem(b"not a pem", DPoPAlgorithm.ES256)
 
     @pytest.mark.parametrize(
@@ -127,7 +128,7 @@ class TestFromPem:
     def test_key_that_does_not_fit_refused(self, algorithm, key_algorithm):
         pem = generate_dpop_key(key_algorithm).private_key_pem
         with pytest.raises(
-            ValueError, match=f"Key is not a private key {algorithm} can sign with"
+            DPoPKeyError, match=f"Key is not a private key {algorithm} can sign with"
         ):
             DPoPKey.from_pem(pem, algorithm)
 
@@ -138,12 +139,12 @@ class TestFromPem:
         weak = mock.create_autospec(rsa.RSAPrivateKey, instance=True)
         weak.key_size = bits
         monkeypatch.setattr(dpop_module, "load_pem_private_key", lambda *_, **__: weak)
-        with pytest.raises(ValueError, match="Key is not a private key PS256"):
+        with pytest.raises(DPoPKeyError, match="Key is not a private key PS256"):
             DPoPKey.from_pem(b"pem", "PS256")
 
     def test_unknown_algorithm_refused(self):
         pem = generate_dpop_key("ES256").private_key_pem
-        with pytest.raises(ValueError, match="Unsupported DPoP algorithm: none"):
+        with pytest.raises(DPoPKeyError, match="Unsupported DPoP algorithm: none"):
             DPoPKey.from_pem(pem, "none")
 
 
@@ -170,35 +171,35 @@ class TestFromJwk:
     def test_no_algorithm_refused(self):
         jwk = _private_jwk(generate_dpop_key("ES256"))
         message = "A DPoP JWK needs an algorithm: pass one or set 'alg'"
-        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        with pytest.raises(DPoPKeyError, match=f"^{re.escape(message)}$"):
             DPoPKey.from_jwk(jwk)
 
     def test_public_jwk_refused(self):
         key = generate_dpop_key("ES256")
-        with pytest.raises(ValueError, match="Key is not a private key ES256"):
+        with pytest.raises(DPoPKeyError, match="Key is not a private key ES256"):
             DPoPKey.from_jwk(key.public_jwk, "ES256")
 
     def test_non_dict_jwk_refused(self):
-        with pytest.raises(ValueError, match=r"^A DPoP JWK must be a dict$"):
+        with pytest.raises(DPoPKeyError, match=r"^A DPoP JWK must be a dict$"):
             DPoPKey.from_jwk(["kty", "EC"], "ES256")  # type: ignore[arg-type]
 
     def test_non_str_kty_refused(self):
         with pytest.raises(
-            ValueError, match=re.escape("Unsupported JWK kty for DPoP: ['EC']")
+            DPoPKeyError, match=re.escape("Unsupported JWK kty for DPoP: ['EC']")
         ):
             DPoPKey.from_jwk({"kty": ["EC"]}, "ES256")
 
     def test_unsupported_kty_refused(self):
-        with pytest.raises(ValueError, match="Unsupported JWK kty for DPoP: 'oct'"):
+        with pytest.raises(DPoPKeyError, match="Unsupported JWK kty for DPoP: 'oct'"):
             DPoPKey.from_jwk({"kty": "oct", "k": "c2VjcmV0"}, "ES256")
 
     def test_malformed_jwk_refused(self):
-        with pytest.raises(ValueError, match="Cannot load the DPoP JWK"):
+        with pytest.raises(DPoPKeyError, match="Cannot load the DPoP JWK"):
             DPoPKey.from_jwk({"kty": "EC", "crv": "P-256"}, "ES256")
 
     def test_curve_mismatch_refused(self):
         jwk = _private_jwk(generate_dpop_key("ES384"))
-        with pytest.raises(ValueError, match="Key is not a private key ES256"):
+        with pytest.raises(DPoPKeyError, match="Key is not a private key ES256"):
             DPoPKey.from_jwk(jwk, "ES256")
 
 
@@ -210,5 +211,5 @@ def test_public_key_pem_is_not_a_private_key():
     public_pem = private.public_key().public_bytes(
         Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
     )
-    with pytest.raises(ValueError, match="Cannot load the DPoP private key"):
+    with pytest.raises(DPoPKeyError, match="Cannot load the DPoP private key"):
         DPoPKey.from_pem(public_pem, "ES256")

@@ -14,9 +14,9 @@ from urllib.parse import urlparse
 
 from ..exceptions import (
     ConfigurationException,
-    DiscoveryException,
     DiscoveryIssuerMismatchError,
     DiscoveryParseError,
+    DiscoveryValidationError,
 )
 from ..logging_config import logger
 from .discovery_policy import _WELL_KNOWN_PATH, DiscoveryPolicy
@@ -25,6 +25,7 @@ from .models import (
     ClientCredentialsTokenResponse,
     DiscoveryDocumentResponse,
     JsonWebKey,
+    JwksErrorKind,
     JwksResponse,
     RefreshTokenResponse,
     TokenIntrospectionResponse,
@@ -101,7 +102,7 @@ def _reject_internal_ip_host(
     and is tracked separately (T9).
 
     Raises:
-        DiscoveryException: If ``url``'s host is an internal/reserved IP literal.
+        DiscoveryValidationError: If ``url``'s host is an internal/reserved IP literal.
     """
     host = urlparse(url).hostname
     if not host:
@@ -119,7 +120,7 @@ def _reject_internal_ip_host(
         or ip.is_multicast
         or ip.is_unspecified
     ):
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"{parameter_name} host '{host}' is an internal/reserved IP address "
             f"({ip}); refusing to route a request there"
         )
@@ -141,7 +142,7 @@ def _validate_endpoint_authority(
     from ``policy.additional_endpoint_base_addresses``.
 
     Raises:
-        DiscoveryException: If the endpoint URL's authority does not match.
+        DiscoveryValidationError: If the endpoint URL's authority does not match.
     """
 
     ep_authority = _get_url_authority(url)
@@ -165,14 +166,14 @@ def _validate_endpoint_authority(
     allowed.discard("")
 
     if not allowed:
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"Cannot validate {parameter_name} authority: "
             f"no authority constraint available (issuer is empty and "
             f"no policy.authority or additional_endpoint_base_addresses set)"
         )
 
     if ep_authority not in allowed:
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"{parameter_name} authority '{ep_authority}' does not match "
             f"expected authorities: {sorted(allowed)}. If this is a legitimate "
             f"endpoint on a different host (RFC 8414 / RFC 9126 permit this), add "
@@ -212,13 +213,13 @@ def validate_and_parse_discovery_response(
         dict: Parsed discovery document JSON
 
     Raises:
-        DiscoveryException: If response is invalid
+        DiscoveryValidationError: If response is invalid
     """
     # Check content type - extract media type before any parameters (e.g., charset)
     content_type_header = response.headers.get("Content-Type", "")
     media_type = content_type_header.split(";")[0].strip().lower()
     if media_type != "application/json":
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"Invalid content type. Expected application/json, got: "
             f"{response.headers.get('Content-Type', 'unknown')}"
         )
@@ -525,6 +526,38 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     return keys, None
 
 
+def _jwks_envelope_error(response: httpx.Response, config: HTTPConfig) -> str | None:
+    """Why a 2xx JWKS response's size or content type is refused, if it is."""
+    # Check response size before parsing — Content-Length first to
+    # avoid materialising the body for obviously-oversized responses.
+    max_size = config.jwks_max_size
+    content_length = response.headers.get("Content-Length")
+    try:
+        cl_too_large = content_length is not None and int(content_length) > max_size
+    except (ValueError, TypeError):
+        logger.warning("Malformed Content-Length header: %s", content_length)
+        cl_too_large = False
+    if cl_too_large:
+        size_desc = f"Content-Length {content_length}"
+    elif len(response.content) > max_size:
+        size_desc = f"{len(response.content)} bytes"
+    else:
+        size_desc = None
+    if size_desc:
+        return f"JWKS response too large: {size_desc} exceeds limit of {max_size} bytes"
+
+    content_type_header = response.headers.get("Content-Type", "")
+    media_type = content_type_header.split(";")[0].strip().lower()
+    if not media_type:
+        return "JWKS response missing Content-Type header"
+    if media_type not in _VALID_JWKS_CONTENT_TYPES:
+        return (
+            f"Invalid JWKS Content-Type: expected application/json or "
+            f"application/jwk-set+json, got: {content_type_header}"
+        )
+    return None
+
+
 def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksResponse:
     """
     Parse JWKS HTTP response.
@@ -538,53 +571,32 @@ def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksRes
         JwksResponse: Parsed JWKS response with keys
     """
     if response.is_success:
-        # Check response size before parsing — Content-Length first to
-        # avoid materialising the body for obviously-oversized responses.
-        max_size = config.jwks_max_size
-        content_length = response.headers.get("Content-Length")
+        envelope_error = _jwks_envelope_error(response, config)
+        if envelope_error is not None:
+            return JwksResponse(
+                is_successful=False,
+                error=envelope_error,
+                error_kind=JwksErrorKind.INVALID_DOCUMENT,
+            )
+
         try:
-            cl_too_large = content_length is not None and int(content_length) > max_size
-        except (ValueError, TypeError):
-            logger.warning("Malformed Content-Length header: %s", content_length)
-            cl_too_large = False
-        if cl_too_large:
-            size_desc = f"Content-Length {content_length}"
-        elif len(response.content) > max_size:
-            size_desc = f"{len(response.content)} bytes"
-        else:
-            size_desc = None
-        if size_desc:
+            response_json = response.json()
+        except ValueError as e:
             return JwksResponse(
                 is_successful=False,
-                error=(
-                    f"JWKS response too large: {size_desc} "
-                    f"exceeds limit of {max_size} bytes"
-                ),
+                error=f"Invalid JSON in JWKS response: {e!s}",
+                error_kind=JwksErrorKind.INVALID_JSON,
             )
-
-        content_type_header = response.headers.get("Content-Type", "")
-        media_type = content_type_header.split(";")[0].strip().lower()
-        if not media_type:
-            return JwksResponse(
-                is_successful=False,
-                error="JWKS response missing Content-Type header",
-            )
-        if media_type not in _VALID_JWKS_CONTENT_TYPES:
-            return JwksResponse(
-                is_successful=False,
-                error=(
-                    f"Invalid JWKS Content-Type: expected application/json or "
-                    f"application/jwk-set+json, got: {content_type_header}"
-                ),
-            )
-
-        response_json = response.json()
         raw_keys, keys_error = _extract_jwks_keys(response_json, config.jwks_max_keys)
         keys: list[JsonWebKey] = []
         if not keys_error:
             keys, keys_error = _build_jwks_keys(raw_keys)
         if keys_error:
-            return JwksResponse(is_successful=False, error=keys_error)
+            return JwksResponse(
+                is_successful=False,
+                error=keys_error,
+                error_kind=JwksErrorKind.INVALID_DOCUMENT,
+            )
         cache_control = response.headers.get("cache-control")
         return JwksResponse(is_successful=True, keys=keys, cache_control=cache_control)
 
@@ -595,6 +607,8 @@ def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksRes
     return JwksResponse(
         is_successful=False,
         error=error_msg,
+        error_kind=JwksErrorKind.UNEXPECTED_STATUS,
+        status_code=response.status_code,
     )
 
 

@@ -12,6 +12,7 @@ with :func:`fastapi_identity_model.build_ws_authenticator` instead.
 """
 
 from collections.abc import Callable
+from enum import Enum
 import logging
 from urllib.parse import urlsplit
 
@@ -30,6 +31,7 @@ from starlette.responses import (  # type: ignore[attr-defined]
 from py_identity_model import (
     AuthorizationScheme,
     CertificateBindingError,
+    ConfigurationException,
     DPoPErrorKind,
     DPoPReplayCacheError,
     DPoPValidationError,
@@ -83,26 +85,48 @@ _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS = ("scope", "scp")
 # logged server-side for operators, never returned to the caller.
 _GENERIC_401_DETAIL = "Invalid or unauthorized token"
 
-# Stable message prefixes the core library uses for discovery/JWKS *fetch*
-# failures (py_identity_model.core.error_handlers). The core wraps a failed
-# fetch in an unsuccessful response, so validate_token surfaces it as a
-# TokenValidationException — NOT a NetworkException — which would otherwise be
-# reported as a 401 "invalid token" for what is really a transient provider
-# outage. We match these prefixes to map such failures to 503 instead, so
-# callers back off and 5xx monitoring fires. This is a pragmatic bridge: the
-# clean fix is in py-identity-model (raise a NetworkException subtype from
-# validate_disco_response / validate_jwks_response), after which the
-# `except NetworkException` branch below handles it directly.
-_UPSTREAM_FETCH_FAILURE_PREFIXES = (
-    "Network error during discovery",
-    "Network error during JWKS",
-)
+
+class _ValidationFailure(Enum):
+    """How a token-validation failure is answered."""
+
+    UNAVAILABLE = "unavailable"
+    """The provider's discovery document or JWK Set could not be fetched
+    (``NetworkException``): HTTP 503, WebSocket close 1013."""
+    SERVER_ERROR = "server_error"
+    """An unusable replay cache (``DPoPReplayCacheError``) or a non-library
+    failure: HTTP 500, WebSocket close 1011."""
+    REJECTED = "rejected"
+    """The token, or the provider document it depends on, is invalid:
+    HTTP 401, WebSocket close 1008."""
 
 
-def _is_upstream_fetch_failure(exc: Exception) -> bool:
-    """Whether a library exception is a transient upstream fetch failure."""
-    message = str(exc)
-    return any(message.startswith(p) for p in _UPSTREAM_FETCH_FAILURE_PREFIXES)
+def _classify_validation_failure(exc: Exception) -> _ValidationFailure:
+    """How to answer *exc*, raised while validating a token. Decided by type.
+
+    Any other ``ConfigurationException`` is ``REJECTED``: discovery raises one
+    for a URL in the provider's document that fails a policy check, which is
+    the provider's data, not this server's setup. A malformed token PyJWT
+    rejects outside the library hierarchy (``InvalidTokenError``) is
+    ``REJECTED``.
+    """
+    if isinstance(exc, NetworkException):
+        return _ValidationFailure.UNAVAILABLE
+    if isinstance(exc, DPoPReplayCacheError):
+        return _ValidationFailure.SERVER_ERROR
+    if isinstance(exc, (PyIdentityModelException, InvalidTokenError)):
+        return _ValidationFailure.REJECTED
+    return _ValidationFailure.SERVER_ERROR
+
+
+def _log_rejection(message: str, exc: Exception) -> None:
+    """Log a rejected token. A ``ConfigurationException`` may be this
+    server's own setup (an HTTPS-policy failure on its discovery URL, an empty
+    algorithm list), so it is logged at warning level with its traceback for
+    alerting; any other rejection is a bad token, logged at info level."""
+    if isinstance(exc, ConfigurationException):
+        logger.warning(message, exc, exc_info=exc)
+    else:
+        logger.info(message, exc)
 
 
 def parse_authorization(header: str) -> tuple[AuthorizationScheme, str] | None:
@@ -463,37 +487,23 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         if isinstance(e, CertificateBindingError):
             logger.info("Certificate binding rejected: %s", e.kind.value)
             return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
-        # A replay cache that cannot be used is the server's fault, not a bad
-        # token: it falls through to the 500 below.
-        if isinstance(e, PyIdentityModelException) and not isinstance(
-            e, DPoPReplayCacheError
-        ):
+        failure = _classify_validation_failure(e)
+        if failure is _ValidationFailure.UNAVAILABLE:
             # A provider outage is a transient server fault, not an auth
             # decision: surface 503 so callers retry instead of treating it as a
-            # bad token. This covers both a real NetworkException (a
-            # PyIdentityModelException subclass — the clean path if the core
-            # raises one) and a discovery/JWKS fetch failure the core currently
-            # surfaces as a TokenValidationException (_UPSTREAM_FETCH_FAILURE_
-            # PREFIXES).
-            if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):
-                logger.exception("Upstream fetch failure during token validation")
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={"detail": "Authentication temporarily unavailable"},
-                )
+            # bad token.
+            logger.exception("Upstream fetch failure during token validation")
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"detail": "Authentication temporarily unavailable"},
+            )
+        if failure is _ValidationFailure.REJECTED:
             # Uniform 401 body — do NOT echo the stage-specific cause
-            # (signature/audience/expiry), which would form a CWE-209 oracle
-            # (F-18). Log the real cause server-side for operators.
-            logger.info("Token rejected during validation: %s", e)
+            # (signature/audience/expiry/malformed), which would form a CWE-209
+            # oracle (F-18). Log the real cause server-side for operators.
+            _log_rejection("Token rejected during validation: %s", e)
             return self._unauthorized(_GENERIC_401_DETAIL)
-        if isinstance(e, InvalidTokenError):
-            # A malformed/undecodable token (e.g. raw pyjwt DecodeError from
-            # header parsing during key lookup) is a client error, not a 500 —
-            # and returns the same generic body as any other rejection so the
-            # response can't distinguish "malformed" from "invalid".
-            logger.info("Malformed token rejected: %s", e)
-            return self._unauthorized(_GENERIC_401_DETAIL)
-        # A genuinely unexpected (non-library) failure is a server fault,
+        # An unusable replay cache or a non-library failure is a server fault,
         # not an auth decision. Surface a 500 without leaking internals.
         logger.exception("Unexpected error during token validation")
         return JSONResponse(

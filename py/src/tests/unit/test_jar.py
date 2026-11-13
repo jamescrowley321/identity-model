@@ -17,6 +17,7 @@ from py_identity_model.core.jar import (
     build_jar_authorization_url,
     create_request_object,
 )
+from py_identity_model.exceptions import InvalidArgumentError
 
 
 # Expected JAR token values
@@ -146,7 +147,7 @@ class TestCreateRequestObject:
 
     def test_unsupported_algorithm(self):
         pem = _ec_private_key_pem()
-        with pytest.raises(ValueError, match="Unsupported JAR algorithm"):
+        with pytest.raises(InvalidArgumentError, match="Unsupported JAR algorithm"):
             create_request_object(
                 private_key=pem,
                 algorithm="HS256",

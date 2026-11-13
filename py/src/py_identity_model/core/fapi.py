@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import jwt as pyjwt
 
+from ..exceptions import ConfigurationException
 from .authorize_url import build_par_authorization_url
 from .client_auth_method import ClientAuthMethod
 from .jar import create_request_object
@@ -998,7 +999,7 @@ _MTLS_WITH_DPOP = FAPIViolation(
 )
 
 
-class FAPIProfileError(ValueError):
+class FAPIProfileError(ConfigurationException):
     """A FAPI 2.0 client profile refused a configuration or request.
 
     ``violations`` lists every rule that was broken; match on their ``code``.
