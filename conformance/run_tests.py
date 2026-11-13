@@ -782,6 +782,9 @@ ALLOWLISTABLE_STATUSES = frozenset({"SKIPPED", "WARNING"})
 
 HARNESS_SUCCESS = "success"
 HARNESS_ERROR = "error"
+# The harness saw a rejection it could not tie to a flow after the module's
+# flow had succeeded; the module's outcome is unknown, so it fails.
+HARNESS_CONFLICT = "conflict"
 
 
 class ManifestError(Exception):
@@ -899,6 +902,11 @@ def assess_module(
     if recorded is None:
         return "FAILED", "harness recorded no result for this module"
     outcome = recorded.get("status")
+    if outcome == HARNESS_CONFLICT:
+        return (
+            "FAILED",
+            f"harness recorded conflicting outcomes: {recorded.get('error')!r}",
+        )
     if expectation.expect is Expectation.ACCEPT:
         for previous in evidence.earlier:
             if (previous or {}).get("status") != HARNESS_SUCCESS:

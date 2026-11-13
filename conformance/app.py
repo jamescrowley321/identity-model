@@ -1834,7 +1834,9 @@ async def backchannel_logout(request: Request) -> JSONResponse:
             if rejection["error"] == "invalid_logout_token"
             else rejection["error"]
         )
-        _record_last_flow_rejection(f"{reason}: {rejection['detail']}")
+        _record_last_flow_rejection(
+            f"{reason}: {rejection['detail']}", after_login=True
+        )
     # Back-Channel Logout 1.0 §2.8: the RP's response SHOULD carry no-store cache
     # headers so a logout is never served from cache. Set on every response
     # (success and error) since the OP posts to this fixed URI.
@@ -1910,7 +1912,9 @@ def post_logout_callback(state: str | None = Query(default=None)) -> HTMLRespons
         validate_post_logout_state(_expected_logout_state, state)
     except LogoutStateValidationException as exc:
         logger.error("REJECTED: post-logout state validation failed: %s", exc.message)
-        _record_last_flow_rejection(f"logout_state_validation: {exc.message}")
+        _record_last_flow_rejection(
+            f"logout_state_validation: {exc.message}", after_login=True
+        )
         return HTMLResponse(
             content=(
                 "<h1>Logout State Validation Failed</h1>"
@@ -1976,20 +1980,60 @@ def _discovery_failure(disco: DiscoveryDocumentResponse) -> str:
     return f"{reason}: {disco.error}"
 
 
-def _record_last_flow_rejection(error: str) -> None:
+HARNESS_CONFLICT = "conflict"
+
+
+def merge_unattributed_rejection(
+    existing: dict | None, test_id: str, error: str, *, after_login: bool
+) -> dict | None:
+    """The record for a rejection that carries no session key, or None to keep it.
+
+    Such a rejection is filed under the most recent flow's test, so it must not
+    be able to turn that test's verdict into a pass:
+
+    - nothing recorded yet: record the rejection;
+    - a rejection already recorded: keep it (the first rejection stands);
+    - a success recorded: for a logout rejection (``after_login``), which by
+      design follows the module's login, record the rejection; otherwise record
+      a ``conflict``, which the runner always fails.
+    """
+    status = (existing or {}).get("status")
+    if status is None:
+        return {"test_id": test_id, "status": "error", "error": error}
+    if status != "success":
+        logger.warning("Ignoring unattributed rejection for %s: %s", test_id, error)
+        return None
+    if after_login:
+        return {"test_id": test_id, "status": "error", "error": error}
+    logger.error("Unattributed rejection after a recorded success: %s", error)
+    return {
+        "test_id": test_id,
+        "status": HARNESS_CONFLICT,
+        "error": f"{error} (after a recorded success)",
+    }
+
+
+def _record_last_flow_rejection(error: str, *, after_login: bool = False) -> None:
     """Record a rejection the RP made before it could identify the flow's session.
 
     A callback with an unknown state, a JARM response that fails validation, a
     Back-Channel Logout Token or a post-logout state carries no usable session
     key, so the rejection is filed under the most recent flow's test (the runner
-    drives one module at a time). The runner reads it from ``/results``.
+    drives one module at a time), merged per
+    :func:`merge_unattributed_rejection`. The runner reads it from ``/results``.
     """
     flow_context = _last_flow_context
     test_id = flow_context.get("test_id", "") if flow_context else ""
     if not test_id:
         return
+    existing = test_results.get(test_id)
+    record = merge_unattributed_rejection(
+        existing.result if existing else None, test_id, error, after_login=after_login
+    )
+    if record is None:
+        return
     error_session = AuthSession(issuer=flow_context["issuer"], state="", nonce="")
-    error_session.result = {"test_id": test_id, "status": "error", "error": error}
+    error_session.result = record
     test_results[test_id] = error_session
 
 

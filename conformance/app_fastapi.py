@@ -41,7 +41,7 @@ from urllib.parse import parse_qs, parse_qsl, urlparse
 # active-test pointer and the handler that routes records to per-test files.
 # Importing ``app`` also installs its handler on the ``py_identity_model``
 # logger (and raises it to DEBUG), so only the package loggers need wiring here.
-from app import _PerTestLogRouter, _set_active_test
+from app import _PerTestLogRouter, _set_active_test, merge_unattributed_rejection
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
@@ -146,6 +146,17 @@ def _router_rejection(resp: httpx.Response) -> str:
     if resp.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
         return f"{ROUTER_CRASH_REASON}: {detail}"
     return f"{_ROUTER_REASONS.get(detail, 'router_rejected')}: {detail}"
+
+
+def _record_unattributed(test_id: str, error: str) -> None:
+    """Record a rejection that carries no flow (see app.merge_unattributed_rejection)."""
+    if not test_id:
+        return
+    record = merge_unattributed_rejection(
+        test_results.get(test_id), test_id, error, after_login=False
+    )
+    if record is not None:
+        test_results[test_id] = record
 
 
 def _record_error(test_id: str, error: str) -> None:
@@ -442,7 +453,7 @@ async def callback_get(request: Request) -> HTMLResponse:
         logger.error(
             "REJECTED: unknown or missing state: %s", request.query_params.get("state")
         )
-        _record_error(_last_test_id, "state_validation: unknown state")
+        _record_unattributed(_last_test_id, "state_validation: unknown state")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,
@@ -469,7 +480,7 @@ async def callback_post(request: Request) -> HTMLResponse:
     flow = _pop_flow(fields.get("state"))
     if flow is None:
         logger.error("REJECTED: unknown or missing state: %s", fields.get("state"))
-        _record_error(_last_test_id, "state_validation: unknown state")
+        _record_unattributed(_last_test_id, "state_validation: unknown state")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,

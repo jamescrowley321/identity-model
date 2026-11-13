@@ -96,7 +96,12 @@ A module is FAILED when:
 - the harness answered with an HTTP 5xx other than its deliberate 502, or could
   not be reached;
 - the harness recorded nothing, or recorded an outcome other than the expected
-  one.
+  one;
+- the harness recorded a `conflict`: a rejection it could not tie to a flow
+  (unknown callback state, failed JARM, unparseable callback) arrived after the
+  module's flow had succeeded. Such a rejection never replaces an earlier
+  rejection. A logout rejection is the exception: it follows the module's login
+  by design, so it does replace the login's success.
 
 The plan fails before running anything when its modules differ from the
 manifest (a module missing, unexpected or listed twice). After a suite upgrade,

@@ -606,3 +606,99 @@ def test_plan_entry_that_is_not_an_object_is_rejected(tmp_path):
         load_manifest("plan", path)
 
     assert str(excinfo.value) == "manifest for plan 'plan' must be an object"
+
+
+def test_conflict_record_fails_a_reject_module():
+    conflict = {
+        "test_id": "m1",
+        "status": "conflict",
+        "error": "state_validation: unknown state (after a recorded success)",
+    }
+
+    assert assess_module(
+        "PASSED",
+        ModuleExpectation(
+            expect=Expectation.REJECT, reasons=frozenset({"state_validation"})
+        ),
+        RPEvidence(conflict),
+    ) == (
+        "FAILED",
+        "harness recorded conflicting outcomes: "
+        "'state_validation: unknown state (after a recorded success)'",
+    )
+
+
+def test_conflict_record_fails_an_accept_module():
+    conflict = {"test_id": "m1", "status": "conflict", "error": "x"}
+
+    assert assess_module("PASSED", ACCEPT, RPEvidence(conflict)) == (
+        "FAILED",
+        "harness recorded conflicting outcomes: 'x'",
+    )
+
+
+def test_stray_callback_after_success_records_a_conflict(harness):
+    from fastapi.testclient import TestClient
+
+    accepted = harness.AuthSession(issuer=ISSUER, state="", nonce="")
+    accepted.result = dict(ACCEPTED, test_id="m9")
+    harness.test_results["m9"] = accepted
+
+    TestClient(harness.app).get("/callback", params={"state": "stray", "code": "x"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "conflict",
+        "error": "state_validation: unknown state 'stray' (after a recorded success)",
+    }
+
+
+def test_stray_callback_after_rejection_keeps_the_first_rejection(harness):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(harness.app)
+    client.get("/callback", params={"state": "first", "code": "x"})
+    client.get("/callback", params={"state": "second", "code": "x"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "state_validation: unknown state 'first'",
+    }
+
+
+def test_logout_rejection_after_login_is_recorded(harness, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    accepted = harness.AuthSession(issuer=ISSUER, state="", nonce="")
+    accepted.result = dict(ACCEPTED, test_id="m9")
+    harness.test_results["m9"] = accepted
+    monkeypatch.setattr(harness, "_expected_logout_state", "sent")
+
+    TestClient(harness.app).get("/post-logout-callback", params={"state": "other"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "logout_state_validation: "
+        "State parameter does not match expected value",
+    }
+
+
+def test_fastapi_stray_callback_after_success_records_a_conflict(monkeypatch):
+    import app_fastapi
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(app_fastapi, "_last_test_id", "m7")
+    monkeypatch.setattr(
+        app_fastapi, "test_results", {"m7": dict(ACCEPTED, test_id="m7")}
+    )
+    client = TestClient(app_fastapi.app)
+
+    client.get("/callback", params={"state": "stray", "code": "x"})
+
+    assert client.get("/results/m7").json() == {
+        "test_id": "m7",
+        "status": "conflict",
+        "error": "state_validation: unknown state (after a recorded success)",
+    }
