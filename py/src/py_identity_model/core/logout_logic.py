@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urlparse
 
 from ..exceptions import (
+    ConfigurationException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
 )
@@ -31,6 +32,8 @@ from .id_token_logic import find_untrusted_audiences
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from .models import TokenValidationConfig
 
 
 # The event member that MUST be present in a Logout Token's ``events`` claim
@@ -63,6 +66,23 @@ _RESERVED_END_SESSION_PARAMS = frozenset(
 # missing claim produces a precise, self-contained error and so the pure
 # claim check is complete on its own.
 _REQUIRED_CLAIMS = ("iss", "aud", "iat", "exp", "jti", "events")
+
+
+def require_logout_client_id(token_validation_config: TokenValidationConfig) -> None:
+    """Reject a config with no ``audience`` (the RP's ``client_id``).
+
+    Back-Channel Logout 1.0 §2.6 step 4 validates ``aud`` as for ID Tokens:
+    it must contain the client's ``client_id``. Without one configured, every
+    Logout Token would fail, so the misconfiguration is reported up front.
+
+    Raises:
+        ConfigurationException: If ``audience`` is ``None`` or ``""``.
+    """
+    if not token_validation_config.audience:
+        raise ConfigurationException(
+            "TokenValidationConfig.audience (the client_id) is required to "
+            "validate a Logout Token"
+        )
 
 
 def validate_logout_token_claims(
@@ -280,6 +300,7 @@ __all__ = [
     "BACKCHANNEL_LOGOUT_EVENT",
     "LOGOUT_TOKEN_PARAM",
     "build_end_session_url",
+    "require_logout_client_id",
     "validate_logout_token_claims",
     "validate_post_logout_state",
 ]

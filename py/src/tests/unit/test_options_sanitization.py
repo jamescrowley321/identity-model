@@ -5,14 +5,28 @@ import time
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+import httpx
 import jwt as pyjwt
 import pytest
+import respx
 
+from py_identity_model.aio.token_validation import validate_token as avalidate_token
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.jwt_helpers import (
     _sanitize_options,
     decode_and_validate_jwt,
 )
+from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import ConfigurationException
+from py_identity_model.sync.token_validation import validate_token
+from py_identity_model.sync.validation_cache import ValidationCache
+
+from ..constants import DISCO_URL
+from ..token_validation_helpers import (
+    DISCO_RESPONSE_WITH_JWKS,
+    generate_rsa_keypair,
+    sign_jwt,
+)
 
 
 @pytest.fixture
@@ -271,3 +285,51 @@ class TestDecodeRejectsBlockedOptions:
             options=None,
         )
         assert result["sub"] == "test-user"
+
+
+class TestDiscoveredIssuerCannotBeDisabled:
+    """M1: in discovery mode the discovered issuer is pinned, so
+    ``verify_iss=False`` is rejected even with no configured ``issuer``."""
+
+    _MESSAGE = (
+        "Security option 'verify_iss' cannot be disabled while an issuer is configured."
+    )
+
+    @pytest.fixture
+    def discovery(self):
+        key_dict, pem = generate_rsa_keypair()
+        with respx.mock:
+            respx.get(DISCO_URL).mock(
+                return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
+            )
+            respx.get(DISCO_RESPONSE_WITH_JWKS["jwks_uri"]).mock(
+                return_value=httpx.Response(200, json={"keys": [key_dict]})
+            )
+            token = sign_jwt(
+                pem,
+                {
+                    "iss": "https://evil.example",
+                    "sub": "u",
+                    "exp": int(time.time()) + 60,
+                },
+                headers={"kid": key_dict["kid"]},
+            )
+            yield token
+
+    def test_sync_discovered_issuer(self, discovery):
+        config = TokenValidationConfig(
+            perform_disco=True, options={"verify_iss": False}
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_token(discovery, config, DISCO_URL, cache=ValidationCache())
+        assert exc_info.value.message == self._MESSAGE
+
+    async def test_async_discovered_issuer(self, discovery):
+        config = TokenValidationConfig(
+            perform_disco=True, options={"verify_iss": False}
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            await avalidate_token(
+                discovery, config, DISCO_URL, cache=AsyncValidationCache()
+            )
+        assert exc_info.value.message == self._MESSAGE

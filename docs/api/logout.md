@@ -38,8 +38,8 @@ must be present (`exp` is REQUIRED as of errata set 1), the `events` object must
 (so a Logout Token can never pass as an ID Token). Every `aud` value must be
 your `client_id` or one you list in `trusted_audiences=` (§2.6 step 4, which
 applies OIDC Core §3.1.3.7 step 3). Set `audience` to your `client_id` and
-`issuer` to the OP issuer in the config; with `perform_disco=False` the issuer
-is required and a config without one raises `ConfigurationException`.
+`issuer` to the OP issuer in the config. A config without `audience`, or
+with `perform_disco=False` and no `issuer`, raises `ConfigurationException`.
 
 ```python
 from py_identity_model import TokenValidationConfig, validate_logout_token

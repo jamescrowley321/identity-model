@@ -156,3 +156,23 @@ def test_hmac_key_at_floor_verifies(alg):
 
 def test_oct_key_without_hmac_alg_has_no_floor():
     assert enforce_key_strength(_oct_jwk(1)) is None
+
+
+@pytest.mark.parametrize("alg", sorted(_HMAC_FLOORS))
+@pytest.mark.parametrize("k", ["", None, "é"], ids=["empty", "missing", "undecodable"])
+def test_empty_hmac_key_refused(alg, k):
+    # PyJWT accepts an empty HMAC secret, so an empty k must not skip the floor.
+    jwk = {"kty": "oct", "kid": "hmac"}
+    if k is not None:
+        jwk["k"] = k
+    token = _hmac_token(b"", alg)
+
+    with pytest.raises(WeakKeyException) as exc_info:
+        decode_and_validate_jwt(token, jwk, [alg], None, None, None)
+
+    assert exc_info.value.details == {
+        "kid": "hmac",
+        "kty": "oct",
+        "bits": 0,
+        "min_bits": _HMAC_FLOORS[alg] * 8,
+    }

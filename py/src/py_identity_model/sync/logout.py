@@ -12,7 +12,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.id_token_logic import require_issuer_without_discovery
-from ..core.logout_logic import validate_logout_token_claims
+from ..core.logout_logic import (
+    require_logout_client_id,
+    validate_logout_token_claims,
+)
 from .token_validation import _validate_jwt_without_binding
 
 
@@ -68,8 +71,10 @@ def validate_logout_token(
             signature, wrong issuer/audience, expired token).
         LogoutTokenValidationException: If a Logout-Token-specific rule fails.
         ConfigurationException: If the configuration is invalid, including
-            ``perform_disco=False`` with no ``issuer`` (§3.1.3.7 step 2).
+            no ``audience`` (``client_id``), or ``perform_disco=False`` with
+            no ``issuer`` (§3.1.3.7 step 2).
     """
+    require_logout_client_id(token_validation_config)
     require_issuer_without_discovery(token_validation_config)
     claims = _validate_jwt_without_binding(
         logout_token,

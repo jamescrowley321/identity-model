@@ -1471,7 +1471,7 @@ signed with another listed algorithm raises `KeyAlgorithmMismatchException`.
 RFC 7518 §3.2 requires an HMAC key at least as long as the hash output. When
 you allow an HS* algorithm, a verification key (`kty: "oct"`) under 256, 384
 or 512 bits for HS256, HS384 or HS512 raises `WeakKeyException`. In 4.x PyJWT
-only warned. Use a longer secret.
+only warned. A missing or empty `k` counts as 0 bits. Use a longer secret.
 
 ## UserInfo
 
@@ -1573,6 +1573,10 @@ claims = validate_logout_token(
     trusted_audiences=["https://partner.example.com"],
 )
 ```
+
+`validate_logout_token` requires `TokenValidationConfig.audience` (your
+`client_id`) and raises `ConfigurationException` before any request when it is
+`None` or `""`. Without it every Logout Token would fail the audience check.
 
 With `perform_disco=False`, `validate_logout_token` also requires an issuer;
 see [Without discovery, an issuer is required](#without-discovery-an-issuer-is-required).

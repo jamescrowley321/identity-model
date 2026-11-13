@@ -264,6 +264,36 @@ class TestLogoutAudience:
         assert exc_info.value.message == "Invalid audience"
 
 
+class TestLogoutRequiresClientId:
+    """§2.6 step 4: ``aud`` must contain the client_id, so one is required."""
+
+    _MESSAGE = (
+        "TokenValidationConfig.audience (the client_id) is required to "
+        "validate a Logout Token"
+    )
+
+    @pytest.mark.parametrize("audience", [None, ""], ids=["none", "empty"])
+    @respx.mock
+    def test_sync_rejects_missing_client_id_before_io(self, audience):
+        config = TokenValidationConfig(
+            perform_disco=True, audience=audience, issuer=_ISSUER
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_logout_token("not-a-jwt", config, disco_doc_address=DISCO_URL)
+        assert exc_info.value.message == self._MESSAGE
+        assert respx.calls.call_count == 0
+
+    @respx.mock
+    async def test_async_rejects_missing_client_id_before_io(self):
+        config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
+        with pytest.raises(ConfigurationException) as exc_info:
+            await aio_validate_logout_token(
+                "not-a-jwt", config, disco_doc_address=DISCO_URL
+            )
+        assert exc_info.value.message == self._MESSAGE
+        assert respx.calls.call_count == 0
+
+
 class TestLogoutManualModeRequiresIssuer:
     """§2.6 step 4 applies Core §3.1.3.7 step 2: the issuer must be pinned."""
 

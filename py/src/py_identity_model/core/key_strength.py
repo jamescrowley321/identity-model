@@ -42,12 +42,16 @@ def _decode_member(value: object) -> bytes | None:
 
 
 def _hmac_key_bits(jwk: dict, alg: str | None) -> tuple[int, int] | None:
-    """Return ``(bits, min_bits)`` for an ``oct`` key used with HS256/384/512."""
+    """Return ``(bits, min_bits)`` for an ``oct`` key used with HS256/384/512.
+
+    A missing, empty or undecodable ``k`` measures 0 bits: key conversion
+    accepts an empty HMAC secret, so it must not skip the floor.
+    """
     min_bits = MIN_HMAC_KEY_BITS.get(alg) if isinstance(alg, str) else None
-    k = _decode_member(jwk.get("k"))
-    if min_bits is None or k is None:
+    if min_bits is None:
         return None
-    return len(k) * 8, min_bits
+    k = _decode_member(jwk.get("k"))
+    return (len(k) * 8 if k is not None else 0), min_bits
 
 
 def _key_bits(jwk: dict, alg: str | None) -> tuple[int, int] | None:
