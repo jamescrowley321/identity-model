@@ -252,6 +252,25 @@ def _no_kid_candidates(
     return signing_keys
 
 
+def _first_usable_kid_match(
+    matches: list[JsonWebKey],
+    jwt_alg: str | None,
+) -> JsonWebKey:
+    """Pick the key among those sharing the token's ``kid``.
+
+    RFC 7517 §4.5 allows keys of different ``kty`` to share a ``kid``, so the
+    first key whose ``kty`` and ``alg`` fit the header ``alg`` is used. When
+    none fits, the first match is returned so the consistency check reports
+    why it cannot verify the token.
+    """
+    if len(matches) > 1 and jwt_alg:
+        expected_kty = _ALG_TO_KTY.get(jwt_alg)
+        for key in matches:
+            if expected_kty in (None, key.kty) and key.alg in (None, jwt_alg):
+                return key
+    return matches[0]
+
+
 def find_key_by_kid(
     kid: str | None,
     keys: list[JsonWebKey],
@@ -318,7 +337,7 @@ def find_key_by_kid(
     if not filtered_keys:
         raise _key_not_found(kid, keys)
 
-    public_key = filtered_keys[0]
+    public_key = _first_usable_kid_match(filtered_keys, jwt_alg)
     _validate_key_alg_consistency(public_key, jwt_alg)
     # Prefer the key's declared alg; otherwise fall back to the JWT header alg
     # (already checked for key-type consistency above) so non-RS256 tokens
