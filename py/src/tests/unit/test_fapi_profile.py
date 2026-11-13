@@ -368,6 +368,20 @@ class TestValidateFAPIClientConfig:
             _mtls(auth_method=ClientAuthMethod.CLIENT_SECRET_BASIC)
         assert excinfo.value.reason is ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD
 
+    def test_private_key_jwt_with_mtls_bound_tokens_accepted(self):
+        """976-C: §5.3.3.1 allows it; only the profile is narrower."""
+        result = validate_fapi_client_config(
+            issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER), mtls=_mtls()
+        )
+        assert result.violations == []
+
+    def test_mtls_with_dpop_key_accepted(self):
+        """976-C: §5.3.3.1 allows it; the profile refuses it (MTLS_WITH_DPOP)."""
+        result = validate_fapi_client_config(
+            issuer=ISSUER, mtls=_mtls(), dpop_key=DPOP_KEY
+        )
+        assert result.violations == []
+
     def test_private_key_jwt_without_dpop_rejected(self):
         result = validate_fapi_client_config(
             issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER)
@@ -456,6 +470,20 @@ class TestFAPI2ClientProfileConstruction:
             "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
             "Security Profile §5.3.2.2 requires pushed authorization requests "
             "(RFC 9126)"
+        ]
+
+    def test_non_string_par_endpoint_refused(self):
+        """971-B: ``true`` is not a PAR endpoint; refused, not passed to urlparse."""
+        with pytest.raises(FAPIProfileError) as exc_info:
+            FAPI2ClientProfile(
+                _discovery(pushed_authorization_request_endpoint=True),
+                client_id=CLIENT_ID,
+                redirect_uri=REDIRECT_URI,
+                client_auth=_pkj(),
+            )
+        assert exc_info.value.violations == [
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            "True (RFC 9126 §5)"
         ]
 
     def test_failed_discovery_refused(self):

@@ -230,6 +230,25 @@ class TestValidateFAPIDiscovery:
         )
         assert result.violations == [PAR_ABSENT]
 
+    def test_par_endpoint_empty_is_non_compliant(self):
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint="")
+        )
+        assert result.violations == [PAR_ABSENT]
+
+    @pytest.mark.parametrize(
+        "endpoint", [True, 1, ["https://auth.example.com/par"], {}, "   "]
+    )
+    def test_par_endpoint_not_a_url_string_is_non_compliant(self, endpoint):
+        """971-B: a truthy non-string (``true``) used to pass."""
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint=endpoint)
+        )
+        assert result.violations == [
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            f"{endpoint!r} (RFC 9126 §5)"
+        ]
+
     @pytest.mark.parametrize("supported", [None, False], ids=["absent", "false"])
     def test_iss_parameter_not_supported_is_non_compliant(self, supported):
         result = validate_fapi_discovery(

@@ -156,7 +156,8 @@ def validate_fapi_authorization_request(
     with ``S256``, a ``nonce`` of at most 64 characters, and the redirect URI
     rules of §5.3.2.2.  The request's client authentication and DPoP key are
     checked as in :func:`validate_fapi_client_config`, without the
-    assertion-audience check (that needs the issuer).
+    assertion-audience check (that needs the issuer).  Like that function it
+    checks the specification and is wider than :class:`FAPI2ClientProfile`.
 
     Args:
         request: The pushed authorization request (RFC 9126) to send.
@@ -296,6 +297,15 @@ def validate_fapi_client_config(
     neither being set (the endpoint-URL fallback), is a violation.  JWT
     algorithms are limited by §5.4.1.
 
+    This checks the specification, so it is wider than
+    :class:`FAPI2ClientProfile`.  It accepts two combinations §5.3.3.1
+    allows and the profile refuses: ``private_key_jwt`` with mTLS-bound
+    tokens, and mTLS client authentication with a DPoP key.  It does not see
+    the discovery document or the redirect URI, so it also skips the
+    profile's checks that the server supports the chosen methods, that the
+    issuer and endpoints are ``https`` URLs, and that the redirect URI is
+    allowed.  Build a :class:`FAPI2ClientProfile` to get every check.
+
     Args:
         issuer: The authorization server's issuer identifier.
         private_key_jwt: The ``private_key_jwt`` settings, if used.
@@ -424,11 +434,18 @@ def _authorization_endpoint_violations(
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(2): PAR (RFC 9126) is required.
-    if not discovery.pushed_authorization_request_endpoint:
+    # RFC 9126 §5: the endpoint is a URL, so only a non-empty string counts.
+    par_endpoint = discovery.pushed_authorization_request_endpoint
+    if par_endpoint is None or par_endpoint == "":
         violations.append(
             "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
             "Security Profile §5.3.2.2 requires pushed authorization requests "
             "(RFC 9126)"
+        )
+    elif not isinstance(par_endpoint, str) or not par_endpoint.strip():
+        violations.append(
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            f"{par_endpoint!r} (RFC 9126 §5)"
         )
 
     # FAPI 2.0 Security Profile §5.3.2.2(7): the server returns iss in the
@@ -619,6 +636,12 @@ class FAPI2ClientProfile:
     host.  A ``PrivateKeyJwt`` without ``issuer`` or ``audience`` gets the
     discovery issuer; one naming anything else is refused, so the assertion
     ``aud`` is never the endpoint URL (§5.3.3.1).
+
+    The profile is narrower than the specification: a client uses exactly
+    one of ``private_key_jwt`` (tokens DPoP-bound) or mTLS (tokens bound to
+    the certificate), so it refuses ``private_key_jwt`` with mTLS-bound tokens
+    and mTLS with a DPoP key, which :func:`validate_fapi_client_config`
+    accepts because §5.3.3.1 allows them.
 
     The request builders fix the FAPI parameters (PAR,
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
