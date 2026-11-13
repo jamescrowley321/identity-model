@@ -67,7 +67,7 @@ class TestFAPIDiscoveryCompliance:
         issuer = discovery_document.issuer
         build = partial(
             FAPI2ClientProfile,
-            discovery_document,
+            discovery=discovery_document,
             client_id="fapi-client",
             redirect_uri=REDIRECT_URI,
             client_auth=_pkj(issuer=issuer),
