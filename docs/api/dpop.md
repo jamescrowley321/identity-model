@@ -331,7 +331,16 @@ strips from client requests; otherwise a client can present any certificate.
   `WWW-Authenticate: DPoP error="<kind.oauth_error>", algs="<accepted algorithms>"`
   (RFC 9449 §7.1). The body is the same generic detail as every other `401`.
 - With `required_binding=TokenBinding.DPOP`, every `401` challenges with `DPoP`.
-  Otherwise non-DPoP failures challenge with `Bearer`.
+  Otherwise a request sent with the `DPoP` scheme is challenged with `DPoP`,
+  and every other request with `Bearer`.
+- A rejected token gets `error="invalid_token"`; a malformed `Authorization`
+  header with a supported scheme gets `400` and `error="invalid_request"`; a
+  request with no credentials, or an unsupported scheme, gets no `error`
+  (RFC 6750 §3.1). `require_scope` and `require_claim` answer `403` with
+  `error="insufficient_scope"` in the request's scheme.
+- `AuthOptions.realm` adds `realm="<realm>"` to every challenge. Without it a
+  `Bearer` challenge that would carry no other parameter carries
+  `realm="api"`, since `Bearer` needs at least one (RFC 6750 §3).
 - More than one `DPoP` header is refused as `invalid_dpop_proof` (§4.3).
 - Without `expected_origin`, the proof's `htu` is checked against
   `request.url`, whose scheme and host come from the ASGI scope and the `Host`

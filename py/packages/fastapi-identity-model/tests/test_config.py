@@ -67,7 +67,9 @@ def test_token_manager_repr_omits_secrets():
         client_id="cid",
         client_secret="s3cr3t",
     )
-    manager.set_tokens(access_token="at-s3cr3t", refresh_token="rt-s3cr3t")
+    manager.set_tokens(
+        access_token="at-s3cr3t", refresh_token="rt-s3cr3t", token_type="Bearer"
+    )
     assert "s3cr3t" not in repr(manager)
 
 

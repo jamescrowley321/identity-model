@@ -12,6 +12,8 @@ with :func:`fastapi_identity_model.build_ws_authenticator` instead.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass, replace
+from enum import StrEnum
 import logging
 from urllib.parse import urlsplit
 
@@ -97,6 +99,57 @@ _UPSTREAM_FETCH_FAILURE_PREFIXES = (
     "Network error during discovery",
     "Network error during JWKS",
 )
+
+
+# RFC 6750 §3: a Bearer challenge MUST carry at least one auth-param; this
+# realm is the one sent when nothing else would be.
+DEFAULT_REALM = "api"
+
+
+class BearerError(StrEnum):
+    """The ``error`` auth-param of a challenge (RFC 6750 §3.1)."""
+
+    INVALID_REQUEST = "invalid_request"
+    """The ``Authorization`` header names a supported scheme but is malformed
+    (sent with ``400``)."""
+    INVALID_TOKEN = "invalid_token"
+    """The access token is expired, revoked, malformed or otherwise invalid."""
+    INSUFFICIENT_SCOPE = "insufficient_scope"
+    """The token is valid but does not grant access to the resource (``403``)."""
+
+
+@dataclass(frozen=True)
+class AuthChallenge:
+    """Builds the ``WWW-Authenticate`` header (RFC 6750 §3, RFC 9449 §7.1).
+
+    The middleware stores the challenge for the current request on
+    ``request.state.auth_challenge`` so the dependencies answer with the same
+    scheme and parameters.
+    """
+
+    scheme: AuthorizationScheme = AuthorizationScheme.BEARER
+    realm: str | None = None
+    dpop_algs: tuple[str, ...] = ()
+
+    def header(self, *, error: str | None = None, scope: str | None = None) -> str:
+        """The header value, with *error* and *scope* auth-params when given.
+
+        A ``DPoP`` challenge always carries ``algs``. A ``Bearer`` challenge
+        that would have no auth-param carries ``realm`` (``DEFAULT_REALM``
+        unless one is configured).
+        """
+        params = []
+        if self.realm is not None:
+            params.append(f'realm="{self.realm}"')
+        if error is not None:
+            params.append(f'error="{error}"')
+        if scope is not None:
+            params.append(f'scope="{scope}"')
+        if self.scheme is AuthorizationScheme.DPOP:
+            params.append(f'algs="{" ".join(self.dpop_algs)}"')
+        if not params:
+            params.append(f'realm="{DEFAULT_REALM}"')
+        return f"{self.scheme.value} {', '.join(params)}"
 
 
 def _is_upstream_fetch_failure(exc: Exception) -> bool:
@@ -312,14 +365,24 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self.http_client = http_client
         self.cache = cache
         self.options = resolve_auth_options(settings, options)
-        self._dpop_algs = " ".join(self.options.dpop.accepted_algorithms)
         # The scheme a client must use; RFC 9449 §7.1 challenges a DPoP-only
         # resource with ``DPoP``.
-        self._challenge = (
-            AuthorizationScheme.DPOP
-            if self.options.required_binding is TokenBinding.DPOP
-            else AuthorizationScheme.BEARER
+        self._challenge = AuthChallenge(
+            scheme=(
+                AuthorizationScheme.DPOP
+                if self.options.required_binding is TokenBinding.DPOP
+                else AuthorizationScheme.BEARER
+            ),
+            realm=self.options.realm,
+            dpop_algs=tuple(self.options.dpop.accepted_algorithms),
         )
+
+    def _challenge_for(self, scheme: AuthorizationScheme) -> AuthChallenge:
+        """The challenge for a request that used *scheme*: ``DPoP`` when the
+        request did or the resource requires it, else ``Bearer``."""
+        if scheme is AuthorizationScheme.DPOP:
+            return replace(self._challenge, scheme=scheme)
+        return self._challenge
 
     def _is_excluded(self, path: str) -> bool:
         """Whether *path* is excluded from token validation.
@@ -354,18 +417,16 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self,
         detail: str,
         *,
-        scheme: AuthorizationScheme | None = None,
+        scheme: AuthorizationScheme = AuthorizationScheme.BEARER,
         error: str | None = None,
+        status_code: int = status.HTTP_401_UNAUTHORIZED,
     ) -> JSONResponse:
-        scheme = scheme or self._challenge
-        params = [f'error="{error}"'] if error is not None else []
-        if scheme is AuthorizationScheme.DPOP:
-            params.append(f'algs="{self._dpop_algs}"')
-        challenge = " ".join([scheme.value, ", ".join(params)]).strip()
         return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status_code,
             content={"detail": detail},
-            headers={"WWW-Authenticate": challenge},
+            headers={
+                "WWW-Authenticate": self._challenge_for(scheme).header(error=error)
+            },
         )
 
     def _extract_token(
@@ -377,6 +438,18 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             return self._unauthorized("Missing Authorization header")
         credentials = parse_authorization(authorization)
         if credentials is None:
+            # RFC 6750 §3.1: a supported scheme with a malformed credential is
+            # invalid_request (400); an unsupported scheme gets no error code.
+            parts = authorization.split()
+            scheme = _SCHEMES.get(parts[0].lower()) if parts else None
+            if scheme is not None:
+                return self._unauthorized(
+                    "Invalid Authorization header format. Expected: Bearer "
+                    "<token> or DPoP <token>",
+                    scheme=scheme,
+                    error=BearerError.INVALID_REQUEST,
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             return self._unauthorized(
                 "Invalid Authorization header format. Expected: Bearer <token> "
                 "or DPoP <token>"
@@ -440,15 +513,17 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             # confusion at the resource server).
             wrong_type = self._wrong_token_type_error(claims)
             if wrong_type is not None:
-                return self._unauthorized(wrong_type)
+                return self._unauthorized(
+                    wrong_type, scheme=scheme, error=BearerError.INVALID_TOKEN
+                )
             request.state.user = to_principal(claims)
             request.state.claims = claims
             request.state.token = token
             return None
         except Exception as e:
-            return self._rejection(e)
+            return self._rejection(e, scheme)
 
-    def _rejection(self, e: Exception) -> JSONResponse:
+    def _rejection(self, e: Exception, scheme: AuthorizationScheme) -> JSONResponse:
         """The response for a token-validation failure *e* (called while it is
         being handled, so ``logger.exception`` records the traceback)."""
         if isinstance(e, DPoPValidationError):
@@ -462,7 +537,9 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             )
         if isinstance(e, CertificateBindingError):
             logger.info("Certificate binding rejected: %s", e.kind.value)
-            return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
+            return self._unauthorized(
+                _GENERIC_401_DETAIL, scheme=scheme, error=BearerError.INVALID_TOKEN
+            )
         # A replay cache that cannot be used is the server's fault, not a bad
         # token: it falls through to the 500 below.
         if isinstance(e, PyIdentityModelException) and not isinstance(
@@ -485,14 +562,18 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             # (signature/audience/expiry), which would form a CWE-209 oracle
             # (F-18). Log the real cause server-side for operators.
             logger.info("Token rejected during validation: %s", e)
-            return self._unauthorized(_GENERIC_401_DETAIL)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL, scheme=scheme, error=BearerError.INVALID_TOKEN
+            )
         if isinstance(e, InvalidTokenError):
             # A malformed/undecodable token (e.g. raw pyjwt DecodeError from
             # header parsing during key lookup) is a client error, not a 500 —
             # and returns the same generic body as any other rejection so the
             # response can't distinguish "malformed" from "invalid".
             logger.info("Malformed token rejected: %s", e)
-            return self._unauthorized(_GENERIC_401_DETAIL)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL, scheme=scheme, error=BearerError.INVALID_TOKEN
+            )
         # A genuinely unexpected (non-library) failure is a server fault,
         # not an auth decision. Surface a 500 without leaking internals.
         logger.exception("Unexpected error during token validation")
@@ -503,6 +584,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request and validate the token if required."""
+        request.state.auth_challenge = self._challenge
         # CORS preflight carries no Authorization; excluded paths skip auth.
         if request.method == "OPTIONS" or self._is_excluded(request.url.path):
             return await call_next(request)
@@ -510,6 +592,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         credentials = self._extract_token(request)
         if isinstance(credentials, JSONResponse):
             return credentials
+        request.state.auth_challenge = self._challenge_for(credentials[0])
 
         auth_error = await self._authenticate(request, *credentials)
         if auth_error is not None:

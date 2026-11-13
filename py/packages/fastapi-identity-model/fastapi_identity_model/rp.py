@@ -41,7 +41,12 @@ from urllib.parse import parse_qsl, urlencode
 from fastapi import APIRouter, HTTPException, Request, status
 from starlette.responses import RedirectResponse
 
-from py_identity_model import PyIdentityModelException
+from py_identity_model import (
+    AuthorizationScheme,
+    ConfigurationException,
+    NetworkException,
+    PyIdentityModelException,
+)
 from py_identity_model.aio import (
     AuthorizationCodeTokenRequest,
     DiscoveryDocumentRequest,
@@ -55,9 +60,12 @@ from py_identity_model.aio import (
     get_userinfo,
     parse_authorize_callback_response,
     request_authorization_code_token,
+    validate_authorize_callback_issuer,
     validate_authorize_callback_state,
     validate_id_token,
 )
+
+from .middleware import _is_upstream_fetch_failure
 
 
 if TYPE_CHECKING:
@@ -278,11 +286,21 @@ async def _validate_id_token(
             trusted_audiences=settings.trusted_audiences,
             validate_azp=settings.validate_azp,
         )
+    except ConfigurationException:
+        # A misconfigured RP is a server fault, not a bad ID token: let it
+        # surface as a 500.
+        raise
     except PyIdentityModelException as exc:
-        logger.info("ID token validation failed: %s", exc)
+        if not (isinstance(exc, NetworkException) or _is_upstream_fetch_failure(exc)):
+            logger.info("ID token validation failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="ID token validation failed",
+            ) from exc
+        logger.warning("Provider unreachable during ID token validation: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token validation failed",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Identity provider unavailable",
         ) from exc
 
     # Checked here (not via nonce=) to keep the "Nonce mismatch" 401 detail.
@@ -292,6 +310,20 @@ async def _validate_id_token(
             detail="Nonce mismatch",
         )
     return claims
+
+
+def _is_bearer(token: dict) -> bool:
+    """Whether the token response issued a Bearer access token.
+
+    RFC 6749 §7.1: a client MUST NOT use an access token whose type it does
+    not understand; §5.1: ``token_type`` is case-insensitive. The router holds
+    no DPoP key, so it can present only a Bearer token.
+    """
+    token_type = token.get("token_type")
+    return (
+        isinstance(token_type, str)
+        and token_type.casefold() == AuthorizationScheme.BEARER.value.casefold()
+    )
 
 
 async def _fetch_userinfo(
@@ -382,6 +414,21 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
         )
 
     disco = await _discover(settings, http_client)
+    # RFC 9207 §2.4: a present ``iss`` must equal the metadata issuer, and a
+    # provider that advertises the parameter must send it.
+    issuer_check = validate_authorize_callback_issuer(
+        cb,
+        disco.issuer,
+        iss_parameter_supported=(
+            disco.authorization_response_iss_parameter_supported is True
+        ),
+    )
+    if not issuer_check.is_valid:
+        logger.info("Authorization response issuer rejected: %s", issuer_check.result)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authorization response issuer mismatch",
+        )
     token = await _exchange_code(
         settings, disco, cb.code, flow["code_verifier"], http_client
     )
@@ -401,7 +448,11 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     )
 
     userinfo: dict = {}
-    if fetch_userinfo:
+    if fetch_userinfo and access_token and not _is_bearer(token):
+        logger.warning(
+            "Skipping UserInfo: token_type %r is not Bearer", token.get("token_type")
+        )
+    elif fetch_userinfo:
         userinfo = await _fetch_userinfo(
             disco, access_token, claims.get("sub"), http_client
         )
@@ -414,6 +465,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     if store_tokens:
         session_data["tokens"] = {
             "access_token": access_token,
+            "token_type": token.get("token_type"),
             "refresh_token": token.get("refresh_token"),
             "id_token": id_token,
         }

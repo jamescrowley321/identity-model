@@ -488,6 +488,82 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
   get a proof minted for another origin past the `htu` check. Set it unless a
   trusted proxy pins `Host`.
 
+### FastAPI: `WWW-Authenticate` challenges carry the RFC 6750 parameters ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
+
+RFC 6750 §3 requires every `Bearer` challenge to carry at least one
+auth-param; 4.x sent a bare `WWW-Authenticate: Bearer`.
+
+- No credentials, or an unsupported scheme: `401`, `Bearer realm="api"` (no
+  `error`, RFC 6750 §3.1), or `DPoP algs="..."` with
+  `required_binding=TokenBinding.DPOP`. Set `AuthOptions(realm=...)` to name the realm; it
+  is then added to every challenge. A realm that would need escaping (`"`,
+  `\`, non-ASCII or control characters) raises `ConfigurationException`.
+- A malformed `Authorization` header with the `Bearer` or `DPoP` scheme
+  (`Bearer`, `Bearer a b`): `400` with `error="invalid_request"`; it was a
+  `401`.
+- A rejected token: `401` with `error="invalid_token"`.
+- A request sent with the `DPoP` scheme is challenged with `DPoP` (with
+  `algs`) for every failure, not only binding failures (RFC 9449 §7.1).
+- `require_scope` and `require_claim` answer `403` with
+  `error="insufficient_scope"` (and `scope="<scope>"` for `require_scope`).
+- `get_current_user`, `get_claims` and `get_token` send the same challenge as
+  the middleware.
+- `require_scope(scope)` raises `ConfigurationException` when `scope` is not a
+  single RFC 6749 §3.3 scope-token (empty, contains a space, `"` or `\`).
+
+### FastAPI: the login callback checks the RFC 9207 `iss` parameter ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
+
+`build_oidc_router`'s callback now validates the authorization response `iss`
+parameter against the discovery `issuer` (simple string comparison, RFC 9207
+§2.4):
+
+- A present `iss` must equal the discovery `issuer` exactly, or the callback
+  answers `400` "Authorization response issuer mismatch" and the code is not
+  redeemed. A trailing-slash difference is a mismatch.
+- When discovery advertises `authorization_response_iss_parameter_supported`,
+  a callback without `iss` is rejected the same way.
+- When it does not, a callback without `iss` is accepted as before.
+
+### FastAPI: the RP and `TokenManager` check `token_type` ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
+
+RFC 6749 §7.1: a client MUST NOT use an access token whose type it does not
+understand.
+
+- `build_oidc_router` calls UserInfo only when the token response's
+  `token_type` is `Bearer` (any case). Any other type skips UserInfo, and the
+  login continues on the ID Token. With `store_tokens=True` the session's
+  `tokens` now also holds `token_type`.
+- `TokenManager.set_tokens` takes a required keyword `token_type` (`"Bearer"`,
+  `"DPoP"`, any case, or an `AuthorizationScheme`). Read it back from
+  `TokenManager.token_type` to build the `Authorization` header. A refreshed
+  token keeps the type the token endpoint returns.
+
+Before:
+
+```python
+tm.set_tokens(access_token=at, refresh_token=rt, expires_in=3600)
+```
+
+After:
+
+```python
+tm.set_tokens(access_token=at, refresh_token=rt, expires_in=3600, token_type="Bearer")
+headers = {"Authorization": f"{tm.token_type.value} {await tm.get_access_token()}"}
+```
+
+### FastAPI: `TokenManager` errors are typed; ID Token outages are `502` ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
+
+- `TokenManager` raises `TokenManagerError` (a `PyIdentityModelException`)
+  with `kind: TokenManagerErrorKind`: `NO_REFRESH_TOKEN`, `DISCOVERY_FAILED`,
+  `REFRESH_FAILED` (`details["error"]` holds the token endpoint's error),
+  `MISSING_ACCESS_TOKEN`, `UNSUPPORTED_TOKEN_TYPE`. Match on `kind`, not the
+  message.
+- In the login callback, a transport failure (connection error or timeout)
+  fetching discovery or JWKS during ID Token validation answers `502`
+  "Identity provider unavailable", and a
+  `ConfigurationException` propagates (a `500`). Both were a `401` "ID token
+  validation failed".
+
 ### DPoP: the replay cache is yours ([#1060](https://github.com/jamescrowley321/identity-model/issues/1060))
 
 `DPoPVerificationOptions` now requires `replay_cache=`, and the process-wide

@@ -9,8 +9,9 @@ core library.
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 
-from py_identity_model import PyIdentityModelException
+from py_identity_model import AuthorizationScheme, PyIdentityModelException
 from py_identity_model.aio import (
     AsyncHTTPClient,
     DiscoveryDocumentRequest,
@@ -18,6 +19,69 @@ from py_identity_model.aio import (
     get_discovery_document,
     refresh_token,
 )
+
+
+class TokenManagerErrorKind(Enum):
+    """Why :class:`TokenManager` could not return an access token."""
+
+    NO_REFRESH_TOKEN = "no_refresh_token"
+    """The access token expired and no refresh token is held; log in again."""
+    DISCOVERY_FAILED = "discovery_failed"
+    """The discovery document could not be fetched or has no token endpoint."""
+    REFRESH_FAILED = "refresh_failed"
+    """The refresh grant failed (``details["error"]`` holds the cause)."""
+    MISSING_ACCESS_TOKEN = "missing_access_token"
+    """The refresh response has no ``access_token``."""
+    UNSUPPORTED_TOKEN_TYPE = "unsupported_token_type"
+    """The ``token_type`` is not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1)."""
+
+
+_ERROR_MESSAGES = {
+    TokenManagerErrorKind.NO_REFRESH_TOKEN: (
+        "Token expired and no refresh token available"
+    ),
+    TokenManagerErrorKind.DISCOVERY_FAILED: ("Discovery failed while refreshing token"),
+    TokenManagerErrorKind.REFRESH_FAILED: "Token refresh failed",
+    TokenManagerErrorKind.MISSING_ACCESS_TOKEN: (
+        "Token refresh succeeded but no access token returned"
+    ),
+    TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE: (
+        "Access token type is not Bearer or DPoP (RFC 6749 §7.1)"
+    ),
+}
+
+
+class TokenManagerError(PyIdentityModelException):
+    """Raised when :class:`TokenManager` cannot return an access token.
+
+    ``kind`` says why; the message is fixed per kind and ``details`` carries
+    the underlying error, if any.
+    """
+
+    def __init__(self, kind: TokenManagerErrorKind, error: str | None = None) -> None:
+        self.kind = kind
+        details: dict = {"kind": kind.value}
+        if error is not None:
+            details["error"] = error
+        super().__init__(_ERROR_MESSAGES[kind], details=details)
+
+
+_TOKEN_TYPES = {scheme.value.casefold(): scheme for scheme in AuthorizationScheme}
+
+
+def _token_type(value: object) -> AuthorizationScheme:
+    """*value* as an :class:`AuthorizationScheme` (case-insensitive, RFC 6749
+    §5.1), or :class:`TokenManagerError` when it is not Bearer or DPoP."""
+    scheme = (
+        value
+        if isinstance(value, AuthorizationScheme)
+        else _TOKEN_TYPES.get(value.casefold())
+        if isinstance(value, str)
+        else None
+    )
+    if scheme is None:
+        raise TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
+    return scheme
 
 
 class TokenManager:
@@ -34,9 +98,14 @@ class TokenManager:
             access_token="initial_access_token",
             refresh_token="initial_refresh_token",
             expires_in=3600,
+            token_type="Bearer",
         )
         token = await manager.get_access_token()  # auto-refreshes if near expiry
+        headers = {"Authorization": f"{manager.token_type.value} {token}"}
         ```
+
+    A ``DPoP`` access token also needs a DPoP proof on every request
+    (RFC 9449 §7.1).
     """
 
     def __init__(
@@ -66,6 +135,7 @@ class TokenManager:
         self.http_client = http_client
 
         self._access_token: str | None = None
+        self._token_type: AuthorizationScheme | None = None
         self._refresh_token: str | None = None
         self._expires_at: datetime | None = None
         # Serialize refreshes so concurrent callers don't each fire the grant
@@ -77,8 +147,24 @@ class TokenManager:
         access_token: str,
         refresh_token: str | None = None,
         expires_in: int | None = None,
+        *,
+        token_type: str | AuthorizationScheme,
     ) -> None:
-        """Store the current token pair and (optionally) its expiry."""
+        """Store the current token pair, its type and (optionally) its expiry.
+
+        Args:
+            access_token: The access token.
+            refresh_token: The refresh token, if any.
+            expires_in: Seconds until the access token expires.
+            token_type: The token response's ``token_type``, matched
+                case-insensitively (RFC 6749 §5.1).
+
+        Raises:
+            TokenManagerError: ``UNSUPPORTED_TOKEN_TYPE`` when *token_type* is
+                not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1: the token must not
+                be used). Nothing is stored.
+        """
+        self._token_type = _token_type(token_type)
         self._access_token = access_token
         self._refresh_token = refresh_token
         # ``is not None`` (not truthiness) so expires_in=0 means "already
@@ -104,8 +190,9 @@ class TokenManager:
             http_client=self.http_client,
         )
         if not disco.is_successful or not disco.token_endpoint:
-            raise PyIdentityModelException(
-                f"Discovery failed while refreshing token: {disco.error or 'no token endpoint'}",
+            raise TokenManagerError(
+                TokenManagerErrorKind.DISCOVERY_FAILED,
+                disco.error or "no token endpoint",
             )
         return disco.token_endpoint
 
@@ -113,8 +200,10 @@ class TokenManager:
         """Return the current access token, refreshing it first if necessary.
 
         Raises:
-            PyIdentityModelException: If a refresh is required but no refresh
-                token is available, or the refresh grant fails.
+            TokenManagerError: If a refresh is required but no refresh token
+                is available, discovery or the refresh grant fails, or the
+                refreshed token's type is not ``Bearer`` or ``DPoP``.
+                ``kind`` says which.
         """
         if self._access_token and not self.is_token_expired():
             return self._access_token
@@ -126,9 +215,7 @@ class TokenManager:
                 return self._access_token
 
             if not self._refresh_token:
-                raise PyIdentityModelException(
-                    "Token expired and no refresh token available",
-                )
+                raise TokenManagerError(TokenManagerErrorKind.NO_REFRESH_TOKEN)
 
             token_endpoint = await self._resolve_token_endpoint()
             response = await refresh_token(
@@ -142,21 +229,27 @@ class TokenManager:
             )
 
             if not response.is_successful or not response.token:
-                raise PyIdentityModelException(
-                    f"Token refresh failed: {response.error or 'no token in response'}",
+                raise TokenManagerError(
+                    TokenManagerErrorKind.REFRESH_FAILED,
+                    response.error or "no token in response",
                 )
 
+            # Keep a rotated refresh token even when the access token is
+            # refused: the server may already have invalidated the old one.
+            refreshed = response.token.get("refresh_token") or self._refresh_token
             new_access_token = response.token.get("access_token")
-            if not new_access_token:
-                raise PyIdentityModelException(
-                    "Token refresh succeeded but no access token returned",
-                )
-
+            try:
+                if not new_access_token:
+                    raise TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
+                token_type = _token_type(response.token.get("token_type"))
+            except TokenManagerError:
+                self._refresh_token = refreshed
+                raise
             self.set_tokens(
                 access_token=new_access_token,
-                refresh_token=response.token.get("refresh_token")
-                or self._refresh_token,
+                refresh_token=refreshed,
                 expires_in=response.token.get("expires_in"),
+                token_type=token_type,
             )
             return self._access_token
 
@@ -164,6 +257,12 @@ class TokenManager:
     def access_token(self) -> str | None:
         """The current access token, without triggering a refresh."""
         return self._access_token
+
+    @property
+    def token_type(self) -> AuthorizationScheme | None:
+        """The access token's scheme (``Bearer`` or ``DPoP``) for the
+        ``Authorization`` header, or ``None`` before :meth:`set_tokens`."""
+        return self._token_type
 
     @property
     def refresh_token(self) -> str | None:

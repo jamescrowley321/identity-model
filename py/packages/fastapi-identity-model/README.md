@@ -180,9 +180,19 @@ lifespan). A cache holds no connections and needs no closing.
 from fastapi_identity_model import TokenManager
 
 tm = TokenManager(discovery_url=..., client_id=..., client_secret=...)
-tm.set_tokens(access_token=..., refresh_token=..., expires_in=3600)
+tm.set_tokens(
+    access_token=..., refresh_token=..., expires_in=3600, token_type="Bearer"
+)
 access = await tm.get_access_token()   # auto-refreshes shortly before expiry
+headers = {"Authorization": f"{tm.token_type.value} {access}"}
 ```
+
+`token_type` is the token response's `token_type`, matched case-insensitively.
+Anything but `Bearer` or `DPoP` raises `TokenManagerError` with
+`kind=TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE`. Every failure is a
+`TokenManagerError` whose `kind` says why: `NO_REFRESH_TOKEN`,
+`DISCOVERY_FAILED`, `REFRESH_FAILED`, `MISSING_ACCESS_TOKEN` or
+`UNSUPPORTED_TOKEN_TYPE`.
 
 ## License
 
