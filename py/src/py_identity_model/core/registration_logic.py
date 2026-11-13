@@ -116,8 +116,8 @@ def prepare_update_request(request: ClientUpdateRequest) -> tuple[dict, dict]:
             (:attr:`ProtocolParameterErrorReason.CLIENT_ID_MISMATCH`).
     """
     logger.info(f"Updating client at {redact_url(request.address)}")
-    extra_client_id = (request.extra_metadata or {}).get("client_id")
-    if extra_client_id is not None and extra_client_id != request.client_id:
+    extra = request.extra_metadata or {}
+    if "client_id" in extra and extra["client_id"] != request.client_id:
         raise ProtocolParameterError(
             ProtocolParameterErrorReason.CLIENT_ID_MISMATCH, "extra_metadata"
         )

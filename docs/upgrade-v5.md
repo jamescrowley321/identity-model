@@ -878,9 +878,10 @@ redemption whose client authenticates with `ClientAuthMethod.NONE` (no secret,
 no `private_key_jwt`, no mTLS, or `client_auth_method=ClientAuthMethod.NONE`)
 and has no non-empty `code_verifier` is refused before anything is sent:
 `request_authorization_code_token` returns an unsuccessful response whose
-`error` is the `ProtocolParameterError` message ("a public client must send a
-code_verifier (PKCE)"; reason `PKCE_REQUIRED` from
-`prepare_auth_code_token_request_data`). An empty `client_secret` counts as no
+`error` includes the `ProtocolParameterError` message ("a public client must
+send a code_verifier (PKCE)"). The response carries no reason;
+`prepare_auth_code_token_request_data` raises the error with reason
+`PKCE_REQUIRED`. An empty `client_secret` counts as no
 secret. Confidential clients are unchanged.
 
 ```python
@@ -904,7 +905,8 @@ RFC 6749 §3.1.2 and RFC 8707 §2 require both to be absolute URIs (RFC 3986
 `ProtocolParameterError` (reason `NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`) for
 its `redirect_uri` and for a `resource` passed as an extra parameter. PAR
 (`redirect_uri`) and token exchange (`resource`) are refused before anything
-is sent and return an unsuccessful response carrying that error's message. In 4.x `redirect_uri="cb#frag"` was
+is sent and return an unsuccessful response whose `error` includes that
+error's message. In 4.x `redirect_uri="cb#frag"` was
 sent as is. A query component is still allowed.
 
 ### A client update leaves out server-issued fields and keeps its `client_id`
@@ -914,10 +916,11 @@ RFC 7592 §2.2: the update request "MUST NOT include the
 `client_secret_expires_at`, or `client_id_issued_at` fields", and its
 `client_id` "MUST be the same as its currently issued client identifier".
 `update_client` now drops those four fields from `extra_metadata`, so the
-metadata of a read response can be passed back as is, and returns an
-unsuccessful response (the `ProtocolParameterError` message, reason
-`CLIENT_ID_MISMATCH`) without sending anything when `extra_metadata` names a
-different `client_id`. In 4.x both reached the server.
+metadata of a read response can be passed back as is. When `extra_metadata`
+has a `client_id` key with any other value (including `None`), it sends
+nothing and returns an unsuccessful response whose `error` includes the
+`ProtocolParameterError` message; `prepare_update_request` raises it with
+reason `CLIENT_ID_MISMATCH`. In 4.x both reached the server.
 
 ## DPoP client
 

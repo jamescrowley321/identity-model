@@ -5,7 +5,9 @@ without a fragment), RFC 7592 §2.2 (client update body) and RFC 9700 §2.1.1
 (public clients use PKCE).
 """
 
+import httpx
 import pytest
+import respx
 
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
@@ -26,11 +28,16 @@ from py_identity_model.core.token_exchange_logic import (
     prepare_token_exchange_request_data,
 )
 from py_identity_model.core.validators import validate_absolute_uri_without_fragment
+from py_identity_model.sync.par import push_authorization_request
+from py_identity_model.sync.registration import update_client
+from py_identity_model.sync.token_client import request_authorization_code_token
+from py_identity_model.sync.token_exchange import exchange_token
 
 
 AUTHORIZE_URL = "https://auth.example.com/authorize"
 TOKEN_URL = "https://auth.example.com/token"
 REDIRECT_URI = "https://app.example.com/cb"
+PAR_URL = "https://auth.example.com/par"
 ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 
 NOT_ABSOLUTE = ProtocolParameterErrorReason.NOT_ABSOLUTE_URI
@@ -144,9 +151,10 @@ class TestClientUpdateBody:
             "client_name": "App",
         }
 
-    def test_extra_metadata_cannot_change_client_id(self):
+    @pytest.mark.parametrize("other", ["other", None, ""])
+    def test_extra_metadata_cannot_change_client_id(self, other):
         with pytest.raises(ProtocolParameterError) as excinfo:
-            prepare_update_request(_update({"client_id": "other"}))
+            prepare_update_request(_update({"client_id": other}))
         assert _reason(excinfo) == (
             ProtocolParameterErrorReason.CLIENT_ID_MISMATCH,
             "extra_metadata",
@@ -208,3 +216,49 @@ class TestPublicClientRequiresPkce:
             "redirect_uri": REDIRECT_URI,
         }
         assert auth == ("app1", "secret")
+
+
+@pytest.mark.unit
+class TestRefusedBeforeSending:
+    """The public calls refuse these requests without sending anything."""
+
+    @respx.mock
+    def test_public_client_without_verifier(self):
+        route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(200))
+        response = request_authorization_code_token(_auth_code())
+        assert response.is_successful is False
+        assert route.call_count == 0
+
+    @respx.mock
+    def test_par_redirect_uri_with_fragment(self):
+        route = respx.post(PAR_URL).mock(return_value=httpx.Response(201))
+        response = push_authorization_request(
+            PushedAuthorizationRequest(
+                address=PAR_URL, client_id="app1", redirect_uri=REDIRECT_URI + "#f"
+            )
+        )
+        assert response.is_successful is False
+        assert route.call_count == 0
+
+    @respx.mock
+    def test_token_exchange_relative_resource(self):
+        route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(200))
+        response = exchange_token(
+            TokenExchangeRequest(
+                address=TOKEN_URL,
+                client_id="svc",
+                subject_token="st",
+                subject_token_type=ACCESS_TOKEN_TYPE,
+                resource="/api",
+            )
+        )
+        assert response.is_successful is False
+        assert route.call_count == 0
+
+    @respx.mock
+    def test_update_client_with_other_client_id(self):
+        update = _update({"client_id": "other"})
+        route = respx.put(update.address).mock(return_value=httpx.Response(200))
+        response = update_client(update)
+        assert response.is_successful is False
+        assert route.call_count == 0
