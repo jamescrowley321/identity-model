@@ -31,7 +31,9 @@ PyIdentityModelException
 │   ├── TokenRequestException
 │   └── UserInfoException
 ├── ConfigurationException
-│   └── DiscoveryHTTPSRequiredError
+│   ├── DiscoveryHTTPSRequiredError
+│   ├── RequestObjectError
+│   └── WeakSigningKeyError
 ├── FailedResponseAccessError
 └── SuccessfulResponseAccessError
 ```
@@ -99,6 +101,12 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.ConfigurationException
 
 ::: py_identity_model.exceptions.DiscoveryHTTPSRequiredError
+
+::: py_identity_model.exceptions.RequestObjectError
+
+::: py_identity_model.exceptions.RequestObjectErrorKind
+
+::: py_identity_model.exceptions.WeakSigningKeyError
 
 ## Response Guard Errors
 

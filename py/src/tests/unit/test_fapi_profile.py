@@ -7,7 +7,12 @@ import time
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ed448, ed25519, rsa
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+)
 import httpx
 import jwt as pyjwt
 from jwt.algorithms import RSAAlgorithm
@@ -33,6 +38,7 @@ from py_identity_model.core.fapi import (
     validate_fapi_authorization_request,
     validate_fapi_client_config,
 )
+from py_identity_model.core.key_strength import MIN_RSA_KEY_BITS
 from py_identity_model.core.models import (
     DiscoveryDocumentResponse,
     JwksResponse,
@@ -96,6 +102,19 @@ def _alg_violation(what: str, alg: str) -> str:
         f"{what} algorithm '{alg}' not allowed; use ES256, EdDSA, PS256 "
         "(FAPI 2.0 Security Profile §5.4.1)"
     )
+
+
+def _pem(key: Any) -> bytes:
+    return key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+
+
+ED448_PEM = _pem(ed448.Ed448PrivateKey.generate())
+ED25519_PEM = _pem(ed25519.Ed25519PrivateKey.generate())
+WEAK_RSA_BITS = MIN_RSA_KEY_BITS - 1
+RSA_2047_PEM = _pem(
+    rsa.generate_private_key(public_exponent=65537, key_size=WEAK_RSA_BITS)
+)
+RSA_2048_PEM = _pem(rsa.generate_private_key(public_exponent=65537, key_size=2048))
 
 
 def _pkj(**overrides: Any) -> PrivateKeyJwt:
@@ -1572,3 +1591,101 @@ class TestFAPI2ClientProfileBearerDowngrade:
         response = refresh_token(request)
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
+
+
+@pytest.mark.unit
+class TestFAPISigningKeys:
+    """Security Profile §5.4.1: RSA keys of 2048 bits or more, EdDSA on Ed25519."""
+
+    @staticmethod
+    def _client_violations(private_key: bytes, algorithm: str) -> list[FAPIViolation]:
+        return validate_fapi_client_config(
+            issuer=ISSUER,
+            private_key_jwt=_pkj(
+                private_key=private_key, algorithm=algorithm, issuer=ISSUER
+            ),
+            dpop_key=DPOP_KEY,
+        ).violations
+
+    def test_rsa_under_2048_private_key_jwt(self):
+        assert self._client_violations(RSA_2047_PEM, "PS256") == [
+            FAPIViolation(
+                FAPIViolationCode.KEY_NOT_ALLOWED,
+                "private_key_jwt RSA key is 2047 bits; at least 2048 required "
+                "(FAPI 2.0 Security Profile §5.4.1)",
+            )
+        ]
+
+    def test_ed448_private_key_jwt(self):
+        assert self._client_violations(ED448_PEM, "EdDSA") == [
+            FAPIViolation(
+                FAPIViolationCode.KEY_NOT_ALLOWED,
+                "private_key_jwt EdDSA key must be Ed25519 (FAPI 2.0 Security "
+                "Profile §5.4.1)",
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        ("private_key", "algorithm"),
+        [(RSA_2048_PEM, "PS256"), (ED25519_PEM, "EdDSA")],
+        ids=["rsa-2048", "ed25519"],
+    )
+    def test_allowed_private_key_jwt_keys(self, private_key, algorithm):
+        assert self._client_violations(private_key, algorithm) == []
+
+    def test_non_fapi_algorithm_reports_only_the_algorithm(self):
+        assert [v.code for v in self._client_violations(RSA_2047_PEM, "RS256")] == [
+            FAPIViolationCode.ALGORITHM_NOT_ALLOWED
+        ]
+
+    def test_unloadable_key_left_to_signing(self):
+        assert self._client_violations(b"not a key", "EdDSA") == []
+
+    def test_profile_refuses_weak_private_key_jwt(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(
+                _discovery(token_endpoint_auth_signing_alg_values_supported=["PS256"]),
+                client_auth=_pkj(
+                    private_key=RSA_2047_PEM, algorithm="PS256", issuer=ISSUER
+                ),
+            )
+        assert exc_info.value.codes == [FAPIViolationCode.KEY_NOT_ALLOWED]
+
+    def test_profile_refuses_ed448_private_key_jwt(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(
+                _discovery(token_endpoint_auth_signing_alg_values_supported=["EdDSA"]),
+                client_auth=_pkj(
+                    private_key=ED448_PEM, algorithm="EdDSA", issuer=ISSUER
+                ),
+            )
+        assert exc_info.value.codes == [FAPIViolationCode.KEY_NOT_ALLOWED]
+
+    @pytest.mark.parametrize(
+        ("private_key", "algorithm", "message"),
+        [
+            (
+                RSA_2047_PEM,
+                "PS256",
+                "request object RSA key is 2047 bits; at least 2048 required "
+                "(FAPI 2.0 Security Profile §5.4.1)",
+            ),
+            (
+                ED448_PEM,
+                "EdDSA",
+                "request object EdDSA key must be Ed25519 (FAPI 2.0 Security "
+                "Profile §5.4.1)",
+            ),
+        ],
+        ids=["rsa-2047", "ed448"],
+    )
+    def test_request_object_key_refused(self, private_key, algorithm, message):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _signed_profile(
+                request_object_key=_request_object_key(
+                    private_key=private_key, algorithm=algorithm
+                )
+            )
+        assert exc_info.value.violations == [
+            FAPIViolation(FAPIViolationCode.KEY_NOT_ALLOWED, message)
+        ]

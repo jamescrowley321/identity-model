@@ -442,6 +442,71 @@ class ClientAuthMethodError(ConfigurationException):
         super().__init__(messages[reason])
 
 
+class WeakSigningKeyError(ConfigurationException):
+    """A key the library was asked to sign with is below the strength floor.
+
+    The floor is the one verification keys meet (``WeakKeyException``): an RSA
+    key needs at least 2048 bits (RFC 7518 §3.3, §3.5). Raised before anything
+    is signed.
+
+    Attributes:
+        kty: The key type (``"RSA"``).
+        bits: The key's size in bits.
+        min_bits: The size it needed.
+    """
+
+    def __init__(self, kty: str, bits: int, min_bits: int) -> None:
+        self.kty = kty
+        self.bits = bits
+        self.min_bits = min_bits
+        super().__init__(
+            f"{kty} signing key is {bits} bits; at least {min_bits} required",
+            details={"kty": kty, "bits": bits, "min_bits": min_bits},
+        )
+
+
+class RequestObjectErrorKind(Enum):
+    """Why a JAR request object or authorization URL can't be built."""
+
+    FORBIDDEN_CLAIM = "forbidden_claim"
+    """``extra_claims`` holds ``request`` or ``request_uri``, which RFC 9101 §4
+    forbids inside a request object."""
+    NOT_A_JWT = "not_a_jwt"
+    """The request object is not a signed JWT whose claims can be read."""
+    ENCRYPTED = "encrypted"
+    """The request object is a compact JWE, so its ``client_id`` can't be
+    read."""
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """The request object's ``client_id`` is absent or differs from the
+    authorization request's ``client_id`` (RFC 9101 §5)."""
+
+
+_REQUEST_OBJECT_MESSAGES = {
+    RequestObjectErrorKind.FORBIDDEN_CLAIM: (
+        "request and request_uri must not be included in a request object (RFC 9101 §4)"
+    ),
+    RequestObjectErrorKind.NOT_A_JWT: "request object is not a signed JWT",
+    RequestObjectErrorKind.ENCRYPTED: (
+        "request object is encrypted; its client_id can't be checked"
+    ),
+    RequestObjectErrorKind.CLIENT_ID_MISMATCH: (
+        "request object client_id does not match the authorization request "
+        "client_id (RFC 9101 §5)"
+    ),
+}
+
+
+class RequestObjectError(ConfigurationException):
+    """A JAR request object (RFC 9101) can't be built or sent as given.
+
+    ``kind`` says which rule was broken; the message is fixed per kind.
+    """
+
+    def __init__(self, kind: RequestObjectErrorKind) -> None:
+        self.kind = kind
+        super().__init__(_REQUEST_OBJECT_MESSAGES[kind], details={"kind": kind.value})
+
+
 class FailedResponseAccessError(PyIdentityModelException):
     """Raised when accessing data fields on a failed response."""
 
@@ -492,6 +557,8 @@ __all__ = [
     "LogoutTokenValidationException",
     "NetworkException",
     "PyIdentityModelException",
+    "RequestObjectError",
+    "RequestObjectErrorKind",
     "SignatureVerificationException",
     "SuccessfulResponseAccessError",
     "TokenExpiredException",
@@ -501,4 +568,5 @@ __all__ = [
     "UserInfoException",
     "ValidationException",
     "WeakKeyException",
+    "WeakSigningKeyError",
 ]
