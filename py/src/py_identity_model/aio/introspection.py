@@ -30,6 +30,7 @@ from ..core.models import (
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
 )
+from ..core.token_validation_logic import DISCOVERY_AND_JWKS_FAILURES
 from .http_client import resolve_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 from .token_validation import (
@@ -109,6 +110,14 @@ async def introspect_token(
 
     Returns:
         TokenIntrospectionResponse with claims dict including ``active`` bool.
+
+    Raises:
+        ConfigurationException: If the request is misconfigured, or in
+            discovery mode a URL in the discovery document fails a check.
+        DiscoveryException, JwksException: In discovery mode, if the
+            discovery document or JWK Set cannot be fetched.
+        DiscoveryValidationError, JwksValidationError: In discovery mode, if
+            the discovery document or JWK Set is invalid.
     """
     log_introspection_request(request)
 
@@ -127,6 +136,10 @@ async def introspect_token(
                 response, request, discovered, http_client, cache
             )
         return process_introspection_response(response, request, verified)
+    except DISCOVERY_AND_JWKS_FAILURES:
+        # Discovery mode fetches the keys after the request: an unavailable
+        # provider or an invalid document raises as in validate_token.
+        raise
     except Exception as e:
         return handle_introspection_error(e)
     finally:

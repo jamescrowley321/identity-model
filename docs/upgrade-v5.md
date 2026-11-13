@@ -1475,6 +1475,15 @@ except PyIdentityModelException:
 An `except TokenValidationException` handler no longer catches discovery or
 JWKS failures; catch `PyIdentityModelException` (or the types above) as well.
 
+`introspect_token` with `SignedIntrospectionOptions(discovery_address=...)`
+fetches the discovery document and keys after its own request, and raises
+these same exceptions when that fetch fails. A failed introspection request
+itself is still returned as a failed response.
+
+A 2xx discovery document whose members have the wrong JSON type (for example
+`"subject_types_supported": 5`) is `DiscoveryErrorKind.INVALID_DOCUMENT` and
+raises `DiscoveryValidationError`, not an unexpected error.
+
 `JwksResponse` gains `error_kind` (a `JwksErrorKind`) and `status_code`.
 `DiscoveryDocumentResponse` gains `requested_issuer` and `returned_issuer`,
 set with `DiscoveryErrorKind.ISSUER_MISMATCH`. A failed discovery response's
@@ -1529,7 +1538,9 @@ be fetched) is HTTP 503 or WebSocket close 1013. Before, only a transport
 error whose message started with `Network error during` was; a provider
 returning 503 was answered 401. A `DPoPReplayCacheError` or a non-library
 error is 500 or close 1011. Every other library error, including an invalid
-discovery document, is 401 or close 1008.
+discovery document, is 401 or close 1008. A `ConfigurationException` answered
+401 is logged at warning level with its traceback, since it may be this
+server's own setup; other rejections stay at info level.
 
 ## Go and Rust
 

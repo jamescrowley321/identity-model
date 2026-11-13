@@ -335,6 +335,35 @@ class TestValidateTokenOverHttp:
             "https://other.example",
         )
 
+    @respx.mock
+    @pytest.mark.parametrize(
+        "member",
+        [{"subject_types_supported": 5}, {"response_types_supported": [5]}],
+        ids=["subject-types-not-a-list", "response-type-not-a-string"],
+    )
+    def test_wrongly_typed_document_is_a_validation_error(self, member):
+        # A check crashing on a wrongly typed member means the document is
+        # invalid, not that the provider is unavailable.
+        document = {
+            "issuer": ISSUER,
+            "authorization_endpoint": f"{ISSUER}/authorize",
+            "token_endpoint": f"{ISSUER}/token",
+            "jwks_uri": f"{ISSUER}/jwks",
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            **member,
+        }
+        respx.get(DISCO_ADDR).mock(return_value=httpx.Response(200, json=document))
+        config = TokenValidationConfig(perform_disco=True, audience=None)
+        with pytest.raises(DiscoveryValidationError) as excinfo:
+            validate_token(
+                jwt="a.b.c",
+                token_validation_config=config,
+                disco_doc_address=DISCO_ADDR,
+            )
+        assert type(excinfo.value) is DiscoveryValidationError
+
 
 class TestRequestFunctionsRaise:
     """A misconfigured request raises instead of returning a failure (M13)."""

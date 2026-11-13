@@ -82,6 +82,18 @@ def discovery_failure(
     return exception_type(message)
 
 
+#: What :func:`validate_disco_response`, :func:`validate_jwks_uri` and
+#: :func:`validate_jwks_response` raise for a provider that is unavailable or
+#: serves an invalid document. Request functions that fetch discovery after
+#: their own request (signed introspection) let these propagate unchanged.
+DISCOVERY_AND_JWKS_FAILURES: tuple[type[PyIdentityModelException], ...] = (
+    DiscoveryException,
+    DiscoveryValidationError,
+    JwksException,
+    JwksValidationError,
+)
+
+
 def validate_disco_response(
     disco_doc_response: DiscoveryDocumentResponse,
 ) -> None:
@@ -516,6 +528,7 @@ def log_validation_success(decoded_token: dict) -> None:
 
 
 __all__ = [
+    "DISCOVERY_AND_JWKS_FAILURES",
     "build_resolved_config",
     "decode_with_config",
     "discovery_failure",
