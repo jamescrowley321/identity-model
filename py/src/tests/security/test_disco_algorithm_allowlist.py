@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from py_identity_model.core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.core.token_validation_logic import build_resolved_config
 from py_identity_model.exceptions import TokenValidationException
@@ -31,3 +32,23 @@ class TestResolvedAlgOutsideAllowlist:
         original = TokenValidationConfig(perform_disco=True, algorithms=["RS256"])
         resolved = build_resolved_config(original, {"kty": "RSA"}, "RS256")
         assert resolved.algorithms == ["RS256"]
+
+
+class TestUnsetAlgorithmsUsesDefaultAllowlist:
+    """``algorithms=None`` means ``DEFAULT_ALLOWED_ALGORITHMS`` (#952, #907)."""
+
+    @pytest.mark.parametrize("alg", ["HS256", "HS384", "HS512", "none"])
+    def test_non_default_alg_rejected(self, alg):
+        original = TokenValidationConfig(perform_disco=True)
+        with pytest.raises(TokenValidationException) as exc_info:
+            build_resolved_config(original, {"kty": "oct"}, alg)
+        assert exc_info.value.details == {
+            "alg": alg,
+            "allowed": sorted(DEFAULT_ALLOWED_ALGORITHMS),
+        }
+
+    @pytest.mark.parametrize("alg", sorted(DEFAULT_ALLOWED_ALGORITHMS))
+    def test_default_alg_resolves(self, alg):
+        original = TokenValidationConfig(perform_disco=True)
+        resolved = build_resolved_config(original, {"kty": "RSA"}, alg)
+        assert resolved.algorithms == [alg]

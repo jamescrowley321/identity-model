@@ -22,6 +22,7 @@ serialized vs. parallel times differ by ~2x — well outside any noise.
 """
 
 import asyncio
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
@@ -30,7 +31,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks as async_get_cached_jwks,
 )
@@ -40,12 +41,14 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as async_clear_jwks_cache,
 )
-from py_identity_model.sync import token_validation as sync_tv
+from py_identity_model.aio.validation_cache import AsyncValidationCache
+from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     _get_cached_jwks,
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..token_validation_helpers import generate_rsa_keypair
 
@@ -64,7 +67,30 @@ async def _clear_caches():
 
 
 @pytest.fixture
-def _distinct_lock_per_uri(monkeypatch):
+def sync_client() -> Iterator[HTTPClient]:
+    with HTTPClient() as client:
+        yield client
+
+
+@pytest.fixture
+async def async_client() -> AsyncIterator[AsyncHTTPClient]:
+    async with AsyncHTTPClient() as client:
+        yield client
+
+
+@pytest.fixture
+def sync_cache() -> ValidationCache:
+    """An injected cache; its JWKS cache and fetch locks are its own."""
+    return ValidationCache()
+
+
+@pytest.fixture
+def async_cache() -> AsyncValidationCache:
+    return AsyncValidationCache()
+
+
+@pytest.fixture
+def _distinct_lock_per_uri(monkeypatch, sync_cache, async_cache):
     """Force each distinct URI to get its own fetch lock for the duration
     of the test, side-stepping ``PYTHONHASHSEED``-driven stripe collisions.
 
@@ -100,8 +126,8 @@ def _distinct_lock_per_uri(monkeypatch):
             aio_locks[uri] = asyncio.Lock()
         return aio_locks[uri]
 
-    monkeypatch.setattr(sync_tv, "_get_jwks_fetch_lock", _sync_per_uri)
-    monkeypatch.setattr(aio_tv, "_get_jwks_fetch_lock", _aio_per_uri)
+    monkeypatch.setattr(sync_cache, "_jwks_fetch_lock", _sync_per_uri)
+    monkeypatch.setattr(async_cache, "_jwks_fetch_lock", _aio_per_uri)
 
 
 # Per-fetch sleep. Long enough that serialized vs parallel differ by a
@@ -149,7 +175,7 @@ class TestSyncDistinctUrisParallelizeFetches:
     """
 
     @respx.mock
-    def test_two_distinct_uris_fetch_in_parallel(self):
+    def test_two_distinct_uris_fetch_in_parallel(self, sync_client, sync_cache):
         url_a = "https://op-a.example/jwks"
         url_b = "https://op-b.example/jwks"
         respx.get(url_a).mock(side_effect=_build_slow_handler(_make_jwks_payload()))
@@ -161,7 +187,7 @@ class TestSyncDistinctUrisParallelizeFetches:
 
         def fetch(url: str) -> None:
             barrier.wait()
-            _get_cached_jwks(url)
+            _get_cached_jwks(url, http_client=sync_client, cache=sync_cache)
 
         start = time.monotonic()
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -178,7 +204,7 @@ class TestSyncDistinctUrisParallelizeFetches:
         )
 
     @respx.mock
-    def test_same_uri_still_single_flight(self):
+    def test_same_uri_still_single_flight(self, sync_client, sync_cache):
         """The fix must not regress single-flight semantics: two concurrent
         requests for the *same* URI must coalesce into one upstream fetch."""
         url = "https://op-shared.example/jwks"
@@ -190,7 +216,7 @@ class TestSyncDistinctUrisParallelizeFetches:
 
         def fetch() -> None:
             barrier.wait()
-            _get_cached_jwks(url)
+            _get_cached_jwks(url, http_client=sync_client, cache=sync_cache)
 
         with ThreadPoolExecutor(max_workers=5) as pool:
             futures = [pool.submit(fetch) for _ in range(5)]
@@ -212,7 +238,9 @@ class TestAsyncDistinctUrisParallelizeFetches:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_two_distinct_uris_fetch_in_parallel_async(self):
+    async def test_two_distinct_uris_fetch_in_parallel_async(
+        self, async_client, async_cache
+    ):
         url_a = "https://op-a.example/jwks"
         url_b = "https://op-b.example/jwks"
         respx.get(url_a).mock(
@@ -224,8 +252,8 @@ class TestAsyncDistinctUrisParallelizeFetches:
 
         start = time.monotonic()
         await asyncio.gather(
-            async_get_cached_jwks(url_a),
-            async_get_cached_jwks(url_b),
+            async_get_cached_jwks(url_a, http_client=async_client, cache=async_cache),
+            async_get_cached_jwks(url_b, http_client=async_client, cache=async_cache),
         )
         elapsed = time.monotonic() - start
 
@@ -237,13 +265,18 @@ class TestAsyncDistinctUrisParallelizeFetches:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_same_uri_still_single_flight_async(self):
+    async def test_same_uri_still_single_flight_async(self, async_client, async_cache):
         url = "https://op-shared.example/jwks"
         route = respx.get(url).mock(
             side_effect=_build_slow_async_handler(_make_jwks_payload())
         )
 
-        await asyncio.gather(*(async_get_cached_jwks(url) for _ in range(5)))
+        await asyncio.gather(
+            *(
+                async_get_cached_jwks(url, http_client=async_client, cache=async_cache)
+                for _ in range(5)
+            )
+        )
         assert route.call_count == 1
 
 
@@ -269,9 +302,9 @@ class TestSharedLockProducesSerialization:
     """
 
     @respx.mock
-    def test_sync_shared_lock_serializes(self, monkeypatch):
+    def test_sync_shared_lock_serializes(self, monkeypatch, sync_client, sync_cache):
         shared_lock = threading.Lock()
-        monkeypatch.setattr(sync_tv, "_get_jwks_fetch_lock", lambda _uri: shared_lock)
+        monkeypatch.setattr(sync_cache, "_jwks_fetch_lock", lambda _uri: shared_lock)
 
         url_a = "https://op-a.example/jwks"
         url_b = "https://op-b.example/jwks"
@@ -282,7 +315,7 @@ class TestSharedLockProducesSerialization:
 
         def fetch(url: str) -> None:
             barrier.wait()
-            _get_cached_jwks(url)
+            _get_cached_jwks(url, http_client=sync_client, cache=sync_cache)
 
         start = time.monotonic()
         with ThreadPoolExecutor(max_workers=2) as pool:

@@ -9,8 +9,8 @@ import httpx
 
 from ..logging_config import logger
 from ..logging_utils import redact_url
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from ..oidc_constants import TokenResponse
+from .client_auth import apply_client_auth
 from .dpop import create_dpop_proof
 from .error_handlers import (
     handle_auth_code_token_error,
@@ -24,8 +24,8 @@ from .models import (
     ClientCredentialsTokenResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
+    TokenErrorKind,
 )
-from .mtls import apply_mtls_client_auth
 from .response_processors import (
     parse_auth_code_token_response,
     parse_refresh_token_response,
@@ -56,6 +56,10 @@ def log_token_success(token_response: ClientCredentialsTokenResponse) -> None:
         )
 
 
+RequestParts = tuple[dict, dict, tuple[str, str] | None]
+"""Form data, headers and optional HTTP Basic auth for one request attempt."""
+
+
 def prepare_token_request_data(
     request: ClientCredentialsTokenRequest,
 ) -> tuple[dict, dict, tuple[str, str] | None]:
@@ -72,24 +76,7 @@ def prepare_token_request_data(
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # ``is not None`` (not truthiness) mirrors the auth-code/refresh
-        # branches so an empty-string secret is handled identically here.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 
@@ -167,38 +154,59 @@ def prepare_auth_code_token_request_data(
             request.dpop_key, "POST", request.address, nonce=dpop_nonce
         )
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # RFC 6749 §2.3.1: use Basic auth for confidential clients;
-        # client_id is carried in the auth header, not the body.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        # Public client: include client_id in the request body
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 
 
+def dpop_token_type_error(token: object) -> str | None:
+    """Why a DPoP-bound request's token response is not ``token_type=DPoP``.
+
+    RFC 9449 §5: a DPoP-bound access token is issued with ``token_type``
+    ``DPoP``; a server that ignored the proof returns ``Bearer``.  Token types
+    compare case-insensitively (RFC 6749 §7.1).
+
+    Returns:
+        ``None`` when ``token_type`` is ``DPoP``, otherwise the error message.
+    """
+    token_type = (
+        token.get(TokenResponse.TOKEN_TYPE.value) if isinstance(token, dict) else None
+    )
+    expected = TokenResponse.DPOP_TOKEN_TYPE.value
+    if isinstance(token_type, str) and token_type.casefold() == expected.casefold():
+        return None
+    return (
+        f"Expected token_type {expected!r} for a DPoP-bound request, got "
+        f"{token_type!r} (RFC 9449 §5)"
+    )
+
+
 def process_auth_code_token_response(
     response: httpx.Response,
+    *,
+    require_dpop_token_type: bool = False,
 ) -> AuthorizationCodeTokenResponse:
-    """Process authorization code token exchange response."""
+    """Process authorization code token exchange response.
+
+    With *require_dpop_token_type* (the request's opt-in, RFC 9449 §5), a
+    successful response whose ``token_type`` is not ``DPoP`` fails with
+    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
+    tokens on ``rejected_token``.
+    """
     log_token_status(response.status_code)
 
     try:
         token_response = parse_auth_code_token_response(response)
+        if require_dpop_token_type and token_response.is_successful:
+            error = dpop_token_type_error(token_response.token)
+            if error is not None:
+                logger.warning(error)
+                return AuthorizationCodeTokenResponse(
+                    is_successful=False,
+                    error=error,
+                    error_kind=TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH,
+                    rejected_token=token_response.token,
+                )
         if token_response.is_successful and token_response.token:
             logger.info("Authorization code token exchange successful")
         return token_response
@@ -219,8 +227,15 @@ def log_refresh_token_request(request: RefreshTokenRequest) -> None:
 
 def prepare_refresh_token_request_data(
     request: RefreshTokenRequest,
+    dpop_nonce: str | None = None,
 ) -> tuple[dict, dict, tuple[str, str] | None]:
-    """Prepare request data, headers, and optional auth for refresh grant."""
+    """Prepare request data, headers, and optional auth for refresh grant.
+
+    Args:
+        request: The refresh token request.
+        dpop_nonce: Server-provided DPoP nonce to embed in the proof after a
+            ``use_dpop_nonce`` challenge (RFC 9449 §8).
+    """
     params: dict[str, str] = {
         "grant_type": "refresh_token",
         "refresh_token": request.refresh_token,
@@ -230,38 +245,44 @@ def prepare_refresh_token_request_data(
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
+    if request.dpop_key is not None:
+        # RFC 9449 §5: the refreshed access token stays bound to the key.  A
+        # token-endpoint proof carries no ``ath``.
+        headers["DPoP"] = create_dpop_proof(
+            request.dpop_key, "POST", request.address, nonce=dpop_nonce
         )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret is not None:
-        # RFC 6749 §2.3.1: use Basic auth for confidential clients;
-        # client_id is carried in the auth header, not the body.
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        # Public client: include client_id in the request body
-        params["client_id"] = request.client_id
+
+    auth = apply_client_auth(params, request, client_secret=request.client_secret)
 
     return params, headers, auth
 
 
 def process_refresh_token_response(
     response: httpx.Response,
+    *,
+    require_dpop_token_type: bool = False,
 ) -> RefreshTokenResponse:
-    """Process refresh token grant response."""
+    """Process refresh token grant response.
+
+    With *require_dpop_token_type* (the request's opt-in, RFC 9449 §5), a
+    successful response whose ``token_type`` is not ``DPoP`` fails with
+    :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
+    tokens on ``rejected_token``.
+    """
     log_token_status(response.status_code)
 
     try:
         token_response = parse_refresh_token_response(response)
+        if require_dpop_token_type and token_response.is_successful:
+            error = dpop_token_type_error(token_response.token)
+            if error is not None:
+                logger.warning(error)
+                return RefreshTokenResponse(
+                    is_successful=False,
+                    error=error,
+                    error_kind=TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH,
+                    rejected_token=token_response.token,
+                )
         if token_response.is_successful and token_response.token:
             logger.info("Token refresh successful")
         return token_response

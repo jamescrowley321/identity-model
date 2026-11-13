@@ -162,6 +162,16 @@ async function startProvider() {
           ],
         },
       },
+      {
+        // client_secret_post client (RFC 6749 §2.3.1), used by
+        // src/tests/integration/test_client_secret_post.py.
+        client_id: "test-client-secret-post",
+        client_secret: "test-client-secret-post-secret",
+        grant_types: ["client_credentials"],
+        response_types: [],
+        scope: "api",
+        token_endpoint_auth_method: "client_secret_post",
+      },
     ],
 
     // JWKS
@@ -197,8 +207,11 @@ async function startProvider() {
       clientCredentials: { enabled: true },
       dPoP: { enabled: true },
       pushedAuthorizationRequests: { enabled: true },
+      // JAR (RFC 9101): accept the `request` parameter, including a signed
+      // request object sent to PAR (RFC 9126 §3). oidc-provider v9 reads
+      // `enabled`; the older `request: true` key is ignored.
       requestObjects: {
-        request: true,
+        enabled: true,
       },
       // JARM — JWT-Secured Authorization Response Mode. Advertises
       // authorization_signing_alg_values_supported and the *.jwt response
@@ -302,7 +315,8 @@ async function startProvider() {
     enabledJWA: {
       authorizationSigningAlgValues: ["RS256", "ES256"],
       requestObjectSigningAlgValues: ["RS256", "ES256"],
-      dPoPSigningAlgValues: ["RS256", "ES256"],
+      // PS256 and EdDSA: the FAPI 2.0 §5.4.1 DPoP algorithms besides ES256.
+      dPoPSigningAlgValues: ["RS256", "ES256", "PS256", "EdDSA"],
       introspectionSigningAlgValues: ["RS256", "ES256"],
       // FAPI 2.0 client authentication algorithms for private_key_jwt.
       clientAuthSigningAlgValues: ["PS256", "ES256"],

@@ -13,12 +13,14 @@ use super::claims_validation::ClaimsValidator;
 /// family is intentionally excluded so a token signed with HMAC cannot be
 /// verified against a provider's public key (algorithm-confusion attack), and
 /// the unsecured `none` algorithm is never accepted (JWT-003). Mirrors
-/// `go/pkg/jwt` `defaultAllowedAlgorithms` minus `ES512` (P-521), which the
-/// underlying `jsonwebtoken` verifier does not support; a caller can still add
-/// it via [`ValidationOptionsBuilder::allowed_algorithms`] but a token using it
-/// will fail as an unsupported algorithm.
+/// `go/pkg/jwt` `defaultAllowedAlgorithms` and Python's
+/// `DEFAULT_ALLOWED_ALGORITHMS`, EdDSA (Ed25519 keys, RFC 8037) included, minus
+/// `ES512` (P-521), which the underlying `jsonwebtoken` verifier does not
+/// support; a caller can still add it via
+/// [`ValidationOptionsBuilder::allowed_algorithms`] but a token using it will
+/// fail as an unsupported algorithm.
 pub const DEFAULT_ALLOWED_ALGORITHMS: &[&str] = &[
-    "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384",
+    "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA",
 ];
 
 /// Resolved settings for a token validation.

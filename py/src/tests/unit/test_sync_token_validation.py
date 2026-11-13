@@ -65,7 +65,7 @@ class TestSyncTokenValidation:
 
         with pytest.raises(
             ConfigurationException,
-            match=r"TokenValidationConfig\.key and TokenValidationConfig\.algorithms are required",
+            match=r"TokenValidationConfig\.key is required if perform_disco is False",
         ):
             validate_token(
                 jwt="fake.jwt.token",
@@ -99,7 +99,7 @@ class TestSyncTokenValidation:
 
         with pytest.raises(
             TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(
                 jwt="fake.jwt.token",
@@ -123,7 +123,7 @@ class TestSyncTokenValidation:
             HTTPClient() as client,
             pytest.raises(
                 TokenValidationException,
-                match=r"does not contain a jwks_uri.*require_key_set",
+                match=r"Missing required parameters: jwks_uri",
             ),
         ):
             validate_token(
@@ -148,7 +148,7 @@ class TestSyncTokenValidation:
 
         with pytest.raises(
             TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(
                 jwt="fake.jwt.token",

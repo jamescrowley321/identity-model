@@ -119,19 +119,28 @@ def apply_private_key_jwt(
     Adds ``client_id``, ``client_assertion_type``, and ``client_assertion`` to
     the request body per RFC 7523 Section 2.2.  ``client_id`` is included
     alongside the assertion (RFC 7521 Section 4.2); it identifies the same
-    client as the assertion's ``sub``.  The assertion ``aud`` defaults to
-    *default_audience* (the request ``address``) and may be overridden via
-    :attr:`PrivateKeyJwt.audience`.
+    client as the assertion's ``sub``.  The assertion ``aud`` is
+    :attr:`PrivateKeyJwt.audience` if set, else :attr:`PrivateKeyJwt.issuer`
+    (FAPI 2.0 Security Profile §5.3.3.1), else *default_audience* (the
+    request ``address``).  It is always a single string.
 
     Args:
         params: Request body parameters to mutate in place.
         config: The ``private_key_jwt`` authentication parameters.
         client_id: The client identifier.
-        default_audience: Audience to use when ``config.audience`` is ``None``.
+        default_audience: Audience to use when neither ``config.audience``
+            nor ``config.issuer`` is set.
+
+    Raises:
+        ValueError: If ``config.audience`` or ``config.issuer`` is set to
+            something other than a string.
     """
+    for name, value in (("audience", config.audience), ("issuer", config.issuer)):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string, got {type(value).__name__}")
     assertion = build_client_assertion(
         client_id=client_id,
-        audience=config.audience or default_audience,
+        audience=config.audience or config.issuer or default_audience,
         private_key=config.private_key,
         algorithm=config.algorithm,
         kid=config.kid,

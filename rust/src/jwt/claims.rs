@@ -293,32 +293,6 @@ impl Claims {
             ));
         }
 
-        // azp — authorized party (OIDC Core 1.0 §3.1.3.7). The claim can only be
-        // checked against the caller's own client_id, which is the expected
-        // audience, so these rules apply only when an audience is configured:
-        //  - a present `azp` MUST equal the client_id: a token authorized for a
-        //    different party must not validate for this client;
-        //  - a token carrying more than one audience MUST name the authorized
-        //    party in `azp`, so the client can confirm it is the intended party.
-        // Single-audience tokens without `azp` are unaffected.
-        if let Some(client_id) = &opts.expected_audience {
-            match &self.authorized_party {
-                Some(azp) if azp != client_id => {
-                    return Err(claim_err(
-                        "azp",
-                        &format!("authorized party {azp:?} does not match client {client_id:?}"),
-                    ));
-                }
-                None if self.audience.values().len() > 1 => {
-                    return Err(claim_err(
-                        "azp",
-                        "token with multiple audiences must carry an azp claim",
-                    ));
-                }
-                _ => {}
-            }
-        }
-
         // nonce match when expected (JWT-004, OIDC Core 1.0 §3.1.3.7). An
         // expected nonce (even the empty string) requires the claim to be
         // present — an absent nonce must not satisfy the expectation.
@@ -533,92 +507,37 @@ mod tests {
             .expect("matching nonce passes");
     }
 
-    // OIDC Core §3.1.3.7: a multi-audience token must carry an azp naming the
-    // authorized party; with the correct azp it passes, without it or with the
-    // wrong value it is rejected.
+    // azp belongs to the ID-token profile (OIDC Core 1.0 §3.1.3.7 steps 4-6,
+    // `id_token::validate_id_token_claims`), not to base JWT validation: an
+    // access token for a resource server may list several audiences and name
+    // the client that requested it in `azp`. Base validation checks the
+    // expected audience only and leaves azp alone, matching Python and Go.
     #[test]
-    fn multi_audience_requires_matching_azp() {
-        let opts = ValidationOptions::builder().audience("test-client").build();
-
-        let ok = claims(serde_json::json!({
-            "aud": ["test-client", "other-rp"],
-            "azp": "test-client",
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        ok.validate(&opts, NOW)
-            .expect("multi-aud with correct azp passes");
-
-        let no_azp = claims(serde_json::json!({
-            "aud": ["test-client", "other-rp"],
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        let err = no_azp
-            .validate(&opts, NOW)
-            .expect_err("multi-aud without azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
-
-        let wrong_azp = claims(serde_json::json!({
-            "aud": ["test-client", "other-rp"],
-            "azp": "other-rp",
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        let err = wrong_azp
-            .validate(&opts, NOW)
-            .expect_err("multi-aud with wrong azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
-    }
-
-    // OIDC Core §3.1.3.7: a present azp must equal the client_id even for a
-    // single-audience token; a matching azp (or none) passes.
-    #[test]
-    fn present_azp_must_match_client() {
-        let opts = ValidationOptions::builder().audience("test-client").build();
-
-        let wrong = claims(serde_json::json!({
-            "aud": "test-client",
-            "azp": "attacker",
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        let err = wrong
-            .validate(&opts, NOW)
-            .expect_err("single-aud wrong azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
-
-        let right = claims(serde_json::json!({
-            "aud": "test-client",
-            "azp": "test-client",
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        right
-            .validate(&opts, NOW)
-            .expect("single-aud matching azp passes");
-
-        let none = claims(serde_json::json!({
-            "aud": "test-client",
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        none.validate(&opts, NOW)
-            .expect("single-aud without azp passes");
-    }
-
-    // Without an expected audience the caller's client_id is unknown, so the
-    // azp rules cannot be evaluated and a multi-aud token is not rejected on
-    // azp grounds.
-    #[test]
-    fn azp_not_enforced_without_expected_audience() {
-        let c = claims(serde_json::json!({
-            "aud": ["a", "b"],
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        c.validate(&ValidationOptions::new(), NOW)
-            .expect("no expected audience -> azp not enforced");
+    fn base_validation_ignores_azp() {
+        let opts = ValidationOptions::builder().audience("api").build();
+        let cases = [
+            (
+                "multi-aud access token naming the requesting client",
+                serde_json::json!({ "aud": ["api", "https://idp.example/userinfo"], "azp": "spa-client" }),
+            ),
+            (
+                "multi-aud without azp",
+                serde_json::json!({ "aud": ["api", "other-api"] }),
+            ),
+            (
+                "single-aud with azp other than the audience",
+                serde_json::json!({ "aud": "api", "azp": "spa-client" }),
+            ),
+        ];
+        for (name, mut value) in cases {
+            value["exp"] = serde_json::json!(NOW + 3600);
+            value["iat"] = serde_json::json!(NOW);
+            let expected_azp = value.get("azp").and_then(Value::as_str).map(str::to_owned);
+            let c = claims(value);
+            c.validate(&opts, NOW)
+                .unwrap_or_else(|err| panic!("{name}: base validation rejected azp: {err}"));
+            assert_eq!(c.authorized_party, expected_azp, "{name}: azp still parsed");
+        }
     }
 
     // JWT-012: a token missing a claim named in required_claims is rejected,

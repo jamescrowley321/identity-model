@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -229,6 +230,22 @@ func TestFetchConfiguration_InvalidJSON(t *testing.T) {
 	}
 }
 
+// DISC-007: a JSON value that is not an object is a parse error, not a
+// document with every required field missing.
+func TestFetchConfiguration_NonObjectJSON(t *testing.T) {
+	for _, body := range []string{"null", "[]", `"x"`, "1", "true"} {
+		t.Run(body, func(t *testing.T) {
+			freshCache(t)
+			srv, _ := newServer(t, http.StatusOK, []byte(body))
+			_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+			var pErr *ParseError
+			if !errors.As(err, &pErr) {
+				t.Fatalf("err = %v, want *ParseError", err)
+			}
+		})
+	}
+}
+
 // DISC-008: a missing required field is reported by name.
 func TestFetchConfiguration_MissingField(t *testing.T) {
 	freshCache(t)
@@ -261,6 +278,38 @@ func TestFetchConfiguration_MissingMultipleFields(t *testing.T) {
 		if !contains(mErr.Fields, want) {
 			t.Errorf("missing fields = %v, want to include %q", mErr.Fields, want)
 		}
+	}
+}
+
+// DISC-008: empty required arrays count as missing and are reported in spec
+// order.
+func TestFetchConfiguration_EmptyRequiredArrays(t *testing.T) {
+	freshCache(t)
+	srv, _ := newServer(t, http.StatusOK, fixture(t, "empty-required-arrays.json"))
+	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	var mErr *MissingFieldsError
+	if !errors.As(err, &mErr) {
+		t.Fatalf("err = %v, want *MissingFieldsError", err)
+	}
+	want := []string{"response_types_supported", "subject_types_supported", "id_token_signing_alg_values_supported"}
+	if !slices.Equal(mErr.Fields, want) {
+		t.Errorf("missing fields = %v, want %v", mErr.Fields, want)
+	}
+}
+
+// DISC-008: null and empty-string required fields count as missing and are
+// reported in spec order.
+func TestFetchConfiguration_NullAndEmptyStringRequiredFields(t *testing.T) {
+	freshCache(t)
+	srv, _ := newServer(t, http.StatusOK, fixture(t, "null-and-empty-string-required-fields.json"))
+	_, err := FetchConfiguration(context.Background(), srv.URL, WithInsecureAllowHTTP())
+	var mErr *MissingFieldsError
+	if !errors.As(err, &mErr) {
+		t.Fatalf("err = %v, want *MissingFieldsError", err)
+	}
+	want := []string{"authorization_endpoint", "token_endpoint", "subject_types_supported"}
+	if !slices.Equal(mErr.Fields, want) {
+		t.Errorf("missing fields = %v, want %v", mErr.Fields, want)
 	}
 }
 

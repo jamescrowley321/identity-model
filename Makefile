@@ -179,7 +179,7 @@ test-harness-rs: ## Boot the RS (uvicorn) against node-oidc and run the TH-1.2 r
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Booting fastapi-identity-model RS under uvicorn (real HTTP)..."
-	$(UVPY) pytest src/tests/integration/test_rs_boot.py -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests/integration/test_rs_boot.py src/tests/integration/test_rs_dpop_live.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 

@@ -118,4 +118,49 @@ def build_authorization_url(  # noqa: PLR0913  # RFC 6749 §4.1.1 + RFC 7636 §4
     return f"{authorization_endpoint}{separator}{urlencode(params)}"
 
 
-__all__ = ["build_authorization_url"]
+def build_par_authorization_url(
+    authorization_endpoint: str,
+    client_id: str,
+    request_uri: str,
+) -> str:
+    """Build the authorization endpoint URL for a pushed authorization request.
+
+    The URL carries exactly ``client_id`` and the ``request_uri`` returned by
+    the PAR endpoint; every other authorization parameter was pushed and is
+    not repeated on the front channel (RFC 9126 §4, FAPI 2.0 Security Profile
+    §5.3.3.2).  Query parameters already on the endpoint are kept.
+
+    Args:
+        authorization_endpoint: The authorization server's authorize URL.
+        client_id: The registered client identifier.
+        request_uri: The ``request_uri`` from the PAR response.
+
+    Returns:
+        The full authorization URL ready for redirect.
+
+    Raises:
+        ValueError: If any argument is not a string or is empty.
+    """
+    for name, value in (
+        ("authorization_endpoint", authorization_endpoint),
+        ("client_id", client_id),
+        ("request_uri", request_uri),
+    ):
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+        if not value.strip():
+            raise ValueError(f"{name} must not be empty")
+
+    # Strip fragment — query params after #fragment are ignored by browsers
+    endpoint = authorization_endpoint.split("#", 1)[0]
+    query = urlencode({"client_id": client_id, "request_uri": request_uri})
+    has_query = "?" in endpoint
+    if endpoint.endswith("?") or (has_query and endpoint.endswith("&")):
+        separator = ""
+    else:
+        # A trailing "&" with no "?" is part of the path, not a delimiter.
+        separator = "&" if has_query else "?"
+    return f"{endpoint}{separator}{query}"
+
+
+__all__ = ["build_authorization_url", "build_par_authorization_url"]

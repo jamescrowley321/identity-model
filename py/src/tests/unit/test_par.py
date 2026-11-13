@@ -178,6 +178,30 @@ class TestPAR:
         assert response.error is not None
         assert "request_uri" in response.error
 
+    @pytest.mark.parametrize(
+        "request_uri", ["", "   ", 123, ["urn:x"], {"uri": "urn:x"}]
+    )
+    @respx.mock
+    def test_blank_or_non_string_request_uri_returns_error(self, request_uri):
+        """RFC 9126 §2.2: request_uri is a string; anything else is not a success."""
+        respx.post(PAR_URL).mock(
+            return_value=httpx.Response(
+                201, json={"request_uri": request_uri, "expires_in": 60}
+            )
+        )
+        response = push_authorization_request(
+            PushedAuthorizationRequest(
+                address=PAR_URL,
+                client_id="app1",
+                redirect_uri="https://app.com/cb",
+                client_secret="secret",
+            )
+        )
+        assert response.is_successful is False
+        assert response.error == (
+            "PAR response missing required fields per RFC 9126 Section 2.2: request_uri"
+        )
+
     @respx.mock
     def test_missing_expires_in_returns_error(self):
         """M2: Missing expires_in in successful response fails per RFC 9126 §2.2."""

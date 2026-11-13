@@ -18,10 +18,11 @@ takes precedence over `client_secret`.
 
 ```python
 from py_identity_model import (
+    ClientAuthMethod,
     ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
-    MtlsClientAuth,
     get_discovery_document,
+    MtlsClientAuth,
     request_client_credentials_token,
     resolve_mtls_endpoint,
 )
@@ -39,16 +40,36 @@ response = request_client_credentials_token(
         mtls=MtlsClientAuth(
             certificate="/path/to/client-cert.pem",
             private_key="/path/to/client-key.pem",
-            auth_method="self_signed_tls_client_auth",
+            auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         ),
     )
 )
 ```
 
-An `mtls` value cannot be combined with a caller-managed `http_client` on the
-same request — a managed client cannot be guaranteed to present the
-certificate, so supplying both is rejected rather than silently sending an
-unauthenticated request.
+Requests take the endpoint `address` you give them, so resolve the alias as
+above when you build one yourself. `FAPI2ClientProfile` does it for you: with
+an `MtlsClientAuth` client, the PAR, token and refresh requests it builds use
+the advertised `mtls_endpoint_aliases` (FAPI 2.0 Security Profile §5.2.2.1,
+§5.3.3.1).
+
+The certificate is presented by a short-lived client built for the request.
+To apply your own settings to it (`ca_bundle` for a private CA, `http_timeout`,
+retries), pass an `http_client` alongside `mtls`: its `HTTPConfig` configures the
+certificate client, while the request itself never goes through that
+client's own connection pool, which cannot be guaranteed to present the
+certificate. Without `http_client`, the library default client's
+`HTTPConfig()` is used.
+The `http_client` must be one the library built (`HTTPClient(config=...)`).
+One that wraps your own `httpx.Client` is refused with `ValueError`, because
+that client's TLS settings (a pinned CA, a proxy) can't carry over to the
+certificate client.
+
+```python
+from py_identity_model import HTTPClient, HTTPConfig
+
+with HTTPClient(config=HTTPConfig(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
+    response = request_client_credentials_token(request, http_client=http_client)
+```
 
 ## Certificate-bound access tokens
 
@@ -70,13 +91,14 @@ claims = validate_token(token, TokenValidationConfig(perform_disco=True, audienc
 
 try:
     validate_certificate_binding(claims, presented_cert_pem)
-except CertificateBindingError:
-    ...  # token is bound to a different certificate — reject the request
+except CertificateBindingError as exc:
+    ...  # reject the request; exc.kind says why (e.g. MISMATCH, NOT_BOUND)
 ```
 
 [`CertificateBindingError`](../api/exceptions.md) subclasses
 `TokenValidationException`, so existing `except TokenValidationException`
-handlers fail closed on a binding mismatch.
+handlers fail closed on a binding mismatch. Its `kind` is a
+`CertificateBindingErrorKind`.
 
 ## API
 
@@ -97,3 +119,5 @@ handlers fail closed on a binding mismatch.
 ### Exceptions
 
 ::: py_identity_model.exceptions.CertificateBindingError
+
+::: py_identity_model.exceptions.CertificateBindingErrorKind

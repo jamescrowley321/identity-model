@@ -4,7 +4,10 @@ from ..core.authorize_response import (
     AuthorizeCallbackResponse,
     parse_authorize_callback_response,
 )
-from ..core.authorize_url import build_authorization_url
+from ..core.authorize_url import (
+    build_authorization_url,
+    build_par_authorization_url,
+)
 from ..core.claims_validation import (
     ClaimsValidationError,
     ClaimsValidator,
@@ -19,19 +22,39 @@ from ..core.discovery_policy import (
     parse_discovery_url,
 )
 from ..core.dpop import (
+    DPoPAlgorithm,
     DPoPKey,
     build_dpop_headers,
     compute_ath,
+    compute_jwk_thumbprint,
     create_dpop_proof,
     extract_dpop_nonce,
     generate_dpop_key,
 )
+from ..core.dpop_verify import (
+    AsyncDPoPReplayCache,
+    DPoPErrorKind,
+    DPoPProof,
+    DPoPProofRequest,
+    DPoPReplayCache,
+    DPoPReplayCheck,
+    DPoPValidationError,
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    verify_dpop_proof,
+)
 from ..core.fapi import (
     FAPI2_ALLOWED_AUTH_METHODS,
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    FAPI2_MAX_NONCE_LENGTH,
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
+    FAPI2ClientProfile,
+    FAPIProfileError,
     FAPIValidationResult,
+    FAPIViolation,
+    FAPIViolationCode,
     validate_fapi_authorization_request,
     validate_fapi_client_config,
     validate_fapi_discovery,
@@ -50,6 +73,9 @@ from ..core.models import (
     BaseResponse,
     MtlsClientAuth,
     PrivateKeyJwt,
+    RequestObjectKey,
+    TokenErrorKind,
+    UserInfoErrorKind,
 )
 from ..core.mtls import (
     certificate_thumbprint_from_file,
@@ -68,6 +94,14 @@ from ..core.state_validation import (
     validate_authorize_callback_issuer,
     validate_authorize_callback_state,
 )
+from ..core.token_binding import (
+    AuthorizationScheme,
+    IntrospectedTokenError,
+    IntrospectedTokenErrorKind,
+    TokenBinding,
+    TokenPresentation,
+    check_introspection_binding,
+)
 from .device_auth import (
     DeviceAuthorizationRequest,
     DeviceAuthorizationResponse,
@@ -84,6 +118,8 @@ from .discovery import (
 )
 from .id_token import validate_id_token
 from .introspection import (
+    IntrospectionErrorKind,
+    SignedIntrospectionOptions,
     TokenIntrospectionRequest,
     TokenIntrospectionResponse,
     introspect_token,
@@ -103,6 +139,7 @@ from .managed_client import HTTPClient
 from .par import (
     PushedAuthorizationRequest,
     PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
     push_authorization_request,
 )
 from .registration import (
@@ -145,17 +182,22 @@ from .token_validation import (
     validate_token,
 )
 from .userinfo import UserInfoRequest, UserInfoResponse, get_userinfo
+from .validation_cache import ValidationCache, get_default_validation_cache
 
 
 __all__ = [
     # FAPI 2.0
     "FAPI2_ALLOWED_AUTH_METHODS",
     "FAPI2_ALLOWED_SIGNING_ALGORITHMS",
+    "FAPI2_MAX_NONCE_LENGTH",
+    "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
+    "AsyncDPoPReplayCache",
     # Auth Code + PKCE
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
+    "AuthorizationScheme",
     # Authorize Callback
     "AuthorizeCallbackResponse",
     "AuthorizeCallbackValidationResult",
@@ -175,7 +217,15 @@ __all__ = [
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
     # DPoP
+    "DPoPAlgorithm",
+    "DPoPErrorKind",
     "DPoPKey",
+    "DPoPProof",
+    "DPoPProofRequest",
+    "DPoPReplayCache",
+    "DPoPReplayCheck",
+    "DPoPValidationError",
+    "DPoPVerificationOptions",
     # Device Authorization Grant
     "DeviceAuthorizationRequest",
     "DeviceAuthorizationResponse",
@@ -188,10 +238,18 @@ __all__ = [
     "DiscoveryEndpoint",
     "DiscoveryErrorKind",
     "DiscoveryPolicy",
+    "FAPI2ClientProfile",
+    "FAPIProfileError",
     "FAPIValidationResult",
+    "FAPIViolation",
+    "FAPIViolationCode",
     # HTTP Client
     "HTTPClient",
+    "InMemoryDPoPReplayCache",
+    "IntrospectedTokenError",
+    "IntrospectedTokenErrorKind",
     # JWKS
+    "IntrospectionErrorKind",
     "JsonWebAlgorithmsKeyTypes",
     "JsonWebKey",
     "JsonWebKeyParameterNames",
@@ -206,31 +264,42 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "RequestObjectKey",
+    "SignedIntrospectionOptions",
+    "SignedPushedAuthorizationRequest",
     "StateValidationResult",
+    "TokenBinding",
+    "TokenErrorKind",
     # Token Exchange
     "TokenExchangeRequest",
     "TokenExchangeResponse",
     # Token Introspection
     "TokenIntrospectionRequest",
     "TokenIntrospectionResponse",
+    "TokenPresentation",
     # Token Revocation
     "TokenRevocationRequest",
     "TokenRevocationResponse",
     # Token Validation
     "TokenValidationConfig",
     # UserInfo
+    "UserInfoErrorKind",
     "UserInfoRequest",
     "UserInfoResponse",
+    "ValidationCache",
     "build_authorization_url",
     "build_dpop_headers",
     "build_end_session_url",
     "build_jar_authorization_url",
+    "build_par_authorization_url",
     "certificate_thumbprint_from_file",
+    "check_introspection_binding",
     "clear_discovery_cache",
     "clear_jwks_cache",
     "combine_claims_validators",
     "compute_ath",
     "compute_certificate_thumbprint",
+    "compute_jwk_thumbprint",
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
@@ -241,6 +310,7 @@ __all__ = [
     "generate_code_verifier",
     "generate_dpop_key",
     "generate_pkce_pair",
+    "get_default_validation_cache",
     "get_discovery_document",
     "get_jwks",
     "get_userinfo",
@@ -274,4 +344,5 @@ __all__ = [
     "validate_logout_token",
     "validate_post_logout_state",
     "validate_token",
+    "verify_dpop_proof",
 ]

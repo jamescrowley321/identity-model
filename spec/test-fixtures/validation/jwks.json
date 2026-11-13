@@ -7,6 +7,31 @@
       "kty": "RSA",
       "n": "uOKx7PZczzJ60AiSEIS2i_B5HP6sulerCGQv3s4zgHdLm7Bno6CQ_7KFmeEbA9sXpftdHXPZGlFuLS3rd3r4lgL4SfNTcyTJOH7NkYD41vccpVi5b32th-BJRqRwJYPXL5dn3lH5NWabWbS3jaKSyOwrmzMMmcEqX9YCrFHlS7DiA0TxZM8MiKDugoJ6ifMO0h1FELhWV00-wcqHuOBQt-4YeA8kGIBaUgPj1uKaOTLliRNpOJbEdc59vstU1Aw3xGCldmMiVvGwgd5RXJiOIZILc3Z6vMJr9zG8sFMn3sBe_541mN_J3okZ14nBzjrIzAplyOrf8DRVLXhSRkl5-Q",
       "use": "sig"
+    },
+    {
+      "kty": "RSA",
+      "kid": "weak-rsa-1024",
+      "use": "sig",
+      "alg": "RS256",
+      "n": "1InD8LkVSmnf1Eiff5f33TyHhO12JrVnVueMT6J50TarOfUVYZiSjiiePmEmGnC4-X5TKEb_IyhlHfdvGeiCSTG0Z5rqnkv5GAEJ_MfPWrKz2WKBTloFIfJk1Vjr-kP30mT6Uv_8iQVALhYceLBa2k1_qcfPzi_uWzyAL0nsbLU",
+      "e": "AQAB"
+    },
+    {
+      "kty": "EC",
+      "kid": "weak-ec-p192",
+      "use": "sig",
+      "alg": "ES256",
+      "crv": "P-192",
+      "x": "kzgVbVVjHqO1HlOdNMP_TqWBLp4Pd0GR",
+      "y": "VPlt5Nkjvaq8HfNJ6Yr6VvWXlvpoyFsV"
+    },
+    {
+      "kty": "OKP",
+      "kid": "ed25519-key-1",
+      "use": "sig",
+      "alg": "EdDSA",
+      "crv": "Ed25519",
+      "x": "kP4aAAgY3v0WD7G-oAWClamX7DmW-vBlItfbuz5_Zew"
     }
   ]
 }

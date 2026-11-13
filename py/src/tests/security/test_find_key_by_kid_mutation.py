@@ -10,13 +10,19 @@ exception's message / ``details`` / ``token_part`` so that mutating any of them
 is caught (Epic 19 mutation gate).
 """
 
+import base64
+import json
 import logging
 
 import pytest
 
 from py_identity_model.core.models import JsonWebKey
-from py_identity_model.core.parsers import find_key_by_kid
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.core.parsers import find_key_by_kid, get_public_key_from_jwk
+from py_identity_model.exceptions import (
+    AmbiguousKeyException,
+    KeyNotFoundException,
+    TokenValidationException,
+)
 
 
 def _rsa(kid=None, alg=None, use=None):
@@ -25,6 +31,16 @@ def _rsa(kid=None, alg=None, use=None):
 
 def _ec(kid=None, alg=None, use=None):
     return JsonWebKey(kty="EC", kid=kid, alg=alg, use=use, crv="P-256", x="x", y="y")
+
+
+def _kidless_jwt(alg):
+    """A compact JWT whose header carries ``alg`` and no ``kid`` (unsigned)."""
+
+    def b64url(obj):
+        raw = json.dumps(obj).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    return f"{b64url({'alg': alg, 'typ': 'JWT'})}.{b64url({'sub': 's'})}.c2ln"
 
 
 class TestEmptyKeys:
@@ -49,6 +65,20 @@ class TestKidNoMatch:
         with pytest.raises(TokenValidationException) as exc:
             find_key_by_kid("x", keys, jwt_alg="RS256")
         assert exc.value.details["available_kids"] == ["only"]
+
+    def test_kid_naming_enc_key_raises_key_not_found(self):
+        # RFC 7517 §4.2: a use=enc key never verifies, even when named by kid.
+        keys = [_rsa(kid="enc", alg="RS256", use="enc"), _rsa(kid="sig", use="sig")]
+        with pytest.raises(KeyNotFoundException) as exc:
+            find_key_by_kid("enc", keys, jwt_alg="RS256")
+        assert exc.value.message == "No matching kid found: enc"
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"kid": "enc", "available_kids": ["sig"]}
+
+    def test_kid_naming_key_without_use_is_selected(self):
+        target = _rsa(kid="plain", alg="RS256")
+        key_dict, _alg = find_key_by_kid("plain", [target], jwt_alg="RS256")
+        assert key_dict == target.as_dict()
 
 
 class TestKidSelection:
@@ -91,10 +121,16 @@ class TestNoKidSelection:
         key_dict, _alg = find_key_by_kid(None, keys, jwt_alg="RS256")
         assert key_dict["kid"] == "sig"
 
-    def test_falls_back_to_all_keys_when_none_marked_sig(self):
+    def test_no_signing_key_raises_key_not_found(self):
+        # RFC 7517 §4.2: no fallback to use=enc keys when none is a signing key.
         keys = [_rsa(kid="enc-only", alg="RS256", use="enc")]
-        key_dict, _alg = find_key_by_kid(None, keys, jwt_alg="RS256")
-        assert key_dict["kid"] == "enc-only"
+        with pytest.raises(KeyNotFoundException) as exc:
+            find_key_by_kid(None, keys, jwt_alg="RS256")
+        assert exc.value.message == (
+            "JWT has no kid header and JWKS contains no signing key"
+        )
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"kid": None, "available_kids": []}
 
     def test_multiple_keys_disambiguated_by_alg_kty(self):
         keys = [_rsa(kid="r", use="sig"), _ec(kid="e", use="sig")]
@@ -178,3 +214,27 @@ class TestNoKidAlgFilterGuard:
             "available_kids": ["plain", "declared"],
             "key_count": 2,
         }
+
+
+class TestDeprecatedGetPublicKeyFromJwkAmbiguous:
+    """The deprecated ``get_public_key_from_jwk`` raises the same typed error."""
+
+    def test_ambiguous_kidless_raises_typed_error_with_exact_details(self):
+        keys = [
+            _rsa(kid="a", alg="RS256", use="sig"),
+            _rsa(kid="b", alg="RS256", use="sig"),
+            _rsa(alg="RS256", use="sig"),
+        ]
+        with (
+            pytest.warns(
+                DeprecationWarning, match="get_public_key_from_jwk is deprecated"
+            ),
+            pytest.raises(AmbiguousKeyException) as exc,
+        ):
+            get_public_key_from_jwk(_kidless_jwt("RS256"), keys)
+        assert exc.value.message == (
+            "JWT has no kid header and JWKS contains multiple signing keys; "
+            "cannot determine which key to use"
+        )
+        assert exc.value.token_part == "header"
+        assert exc.value.details == {"available_kids": ["a", "b"], "key_count": 3}

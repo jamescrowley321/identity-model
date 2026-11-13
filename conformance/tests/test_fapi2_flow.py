@@ -15,15 +15,23 @@ suite-side plan creation is mocked at ``/api/plan``.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from urllib.parse import parse_qs
 
 import app as harness_app
 from fastapi.testclient import TestClient
 import httpx
 import jwt as pyjwt
 import respx
-from run_tests import ConformanceSuiteClient
+from run_tests import ConformanceSuiteClient, drive_rp_authorize
 
-from py_identity_model import generate_dpop_key, parse_authorize_callback_response
+from py_identity_model import (
+    FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
+    DiscoveryDocumentResponse,
+    FAPI2ClientProfile,
+    generate_dpop_key,
+    parse_authorize_callback_response,
+)
 
 
 ISSUER = "https://op.example.com"
@@ -37,6 +45,10 @@ DISCO = {
     "subject_types_supported": ["public"],
     "id_token_signing_alg_values_supported": ["ES256"],
     "authorization_response_iss_parameter_supported": True,
+    "token_endpoint_auth_methods_supported": ["private_key_jwt"],
+    "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
+    "code_challenge_methods_supported": ["S256"],
+    "dpop_signing_alg_values_supported": ["ES256"],
 }
 
 
@@ -118,6 +130,85 @@ def test_fapi2_authorize_pushes_par_with_dpop_and_private_key_jwt() -> None:
 
 
 @respx.mock
+def test_fapi2_signed_request_pushes_only_request_object() -> None:
+    """FAPI 2.0 Message Signing §5.3.2: the PAR body is a signed request object.
+
+    RFC 9126 §3: alongside ``request`` the form carries only client
+    authentication; the request object's ``aud`` is the issuer and it is
+    signed with the key the runner registers from ``/fapi2-jwks``.
+    """
+    _mock_disco(respx.mock, DISCO)
+    par_route = respx.post(f"{ISSUER}/par").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "request_uri": "urn:ietf:params:oauth:request_uri:abc",
+                "expires_in": 60,
+            },
+        )
+    )
+
+    resp = _client().get(
+        "/authorize",
+        params={
+            "issuer": ISSUER,
+            "client_id": "conformance-rp",
+            "jarm": "true",
+            "signed_request": "true",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == httpx.codes.FOUND
+    form = parse_qs(par_route.calls.last.request.content.decode())
+    assert set(form) == {
+        "client_id",
+        "request",
+        "client_assertion_type",
+        "client_assertion",
+    }
+    (request_object,) = form["request"]
+    public_key = pyjwt.PyJWK(harness_app._fapi2_public_jwk()).key
+    claims = pyjwt.decode(
+        request_object, public_key, algorithms=["ES256"], audience=ISSUER
+    )
+    assert pyjwt.get_unverified_header(request_object)["kid"] == (
+        harness_app._FAPI2_CLIENT_KID
+    )
+    assert claims["iss"] == "conformance-rp"
+    assert claims["response_mode"] == "jwt"
+    assert claims["code_challenge_method"] == "S256"
+    assert claims["exp"] - claims["nbf"] <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME
+
+
+def test_message_signing_config_requests_signed_request_objects() -> None:
+    config = json.loads(
+        (
+            Path(harness_app.__file__).parent / "configs/fapi2-message-signing-rp.json"
+        ).read_text()
+    )
+    assert config["variant"]["fapi_request_method"] == "signed_non_repudiation"
+    assert config["signed_request"] is True
+
+
+def test_drive_rp_authorize_forwards_signed_request() -> None:
+    with respx.mock:
+        route = respx.get("http://rp.test/authorize").mock(
+            return_value=httpx.Response(200, text="ok")
+        )
+        drive_rp_authorize(
+            rp_base_url="http://rp.test",
+            issuer=ISSUER,
+            client_id="conformance-rp",
+            client_secret="",
+            test_id="t1",
+            fapi2=True,
+            signed_request=True,
+        )
+    assert route.calls.last.request.url.params["signed_request"] == "true"
+
+
+@respx.mock
 def test_fapi2_authorize_rejects_op_without_par_endpoint() -> None:
     disco_no_par = dict(DISCO)
     del disco_no_par["pushed_authorization_request_endpoint"]
@@ -134,8 +225,16 @@ def test_fapi2_authorize_rejects_op_without_par_endpoint() -> None:
         follow_redirects=False,
     )
 
+    # The library's FAPI 2.0 profile refuses the OP before any request is sent.
     assert resp.status_code == httpx.codes.BAD_REQUEST
-    assert resp.json()["error"] == "par_not_supported"
+    assert resp.json() == {
+        "error": "fapi_profile",
+        "detail": (
+            "pushed_authorization_request_endpoint not advertised; FAPI 2.0 "
+            "Security Profile §5.3.2.2 requires pushed authorization requests "
+            "(RFC 9126)"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +287,12 @@ def _fapi2_session() -> harness_app.AuthSession:
         redirect_uri="https://rp.example.com/callback",
         code_verifier="cv",
         fapi2=True,
+        fapi_profile=FAPI2ClientProfile(
+            DiscoveryDocumentResponse(is_successful=True, **DISCO),
+            client_id="conformance-rp",
+            redirect_uri="https://rp.example.com/callback",
+            client_auth=harness_app._fapi2_private_key_jwt(),
+        ),
         dpop_key=generate_dpop_key("ES256"),
     )
 
@@ -196,7 +301,7 @@ def test_fapi2_iss_validation_accepts_matching_issuer() -> None:
     cb = parse_authorize_callback_response(
         f"https://rp.example.com/callback?code=c&state=s&iss={ISSUER}"
     )
-    result = harness_app._validate_fapi2_callback_issuer(cb, _Disco(), _fapi2_session())
+    result = harness_app._validate_fapi2_callback_issuer(cb, _fapi2_session())
     assert result is None
 
 
@@ -206,7 +311,7 @@ def test_fapi2_iss_validation_rejects_missing_issuer() -> None:
         "https://rp.example.com/callback?code=c&state=s"
     )
     session = _fapi2_session()
-    result = harness_app._validate_fapi2_callback_issuer(cb, _Disco(), session)
+    result = harness_app._validate_fapi2_callback_issuer(cb, session)
     assert result is not None
     assert result.status_code == httpx.codes.BAD_REQUEST
     assert session.result["status"] == "error"
@@ -217,13 +322,15 @@ def test_non_fapi2_session_skips_iss_validation() -> None:
         "https://rp.example.com/callback?code=c&state=s"
     )
     session = harness_app.AuthSession(issuer=ISSUER, state="s", nonce="n")
-    assert harness_app._validate_fapi2_callback_issuer(cb, _Disco(), session) is None
+    assert harness_app._validate_fapi2_callback_issuer(cb, session) is None
 
 
 def test_build_token_request_fapi2_uses_private_key_jwt_and_dpop() -> None:
     session = _fapi2_session()
     req = harness_app._build_auth_code_token_request(session, _Disco(), "the-code")
+    assert req.address == f"{ISSUER}/token"
     assert req.private_key_jwt is not None
+    assert req.private_key_jwt.issuer == ISSUER
     assert req.dpop_key is session.dpop_key
     assert req.client_secret is None
 

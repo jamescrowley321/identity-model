@@ -23,10 +23,12 @@ import respx
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
     CertificateBindingError,
+    CertificateBindingErrorKind,
     ClientCredentialsTokenRequest,
     DeviceAuthorizationRequest,
     DeviceTokenRequest,
     DiscoveryDocumentRequest,
+    HTTPConfig,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
@@ -78,6 +80,7 @@ from ..constants import DISCO_URL
 
 
 ADDR = "https://as.example.com/endpoint"
+CERTS_IN_SINGLE_CERT_BUNDLE = 1
 TOKEN_URL = "https://as.example.com/token"
 
 
@@ -138,20 +141,19 @@ class TestBuildMtlsSslContext:
 
     def test_returns_ssl_context_with_client_cert_loaded(self, mtls):
         # load_cert_chain would raise if the cert/key failed to load.
-        assert isinstance(build_mtls_ssl_context(mtls), ssl.SSLContext)
+        assert isinstance(build_mtls_ssl_context(mtls, HTTPConfig()), ssl.SSLContext)
 
-    def test_verify_false_disables_server_verification(self, mtls, monkeypatch):
-        monkeypatch.setattr("py_identity_model.core.mtls.get_ssl_verify", lambda: False)
-        ctx = build_mtls_ssl_context(mtls)
-        assert ctx.verify_mode == ssl.CERT_NONE
-        assert ctx.check_hostname is False
+    def test_default_config_verifies_server(self, mtls):
+        ctx = build_mtls_ssl_context(mtls, HTTPConfig())
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
 
-    def test_verify_cafile_requires_server_cert(self, mtls, cert_files, monkeypatch):
+    def test_config_ca_bundle_is_loaded_and_required(self, mtls, cert_files):
         # Reuse the client cert PEM path as a CA bundle to exercise the str path.
-        monkeypatch.setattr(
-            "py_identity_model.core.mtls.get_ssl_verify", lambda: cert_files[0]
-        )
-        assert build_mtls_ssl_context(mtls).verify_mode == ssl.CERT_REQUIRED
+        ca_bundle, _, _ = cert_files
+        ctx = build_mtls_ssl_context(mtls, HTTPConfig(ca_bundle=ca_bundle))
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.cert_store_stats()["x509"] == CERTS_IN_SINGLE_CERT_BUNDLE
 
 
 @pytest.mark.unit
@@ -235,41 +237,48 @@ class TestValidateCertificateBinding:
         validate_certificate_binding({"cnf": {"x5t#S256": tp}}, cert_pem)
 
     def test_mismatched_thumbprint_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="mismatch"):
+        with pytest.raises(CertificateBindingError, match="mismatch") as exc:
             validate_certificate_binding(
                 {"cnf": {"x5t#S256": "not-the-right-thumbprint"}}, cert_pem
             )
+        assert exc.value.kind is CertificateBindingErrorKind.MISMATCH
 
     def test_wrong_cert_raises(self, cert_pem):
         """A token bound to a different cert must be rejected."""
         other_pem, _ = _make_cert()
         tp = compute_certificate_thumbprint(other_pem)
-        with pytest.raises(CertificateBindingError, match="mismatch"):
+        with pytest.raises(CertificateBindingError, match="mismatch") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": tp}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.MISMATCH
 
     def test_missing_cnf_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="missing 'cnf'"):
+        with pytest.raises(CertificateBindingError, match="no 'cnf' claim") as exc:
             validate_certificate_binding({"sub": "user"}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_cnf_not_dict_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="missing 'cnf'"):
+        with pytest.raises(CertificateBindingError, match="no 'cnf' claim") as exc:
             validate_certificate_binding({"cnf": "oops"}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_cnf_without_x5t_raises(self, cert_pem):
         """A DPoP-only cnf (jkt but no x5t#S256) must be rejected for mTLS."""
-        with pytest.raises(CertificateBindingError, match="x5t#S256"):
+        with pytest.raises(CertificateBindingError, match="x5t#S256") as exc:
             validate_certificate_binding({"cnf": {"jkt": "abc"}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_x5t_not_string_raises(self, cert_pem):
-        with pytest.raises(CertificateBindingError, match="x5t#S256"):
+        with pytest.raises(CertificateBindingError, match="x5t#S256") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": 123}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.NOT_BOUND
 
     def test_non_ascii_x5t_raises_binding_error_not_typeerror(self, cert_pem):
         """A crafted non-ASCII thumbprint must fail closed as a
         CertificateBindingError, not escape as a TypeError from
         hmac.compare_digest (which cannot compare non-ASCII str)."""
-        with pytest.raises(CertificateBindingError, match="base64url"):
+        with pytest.raises(CertificateBindingError, match="base64url") as exc:
             validate_certificate_binding({"cnf": {"x5t#S256": "abcé"}}, cert_pem)
+        assert exc.value.kind is CertificateBindingErrorKind.INVALID_THUMBPRINT
 
     def test_binding_error_is_token_validation_exception(self, cert_pem):
         """A cert-binding failure must be catchable as ``TokenValidationException``
@@ -621,8 +630,8 @@ class TestEndToEndMtls:
         created: list[httpx.Client] = []
         real_build = sync_http.build_mtls_client
 
-        def _tracking_build(cfg):
-            client = real_build(cfg)
+        def _tracking_build(cfg, config):
+            client = real_build(cfg, config)
             created.append(client)
             return client
 
@@ -642,47 +651,201 @@ class TestEndToEndMtls:
 
 
 @pytest.mark.unit
-class TestResolveClientMtlsConflict:
-    """A managed http_client cannot be guaranteed to present the mTLS client
-    certificate, and prepare_*() has already dropped client_secret/Basic for the
-    mTLS branch — so supplying both must fail loudly, not silently downgrade to
-    an unauthenticated request (RFC 8705 §2)."""
+class TestResolveClientMtls:
+    """mTLS requests go through a short-lived cert client (RFC 8705 §2). A
+    caller's ``http_client`` supplies that cert client's ``HTTPConfig``
+    (``ca_bundle``, ``http_timeout``, retries) but never its own connection
+    pool, which cannot be guaranteed to present the certificate."""
 
-    def test_sync_both_mtls_and_managed_client_raises(self, mtls):
-        managed = HTTPClient()
+    def test_sync_mtls_with_managed_client_uses_its_config(self, mtls, cert_files):
+        ca_bundle, _, _ = cert_files
+        config = HTTPConfig(ca_bundle=ca_bundle, http_timeout=7.0)
+        managed = HTTPClient(config=config)
         try:
-            with pytest.raises(ValueError, match="Cannot combine"):
-                sync_http.resolve_http_client(mtls, managed)
+            client, owned = sync_http.resolve_http_client(mtls, managed)
+            try:
+                assert owned is not None  # caller must close it
+                assert client is not managed
+                assert client.client is owned
+                assert client.config is config
+                assert owned.timeout == httpx.Timeout(7.0)
+            finally:
+                if owned is not None:
+                    owned.close()
+            # The caller's client is left open and untouched.
+            assert managed.client.is_closed is False
         finally:
             managed.close()
+
+    def test_sync_mtls_with_closed_managed_client_raises(self, mtls):
+        managed = HTTPClient()
+        managed.close()
+        with pytest.raises(RuntimeError, match="HTTPClient has been closed"):
+            sync_http.resolve_http_client(mtls, managed)
+
+    def test_sync_mtls_with_wrapped_client_raises(self, mtls):
+        """A wrapped httpx.Client's own TLS trust (pinned CA, proxy) cannot
+        carry over to the cert client, so the combination is refused."""
+        with httpx.Client() as raw, HTTPClient(raw) as wrapped:
+            assert wrapped.owns_client is False
+            with pytest.raises(ValueError, match="wrapped httpx client"):
+                sync_http.resolve_http_client(mtls, wrapped)
+
+    def test_sync_owned_client_reports_ownership(self):
+        with HTTPClient() as managed:
+            assert managed.owns_client is True
 
     def test_sync_mtls_only_builds_owned_client(self, mtls):
         client, owned = sync_http.resolve_http_client(mtls, None)
         try:
-            assert owned is client  # caller must close it
+            assert owned is not None  # caller must close it
+            assert client.client is owned
+            assert client.config is sync_http.get_default_http_client().config
         finally:
-            client.close()
+            if owned is not None:
+                owned.close()
 
     def test_sync_managed_only_passes_through(self):
         managed = HTTPClient()
         try:
             client, owned = sync_http.resolve_http_client(None, managed)
-            assert client is managed.client
+            assert client is managed
             assert owned is None  # caller must NOT close a managed client
         finally:
             managed.close()
 
-    async def test_async_both_mtls_and_managed_client_raises(self, mtls):
+    def test_sync_neither_uses_default_client(self):
+        client, owned = sync_http.resolve_http_client(None, None)
+        assert client is sync_http.get_default_http_client()
+        assert owned is None
+
+    @respx.mock
+    def test_sync_mtls_request_applies_managed_client_config(
+        self, mtls, cert_files, monkeypatch
+    ):
+        """End to end: the cert client is built from the caller's HTTPConfig, and
+        that HTTPConfig's retry count governs the request (0 retries: one call on
+        a 503, where the default HTTPConfig would retry)."""
+        ca_bundle, _, _ = cert_files
+        config = HTTPConfig(ca_bundle=ca_bundle, http_retry_max_attempts=0)
+        built: list[tuple[httpx.Client, HTTPConfig]] = []
+        real_build = sync_http.build_mtls_client
+
+        def _tracking_build(cfg, build_config):
+            client = real_build(cfg, build_config)
+            built.append((client, build_config))
+            return client
+
+        monkeypatch.setattr(sync_http, "build_mtls_client", _tracking_build)
+        route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(503))
+        request = ClientCredentialsTokenRequest(
+            address=TOKEN_URL, client_id="c", mtls=mtls
+        )
+        with HTTPClient(config=config) as managed:
+            response = request_client_credentials_token(request, http_client=managed)
+            assert managed.client.is_closed is False
+
+        assert response.is_successful is False
+        assert route.call_count == 1
+        assert [build_config for _, build_config in built] == [config]
+        assert [client.is_closed for client, _ in built] == [True]
+        assert route.calls.last.request.headers.get("authorization") is None
+
+    async def test_async_mtls_with_managed_client_uses_its_config(
+        self, mtls, cert_files
+    ):
+        ca_bundle, _, _ = cert_files
+        config = HTTPConfig(ca_bundle=ca_bundle, http_timeout=7.0)
+        managed = AsyncHTTPClient(config=config)
+        try:
+            client, owned = aio_http.resolve_async_http_client(mtls, managed)
+            try:
+                assert owned is not None  # caller must aclose it
+                assert client is not managed
+                assert client.client is owned
+                assert client.config is config
+                assert owned.timeout == httpx.Timeout(7.0)
+            finally:
+                if owned is not None:
+                    await owned.aclose()
+            assert managed.client.is_closed is False
+        finally:
+            await managed.close()
+
+    async def test_async_mtls_with_closed_managed_client_raises(self, mtls):
+        managed = AsyncHTTPClient()
+        await managed.close()
+        with pytest.raises(RuntimeError, match="AsyncHTTPClient has been closed"):
+            aio_http.resolve_async_http_client(mtls, managed)
+
+    async def test_async_mtls_with_wrapped_client_raises(self, mtls):
+        async with httpx.AsyncClient() as raw:
+            wrapped = AsyncHTTPClient(raw)
+            try:
+                assert wrapped.owns_client is False
+                with pytest.raises(ValueError, match="wrapped httpx client"):
+                    aio_http.resolve_async_http_client(mtls, wrapped)
+            finally:
+                await wrapped.close()
+
+    async def test_async_owned_client_reports_ownership(self):
         managed = AsyncHTTPClient()
         try:
-            with pytest.raises(ValueError, match="Cannot combine"):
-                aio_http.resolve_async_http_client(mtls, managed)
+            assert managed.owns_client is True
         finally:
             await managed.close()
 
     async def test_async_mtls_only_builds_owned_client(self, mtls):
         client, owned = aio_http.resolve_async_http_client(mtls, None)
         try:
-            assert owned is client
+            assert owned is not None  # caller must aclose it
+            assert client.client is owned
+            assert client.config is aio_http.get_default_async_http_client().config
         finally:
-            await client.aclose()
+            if owned is not None:
+                await owned.aclose()
+
+    async def test_async_managed_only_passes_through(self):
+        managed = AsyncHTTPClient()
+        try:
+            client, owned = aio_http.resolve_async_http_client(None, managed)
+            assert client is managed
+            assert owned is None
+        finally:
+            await managed.close()
+
+    async def test_async_neither_uses_default_client(self):
+        client, owned = aio_http.resolve_async_http_client(None, None)
+        assert client is aio_http.get_default_async_http_client()
+        assert owned is None
+
+    @respx.mock
+    async def test_async_mtls_request_applies_managed_client_config(
+        self, mtls, cert_files, monkeypatch
+    ):
+        ca_bundle, _, _ = cert_files
+        config = HTTPConfig(ca_bundle=ca_bundle, http_retry_max_attempts=0)
+        built: list[tuple[httpx.AsyncClient, HTTPConfig]] = []
+        real_build = aio_http.build_mtls_client
+
+        def _tracking_build(cfg, build_config):
+            client = real_build(cfg, build_config)
+            built.append((client, build_config))
+            return client
+
+        monkeypatch.setattr(aio_http, "build_mtls_client", _tracking_build)
+        route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(503))
+        request = ClientCredentialsTokenRequest(
+            address=TOKEN_URL, client_id="c", mtls=mtls
+        )
+        async with AsyncHTTPClient(config=config) as managed:
+            response = await async_request_client_credentials_token(
+                request, http_client=managed
+            )
+            assert managed.client.is_closed is False
+
+        assert response.is_successful is False
+        assert route.call_count == 1
+        assert [build_config for _, build_config in built] == [config]
+        assert [client.is_closed for client, _ in built] == [True]
+        assert route.calls.last.request.headers.get("authorization") is None

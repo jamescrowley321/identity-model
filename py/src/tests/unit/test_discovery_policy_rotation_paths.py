@@ -43,9 +43,6 @@ import respx
 
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
-    _kid_miss_last_attempt as async_kid_miss_last_attempt,
-)
-from py_identity_model.aio.token_validation import (
     clear_discovery_cache as async_clear_discovery_cache,
 )
 from py_identity_model.aio.token_validation import (
@@ -53,6 +50,9 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
+)
+from py_identity_model.aio.validation_cache import (
+    get_default_async_validation_cache,
 )
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
@@ -63,9 +63,6 @@ from py_identity_model.exceptions import (
 )
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
-    _kid_miss_last_attempt as sync_kid_miss_last_attempt,
-)
-from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
 )
 from py_identity_model.sync.token_validation import (
@@ -74,6 +71,7 @@ from py_identity_model.sync.token_validation import (
 from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
+from py_identity_model.sync.validation_cache import get_default_validation_cache
 
 from ..token_validation_helpers import generate_rsa_keypair, sign_jwt
 
@@ -138,6 +136,16 @@ def _lax_config() -> TokenValidationConfig:
     )
 
 
+def _sync_kid_miss_last_attempt() -> dict[str, float]:
+    """Kid-miss cooldown state of the default sync cache (no ``cache=``)."""
+    return get_default_validation_cache()._kid_miss_last_attempt
+
+
+def _async_kid_miss_last_attempt() -> dict[str, float]:
+    """Kid-miss cooldown state of the default async cache."""
+    return get_default_async_validation_cache()._kid_miss_last_attempt
+
+
 @pytest.fixture(autouse=True)
 async def _clear_caches():
     """Isolate cache + cooldown state (clear_jwks_cache also clears the
@@ -189,7 +197,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
         # reject the http URL and never issue the second request).
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
         # Successful rotation clears the kid-miss cooldown stamp.
-        assert HTTP_JWKS_URL not in sync_kid_miss_last_attempt
+        assert HTTP_JWKS_URL not in _sync_kid_miss_last_attempt()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -215,7 +223,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
 
         assert decoded["sub"] == SUBJECT
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
-        assert HTTP_JWKS_URL not in async_kid_miss_last_attempt
+        assert HTTP_JWKS_URL not in _async_kid_miss_last_attempt()
 
     @respx.mock
     def test_sync_default_policy_rejects_http_flow_control(self):
@@ -279,7 +287,7 @@ class TestInjectedPolicyGovernsSignatureRetry:
         assert decoded["sub"] == SUBJECT
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
         # Retry succeeded → real rotation absorbed → cooldown stamp cleared.
-        assert HTTP_JWKS_URL not in sync_kid_miss_last_attempt
+        assert HTTP_JWKS_URL not in _sync_kid_miss_last_attempt()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -305,7 +313,7 @@ class TestInjectedPolicyGovernsSignatureRetry:
 
         assert decoded["sub"] == SUBJECT
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
-        assert HTTP_JWKS_URL not in async_kid_miss_last_attempt
+        assert HTTP_JWKS_URL not in _async_kid_miss_last_attempt()
 
 
 # ============================================================================
@@ -346,7 +354,7 @@ class TestInjectedPolicyRetryStampsCooldownOnPersistentFailure:
         # The refresh was admitted (fired) but decode still failed → the
         # attacker-amplifiable path stamps the cooldown to suppress repeats.
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
-        assert HTTP_JWKS_URL in sync_kid_miss_last_attempt
+        assert HTTP_JWKS_URL in _sync_kid_miss_last_attempt()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -373,14 +381,13 @@ class TestInjectedPolicyRetryStampsCooldownOnPersistentFailure:
             )
 
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
-        assert HTTP_JWKS_URL in async_kid_miss_last_attempt
+        assert HTTP_JWKS_URL in _async_kid_miss_last_attempt()
 
 
 # ============================================================================
-# Injected-``http_client`` (DI) path. It bypasses the caches but must still
-# apply the injected policy to both the discovery fetch and the JWKS fetch
-# (``_discover_and_resolve_key`` DI branch), and to the retry refresh
-# (``_retry_with_refreshed_jwks`` DI branch).
+# Injected-``http_client`` (DI) path. Since #753 the injected client runs the
+# same cached path against its OWN caches; the injected policy must still
+# govern its discovery fetch, JWKS fetch and retry refresh.
 # ============================================================================
 
 
@@ -415,7 +422,7 @@ class TestInjectedPolicyGovernsInjectedClientPath:
         )
         jwks_route = respx.get(HTTP_JWKS_URL).mock(
             side_effect=[
-                httpx.Response(200, json={"keys": [cached_key]}),  # DI initial
+                httpx.Response(200, json={"keys": [cached_key]}),  # DI prime
                 httpx.Response(200, json={"keys": [rotated_key]}),  # DI retry
             ]
         )

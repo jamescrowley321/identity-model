@@ -11,6 +11,7 @@ from ..exceptions import (
     ConfigurationException,
     DiscoveryException,
     DiscoveryHTTPSRequiredError,
+    DiscoveryIssuerMismatchError,
     DiscoveryMissingFieldsError,
     DiscoveryParseError,
 )
@@ -75,6 +76,12 @@ def handle_discovery_error(e: Exception) -> DiscoveryDocumentResponse:
                 error=error_msg,
                 error_kind=DiscoveryErrorKind.MISSING_FIELDS,
                 missing_fields=e.fields,
+            )
+        if isinstance(e, DiscoveryIssuerMismatchError):
+            return DiscoveryDocumentResponse(
+                is_successful=False,
+                error=error_msg,
+                error_kind=DiscoveryErrorKind.ISSUER_MISMATCH,
             )
         return DiscoveryDocumentResponse(
             is_successful=False,

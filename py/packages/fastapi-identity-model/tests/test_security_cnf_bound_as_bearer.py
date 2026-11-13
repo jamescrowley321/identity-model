@@ -1,17 +1,12 @@
 """Adversarial sender-constraint test for the middleware (F-02).
 
-``validate_certificate_binding`` (RFC 8705 §3) exists but is never wired into
-``validate_token`` or the middleware. The middleware accepts the ``bearer``
-scheme only and never inspects ``cnf``. So a certificate-bound access token
-(``cnf.x5t#S256`` present) stolen and replayed as a PLAIN ``Bearer`` token —
-with no client certificate on the connection — is accepted identically to an
-unbound bearer token, silently downgrading the RFC 8705 sender constraint and
-making bound tokens fully replayable.
+A certificate-bound access token (``cnf.x5t#S256`` present) stolen and
+replayed as a plain ``Bearer`` token, with no client certificate on the
+connection, must be refused (RFC 8705 §3), not accepted like an unbound token.
 
-``validate_token`` is mocked to return the bound token's claims (as it would
-after signature/iss/aud validation); the middleware, presented no client cert,
-must reject a ``cnf``-bound token offered as bearer. Asserts 401 and XFAILs
-(today: 200) until sender-constraint enforcement is wired in.
+``validate_token`` is replaced by one that returns the bound token's claims (as
+it would after signature/iss/aud validation) and then runs the real
+``check_token_binding`` against the presentation the middleware passes.
 """
 
 from unittest.mock import AsyncMock
@@ -22,6 +17,7 @@ import pytest
 
 from fastapi_identity_model import TokenValidationMiddleware, get_claims
 import fastapi_identity_model.middleware as mw
+from py_identity_model.core.token_binding import check_token_binding
 
 
 pytestmark = pytest.mark.unit
@@ -52,11 +48,6 @@ def _client(app: FastAPI) -> httpx.AsyncClient:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="F-02: an mTLS cnf.x5t#S256-bound token is accepted as a plain bearer "
-    "with no client certificate (sender constraint not enforced)",
-)
 async def test_cnf_bound_token_presented_as_bearer_is_rejected(monkeypatch):
     bound_claims = {
         "sub": "user-1",
@@ -65,9 +56,12 @@ async def test_cnf_bound_token_presented_as_bearer_is_rejected(monkeypatch):
         # RFC 8705 certificate-binding confirmation method.
         "cnf": {"x5t#S256": "Gms6oPFq0v2Y7d3f4a1b2c3d4e5f6g7h8i9j0kLmNoP"},
     }
-    async with _client(
-        _app(monkeypatch, AsyncMock(return_value=bound_claims))
-    ) as client:
+
+    def _validate(*, jwt, token_validation_config, presentation, **_):
+        check_token_binding(bound_claims, jwt, token_validation_config, presentation)
+        return bound_claims
+
+    async with _client(_app(monkeypatch, AsyncMock(side_effect=_validate))) as client:
         # No client certificate is presented over ASGI — the bound token is a
         # stolen replay.
         resp = await client.get("/me", headers={"Authorization": "Bearer boundtok"})

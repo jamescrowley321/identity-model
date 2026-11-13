@@ -25,16 +25,27 @@ import jwt
 import pytest
 
 from py_identity_model import (
+    CacheConfig,
     ClientAuthMethod,
     DiscoveryDocumentRequest,
     DiscoveryErrorKind,
+    HTTPConfig,
+    IntrospectionErrorKind,
+    JwksResponse,
+    SignedIntrospectionOptions,
     get_discovery_document,
+    jwks_from_dict,
 )
 from py_identity_model.core import jwks_cache
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
+    KeyNotFoundException,
+    TokenValidationException,
+)
 from py_identity_model.sync import token_validation
 from py_identity_model.sync.introspection import (
     TokenIntrospectionRequest,
@@ -55,10 +66,9 @@ from py_identity_model.sync.token_validation import (
     _discover_and_resolve_key,
     _get_cached_jwks,
     _refresh_jwks,
-    clear_discovery_cache,
-    clear_jwks_cache,
 )
 from py_identity_model.sync.userinfo import UserInfoRequest, get_userinfo
+from py_identity_model.sync.validation_cache import ValidationCache
 
 from ..dpop_proof_helpers import assert_dpop_proof, dpop_fixture_key, proof_jti
 
@@ -79,6 +89,7 @@ def _find_repo_root() -> Path:
 
 
 _VECTORS_DIR = _find_repo_root() / "spec" / "vectors"
+_FIXTURES_DIR = _find_repo_root() / "spec" / "test-fixtures"
 
 
 class KnownGap(Exception):
@@ -215,14 +226,15 @@ def _userinfo_expect(case_id: str, expect: dict, response: Any) -> None:
             assert getattr(response, name) == value, f"typed claim {name}"
         return
     error = expect.get("error")
-    if error == "missing_sub" and response.is_successful:
-        raise KnownGap("a response with no sub is accepted without expected_sub (#773)")
     assert not response.is_successful, f"{case_id}: expected reject"
     if error == "subject_mismatch":
         assert "sub mismatch" in (response.error or "")
         return
     if error == "missing_sub":
         assert "missing required 'sub' claim" in (response.error or "")
+        return
+    if error == "unverifiable_sub":
+        assert "cannot be verified" in (response.error or "")
         return
     assert not error, f"{case_id}: unknown expected error {error!r}"
     assert f"status code: {expect['status']}" in (response.error or "")
@@ -286,12 +298,10 @@ def _client_credentials_call(base: str, inp: dict) -> Any:
         scope=" ".join(inp["scopes"]) if "scopes" in inp else None,
         **kwargs,
     )
-    http_client = None
-    if "http_client_headers" in inp:
-        http_client = HTTPClient(
-            client=httpx.Client(headers=inp["http_client_headers"])
-        )
-    return request_client_credentials_token(request, http_client)
+    if "http_client_headers" not in inp:
+        return request_client_credentials_token(request)
+    with httpx.Client(headers=inp["http_client_headers"]) as raw:
+        return request_client_credentials_token(request, HTTPClient(client=raw))
 
 
 def _client_credentials_expect(case_id: str, expect: dict, response: Any) -> None:
@@ -322,32 +332,30 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
     address = base + _DISCO_PATH
     # The fixture is plain HTTP on loopback; require_https also withdraws the
     # loopback exemption so the HTTPS requirement applies.
-    policy = (
-        DiscoveryPolicy(allow_http_on_loopback=False)
-        if inp.get("require_https")
-        else DiscoveryPolicy()
-    )
+    policy = DiscoveryPolicy(allow_http_on_loopback=not inp.get("require_https"))
     if "calls_at_seconds" not in inp:
         request = DiscoveryDocumentRequest(address=address, policy=policy)
         return base, [get_discovery_document(request)]
     responses = []
-    try:
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setenv("DISCO_CACHE_TTL", str(inp["cache_ttl_seconds"]))
-            jwks_cache._reset_env_for_testing()
-            now = [0.0]
-            cache_clock = SimpleNamespace(monotonic=lambda: now[0])
-            mp.setattr(token_validation, "time", cache_clock)
-            mp.setattr(jwks_cache, "time", cache_clock)
-            token_validation.clear_discovery_cache()
-            start = now[0]
-            for at in inp["calls_at_seconds"]:
-                now[0] = start + at
-                responses.append(token_validation._get_disco_response(address, policy))
-    finally:
-        # After the env var is restored, so the cache re-reads the default TTL.
-        token_validation.clear_discovery_cache()
-        jwks_cache._reset_env_for_testing()
+    # A dedicated cache carries the vector's TTL, so nothing is left in the
+    # library default cache afterwards; a dedicated client skips retry delays.
+    cache = ValidationCache(
+        config=CacheConfig(discovery_cache_ttl=inp["cache_ttl_seconds"])
+    )
+    with (
+        HTTPClient(config=HTTPConfig(http_retry_base_delay=0)) as client,
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        now = [0.0]
+        cache_clock = SimpleNamespace(monotonic=lambda: now[0])
+        mp.setattr(token_validation, "time", cache_clock)
+        mp.setattr(jwks_cache, "time", cache_clock)
+        start = now[0]
+        for at in inp["calls_at_seconds"]:
+            now[0] = start + at
+            responses.append(
+                token_validation._get_disco_response(address, policy, client, cache)
+            )
     return base, responses
 
 
@@ -363,13 +371,6 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
         for name, value in want.items():
             assert getattr(response, name) == value, f"{case_id}: {name}"
         return
-    if (
-        case_id == "DISC-003"
-        and expect["error"] == "issuer_mismatch"
-        and response.is_successful
-        and response.issuer == "https://attacker.example.com"
-    ):
-        raise KnownGap(f"{case_id}: issuer mismatch accepted (#574)")
     assert not response.is_successful, f"{case_id}: expected reject, got accept"
     assert response.error_kind is DiscoveryErrorKind(expect["error"]), (
         f"{case_id}: expected {expect['error']}, got {response.error_kind}: {response.error}"
@@ -377,16 +378,9 @@ def _discovery_expect(case_id: str, expect: dict, result: Any) -> None:
     if expect["error"] == "unexpected_status":
         assert response.status_code == expect["status"], f"{case_id}: HTTP status"
     if expect["error"] == "missing_fields":
-        observed = set(response.missing_fields)
-        expected = set(expect["fields"])
-        if (
-            case_id == "DISC-008"
-            and expected == {"token_endpoint", "subject_types_supported"}
-            and observed == {"subject_types_supported"}
-        ):
-            raise KnownGap(f"{case_id}: token_endpoint not required (#771)")
-        assert observed == expected, (
-            f"{case_id}: missing fields {sorted(observed)}, expected {sorted(expected)}"
+        assert list(response.missing_fields) == expect["fields"], (
+            f"{case_id}: missing fields {list(response.missing_fields)}, "
+            f"expected {expect['fields']}"
         )
 
 
@@ -482,6 +476,16 @@ def _introspection_call(base: str, inp: dict) -> Any:
         ):
             raise KnownGap("TokenIntrospectionRequest has no client_auth_method")
         kwargs["client_auth_method"] = ClientAuthMethod.CLIENT_SECRET_POST
+    if signed := inp.get("signed_response"):
+        jwks = json.loads((_FIXTURES_DIR / signed["jwks_fixture"]).read_text())
+        algorithms = signed.get("algorithms")
+        kwargs["signed_response"] = SignedIntrospectionOptions(
+            issuer=signed["issuer"],
+            jwks=JwksResponse(
+                is_successful=True, keys=[jwks_from_dict(k) for k in jwks["keys"]]
+            ),
+            algorithms=None if algorithms is None else frozenset(algorithms),
+        )
     return introspect_token(
         TokenIntrospectionRequest(
             address=endpoint,
@@ -494,6 +498,16 @@ def _introspection_call(base: str, inp: dict) -> Any:
     )
 
 
+#: Canonical error code for each signed-response refusal (RFC 9701 §5).
+_INTROSPECTION_ERRORS = {
+    IntrospectionErrorKind.MALFORMED: "malformed",
+    IntrospectionErrorKind.INVALID_TYPE: "malformed",
+    IntrospectionErrorKind.UNSUPPORTED_ALGORITHM: "unsupported_alg",
+    IntrospectionErrorKind.SIGNATURE: "signature",
+    IntrospectionErrorKind.CLAIM_VALIDATION: "claim_validation",
+}
+
+
 def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
     if expect["outcome"] == "accept":
         assert response.is_successful, f"{case_id}: {response.error}"
@@ -504,6 +518,8 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
         if "active" in expect.get("claims", {}):
             assert claims.get("active") is expect["claims"]["active"], "active"
         for name, value in expect.get("claims", {}).items():
+            if name == "active":
+                continue
             if not hasattr(response, name):
                 raise KnownGap(f"{case_id}: no typed member {name} (#772)")
             assert getattr(response, name) == value, f"typed member {name}"
@@ -511,6 +527,9 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
     if response.is_successful and expect["error"] == "malformed":
         raise KnownGap(f"{case_id}: malformed response accepted (#782)")
     assert not response.is_successful, f"{case_id}: expected reject"
+    if response.error_kind is not None:
+        assert _INTROSPECTION_ERRORS[response.error_kind] == expect["error"], case_id
+        return
     assert f"status code: {expect['status']}" in (response.error or "")
     # The error code appears in the raw body, so a substring check proves
     # nothing until the error is typed (#791).
@@ -523,7 +542,10 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 # use the helpers validate_token uses: ``fetch`` is ``_get_cached_jwks`` plus
 # ``validate_jwks_response``, ``force_refresh`` is ``_refresh_jwks``, and
 # ``resolve`` is ``_discover_and_resolve_key`` with a token header carrying the
-# kid. Errors are messages on ``TokenValidationException``.
+# kid (none when the vector gives neither ``kid`` nor ``kids``) and
+# ``input.alg``. Errors are messages on ``TokenValidationException``, except
+# ``key_not_found``, ``ambiguous_key`` and ``key_alg_mismatch``, which have
+# their own types.
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
@@ -531,51 +553,78 @@ _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 _JWKS_ERRORS = {
     "malformed": "Invalid JSON",
     "empty_key_set": "No keys available",
-    "key_not_found": "No matching kid found",
+}
+
+#: Canonical reject codes surfaced as their own exception type.
+_JWKS_TYPED_ERRORS: dict[str, type[TokenValidationException]] = {
+    "key_not_found": KeyNotFoundException,
+    "ambiguous_key": AmbiguousKeyException,
+    "key_alg_mismatch": KeyAlgorithmMismatchException,
 }
 
 
-def _token_with_kid(kid: str) -> str:
+def _token_with_header(kid: str | None, alg: str | None) -> str:
     def b64(obj: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode()
 
-    return f"{b64({'kid': kid})}.{b64({})}.sig"
+    header = {name: value for name, value in (("kid", kid), ("alg", alg)) if value}
+    return f"{b64(header)}.{b64({})}.sig"
 
 
-def _jwks_step(base: str, step: str, kid: str | None) -> list[dict]:
+class _JwksStack(NamedTuple):
+    """The transport and the validation cache one JWKS vector runs against."""
+
+    client: HTTPClient
+    cache: ValidationCache
+
+
+def _jwks_step(
+    stack: _JwksStack,
+    base: str,
+    step: str,
+    kid: str | None,
+    alg: str | None = None,
+) -> list[dict]:
+    client, cache = stack
     jwks_uri = base + "/jwks"
     if step == "fetch":
-        response = _get_cached_jwks(jwks_uri)
+        response = _get_cached_jwks(jwks_uri, http_client=client, cache=cache)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "force_refresh":
-        response, _ = _refresh_jwks(jwks_uri)
+        response, _ = _refresh_jwks(jwks_uri, http_client=client, cache=cache)
         validate_jwks_response(response)
         return [k.as_dict() for k in response.keys or []]
     if step == "resolve":
-        key, _, _, _ = _discover_and_resolve_key(
-            _token_with_kid(kid or ""), base + _DISCO_PATH, None, DiscoveryPolicy()
+        key, _, _ = _discover_and_resolve_key(
+            _token_with_header(kid, alg),
+            base + _DISCO_PATH,
+            client,
+            DiscoveryPolicy(),
+            cache,
         )
         return [key]
     pytest.fail(f"unknown jwks step {step!r}")
 
 
 def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
-    clear_jwks_cache()
-    clear_discovery_cache()
-    # Each resolve takes the next of input.kids when given, else input.kid.
-    kids = iter(inp.get("kids", []))
-    steps = inp["steps"]
-    keys: list[dict] = []
-    for n, step in enumerate(steps, 1):
-        kid = next(kids, inp.get("kid")) if step == "resolve" else None
-        try:
-            keys = _jwks_step(base, step, kid)
-        except TokenValidationException as exc:
-            # A key-not-found miss before the last step does not end the run.
-            if n == len(steps) or _JWKS_ERRORS["key_not_found"] not in str(exc):
-                return exc
-            keys = []
+    # A fresh cache per vector: empty discovery/JWKS caches and no kid-miss
+    # cooldown carried over from another vector.
+    with HTTPClient(config=HTTPConfig(http_retry_base_delay=0)) as client:
+        stack = _JwksStack(client, ValidationCache())
+        # Each resolve takes the next of input.kids when given, else input.kid.
+        kids = iter(inp.get("kids", []))
+        steps = inp["steps"]
+        keys: list[dict] = []
+        for n, step in enumerate(steps, 1):
+            kid = next(kids, inp.get("kid")) if step == "resolve" else None
+            try:
+                keys = _jwks_step(stack, base, step, kid, inp.get("alg"))
+            except TokenValidationException as exc:
+                # A key-not-found miss before the last step does not end the run.
+                if n == len(steps) or not isinstance(exc, KeyNotFoundException):
+                    return exc
+                keys = []
     return [{m: k[m] for m in _JWK_MEMBERS if k.get(m)} for k in keys]
 
 
@@ -585,6 +634,13 @@ def _jwks_expect(case_id: str, expect: dict, result: Any) -> None:
         assert result == expect["keys"]
         return
     assert isinstance(result, TokenValidationException), f"{case_id}: {result!r}"
+    typed = _JWKS_TYPED_ERRORS.get(expect["error"])
+    if typed is not None:
+        assert isinstance(result, typed), f"{case_id}: {result!r}"
+        return
+    assert not isinstance(result, tuple(_JWKS_TYPED_ERRORS.values())), (
+        f"{case_id}: {result!r}"
+    )
     message = str(result)
     if expect["error"] == "malformed" and "Unhandled exception" in message:
         raise KnownGap(
@@ -613,11 +669,10 @@ _KNOWN_GAPS = {
     "ACG-001-confidential-client-basic": "no typed token members (#783)",
     "ACG-004-code-verifier": "no typed token members (#783)",
     "ACG-005-invalid-grant": "token errors are untyped (#791)",
-    "CC-003-client-secret-post": "no client_secret_post for client credentials (#574)",
     "CC-004-invalid-client": "token errors are untyped (#791)",
     "CC-006-extra-params": "ClientCredentialsTokenRequest has no extra parameters (#778)",
+    "EXCH-001-client-secret-post": "no typed token-exchange members (#783)",
     "EXCH-001-impersonation": "no typed token-exchange members (#783)",
-    "EXCH-001-client-secret-post": "no client_secret_post for token exchange (#574)",
     "EXCH-002-delegation": "no typed token-exchange members (#783)",
     "EXCH-005-n_a-token-type": "no typed token-exchange members (#783)",
     "EXCH-005-optional-fields": "no typed token-exchange members (#783)",
@@ -626,16 +681,11 @@ _KNOWN_GAPS = {
     "INTR-001-active-token": "no typed §2.2 introspection members (#772)",
     "INTR-001-missing-active": "a response with no active member is accepted (#782)",
     "INTR-001-active-not-boolean": "a non-boolean active member is accepted (#782)",
-    "INTR-002-inactive-token": "no typed §2.2 introspection members (#772)",
-    "INTR-003-client-secret-post": "no client_secret_post for introspection (#574)",
     "INTR-005-invalid-client": "introspection errors are untyped (#791)",
-    "DISC-003-issuer-mismatch": "no issuer-match check (#574)",
-    "DISC-008-missing-multiple-fields": "token_endpoint not required (#771)",
     "REV-003-unsupported-token-type": "revocation errors are untyped (#791)",
     "REV-004-invalid-client": "revocation errors are untyped (#791)",
     "REV-005-endpoint-from-discovery": "no revocation_endpoint in discovery (#766)",
     "UI-001": "UserInfoResponse has no typed standard claims (#768)",
-    "UI-003-missing-sub": "no-sub response accepted without expected_sub (#773)",
     "UI-004": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-005": "UserInfoResponse has no WWW-Authenticate challenge (#769)",
     "UI-006": "UserInfoResponse has no WWW-Authenticate challenge (#769)",

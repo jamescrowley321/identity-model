@@ -17,9 +17,16 @@ const CanonicalError = "id_token_profile"
 const (
 	// ReasonMissingSub: sub is absent or empty (§2 / §3.1.3.7).
 	ReasonMissingSub = "missing_sub"
-	// ReasonAZPRequiredMultiAud: multiple audiences but no azp (§3.1.3.7 step 4).
+	// ReasonMissingAud: aud is absent, null or holds only empty strings (§2).
+	ReasonMissingAud = "missing_aud"
+	// ReasonUntrustedAudience: aud contains a value that is neither the
+	// client_id nor an audience the client trusts (§3.1.3.7 step 3).
+	ReasonUntrustedAudience = "untrusted_audience"
+	// ReasonAZPRequiredMultiAud: multiple audiences but no azp, with
+	// [WithAZPValidation] (Core 1.0 (2014) §3.1.3.7 step 4).
 	ReasonAZPRequiredMultiAud = "azp_required_multi_aud"
-	// ReasonAZPMismatch: azp present but not this client (§3.1.3.7 step 6).
+	// ReasonAZPMismatch: azp present but not this client, with
+	// [WithAZPValidation] (§3.1.3.7 step 5).
 	ReasonAZPMismatch = "azp_mismatch"
 	// ReasonNonceMismatch: token nonce absent or not equal to the expected nonce
 	// (§3.1.3.7 step 11).
@@ -29,10 +36,18 @@ const (
 	// ReasonAuthTimeMissing: max_age requested but auth_time absent (§3.1.3.7
 	// step 12).
 	ReasonAuthTimeMissing = "auth_time_missing"
-	// ReasonAtHashMismatch: at_hash absent or not the access token's left-half
-	// hash (§3.3.2.11).
+	// ReasonAtHashMissing: at_hash absent although the access token came in the
+	// same authorization response as the ID Token (the default unless
+	// [WithAccessTokenIssuedWithIDToken] is false, §3.2.2.10, §3.3.2.11).
+	ReasonAtHashMissing = "at_hash_missing"
+	// ReasonAtHashMismatch: at_hash present but not the access token's
+	// left-half hash (§3.3.2.11).
 	ReasonAtHashMismatch = "at_hash_mismatch"
-	// ReasonCHashMismatch: c_hash absent or not the authorization code's
+	// ReasonCHashMissing: c_hash absent although the code came in the same
+	// authorization response as the ID Token (the default unless
+	// [WithCodeIssuedWithIDToken] is false, §3.3.2.11).
+	ReasonCHashMissing = "c_hash_missing"
+	// ReasonCHashMismatch: c_hash present but not the authorization code's
 	// left-half hash (§3.3.2.11).
 	ReasonCHashMismatch = "c_hash_mismatch"
 	// ReasonUnsupportedAlg: the header alg cannot be mapped to a hash for an
@@ -46,6 +61,13 @@ const (
 // ErrIDTokenProfile is the sentinel matched by errors.Is for any ID-Token
 // profile violation, for callers that prefer errors.Is over a type assertion.
 var ErrIDTokenProfile = errors.New("idtoken: id-token profile validation failed")
+
+// ErrAZPRequiresClientID is returned when [WithAZPValidation] is set without
+// [WithClientID]. §3.1.3.7 step 5 compares a present azp with the client's own
+// client_id, so with none configured the check cannot run as asked. It is a
+// caller configuration error, not an ID-Token profile violation: it never
+// matches [ErrIDTokenProfile], and it is returned before any claim is read.
+var ErrAZPRequiresClientID = errors.New("idtoken: azp validation requires a client_id")
 
 // ProfileError reports that an ID-Token profile rule (OIDC Core §3.1.3.7 /
 // §3.3.2.11) was violated. Reason is one of the stable Reason* labels above;

@@ -96,7 +96,10 @@ response = await get_discovery_document(DiscoveryDocumentRequest(address=url))
 ### Client Credentials
 
 ```python
-from py_identity_model import ClientCredentialsTokenRequest, request_client_credentials_token
+from py_identity_model import (
+    ClientCredentialsTokenRequest,
+    request_client_credentials_token,
+)
 
 token = request_client_credentials_token(ClientCredentialsTokenRequest(
     client_id="my-client", client_secret="secret",
@@ -167,21 +170,30 @@ async def admin() -> dict:
 
 ## Configuration
 
-### Environment Variables
+Settings are passed in; the library reads no environment variables. Build an
+`HTTPConfig` and pass it on an HTTP client, then pass the client to any entry
+point (cache settings go on a `CacheConfig`, passed on a `ValidationCache`):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HTTP_TIMEOUT` | 30.0 | Request timeout (seconds) |
-| `HTTP_RETRY_COUNT` | 3 | Retries for rate-limited requests |
-| `HTTP_RETRY_BASE_DELAY` | 1.0 | Base delay for exponential backoff |
-| `SSL_CERT_FILE` | — | CA bundle path (recommended) |
-| `REQUESTS_CA_BUNDLE` | — | CA bundle path (legacy compat) |
+```python
+from py_identity_model import HTTPClient, HTTPConfig, validate_token
+
+client = HTTPClient(config=HTTPConfig(http_timeout=10.0, ca_bundle="/path/to/ca.crt"))
+claims = validate_token(token, validation_config, disco_url, http_client=client)
+```
+
+Without `http_client=`, the library default client (built from `HTTPConfig()`)
+is used. To read the settings from environment variables (`HTTP_TIMEOUT`,
+`HTTP_RETRY_COUNT`, `SSL_CERT_FILE`, ...), call the optional helpers
+`py_identity_model.config_helpers.http_config_from_env()` and
+`cache_config_from_env()`. Every setting and its
+default is listed in the [Configuration reference](https://jamescrowley321.github.io/identity-model/api/config/).
 
 ## Documentation
 
 Full docs: **[jamescrowley321.github.io/identity-model](https://jamescrowley321.github.io/identity-model/)**
 
 - [Getting Started](https://jamescrowley321.github.io/identity-model/getting-started/)
+- [Upgrading to 5.0](https://jamescrowley321.github.io/identity-model/upgrade-v5/): breaking changes from 4.x
 - [Migration Guide](https://jamescrowley321.github.io/identity-model/migration-guide/)
 - [Performance Guide](https://jamescrowley321.github.io/identity-model/performance/)
 - [Integration Tests](https://jamescrowley321.github.io/identity-model/integration-tests/)

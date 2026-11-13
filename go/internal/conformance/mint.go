@@ -18,7 +18,13 @@ const ephemeralKeyBits = 2048
 // them stay fresh regardless of when the suite runs.
 var timeClaims = map[string]struct{}{"exp": {}, "nbf": {}, "iat": {}}
 
-// SigningKeyFromBytes parses the shared RSA private signing-key fixture.
+// FixtureKeys are the shared private signing keys a minted token can name.
+type FixtureKeys struct {
+	RSA     *jose.JSONWebKey // signing_key "fixture" (kid test-key-1)
+	Ed25519 *jose.JSONWebKey // signing_key "ed25519" (kid ed25519-key-1)
+}
+
+// SigningKeyFromBytes parses a shared private signing-key fixture.
 func SigningKeyFromBytes(b []byte) (*jose.JSONWebKey, error) {
 	var jk jose.JSONWebKey
 	if err := jk.UnmarshalJSON(b); err != nil {
@@ -30,13 +36,13 @@ func SigningKeyFromBytes(b []byte) (*jose.JSONWebKey, error) {
 // MintToken realises a minting TokenSpec into a compact JWS. Callers handle
 // TokenSpec.Static (a committed fixture token) themselves; this function only
 // mints from TokenSpec.Claims. now is the reference clock for time claims.
-func MintToken(spec TokenSpec, fixtureKey *jose.JSONWebKey, now time.Time) (string, error) {
+func MintToken(spec TokenSpec, keys FixtureKeys, now time.Time) (string, error) {
 	alg := spec.Alg
 	if alg == "" {
 		alg = "RS256"
 	}
 
-	signingKey, err := signingKeyFor(spec, fixtureKey, alg)
+	signingKey, err := signingKeyFor(spec, keys, alg)
 	if err != nil {
 		return "", err
 	}
@@ -71,14 +77,19 @@ func MintToken(spec TokenSpec, fixtureKey *jose.JSONWebKey, now time.Time) (stri
 
 // signingKeyFor returns the JWK to sign with. go-jose emits the header kid from
 // the key's KeyID, so the returned key's KeyID controls the header kid.
-func signingKeyFor(spec TokenSpec, fixtureKey *jose.JSONWebKey, alg string) (*jose.JSONWebKey, error) {
+func signingKeyFor(spec TokenSpec, keys FixtureKeys, alg string) (*jose.JSONWebKey, error) {
 	var key jose.JSONWebKey
 	switch spec.SigningKey {
 	case "", "fixture":
-		if fixtureKey == nil {
+		if keys.RSA == nil {
 			return nil, fmt.Errorf("fixture signing key not loaded")
 		}
-		key = *fixtureKey // copy so a header_kid override never mutates the shared key
+		key = *keys.RSA // copy so a header_kid override never mutates the shared key
+	case "ed25519":
+		if keys.Ed25519 == nil {
+			return nil, fmt.Errorf("ed25519 signing key not loaded")
+		}
+		key = *keys.Ed25519
 	case "ephemeral":
 		priv, err := rsa.GenerateKey(rand.Reader, ephemeralKeyBits)
 		if err != nil {

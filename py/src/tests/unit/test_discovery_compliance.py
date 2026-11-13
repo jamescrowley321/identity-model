@@ -125,6 +125,9 @@ class TestDiscoveryValidationFunctions:
         """Test that validation passes when all required parameters are present"""
         valid_data = {
             "issuer": "https://example.com",
+            "authorization_endpoint": "https://example.com/auth",
+            "token_endpoint": "https://example.com/token",
+            "jwks_uri": "https://example.com/jwks",
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
@@ -238,6 +241,8 @@ class TestDiscoveryComplianceIntegration:
                 json={
                     "issuer": "http://example.com?query=param",  # Invalid issuer
                     "jwks_uri": "https://example.com/jwks",
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["public"],
                     "id_token_signing_alg_values_supported": ["RS256"],
@@ -263,6 +268,8 @@ class TestDiscoveryComplianceIntegration:
                 json={
                     "issuer": "https://example.com",
                     "jwks_uri": "https://example.com/jwks",
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["invalid_subject_type"],  # Invalid
                     "id_token_signing_alg_values_supported": ["RS256"],
@@ -288,6 +295,8 @@ class TestDiscoveryComplianceIntegration:
                 json={
                     "issuer": "https://example.com",
                     "jwks_uri": "not-a-valid-url",  # Invalid URL
+                    "authorization_endpoint": "https://example.com/auth",
+                    "token_endpoint": "https://example.com/token",
                     "response_types_supported": ["code"],
                     "subject_types_supported": ["public"],
                     "id_token_signing_alg_values_supported": ["RS256"],

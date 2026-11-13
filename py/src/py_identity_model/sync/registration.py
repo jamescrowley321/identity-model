@@ -25,7 +25,7 @@ from ..core.registration_logic import (
     process_registration_response,
     process_update_response,
 )
-from .http_client import get_http_client, retry_with_backoff
+from .http_client import get_default_http_client, retry_with_backoff
 from .managed_client import HTTPClient
 
 
@@ -75,7 +75,7 @@ def register_client(
     response = None
     try:
         body, headers = prepare_registration_request(request)
-        client = http_client.client if http_client else get_http_client()
+        client = http_client if http_client is not None else get_default_http_client()
         response = _post_registration(client, request.address, body, headers)
         return process_registration_response(response)
     except Exception as e:
@@ -101,7 +101,7 @@ def read_client(
     response = None
     try:
         headers = prepare_management_headers(request.registration_access_token)
-        client = http_client.client if http_client else get_http_client()
+        client = http_client if http_client is not None else get_default_http_client()
         response = _get_client(client, request.address, headers)
         return process_read_response(response)
     except Exception as e:
@@ -128,7 +128,7 @@ def update_client(
     response = None
     try:
         body, headers = prepare_update_request(request)
-        client = http_client.client if http_client else get_http_client()
+        client = http_client if http_client is not None else get_default_http_client()
         response = _put_client(client, request.address, body, headers)
         return process_update_response(response)
     except Exception as e:
@@ -154,7 +154,7 @@ def delete_client(
     response = None
     try:
         headers = prepare_management_headers(request.registration_access_token)
-        client = http_client.client if http_client else get_http_client()
+        client = http_client if http_client is not None else get_default_http_client()
         response = _delete_client(client, request.address, headers)
         return process_delete_response(response)
     except Exception as e:

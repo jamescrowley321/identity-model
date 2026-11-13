@@ -33,7 +33,11 @@ from py_identity_model.core.dpop import (
     generate_dpop_key,
 )
 from py_identity_model.core.jar import create_request_object
-from py_identity_model.core.models import TokenValidationConfig
+from py_identity_model.core.models import (
+    PrivateKeyJwt,
+    PushedAuthorizationRequest,
+    TokenValidationConfig,
+)
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.core.pkce import (
     generate_code_challenge,
@@ -131,17 +135,26 @@ def test_bench_create_request_object_rsa(benchmark, rsa_private_pem):
 # ============================================================================
 
 
+_FAPI_DPOP_KEY = generate_dpop_key("ES256")
+_FAPI_PKJ = PrivateKeyJwt(
+    private_key=_FAPI_DPOP_KEY.private_key_pem,
+    algorithm="ES256",
+    issuer="https://auth.example.com",
+)
+
+
 @pytest.mark.benchmark(group="fapi")
 def test_bench_validate_fapi_request(benchmark):
-    result = benchmark(
-        validate_fapi_authorization_request,
-        response_type="code",
+    request = PushedAuthorizationRequest(
+        address="https://auth.example.com/par",
+        client_id="client",
+        redirect_uri="https://app.example.com/cb",
         code_challenge="challenge_value",
         code_challenge_method="S256",
-        redirect_uri="https://app.example.com/cb",
-        use_par=True,
-        algorithm="ES256",
+        private_key_jwt=_FAPI_PKJ,
+        dpop_key=_FAPI_DPOP_KEY,
     )
+    result = benchmark(validate_fapi_authorization_request, request)
     assert result is not None
 
 
@@ -149,8 +162,9 @@ def test_bench_validate_fapi_request(benchmark):
 def test_bench_validate_fapi_client(benchmark):
     result = benchmark(
         validate_fapi_client_config,
-        auth_method="private_key_jwt",
-        use_dpop=True,
+        issuer="https://auth.example.com",
+        private_key_jwt=_FAPI_PKJ,
+        dpop_key=_FAPI_DPOP_KEY,
     )
     assert result is not None
 

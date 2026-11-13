@@ -8,7 +8,7 @@ It gives you two composable pieces:
 
 | Piece | Use case |
 |-------|----------|
-| **`TokenValidationMiddleware`** + `Depends` helpers | Protect an **API / resource server** that receives `Authorization: Bearer <token>` |
+| **`TokenValidationMiddleware`** + `Depends` helpers | Protect an **API / resource server** that receives `Authorization: Bearer <token>` or `Authorization: DPoP <token>` |
 | **`build_oidc_router`** | Add a browser **login flow** (authorization code + PKCE) to your app (relying party) |
 
 ## Install
@@ -19,7 +19,7 @@ pip install fastapi-identity-model
 pip install "fastapi-identity-model[server]"
 ```
 
-## Resource server — validate incoming Bearer tokens
+## Resource server — validate incoming access tokens
 
 ```python
 from fastapi import FastAPI, Depends
@@ -27,7 +27,10 @@ from fastapi_identity_model import (
     TokenValidationMiddleware, OIDCSettings, get_current_user, require_scope,
 )
 
-settings = OIDCSettings.from_env()  # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
+settings = OIDCSettings(
+    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    client_id="<client_id>",
+)
 app = FastAPI()
 app.add_middleware(
     TokenValidationMiddleware,
@@ -49,6 +52,15 @@ The middleware validates the token (signature, issuer, audience, expiry) via
 `py-identity-model` and attaches a `ClaimsPrincipal` to `request.state.user`.
 Invalid tokens → **401**; an unexpected server-side failure → **500** (never
 masked as a 401).
+
+Sender-constrained tokens are always checked: a DPoP-bound token (`cnf.jkt`)
+needs the `DPoP` scheme and a valid proof, and a certificate-bound token needs
+its client certificate. Binding options live on one `AuthOptions`, passed as
+`options=` to both `TokenValidationMiddleware` and `build_ws_authenticator`;
+pass `settings=` instead to read `OIDC_REQUIRED_BINDING` and friends from
+`OIDCSettings`. `AuthOptions(required_binding=TokenBinding.DPOP)` also refuses
+unbound tokens. See
+[DPoP resource server verification](https://jamescrowley321.github.io/identity-model/api/dpop/#fastapi).
 
 ## Relying party — browser login flow
 
@@ -86,6 +98,24 @@ async def me(request: Request):
 Routes added: `GET /auth/login` → provider, `GET /auth/callback` (code exchange,
 ID-token validation, **nonce check**, UserInfo `sub` verification), `POST /auth/logout`.
 
+The callback validates the ID Token with `validate_id_token` (OIDC Core
+§3.1.3.7). An ID Token whose `aud` lists anything besides `client_id` fails
+the login unless that audience is in `trusted_audiences`
+(`OIDC_TRUSTED_AUDIENCES`). If your provider issues multi-audience ID Tokens,
+list the extra audiences. Whenever you set `OIDC_TRUSTED_AUDIENCES`, also set
+`OIDC_VALIDATE_AZP=true` (`validate_azp=True`), so the token must name your
+client as its authorized party (`azp`). Without it, an ID Token issued to
+another client that also lists yours in `aud` logs in. The `azp` check is off
+by default because OIDC Core §3.1.3.7 makes it a SHOULD:
+
+```python
+settings = OIDCSettings(
+    ...,
+    trusted_audiences=["https://api.example.com"],
+    validate_azp=True,
+)
+```
+
 ### Session & security
 
 The router uses Starlette's `SessionMiddleware`, which **signs but does not
@@ -93,6 +123,56 @@ encrypt** the cookie. Stored identity claims are tamper-proof but readable by th
 client. Raw tokens are stored **only** when you pass `build_oidc_router(settings,
 store_tokens=True)` — enable that only with an encrypted or server-side session
 store. For production, back the session with a server-side store.
+
+## Configuration
+
+The package reads no environment variables. Construct `OIDCSettings` yourself,
+or build it from the environment with the optional helper:
+
+```python
+from fastapi_identity_model.config_helpers import oidc_settings_from_env
+
+settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
+settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
+```
+
+`DISCOVERY_URL` and `CLIENT_ID` are required. `EXCLUDED_PATHS` and
+`TRUSTED_AUDIENCES` are comma-separated lists; an empty `TRUSTED_AUDIENCES`
+entry raises `ValueError`. `VALIDATE_AZP` is `true` or `false`. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
+`SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
+to the `OIDCSettings` default when unset.
+
+HTTP settings belong to a `py-identity-model` `HTTPConfig`, and cache settings
+to a `CacheConfig`. Build an `AsyncHTTPClient` from the first (timeouts,
+retries, CA bundle) and pass it as
+`http_client=` to `TokenValidationMiddleware`, `build_oidc_router`,
+`build_ws_authenticator` and `TokenManager`. Without it, the library default
+client is used.
+
+The discovery document, the keys and the kid-miss cooldown are kept on an
+`AsyncValidationCache`, not on the client. Pass one as `cache=` to
+`TokenValidationMiddleware` and `build_ws_authenticator` to set the cache
+TTLs, size or cooldown. Without it, and in `build_oidc_router`, the library
+default cache is used.
+
+```python
+from py_identity_model import CacheConfig, HTTPConfig
+from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
+
+http_client = AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0))
+cache = AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))
+app.add_middleware(
+    TokenValidationMiddleware,
+    discovery_url=settings.discovery_url,
+    audience=settings.audience,
+    http_client=http_client,
+    cache=cache,
+)
+app.include_router(build_oidc_router(settings, http_client=http_client), prefix="/auth")
+```
+
+Close the client on shutdown (`await http_client.close()`, e.g. in the app's
+lifespan). A cache holds no connections and needs no closing.
 
 ## Token refresh
 

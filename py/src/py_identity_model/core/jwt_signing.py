@@ -1,10 +1,17 @@
 """
-Shared JWT signing algorithm support and validation.
+JWS algorithm allowlists: one per purpose.
 
-Centralises the set of asymmetric signing algorithms accepted across the
-library — JAR request objects (RFC 9101) and ``private_key_jwt`` client
-assertions (RFC 7523) — so the supported list and its validation are defined
-in exactly one place.
+* **Verify** — :data:`DEFAULT_ALLOWED_ALGORITHMS`: what an inbound JWS (access
+  token, ID token, DPoP proof, signed introspection response, JARM response)
+  may be signed with when the caller passes ``algorithms=None``.
+* **Sign** — :data:`SUPPORTED_SIGNING_ALGORITHMS`: what the library signs
+  outbound JWTs with (``private_key_jwt`` client assertions, JAR request
+  objects).
+* **FAPI 2.0** — ``FAPI2_ALLOWED_SIGNING_ALGORITHMS`` in :mod:`.fapi`: applied
+  only when a FAPI 2.0 profile or validator passes it explicitly.
+
+The verify set is spelled out separately so adding a signing algorithm never
+widens what the library accepts.
 """
 
 from __future__ import annotations
@@ -29,6 +36,26 @@ SUPPORTED_SIGNING_ALGORITHMS = frozenset(
     }
 )
 
+# Algorithms an inbound JWS may be signed with when the caller passes
+# ``algorithms=None``, in every mode. Matches Go ``defaultAllowedAlgorithms``;
+# Rust's default omits ES512, which it cannot verify yet. HMAC is excluded so a
+# token can't be verified with a provider's public key used as a shared secret
+# (RFC 8725 §2.1, §3.1), and ``none`` is never accepted.
+DEFAULT_ALLOWED_ALGORITHMS: frozenset[str] = frozenset(
+    {
+        "RS256",
+        "RS384",
+        "RS512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "ES256",
+        "ES384",
+        "ES512",
+        "EdDSA",
+    }
+)
+
 
 def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> None:
     """Validate that *algorithm* is a supported asymmetric signing algorithm.
@@ -50,7 +77,27 @@ def validate_signing_algorithm(algorithm: str, *, context: str = "signing") -> N
         raise ValueError(msg)
 
 
+def advertised_verify_algorithms(advertised: object) -> list[str] | None:
+    """Return the advertised ``*_signing_alg_values_supported`` algorithms that
+    are in :data:`DEFAULT_ALLOWED_ALGORITHMS`.
+
+    ``None`` (not advertised) stays ``None``, which callers read as
+    ``DEFAULT_ALLOWED_ALGORITHMS``. A value that is not a list allows nothing.
+    """
+    if advertised is None:
+        return None
+    if not isinstance(advertised, list):
+        return []
+    return [
+        alg
+        for alg in advertised
+        if isinstance(alg, str) and alg in DEFAULT_ALLOWED_ALGORITHMS
+    ]
+
+
 __all__ = [
+    "DEFAULT_ALLOWED_ALGORITHMS",
     "SUPPORTED_SIGNING_ALGORITHMS",
+    "advertised_verify_algorithms",
     "validate_signing_algorithm",
 ]

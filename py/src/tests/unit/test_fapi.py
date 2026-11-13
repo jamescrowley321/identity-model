@@ -1,14 +1,25 @@
 """Unit tests for FAPI 2.0 Security Profile compliance validation."""
 
-import pytest
+from typing import Any
 
+import httpx
+import pytest
+import respx
+
+from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 from py_identity_model.core.fapi import (
     FAPIValidationResult,
-    validate_fapi_authorization_request,
-    validate_fapi_client_config,
+    FAPIViolation,
+    FAPIViolationCode,
     validate_fapi_discovery,
 )
 from py_identity_model.core.models import DiscoveryDocumentResponse
+
+from ..constants import DISCO_URL, ISSUER
+
+
+def _messages(violations: list[FAPIViolation]) -> list[str]:
+    return [v.message for v in violations]
 
 
 @pytest.mark.unit
@@ -18,475 +29,367 @@ class TestFAPIValidationResult:
         assert result.is_compliant is True
 
     def test_violations_is_not_compliant(self):
-        result = FAPIValidationResult(violations=["problem"])
+        problem = FAPIViolation(FAPIViolationCode.DISCOVERY_FAILED, "problem")
+        result = FAPIValidationResult(violations=[problem])
         assert result.is_compliant is False
+        assert result.codes == [FAPIViolationCode.DISCOVERY_FAILED]
 
     def test_default_is_compliant(self):
         result = FAPIValidationResult()
         assert result.is_compliant is True
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
 
-@pytest.mark.unit
-class TestValidateFAPIAuthorizationRequest:
-    def test_compliant_request(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge_value",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/callback",
-            use_par=True,
-            algorithm="ES256",
-        )
-        assert result.is_compliant is True
-        assert result.violations == []
+# Discovery metadata a FAPI 2.0 authorization server advertises. Each test
+# overrides one field so the violation it expects is the only one.
+COMPLIANT_METADATA: dict[str, Any] = {
+    "issuer": "https://auth.example.com",
+    "grant_types_supported": ["authorization_code"],
+    "response_types_supported": ["code"],
+    "token_endpoint_auth_methods_supported": ["private_key_jwt"],
+    "token_endpoint_auth_signing_alg_values_supported": ["PS256"],
+    "id_token_signing_alg_values_supported": ["ES256", "PS256"],
+    "code_challenge_methods_supported": ["S256"],
+    "pushed_authorization_request_endpoint": "https://auth.example.com/par",
+    "authorization_response_iss_parameter_supported": True,
+    "dpop_signing_alg_values_supported": ["ES256"],
+}
 
-    def test_wrong_response_type(self):
-        result = validate_fapi_authorization_request(
-            response_type="token",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("response_type" in v for v in result.violations)
+# Every value a compliant array could need, so a mixed array fails only
+# because of its non-string entry.
+COMPLIANT_VALUES = [
+    "authorization_code",
+    "code",
+    "private_key_jwt",
+    "PS256",
+    "ES256",
+    "EdDSA",
+    "S256",
+]
 
-    def test_missing_code_challenge(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge=None,
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("code_challenge" in v for v in result.violations)
-
-    def test_wrong_pkce_method(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="plain",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("S256" in v for v in result.violations)
-
-    def test_par_not_used(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=False,
-        )
-        assert result.is_compliant is False
-        assert any("PAR" in v for v in result.violations)
-
-    def test_http_redirect_uri(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="http://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("HTTPS" in v for v in result.violations)
-
-    def test_disallowed_algorithm(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-            algorithm="RS256",
-        )
-        assert result.is_compliant is False
-        assert any("RS256" in v for v in result.violations)
-
-    def test_empty_code_challenge_rejected(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("code_challenge" in v for v in result.violations)
-
-    def test_whitespace_code_challenge_rejected(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="   ",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("code_challenge" in v for v in result.violations)
-
-    def test_none_code_challenge_method_message(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method=None,
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("code_challenge_method is required" in v for v in result.violations)
-        # Must NOT contain Python repr 'None'
-        assert not any("'None'" in v for v in result.violations)
-
-    def test_redirect_uri_case_insensitive_https(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="HTTPS://app.example.com/cb",
-            use_par=True,
-        )
-        assert result.is_compliant is True
-
-    def test_redirect_uri_no_host_rejected(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://",
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("host" in v for v in result.violations)
-
-    def test_redirect_uri_whitespace_stripped(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri=" https://app.example.com/cb ",
-            use_par=True,
-        )
-        assert result.is_compliant is True
-
-    def test_non_string_redirect_uri(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri=None,  # type: ignore[arg-type]
-            use_par=True,
-        )
-        assert result.is_compliant is False
-        assert any("must be a string" in v for v in result.violations)
-
-    def test_algorithm_none_is_ok(self):
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-            algorithm=None,
-        )
-        assert result.is_compliant is True
-
-    def test_algorithm_violation_message_readable(self):
-        """Algorithm violation message should use comma-separated list, not Python repr."""
-        result = validate_fapi_authorization_request(
-            response_type="code",
-            code_challenge="challenge",
-            code_challenge_method="S256",
-            redirect_uri="https://app.example.com/cb",
-            use_par=True,
-            algorithm="RS256",
-        )
-        alg_violation = next(v for v in result.violations if "RS256" in v)
-        assert "[" not in alg_violation
-        assert "]" not in alg_violation
-
-    def test_multiple_violations(self):
-        result = validate_fapi_authorization_request(
-            response_type="token",
-            code_challenge=None,
-            code_challenge_method="plain",
-            redirect_uri="http://app.example.com/cb",
-            use_par=False,
-            algorithm="RS256",
-        )
-        assert result.is_compliant is False
-        assert any("response_type" in v for v in result.violations)
-        assert any("code_challenge" in v for v in result.violations)
-        assert any("S256" in v for v in result.violations)
-        assert any("PAR" in v for v in result.violations)
-        assert any("HTTPS" in v for v in result.violations)
-        assert any("RS256" in v for v in result.violations)
+REQUIRED_RESPONSE_TYPES = (
+    "response_types_supported not advertised; "
+    "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+)
+REQUIRED_ID_TOKEN_ALGS = (
+    "id_token_signing_alg_values_supported not advertised; "
+    "OpenID Connect Discovery 1.0 §3 marks it REQUIRED, with no default"
+)
+AUTH_METHODS_DEFAULT = (
+    "token_endpoint_auth_methods_supported not advertised; "
+    "RFC 8414 default is client_secret_basic, which FAPI 2.0 prohibits"
+)
+PKCE_ABSENT = (
+    "code_challenge_methods_supported not advertised; RFC 8414 §2 reads that "
+    "as no PKCE support, and FAPI 2.0 Security Profile §5.3.2.2 requires S256"
+)
+PAR_ABSENT = (
+    "pushed_authorization_request_endpoint not advertised; FAPI 2.0 Security "
+    "Profile §5.3.2.2 requires pushed authorization requests (RFC 9126)"
+)
+ISS_NOT_SUPPORTED = (
+    "authorization_response_iss_parameter_supported is not true; FAPI 2.0 "
+    "Security Profile §5.3.2.2 requires the iss authorization response "
+    "parameter (RFC 9207 §3)"
+)
+NO_SENDER_CONSTRAINT = (
+    "Neither dpop_signing_alg_values_supported with one of ES256, EdDSA, PS256 "
+    "nor tls_client_certificate_bound_access_tokens: true is advertised; "
+    "FAPI 2.0 Security Profile §5.3.2.1 requires sender-constrained access "
+    "tokens (DPoP or MTLS)"
+)
+AUTH_SIGNING_ALGS_ABSENT = (
+    "token_endpoint_auth_signing_alg_values_supported not advertised; "
+    "private_key_jwt needs one of ES256, EdDSA, PS256 "
+    "(FAPI 2.0 Security Profile §5.4.1)"
+)
+AUTH_SIGNING_ALGS_WEAK = (
+    "Server does not support FAPI-compliant token endpoint auth signing "
+    "algorithms (ES256, EdDSA, PS256)"
+)
 
 
-@pytest.mark.unit
-class TestValidateFAPIClientConfig:
-    def test_compliant_dpop(self):
-        result = validate_fapi_client_config(
-            auth_method="private_key_jwt",
-            use_dpop=True,
-        )
-        assert result.is_compliant is True
-
-    def test_compliant_mtls(self):
-        result = validate_fapi_client_config(
-            auth_method="tls_client_auth",
-            use_mtls=True,
-        )
-        assert result.is_compliant is True
-
-    def test_compliant_self_signed_tls(self):
-        result = validate_fapi_client_config(
-            auth_method="self_signed_tls_client_auth",
-            use_mtls=True,
-        )
-        assert result.is_compliant is True
-
-    def test_no_client_auth(self):
-        result = validate_fapi_client_config(
-            auth_method=None,
-            use_dpop=True,
-        )
-        assert result.is_compliant is False
-        assert any("Client authentication" in v for v in result.violations)
-
-    def test_prohibited_auth_method_client_secret_basic(self):
-        result = validate_fapi_client_config(
-            auth_method="client_secret_basic",
-            use_dpop=True,
-        )
-        assert result.is_compliant is False
-        assert any("not FAPI 2.0 compliant" in v for v in result.violations)
-        assert any("client_secret_basic" in v for v in result.violations)
-
-    def test_prohibited_auth_method_client_secret_post(self):
-        result = validate_fapi_client_config(
-            auth_method="client_secret_post",
-            use_dpop=True,
-        )
-        assert result.is_compliant is False
-        assert any("not FAPI 2.0 compliant" in v for v in result.violations)
-
-    def test_no_sender_constraint(self):
-        result = validate_fapi_client_config(
-            auth_method="private_key_jwt",
-            use_dpop=False,
-            use_mtls=False,
-        )
-        assert result.is_compliant is False
-        assert any("Sender-constrained" in v for v in result.violations)
-
-    def test_both_dpop_and_mtls(self):
-        result = validate_fapi_client_config(
-            auth_method="private_key_jwt",
-            use_dpop=True,
-            use_mtls=True,
-        )
-        assert result.is_compliant is True
+def _discovery(**overrides: Any) -> DiscoveryDocumentResponse:
+    return DiscoveryDocumentResponse(
+        is_successful=True, **{**COMPLIANT_METADATA, **overrides}
+    )
 
 
 @pytest.mark.unit
 class TestValidateFAPIDiscovery:
     def test_compliant_discovery(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256", "PS256"],
-        )
-        result = validate_fapi_discovery(disco)
+        result = validate_fapi_discovery(_discovery())
         assert result.is_compliant is True
+        assert _messages(result.violations) == []
 
     def test_missing_auth_code_grant(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["client_credentials"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
+        result = validate_fapi_discovery(
+            _discovery(grant_types_supported=["client_credentials"])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("authorization_code" in v for v in result.violations)
+        assert _messages(result.violations) == [
+            "Server does not support authorization_code grant type"
+        ]
 
     def test_weak_auth_methods(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["client_secret_basic"],
-            id_token_signing_alg_values_supported=["ES256"],
+        result = validate_fapi_discovery(
+            _discovery(token_endpoint_auth_methods_supported=["client_secret_basic"])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("client auth" in v for v in result.violations)
+        assert _messages(result.violations) == [
+            "Server does not support FAPI-compliant client auth "
+            "(private_key_jwt or tls_client_auth)"
+        ]
 
     def test_weak_algorithms(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["RS256"],
+        result = validate_fapi_discovery(
+            _discovery(id_token_signing_alg_values_supported=["RS256"])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("signing algorithms" in v for v in result.violations)
+        assert _messages(result.violations) == [
+            "Server does not support FAPI-compliant signing algorithms "
+            "(ES256, EdDSA, PS256)"
+        ]
+
+    def test_eddsa_is_a_fapi_algorithm(self):
+        """FAPI 2.0 Security Profile §5.4.1: PS256, ES256 or EdDSA (Ed25519)."""
+        result = validate_fapi_discovery(
+            _discovery(
+                id_token_signing_alg_values_supported=["EdDSA"],
+                token_endpoint_auth_signing_alg_values_supported=["EdDSA"],
+            )
+        )
+        assert _messages(result.violations) == []
 
     def test_failed_discovery_returns_non_compliant(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=False,
-        )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("fetch failed" in v for v in result.violations)
+        result = validate_fapi_discovery(DiscoveryDocumentResponse(is_successful=False))
+        assert _messages(result.violations) == ["Discovery document fetch failed"]
 
     def test_none_auth_methods_non_compliant(self):
         """RFC 8414 §2 default is client_secret_basic — FAPI-prohibited."""
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=None,
-            id_token_signing_alg_values_supported=["ES256"],
+        result = validate_fapi_discovery(
+            _discovery(token_endpoint_auth_methods_supported=None)
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("client_secret_basic" in v for v in result.violations)
+        assert _messages(result.violations) == [AUTH_METHODS_DEFAULT]
 
     def test_none_signing_algs_non_compliant(self):
-        """OIDC Discovery §3 default is RS256 — FAPI-prohibited."""
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=None,
+        """OIDC Discovery §3: REQUIRED, no RS256 (or any other) default."""
+        result = validate_fapi_discovery(
+            _discovery(id_token_signing_alg_values_supported=None)
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("RS256" in v for v in result.violations)
+        assert _messages(result.violations) == [REQUIRED_ID_TOKEN_ALGS]
 
     def test_none_fields_non_compliant(self):
-        """Discovery with all None metadata is non-compliant due to RFC defaults."""
+        """All-None metadata: every FAPI requirement is reported."""
         disco = DiscoveryDocumentResponse(
             is_successful=True,
             issuer="https://auth.example.com",
         )
         result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("client_secret_basic" in v for v in result.violations)
-        assert any("RS256" in v for v in result.violations)
+        assert _messages(result.violations) == [
+            REQUIRED_RESPONSE_TYPES,
+            AUTH_METHODS_DEFAULT,
+            REQUIRED_ID_TOKEN_ALGS,
+            PKCE_ABSENT,
+            PAR_ABSENT,
+            ISS_NOT_SUPPORTED,
+            NO_SENDER_CONSTRAINT,
+        ]
 
     def test_response_types_missing_code(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            response_types_supported=["token"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
-        )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("response type" in v for v in result.violations)
+        result = validate_fapi_discovery(_discovery(response_types_supported=["token"]))
+        assert _messages(result.violations) == [
+            "Server does not support 'code' response type "
+            "(authorization code flow required)"
+        ]
 
-    def test_response_types_none_is_compliant(self):
-        """OIDC Discovery default for response_types_supported is ['code'] — compliant."""
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            response_types_supported=None,
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
-        )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is True
+    def test_response_types_none_is_non_compliant(self):
+        """OIDC Discovery §3: response_types_supported is REQUIRED, no default."""
+        result = validate_fapi_discovery(_discovery(response_types_supported=None))
+        assert _messages(result.violations) == [REQUIRED_RESPONSE_TYPES]
+
+    def test_grant_types_none_is_compliant(self):
+        """OIDC Discovery §3 default is ["authorization_code", "implicit"]."""
+        result = validate_fapi_discovery(_discovery(grant_types_supported=None))
+        assert _messages(result.violations) == []
 
     def test_pkce_methods_without_s256(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
-            code_challenge_methods_supported=["plain"],
+        result = validate_fapi_discovery(
+            _discovery(code_challenge_methods_supported=["plain"])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is False
-        assert any("S256" in v for v in result.violations)
+        assert _messages(result.violations) == [
+            "Server does not support S256 PKCE "
+            "(FAPI 2.0 requires code_challenge_methods_supported to include S256)"
+        ]
 
     def test_pkce_methods_with_s256(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
-            code_challenge_methods_supported=["S256", "plain"],
+        result = validate_fapi_discovery(
+            _discovery(code_challenge_methods_supported=["S256", "plain"])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is True
+        assert _messages(result.violations) == []
 
-    def test_pkce_methods_none_passes(self):
-        """When code_challenge_methods_supported is absent, no violation."""
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["ES256"],
-            code_challenge_methods_supported=None,
+    def test_pkce_methods_none_is_non_compliant(self):
+        """RFC 8414 §2: omitted code_challenge_methods_supported means no PKCE."""
+        result = validate_fapi_discovery(
+            _discovery(code_challenge_methods_supported=None)
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is True
+        assert _messages(result.violations) == [PKCE_ABSENT]
 
-    def test_signing_alg_violation_message_readable(self):
-        """Signing algorithm violation message should use comma-separated list."""
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://auth.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["private_key_jwt"],
-            id_token_signing_alg_values_supported=["RS256"],
+    def test_par_endpoint_none_is_non_compliant(self):
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint=None)
         )
-        result = validate_fapi_discovery(disco)
-        alg_violation = next(v for v in result.violations if "signing" in v)
-        assert "[" not in alg_violation
-        assert "]" not in alg_violation
+        assert _messages(result.violations) == [PAR_ABSENT]
+
+    def test_par_endpoint_empty_is_non_compliant(self):
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint="")
+        )
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [PAR_ABSENT]
+
+    @pytest.mark.parametrize(
+        "endpoint", [True, 1, ["https://auth.example.com/par"], {}, "   "]
+    )
+    def test_par_endpoint_not_a_url_string_is_non_compliant(self, endpoint):
+        """971-B: a truthy non-string (``true``) used to pass."""
+        result = validate_fapi_discovery(
+            _discovery(pushed_authorization_request_endpoint=endpoint)
+        )
+        assert result.codes == [FAPIViolationCode.SERVER_PAR_UNSUPPORTED]
+        assert _messages(result.violations) == [
+            "pushed_authorization_request_endpoint must be a URL string, got "
+            f"{endpoint!r} (RFC 9126 §5)"
+        ]
+
+    @pytest.mark.parametrize("supported", [None, False], ids=["absent", "false"])
+    def test_iss_parameter_not_supported_is_non_compliant(self, supported):
+        result = validate_fapi_discovery(
+            _discovery(authorization_response_iss_parameter_supported=supported)
+        )
+        assert _messages(result.violations) == [ISS_NOT_SUPPORTED]
+
+    @pytest.mark.parametrize(
+        ("dpop_algs", "mtls_bound"),
+        [
+            (None, None),
+            ([], None),
+            (None, False),
+            (["RS256", "HS256", "none"], None),
+        ],
+        ids=["both-absent", "empty-dpop-algs", "mtls-false", "no-fapi-dpop-alg"],
+    )
+    def test_no_sender_constraint_is_non_compliant(self, dpop_algs, mtls_bound):
+        result = validate_fapi_discovery(
+            _discovery(
+                dpop_signing_alg_values_supported=dpop_algs,
+                tls_client_certificate_bound_access_tokens=mtls_bound,
+            )
+        )
+        assert _messages(result.violations) == [NO_SENDER_CONSTRAINT]
+
+    def test_mtls_bound_tokens_satisfy_sender_constraint(self):
+        result = validate_fapi_discovery(
+            _discovery(
+                dpop_signing_alg_values_supported=None,
+                tls_client_certificate_bound_access_tokens=True,
+            )
+        )
+        assert _messages(result.violations) == []
+
+    def test_auth_signing_algs_none_with_private_key_jwt(self):
+        result = validate_fapi_discovery(
+            _discovery(token_endpoint_auth_signing_alg_values_supported=None)
+        )
+        assert _messages(result.violations) == [AUTH_SIGNING_ALGS_ABSENT]
+
+    def test_auth_signing_algs_without_fapi_algorithm(self):
+        result = validate_fapi_discovery(
+            _discovery(token_endpoint_auth_signing_alg_values_supported=["RS256"])
+        )
+        assert _messages(result.violations) == [AUTH_SIGNING_ALGS_WEAK]
+
+    def test_auth_signing_algs_ignored_without_private_key_jwt(self):
+        """RFC 8414 §2: the field governs JWT client authentication only."""
+        result = validate_fapi_discovery(
+            _discovery(
+                token_endpoint_auth_methods_supported=["tls_client_auth"],
+                token_endpoint_auth_signing_alg_values_supported=None,
+            )
+        )
+        assert _messages(result.violations) == []
+
+    @pytest.mark.parametrize(
+        ("field", "violation"),
+        [
+            (
+                "grant_types_supported",
+                "Server does not support authorization_code grant type",
+            ),
+            (
+                "response_types_supported",
+                "Server does not support 'code' response type "
+                "(authorization code flow required)",
+            ),
+            (
+                "token_endpoint_auth_methods_supported",
+                "Server does not support FAPI-compliant client auth "
+                "(private_key_jwt or tls_client_auth)",
+            ),
+            (
+                "token_endpoint_auth_signing_alg_values_supported",
+                AUTH_SIGNING_ALGS_WEAK,
+            ),
+            (
+                "id_token_signing_alg_values_supported",
+                "Server does not support FAPI-compliant signing algorithms "
+                "(ES256, EdDSA, PS256)",
+            ),
+            (
+                "code_challenge_methods_supported",
+                "Server does not support S256 PKCE "
+                "(FAPI 2.0 requires code_challenge_methods_supported to include S256)",
+            ),
+            ("dpop_signing_alg_values_supported", NO_SENDER_CONSTRAINT),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "malformed",
+        [False, "PS256", [["PS256"]], [*COMPLIANT_VALUES, None]],
+        ids=["bool", "string", "nested", "mixed"],
+    )
+    def test_malformed_list_metadata_is_a_violation(self, field, violation, malformed):
+        """Server metadata is untrusted: a non-list or non-string value fails closed."""
+        result = validate_fapi_discovery(_discovery(**{field: malformed}))
+        assert _messages(result.violations) == [violation]
 
 
 @pytest.mark.unit
 class TestValidateFAPIDiscoveryAuthMethods:
-    def test_discovery_with_tls_client_auth(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://fapi.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["tls_client_auth"],
-            id_token_signing_alg_values_supported=["PS256"],
+    @pytest.mark.parametrize(
+        "auth_method", ["tls_client_auth", "self_signed_tls_client_auth"]
+    )
+    def test_discovery_with_mtls_client_auth(self, auth_method):
+        result = validate_fapi_discovery(
+            _discovery(token_endpoint_auth_methods_supported=[auth_method])
         )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is True
+        assert _messages(result.violations) == []
 
-    def test_discovery_with_self_signed_tls(self):
-        disco = DiscoveryDocumentResponse(
-            is_successful=True,
-            issuer="https://fapi.example.com",
-            grant_types_supported=["authorization_code"],
-            token_endpoint_auth_methods_supported=["self_signed_tls_client_auth"],
-            id_token_signing_alg_values_supported=["ES256"],
-        )
-        result = validate_fapi_discovery(disco)
-        assert result.is_compliant is True
+
+@pytest.mark.unit
+class TestValidateFAPIDiscoveryFromDocument:
+    @respx.mock
+    def test_fetched_fapi_document_is_compliant(self):
+        """Every field the validator reads is parsed from the document."""
+        metadata = {
+            **COMPLIANT_METADATA,
+            "issuer": ISSUER,
+            "pushed_authorization_request_endpoint": f"{ISSUER}/par",
+            "jwks_uri": f"{ISSUER}/jwks",
+            "authorization_endpoint": f"{ISSUER}/auth",
+            "token_endpoint": f"{ISSUER}/token",
+            "subject_types_supported": ["public"],
+        }
+        respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=metadata))
+
+        disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+
+        assert disco.dpop_signing_alg_values_supported == ["ES256"]
+        assert _messages(validate_fapi_discovery(disco).violations) == []

@@ -1,7 +1,7 @@
 """Unit tests for OpenID Connect ID Token profile validation.
 
 Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-(required ``sub``, the ``azp`` authorized-party rules, ``nonce`` binding, and
+(required ``sub``, the opt-in ``azp`` authorized-party rules, ``nonce`` binding, and
 ``auth_time``/``max_age`` freshness) and §3.3.2.11 (``at_hash``/``c_hash``
 token/code binding). Structural rules are exercised directly against the pure
 ``validate_id_token_claims``; the accept/reject cases also run the full
@@ -28,8 +28,12 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.core.id_token_logic import validate_id_token_claims
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
+    AzpRequiresClientIdError,
+    ConfigurationException,
     IdTokenValidationException,
+    InvalidAudienceException,
     TokenValidationException,
+    UntrustedAudienceException,
 )
 from py_identity_model.sync.id_token import validate_id_token
 from py_identity_model.sync.token_validation import (
@@ -146,30 +150,120 @@ class TestPureIdTokenClaimValidation:
                 _valid_id_claims(sub=""), "RS256", client_id=_AUDIENCE, now=_NOW
             )
 
-    def test_multi_aud_without_azp_rejected(self):
-        # §3.1.3.7 step 4: multiple audiences require an ``azp`` claim.
+    def test_multi_aud_without_azp_accepted_by_default(self):
+        # azp is ignored unless the caller opts in (§2; errata 2 dropped the
+        # Core 1.0 step-4 multiple-audience SHOULD).
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
-        with pytest.raises(IdTokenValidationException, match=r"azp"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
 
-    def test_multi_aud_with_wrong_azp_rejected(self):
-        # §3.1.3.7 step 6: ``azp`` present but not this client is rejected.
+    def test_multi_aud_without_azp_rejected_when_opted_in(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
+        with pytest.raises(
+            IdTokenValidationException, match=r"multiple audiences must contain"
+        ):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["other-client"],
+                validate_azp=True,
+                now=_NOW,
+            )
+
+    def test_multi_aud_with_wrong_azp_accepted_by_default(self):
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp="other-client")
-        with pytest.raises(IdTokenValidationException, match=r"azp"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
 
-    def test_multi_aud_with_correct_azp_accepted(self):
-        # §3.1.3.7 steps 4-6 (positive): multiple audiences with a matching
-        # ``azp`` validate cleanly.
+    def test_multi_aud_with_wrong_azp_rejected_when_opted_in(self):
+        # Errata 2 §3.1.3.7 step 5: a present ``azp`` names this client.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp="other-client")
+        with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["other-client"],
+                validate_azp=True,
+                now=_NOW,
+            )
+
+    @pytest.mark.parametrize("validate_azp", [False, True])
+    def test_multi_aud_with_correct_azp_accepted(self, validate_azp):
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            validate_azp=validate_azp,
+            now=_NOW,
+        )
+
+    def test_cross_client_azp_accepted_by_default(self):
+        # Google's Android-to-backend flow: aud is this client, azp is the
+        # presenting mobile client.
+        claims = _valid_id_claims(azp="android-client")
         validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
 
-    def test_single_aud_with_wrong_azp_rejected(self):
-        # §3.1.3.7 step 6: even with a single audience, a present ``azp`` that
-        # is not this client is rejected.
-        claims = _valid_id_claims(azp="other-client")
-        with pytest.raises(IdTokenValidationException, match=r"azp"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+    def test_single_aud_with_wrong_azp_rejected_when_opted_in(self):
+        claims = _valid_id_claims(azp="android-client")
+        with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, validate_azp=True, now=_NOW
+            )
+
+    def test_empty_azp_with_multi_aud_rejected_when_opted_in(self):
+        # An empty-string ``azp`` counts as absent for the multi-audience rule.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp="")
+        with pytest.raises(
+            IdTokenValidationException, match=r"multiple audiences must contain"
+        ):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["other-client"],
+                validate_azp=True,
+                now=_NOW,
+            )
+
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            _valid_id_claims(azp="android-client"),
+            _valid_id_claims(),
+            {},
+        ],
+        ids=["foreign-azp", "no-azp", "empty-claims"],
+    )
+    def test_azp_validation_without_client_id_is_config_error(self, claims):
+        # #930: with no client_id there is nothing to compare ``azp`` against,
+        # so turning the check on is a caller misconfiguration. It fires
+        # before any claim is read, whatever the token carries.
+        with pytest.raises(AzpRequiresClientIdError):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                trusted_audiences=[_AUDIENCE],
+                validate_azp=True,
+                now=_NOW,
+            )
+
+    def test_azp_requires_client_id_error_is_configuration_exception(self):
+        assert issubclass(AzpRequiresClientIdError, ConfigurationException)
+        assert not issubclass(AzpRequiresClientIdError, TokenValidationException)
 
     def test_nonce_match_accepted(self):
         # §3.1.3.7 step 11 (positive): matching ``nonce`` validates cleanly.
@@ -270,10 +364,25 @@ class TestPureIdTokenClaimValidation:
                 now=_NOW,
             )
 
-    def test_at_hash_missing_rejected(self):
-        # §3.3.2.11: caller supplied an access token but the token has no
-        # ``at_hash`` to bind it.
-        with pytest.raises(IdTokenValidationException, match=r"at_hash"):
+    def test_at_hash_absent_accepted_for_token_endpoint_access_token(self):
+        # §3.1.3.6: a token-endpoint ID Token may omit ``at_hash``, so an
+        # access token not issued with the ID Token binds only if one is present.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            access_token="SlAV32hkKG-access-token",
+            access_token_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_at_hash_missing_rejected_by_default(self):
+        # §3.2.2.10 / §3.3.2.11: an access token from the same authorization
+        # response as the ID Token REQUIRES ``at_hash``, and a supplied access
+        # token is taken to be one unless the caller says otherwise.
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
             validate_id_token_claims(
                 _valid_id_claims(),
                 "RS256",
@@ -281,6 +390,95 @@ class TestPureIdTokenClaimValidation:
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
             )
+
+    def test_at_hash_wrong_rejected_when_issued_with_id_token(self):
+        # A present but wrong ``at_hash`` is a mismatch, not a missing claim.
+        claims = _valid_id_claims(
+            at_hash=_oidc_left_half("some-other-token", hashlib.sha256)
+        )
+        with pytest.raises(
+            IdTokenValidationException, match=r"'at_hash' claim does not match"
+        ):
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                access_token="SlAV32hkKG-access-token",
+                access_token_issued_with_id_token=True,
+                now=_NOW,
+            )
+
+    def test_at_hash_non_string_rejected_when_not_required(self):
+        # A present ``at_hash`` must match even when presence is not required.
+        with pytest.raises(
+            IdTokenValidationException, match=r"'at_hash' claim does not match"
+        ):
+            validate_id_token_claims(
+                _valid_id_claims(at_hash=None),
+                "RS256",
+                client_id=_AUDIENCE,
+                access_token="SlAV32hkKG-access-token",
+                access_token_issued_with_id_token=False,
+                now=_NOW,
+            )
+
+    def test_absent_unrequired_at_hash_skips_alg_lookup(self):
+        # With nothing to verify, an unmappable ``alg`` is never consulted.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "UNKNOWN",
+            client_id=_AUDIENCE,
+            access_token="SlAV32hkKG-access-token",
+            access_token_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_issued_with_id_token_flags_without_values_are_noops(self):
+        # The presence switches only apply to a supplied access token / code.
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            access_token_issued_with_id_token=True,
+            code_issued_with_id_token=True,
+            now=_NOW,
+        )
+
+    def test_c_hash_absent_accepted_when_code_not_issued_with_id_token(self):
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            code="Qcb0Orv1-authorization-code",
+            code_issued_with_id_token=False,
+            now=_NOW,
+        )
+
+    def test_c_hash_missing_rejected_by_default(self):
+        # §3.3.2.11: a code from the same authorization response as the ID
+        # Token (``code id_token``) REQUIRES ``c_hash``, the default.
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                code="Qcb0Orv1-authorization-code",
+                now=_NOW,
+            )
+
+    def test_c_hash_correct_accepted_when_issued_with_id_token(self):
+        code = "Qcb0Orv1-authorization-code"
+        claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256))
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            code=code,
+            code_issued_with_id_token=True,
+            now=_NOW,
+        )
 
     def test_at_hash_ignored_when_no_access_token(self):
         # ``at_hash`` is not checked when the caller passes no access token.
@@ -375,7 +573,7 @@ class TestNonAsciiInputsFailClosed:
         # digest; surface IdTokenValidationException, not UnicodeEncodeError.
         with pytest.raises(IdTokenValidationException, match=r"ASCII"):
             validate_id_token_claims(
-                _valid_id_claims(),
+                _valid_id_claims(at_hash="present-so-the-hash-is-computed"),
                 "RS256",
                 client_id=_AUDIENCE,
                 access_token="café-access-token",
@@ -386,7 +584,7 @@ class TestNonAsciiInputsFailClosed:
         # Same for a non-ASCII authorization code feeding the c_hash digest.
         with pytest.raises(IdTokenValidationException, match=r"ASCII"):
             validate_id_token_claims(
-                _valid_id_claims(),
+                _valid_id_claims(c_hash="present-so-the-hash-is-computed"),
                 "RS256",
                 client_id=_AUDIENCE,
                 code="café-code",
@@ -407,6 +605,219 @@ class TestNonAsciiInputsFailClosed:
             )
 
 
+def _clear_sync_caches() -> None:
+    clear_discovery_cache()
+    clear_jwks_cache()
+
+
+async def _clear_async_caches() -> None:
+    await aio_clear_discovery_cache()
+    await aio_clear_jwks_cache()
+
+
+class TestUntrustedAudiences:
+    """§3.1.3.7 step 3: reject additional audiences the client does not trust."""
+
+    def test_untrusted_second_audience_rejected(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": ["other-client"]}
+
+    def test_untrusted_audience_is_an_id_token_profile_failure(self):
+        # Callers catching the profile (or token-validation) exception still
+        # fail closed on the new rule.
+        assert issubclass(UntrustedAudienceException, IdTokenValidationException)
+
+    def test_trusted_second_audience_accepted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        validate_id_token_claims(
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
+
+    def test_empty_trusted_list_still_rejects(self):
+        # The trusted list only adds trusted values; it cannot switch the
+        # check off.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, trusted_audiences=[], now=_NOW
+            )
+
+    def test_only_the_untrusted_values_are_reported(self):
+        claims = _valid_id_claims(
+            aud=[_AUDIENCE, "trusted-api", "rogue-api"], azp=_AUDIENCE
+        )
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=["trusted-api"],
+                now=_NOW,
+            )
+        assert exc_info.value.details == {"untrusted_audiences": ["rogue-api"]}
+
+    def test_single_audience_unaffected_by_trusted_list(self):
+        validate_id_token_claims(
+            _valid_id_claims(),
+            "RS256",
+            client_id=_AUDIENCE,
+            trusted_audiences=["other-client"],
+            now=_NOW,
+        )
+
+    def test_untrusted_audience_checked_before_azp(self):
+        # Step 3 precedes the opt-in multiple-audience ``azp`` requirement.
+        claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, validate_azp=True, now=_NOW
+            )
+
+    def test_without_client_id_every_audience_is_untrusted(self):
+        # Fails closed: with no client_id and no trusted list there is nothing
+        # the token's audience can be trusted as.
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(_valid_id_claims(), "RS256", now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [_AUDIENCE]}
+
+    def test_non_string_audience_is_untrusted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, 7], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [7]}
+
+    @pytest.mark.parametrize(
+        "bare", [_AUDIENCE, b"client-123", ""], ids=["str", "bytes", "empty"]
+    )
+    def test_bare_string_trusted_audiences_rejected(self, bare):
+        # A bare ``str``/``bytes`` would iterate as single characters.
+        with pytest.raises(ConfigurationException, match="trusted_audiences"):
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=bare,
+                now=_NOW,
+            )
+
+    @pytest.mark.parametrize("client_id", [_AUDIENCE, None], ids=["client", "none"])
+    def test_absent_audience_rejected(self, client_id):
+        # §2: aud is REQUIRED, with or without a configured client_id.
+        claims = _valid_id_claims()
+        del claims["aud"]
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token_claims(claims, "RS256", client_id=client_id, now=_NOW)
+
+    @pytest.mark.parametrize(
+        "aud",
+        [None, "", [], [""], ("", "")],
+        ids=["null", "empty-str", "empty-list", "list-of-empty", "tuple-of-empty"],
+    )
+    def test_empty_audience_rejected(self, aud):
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token_claims(
+                _valid_id_claims(aud=aud), "RS256", client_id=_AUDIENCE, now=_NOW
+            )
+
+    def test_missing_audience_is_not_an_untrusted_audience(self):
+        claims = _valid_id_claims(aud=[])
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert not isinstance(exc_info.value, UntrustedAudienceException)
+
+    def test_empty_string_beside_a_real_audience_is_untrusted(self):
+        claims = _valid_id_claims(aud=[_AUDIENCE, ""], azp=_AUDIENCE)
+        with pytest.raises(UntrustedAudienceException) as exc_info:
+            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        assert exc_info.value.details == {"untrusted_audiences": [""]}
+
+    @respx.mock
+    def test_sync_wrapper_rejects_absent_audience_without_client_id(self, rsa_keypair):
+        # Base validation with no configured audience does not require aud,
+        # so the profile is what rejects the token.
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        claims = _valid_id_claims()
+        del claims["aud"]
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+        config = TokenValidationConfig(
+            perform_disco=True, audience=None, issuer=_ISSUER
+        )
+        with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
+            validate_id_token(token, config, disco_doc_address=DISCO_URL)
+
+    @respx.mock
+    def test_sync_wrapper_rejects_untrusted_audience(self, rsa_keypair):
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        with pytest.raises(UntrustedAudienceException):
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @respx.mock
+    def test_sync_wrapper_forwards_trusted_audiences(self, rsa_keypair):
+        _clear_sync_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        claims = validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            trusted_audiences=["other-client"],
+        )
+        assert claims["aud"] == [_AUDIENCE, "other-client"]
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_wrapper_rejects_untrusted_audience(self, rsa_keypair):
+        await _clear_async_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        with pytest.raises(UntrustedAudienceException):
+            await aio_validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_async_wrapper_forwards_trusted_audiences(self, rsa_keypair):
+        await _clear_async_caches()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE),
+            headers={"kid": key_dict["kid"]},
+        )
+        claims = await aio_validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            trusted_audiences=["other-client"],
+        )
+        assert claims["aud"] == [_AUDIENCE, "other-client"]
+
+
 class TestSyncValidateIdToken:
     """Full signature + discovery flow via the sync ``validate_id_token``."""
 
@@ -417,6 +828,51 @@ class TestSyncValidateIdToken:
         yield
         clear_discovery_cache()
         clear_jwks_cache()
+
+    @pytest.mark.parametrize("audience", [None, ""], ids=["missing", "empty"])
+    @respx.mock
+    def test_azp_validation_without_audience_fails_before_any_fetch(self, audience):
+        # #930: the configuration error is raised before discovery/JWKS I/O.
+        # No route is mocked, so any request would fail with a respx error.
+        # #1065: an empty audience is no audience.
+        config = TokenValidationConfig(
+            perform_disco=True, issuer=_ISSUER, audience=audience
+        )
+        with pytest.raises(AzpRequiresClientIdError):
+            validate_id_token(
+                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+            )
+        assert respx.calls.call_count == 0
+
+    @respx.mock
+    def test_empty_audience_validates_like_no_audience(self, rsa_keypair):
+        # #1065: audience="" must not let a token whose aud lists "" through.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=["other-api", ""]),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        def outcome(audience):
+            config = TokenValidationConfig(
+                perform_disco=True, issuer=_ISSUER, audience=audience
+            )
+            with pytest.raises(TokenValidationException) as exc_info:
+                validate_id_token(
+                    token,
+                    config,
+                    disco_doc_address=DISCO_URL,
+                    trusted_audiences=["other-api", ""],
+                )
+            return type(exc_info.value), str(exc_info.value)
+
+        empty = outcome("")
+        # PyJWT rejects any aud when no audience is configured, before the
+        # trusted_audiences rule runs.
+        assert empty[0] is InvalidAudienceException
+        assert empty == outcome(None)
 
     @respx.mock
     def test_valid_signed_id_token_accepted(self, rsa_keypair):
@@ -440,6 +896,32 @@ class TestSyncValidateIdToken:
 
         with pytest.raises(IdTokenValidationException, match=r"sub"):
             validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+    @respx.mock
+    def test_signed_cross_client_azp_accepted_by_default(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token_claims = _valid_id_claims(azp="android-client")
+        token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
+
+        claims = validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+
+        assert claims == token_claims
+
+    @respx.mock
+    def test_signed_cross_client_azp_rejected_when_opted_in(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(azp="android-client"),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
+            validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, validate_azp=True
+            )
 
     @respx.mock
     def test_signed_id_token_nonce_mismatch_rejected(self, rsa_keypair):
@@ -507,6 +989,56 @@ class TestSyncValidateIdToken:
             )
 
     @respx.mock
+    def test_signed_id_token_at_hash_absent_accepted(self, rsa_keypair):
+        # A token-endpoint ID Token without ``at_hash`` passes the wrapper.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        claims = validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            access_token="real-access-token-xyz",
+            access_token_issued_with_id_token=False,
+        )
+        assert claims["sub"] == "user-1"
+
+    @respx.mock
+    def test_signed_id_token_at_hash_required_when_issued_with_it(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
+            validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                access_token="real-access-token-xyz",
+                access_token_issued_with_id_token=True,
+            )
+
+    @respx.mock
+    def test_signed_id_token_c_hash_required_when_issued_with_it(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                code="real-auth-code-abc",
+                code_issued_with_id_token=True,
+            )
+
+    @respx.mock
     def test_signed_id_token_c_hash_accepted(self, rsa_keypair):
         # §3.3.2.11: a real RS256-signed ID token whose ``c_hash`` matches the
         # supplied authorization code is accepted through the wrapper.
@@ -570,6 +1102,52 @@ class TestAsyncValidateIdToken:
         await aio_clear_jwks_cache()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("audience", [None, ""], ids=["missing", "empty"])
+    @respx.mock
+    async def test_azp_validation_without_audience_fails_before_any_fetch(
+        self, audience
+    ):
+        # #930: the configuration error is raised before discovery/JWKS I/O.
+        # #1065: an empty audience is no audience.
+        config = TokenValidationConfig(
+            perform_disco=True, issuer=_ISSUER, audience=audience
+        )
+        with pytest.raises(AzpRequiresClientIdError):
+            await aio_validate_id_token(
+                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+            )
+        assert respx.calls.call_count == 0
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_empty_audience_validates_like_no_audience(self, rsa_keypair):
+        # #1065: audience="" must not let a token whose aud lists "" through.
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(aud=["other-api", ""]),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        async def outcome(audience):
+            config = TokenValidationConfig(
+                perform_disco=True, issuer=_ISSUER, audience=audience
+            )
+            with pytest.raises(TokenValidationException) as exc_info:
+                await aio_validate_id_token(
+                    token,
+                    config,
+                    disco_doc_address=DISCO_URL,
+                    trusted_audiences=["other-api", ""],
+                )
+            return type(exc_info.value), str(exc_info.value)
+
+        empty = await outcome("")
+        assert empty[0] is InvalidAudienceException
+        assert empty == await outcome(None)
+
+    @pytest.mark.asyncio
     @respx.mock
     async def test_valid_signed_id_token_accepted(self, rsa_keypair):
         key_dict, pem = rsa_keypair
@@ -597,6 +1175,36 @@ class TestAsyncValidateIdToken:
 
     @pytest.mark.asyncio
     @respx.mock
+    async def test_signed_cross_client_azp_accepted_by_default(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token_claims = _valid_id_claims(azp="android-client")
+        token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
+
+        claims = await aio_validate_id_token(
+            token, _config(), disco_doc_address=DISCO_URL
+        )
+
+        assert claims == token_claims
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_cross_client_azp_rejected_when_opted_in(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(
+            pem,
+            _valid_id_claims(azp="android-client"),
+            headers={"kid": key_dict["kid"]},
+        )
+
+        with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
+            await aio_validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, validate_azp=True
+            )
+
+    @pytest.mark.asyncio
+    @respx.mock
     async def test_signed_id_token_at_hash_accepted(self, rsa_keypair):
         key_dict, pem = rsa_keypair
         _mock_disco_and_jwks(key_dict)
@@ -614,6 +1222,62 @@ class TestAsyncValidateIdToken:
             access_token=access_token,
         )
         assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_at_hash_absent_accepted(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        claims = await aio_validate_id_token(
+            token,
+            _config(),
+            disco_doc_address=DISCO_URL,
+            access_token="real-access-token-xyz",
+            access_token_issued_with_id_token=False,
+        )
+        assert claims["sub"] == "user-1"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_at_hash_required_when_issued_with_it(
+        self, rsa_keypair
+    ):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'at_hash'"
+        ):
+            await aio_validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                access_token="real-access-token-xyz",
+                access_token_issued_with_id_token=True,
+            )
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_signed_id_token_c_hash_required_when_issued_with_it(
+        self, rsa_keypair
+    ):
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(
+            IdTokenValidationException, match=r"missing required 'c_hash'"
+        ):
+            await aio_validate_id_token(
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                code="real-auth-code-abc",
+                code_issued_with_id_token=True,
+            )
 
     @pytest.mark.asyncio
     @respx.mock

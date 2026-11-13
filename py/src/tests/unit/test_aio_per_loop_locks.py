@@ -1,7 +1,6 @@
 """
-Regression coverage for #399: ``aio/token_validation.py`` must not bind
-its cache locks to whichever event loop happens to import the module
-first.
+Regression coverage for #399: the async cache locks must not bind to
+whichever event loop happens to use them first.
 
 Pre-fix: module-level ``asyncio.Lock()`` instances bound to the first
 loop that called ``.acquire()`` (Python 3.10+ semantics). Test runners
@@ -13,7 +12,8 @@ loops between requests) hit:
     different event loop
 
 Post-fix: locks are stored in a ``WeakKeyDictionary`` keyed by the
-running event loop and created lazily on first use within that loop.
+running event loop (since #953 per cache, in ``AsyncValidationCache``) and
+created lazily on first use within that loop.
 Each loop sees its own independent lock set; entries are reclaimed when
 a loop is garbage-collected.
 
@@ -37,6 +37,10 @@ import pytest
 import respx
 
 from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model.aio.managed_client import AsyncHTTPClient
+from py_identity_model.aio.validation_cache import AsyncValidationCache
+
+from ..token_validation_helpers import disco_cache_key, jwks_cache_key
 
 
 JWKS_URL = "https://issuer.example/jwks"
@@ -55,33 +59,27 @@ def _make_key() -> dict:
     }
 
 
-def _reset_aio_lock_state() -> None:
-    """Wipe the per-loop lock dicts between tests.
+@pytest.fixture
+def client() -> AsyncHTTPClient:
+    """A fresh client per test.
 
-    The WeakKeyDictionary entries would otherwise persist for the
-    lifetime of the loop, but the loops we create here are anonymous
-    and discarded — manual clearing keeps state predictable for
-    successive test runs.
+    The client is used across several anonymous event loops, so it is not
+    closed here; respx mocks the transport, so no sockets are opened.
     """
-    aio_tv._disco_cache_write_locks.clear()
-    aio_tv._disco_fetch_locks_by_loop.clear()
-    aio_tv._jwks_cache_write_locks.clear()
-    aio_tv._jwks_fetch_locks_by_loop.clear()
-    aio_tv._jwks_cache.clear()
-    aio_tv._kid_miss_last_attempt.clear()
-    aio_tv._disco_cache.clear()
+    return AsyncHTTPClient()
 
 
-@pytest.fixture(autouse=True)
-def _wipe_lock_state():
-    _reset_aio_lock_state()
-    yield
-    _reset_aio_lock_state()
+@pytest.fixture
+def cache() -> AsyncValidationCache:
+    """A fresh cache per test: its entries and per-loop lock sets start empty."""
+    return AsyncValidationCache()
 
 
 class TestPerLoopLocksAreIndependent:
     @respx.mock
-    def test_two_event_loops_each_get_their_own_jwks_fetch_lock(self) -> None:
+    def test_two_event_loops_each_get_their_own_jwks_fetch_lock(
+        self, client: AsyncHTTPClient, cache: AsyncValidationCache
+    ) -> None:
         """A fresh loop sees a fresh lock — pre-fix this raised
         RuntimeError because the module-level lock was bound to the
         first loop's event loop."""
@@ -91,7 +89,9 @@ class TestPerLoopLocksAreIndependent:
 
         loop_a = asyncio.new_event_loop()
         try:
-            loop_a.run_until_complete(aio_tv._get_cached_jwks(JWKS_URL))
+            loop_a.run_until_complete(
+                aio_tv._get_cached_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_a.close()
 
@@ -99,7 +99,9 @@ class TestPerLoopLocksAreIndependent:
         #   RuntimeError: <Lock> is bound to a different event loop.
         loop_b = asyncio.new_event_loop()
         try:
-            response = loop_b.run_until_complete(aio_tv._get_cached_jwks(JWKS_URL))
+            response = loop_b.run_until_complete(
+                aio_tv._get_cached_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_b.close()
 
@@ -107,17 +109,19 @@ class TestPerLoopLocksAreIndependent:
         assert response.keys is not None
         assert len(response.keys) == 1
 
-    def test_per_loop_lock_storage_uses_running_loop_as_key(self) -> None:
+    def test_per_loop_lock_storage_uses_running_loop_as_key(
+        self, cache: AsyncValidationCache
+    ) -> None:
         """Calling the accessor from inside a loop registers that loop
         as the key. Two distinct loops produce two distinct lock
         instances."""
 
         async def grab_locks():
             return (
-                aio_tv._get_jwks_cache_write_lock(),
-                aio_tv._get_jwks_fetch_lock(JWKS_URL),
-                aio_tv._get_disco_cache_write_lock(),
-                aio_tv._get_disco_fetch_lock((JWKS_URL, ())),
+                cache._jwks_write_lock(),
+                cache._jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
+                cache._disco_write_lock(),
+                cache._disco_fetch_lock(disco_cache_key(JWKS_URL)),
             )
 
         loop_a = asyncio.new_event_loop()
@@ -139,8 +143,51 @@ class TestPerLoopLocksAreIndependent:
                 "behavior would return the same module-level instance."
             )
 
+    def test_same_loop_reuses_its_locks(self) -> None:
+        """Within one loop the accessors return the same instances, so
+        concurrent coroutines on that loop really serialize on them."""
+        cache = AsyncValidationCache()
+
+        async def grab_locks():
+            return (
+                cache._jwks_write_lock(),
+                cache._jwks_fetch_lock(jwks_cache_key(JWKS_URL)),
+                cache._disco_write_lock(),
+                cache._disco_fetch_lock(disco_cache_key(JWKS_URL)),
+            )
+
+        async def grab_twice():
+            return await grab_locks(), await grab_locks()
+
+        loop = asyncio.new_event_loop()
+        try:
+            first, second = loop.run_until_complete(grab_twice())
+        finally:
+            loop.close()
+
+        for lock_first, lock_second in zip(first, second, strict=True):
+            assert lock_first is lock_second
+
+    def test_two_caches_have_independent_lock_sets(self) -> None:
+        """Locks live on each cache, not at module level."""
+        cache_a = AsyncValidationCache()
+        cache_b = AsyncValidationCache()
+
+        async def grab_both():
+            return cache_a._jwks_write_lock(), cache_b._jwks_write_lock()
+
+        loop = asyncio.new_event_loop()
+        try:
+            lock_a, lock_b = loop.run_until_complete(grab_both())
+        finally:
+            loop.close()
+
+        assert lock_a is not lock_b
+
     @respx.mock
-    def test_validation_flow_works_across_distinct_loops(self) -> None:
+    def test_validation_flow_works_across_distinct_loops(
+        self, client: AsyncHTTPClient, cache: AsyncValidationCache
+    ) -> None:
         """End-to-end smoke test: prime cache on one loop, refresh on
         another. Exercises both _get_cached_jwks and _refresh_jwks."""
         respx.get(JWKS_URL).mock(
@@ -149,22 +196,25 @@ class TestPerLoopLocksAreIndependent:
 
         loop_a = asyncio.new_event_loop()
         try:
-            loop_a.run_until_complete(aio_tv._get_cached_jwks(JWKS_URL))
+            loop_a.run_until_complete(
+                aio_tv._get_cached_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_a.close()
 
         loop_b = asyncio.new_event_loop()
         try:
-            refreshed = loop_b.run_until_complete(aio_tv._refresh_jwks(JWKS_URL))
-            # _refresh_jwks may have a tuple or single-value return depending
-            # on whether #403 has been merged into this branch. Normalize.
-            response = refreshed[0] if isinstance(refreshed, tuple) else refreshed
+            response, _ = loop_b.run_until_complete(
+                aio_tv._refresh_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_b.close()
 
         assert response.is_successful is True
 
-    def test_closed_loop_entries_get_reclaimed(self) -> None:
+    def test_closed_loop_entries_get_reclaimed(
+        self, cache: AsyncValidationCache
+    ) -> None:
         """A closed event loop should be removable from the
         WeakKeyDictionary. Pin this so a later refactor can't quietly
         switch to a regular dict and leak loops."""
@@ -173,18 +223,18 @@ class TestPerLoopLocksAreIndependent:
 
         async def touch():
             # Register the loop in every per-loop dict.
-            aio_tv._get_jwks_cache_write_lock()
-            aio_tv._get_jwks_fetch_lock("x")
-            aio_tv._get_disco_cache_write_lock()
-            aio_tv._get_disco_fetch_lock(("x", ()))
+            cache._jwks_write_lock()
+            cache._jwks_fetch_lock(jwks_cache_key("x"))
+            cache._disco_write_lock()
+            cache._disco_fetch_lock(disco_cache_key("x"))
 
         try:
             loop.run_until_complete(touch())
             # Confirm registration happened.
-            assert loop in aio_tv._jwks_cache_write_locks
-            assert loop in aio_tv._jwks_fetch_locks_by_loop
-            assert loop in aio_tv._disco_cache_write_locks
-            assert loop in aio_tv._disco_fetch_locks_by_loop
+            assert loop in cache._jwks_locks._write
+            assert loop in cache._jwks_locks._fetch
+            assert loop in cache._disco_locks._write
+            assert loop in cache._disco_locks._fetch
         finally:
             loop.close()
 
@@ -202,7 +252,9 @@ class TestPerLoopLocksAreIndependent:
         )
 
     @respx.mock
-    def test_refresh_jwks_works_across_loops(self) -> None:
+    def test_refresh_jwks_works_across_loops(
+        self, client: AsyncHTTPClient, cache: AsyncValidationCache
+    ) -> None:
         """``_refresh_jwks`` acquires both the per-URI fetch lock AND
         the cache write lock. Both must be loop-local."""
         respx.get(JWKS_URL).mock(
@@ -211,35 +263,52 @@ class TestPerLoopLocksAreIndependent:
 
         loop_a = asyncio.new_event_loop()
         try:
-            result_a = loop_a.run_until_complete(aio_tv._refresh_jwks(JWKS_URL))
+            response_a, _ = loop_a.run_until_complete(
+                aio_tv._refresh_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_a.close()
-        response_a = result_a[0] if isinstance(result_a, tuple) else result_a
         assert response_a.is_successful
 
         loop_b = asyncio.new_event_loop()
         try:
-            result_b = loop_b.run_until_complete(aio_tv._refresh_jwks(JWKS_URL))
+            response_b, _ = loop_b.run_until_complete(
+                aio_tv._refresh_jwks(JWKS_URL, http_client=client, cache=cache)
+            )
         finally:
             loop_b.close()
-        response_b = result_b[0] if isinstance(result_b, tuple) else result_b
         assert response_b.is_successful
 
-    def test_clear_jwks_cache_runs_under_fresh_loop(self) -> None:
+    def test_clear_jwks_cache_runs_under_fresh_loop(
+        self, cache: AsyncValidationCache
+    ) -> None:
         """``clear_jwks_cache`` acquires the cache write lock. Running
         it under a brand-new loop pre-fix raised RuntimeError."""
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(aio_tv.clear_jwks_cache())
+            loop.run_until_complete(aio_tv.clear_jwks_cache(cache=cache))
         finally:
             loop.close()
         # Reaching here without RuntimeError is the assertion.
 
-    def test_clear_discovery_cache_runs_under_fresh_loop(self) -> None:
+    def test_clear_discovery_cache_runs_under_fresh_loop(
+        self, cache: AsyncValidationCache
+    ) -> None:
         """Mirror of ``test_clear_jwks_cache_runs_under_fresh_loop`` for
         the discovery write lock."""
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(aio_tv.clear_discovery_cache())
+            loop.run_until_complete(aio_tv.clear_discovery_cache(cache=cache))
         finally:
             loop.close()
+
+    def test_default_cache_clear_runs_under_fresh_loops(self) -> None:
+        """The library default cache (no ``cache=``) uses the same
+        per-loop locks: clearing it on two fresh loops must not raise."""
+        for _loop_name in ("loop_a", "loop_b"):
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(aio_tv.clear_jwks_cache())
+                loop.run_until_complete(aio_tv.clear_discovery_cache())
+            finally:
+                loop.close()

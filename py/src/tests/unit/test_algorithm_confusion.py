@@ -16,7 +16,10 @@ from py_identity_model.core.parsers import (
     find_key_by_kid,
     get_public_key_from_jwk,
 )
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    KeyAlgorithmMismatchException,
+    TokenValidationException,
+)
 
 
 def _make_jwt(kid: str | None = "k1", alg: str = "RS256") -> str:
@@ -56,8 +59,16 @@ class TestValidateKeyAlgConsistency:
 
     def test_key_alg_mismatch(self):
         key = JsonWebKey(kty="RSA", kid="k1", alg="RS256", n="n", e="e")
-        with pytest.raises(TokenValidationException, match="does not match"):
+        with pytest.raises(
+            KeyAlgorithmMismatchException, match="does not match"
+        ) as exc_info:
             _validate_key_alg_consistency(key, "RS384")
+        assert isinstance(exc_info.value, TokenValidationException)
+        assert exc_info.value.details == {
+            "kid": "k1",
+            "key_alg": "RS256",
+            "jwt_alg": "RS384",
+        }
 
     def test_key_alg_matches(self):
         key = JsonWebKey(kty="RSA", kid="k1", alg="RS256", n="n", e="e")
@@ -84,6 +95,18 @@ class TestValidateKeyAlgConsistency:
 
 class TestFindKeyByKidAlgorithmEnforcement:
     """Test that find_key_by_kid enforces key/algorithm consistency."""
+
+    @pytest.mark.parametrize("kid", ["k1", None])
+    def test_rejects_key_declaring_other_alg(self, kid):
+        """JWKS-010: with or without a kid, a key declaring another alg is not used."""
+        keys = [JsonWebKey(kty="RSA", kid="k1", alg="RS384", n="n", e="e")]
+        with pytest.raises(KeyAlgorithmMismatchException) as exc_info:
+            find_key_by_kid(kid, keys, "RS256")
+        assert exc_info.value.details == {
+            "kid": "k1",
+            "key_alg": "RS384",
+            "jwt_alg": "RS256",
+        }
 
     def test_rejects_ec_key_with_rs256_jwt(self):
         keys = [JsonWebKey(kty="EC", kid="k1", crv="P-256", x="x", y="y")]

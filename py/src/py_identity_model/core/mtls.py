@@ -31,13 +31,13 @@ from typing import TYPE_CHECKING
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from ..exceptions import CertificateBindingError
+from ..exceptions import CertificateBindingError, CertificateBindingErrorKind
 from ..jwt_claim_types import ConfirmationMethods, JwtClaimTypes
 from ..oidc_constants import TokenRequest
-from ..ssl_config import get_ssl_verify
 
 
 if TYPE_CHECKING:
+    from .config import HTTPConfig
     from .models import DiscoveryDocumentResponse, MtlsClientAuth
 
 
@@ -130,17 +130,11 @@ def validate_certificate_binding(claims: dict, cert: str | bytes) -> None:
     """
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     if not isinstance(cnf, dict):
-        raise CertificateBindingError(
-            "Access token is not certificate-bound: missing 'cnf' claim "
-            "(RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.NOT_BOUND)
 
     bound_thumbprint = cnf.get(ConfirmationMethods.X509ThumbprintSha256.value)
     if not bound_thumbprint or not isinstance(bound_thumbprint, str):
-        raise CertificateBindingError(
-            "Access token 'cnf' claim has no 'x5t#S256' certificate "
-            "thumbprint (RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.NOT_BOUND)
 
     # A genuine base64url-no-pad thumbprint is always ASCII. Reject non-ASCII
     # values explicitly so the fail-closed contract holds: without this guard a
@@ -148,17 +142,11 @@ def validate_certificate_binding(claims: dict, cert: str | bytes) -> None:
     # ``hmac.compare_digest`` raise ``TypeError`` instead of the documented
     # ``CertificateBindingError``, escaping callers that catch only the latter.
     if not bound_thumbprint.isascii():
-        raise CertificateBindingError(
-            "Access token 'cnf[x5t#S256]' is not a valid base64url thumbprint "
-            "(non-ASCII characters) (RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.INVALID_THUMBPRINT)
 
     presented_thumbprint = compute_certificate_thumbprint(cert)
     if not hmac.compare_digest(bound_thumbprint, presented_thumbprint):
-        raise CertificateBindingError(
-            "Certificate binding mismatch: token 'cnf[x5t#S256]' does not "
-            "match the presented client certificate (RFC 8705 Section 3)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.MISMATCH)
 
 
 def apply_mtls_client_auth(params: dict[str, str], *, client_id: str) -> None:
@@ -191,25 +179,18 @@ def build_httpx_cert(mtls: MtlsClientAuth) -> tuple[str, str] | tuple[str, str, 
     return (mtls.certificate, mtls.private_key)
 
 
-def build_mtls_ssl_context(mtls: MtlsClientAuth) -> ssl.SSLContext:
+def build_mtls_ssl_context(mtls: MtlsClientAuth, config: HTTPConfig) -> ssl.SSLContext:
     """Build an ``ssl.SSLContext`` that presents the client certificate.
 
     httpx 0.28 no longer reliably applies a ``cert=`` argument when ``verify``
     is a CA-bundle *path* (only when it is ``False`` or an ``SSLContext``), so an
     mTLS client that also verifies the server against a custom CA would silently
-    fail to present its certificate. Build the context explicitly instead: honor
-    :func:`get_ssl_verify` for server verification (``bool`` or CA file/dir path)
-    and load the client certificate for RFC 8705 mutual-TLS authentication.
+    fail to present its certificate. Build the context explicitly instead:
+    verify the server against ``config.ca_bundle`` (or the default store) and
+    load the client certificate for RFC 8705 mutual-TLS authentication.
     """
-    verify = get_ssl_verify()
-    if verify is False:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-    elif isinstance(verify, str) and Path(verify).is_dir():
-        context = ssl.create_default_context(capath=verify)
-    elif isinstance(verify, str):
-        context = ssl.create_default_context(cafile=verify)
+    if config.ca_bundle is not None:
+        context = ssl.create_default_context(cafile=config.ca_bundle)
     else:
         context = ssl.create_default_context()
     if mtls.password is not None:
@@ -228,6 +209,9 @@ def resolve_mtls_endpoint(
     Per RFC 8705 §5, an authorization server may advertise mTLS-specific
     endpoint URLs in ``mtls_endpoint_aliases``. When a matching alias exists
     for *endpoint*, it is returned; otherwise *endpoint* is returned unchanged.
+    Request models take an explicit ``address``, so call this when building
+    one for an mTLS client; ``FAPI2ClientProfile`` applies it to every PAR,
+    token and refresh request it builds for an mTLS client.
 
     Args:
         disco: The authorization server's discovery document.

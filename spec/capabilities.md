@@ -15,18 +15,18 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 | Tier | Capability | Spec | Conformance | Python | Go | Rust |
 |------|-----------|------|-------------|--------|----|----|
-| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json`¶ | in-progress¶ | implemented | implemented |
+| Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json`¶ | implemented | implemented | implemented |
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | in-progress¶ | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json`¶ | implemented | implemented | implemented |
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json`¶ | implemented | implemented | implemented |
-| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress‡ | implemented | implemented |
+| Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress | implemented | implemented |
 | Core | Authorization Code + PKCE | RFC 6749 §4.1, RFC 7636 | `authorization-code.json`¶ | in-progress¶ | implemented | implemented |
 | Core | UserInfo | OIDC Core 1.0 §5.3 | `userinfo.json`¶ | in-progress¶ | implemented | implemented |
-| Core | Configuration | [Config Contract](config.md) | `config.json` (prose)† | implemented | planned | planned |
+| Core | Configuration | [Configuration](config.md) | —† | implemented† | planned | planned |
 | Extended | Refresh Token | RFC 6749 §6 | — | implemented | planned | planned |
-| Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress‡ | implemented | implemented |
-| Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress‡ | implemented | implemented |
-| Extended | Token Exchange | RFC 8693 | `token-exchange.json`¶ | in-progress‡ | implemented | implemented |
+| Extended | Token Introspection | RFC 7662 | `introspection.json`¶ | in-progress | implemented | implemented |
+| Extended | Token Revocation | RFC 7009 | `revocation.json`¶ | in-progress | implemented | implemented |
+| Extended | Token Exchange | RFC 8693 | `token-exchange.json`¶ | in-progress | implemented | implemented |
 | Extended | Device Authorization | RFC 8628 | — | implemented | planned | planned |
 | Extended | Dynamic Client Registration | RFC 7591, RFC 7592 | — | implemented | planned | planned |
 | Extended | DPoP | RFC 9449 | `dpop.json`¶ | in-progress¶ | implemented | in-progress§ |
@@ -44,28 +44,17 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 
 > **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors (token vectors in its unit suite, HTTP vectors against the node-oidc fixture in its integration target) — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery`, `introspection`, `token-exchange`, `client-credentials`, `authorization-code`, `dpop` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
-> ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language that implements it executes in its unit or HTTP integration suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust have no known gaps; Python's are:
+> ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language that implements it executes in its unit or HTTP integration suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust skip `INTR-007` by case id (signed introspection responses, [#1030](https://github.com/jamescrowley321/identity-model/issues/1030)) and have no other known gaps. Python's are:
 >
 > - **JWT Validation** and **ID Token Validation** — no known gaps.
-> - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and ‡.
-> - **UserInfo** — Python: `UI-001` and `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)), `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)) and `UI-003 missing-sub` (it accepts a response with no `sub` unless an expected subject is supplied, [#773](https://github.com/jamescrowley321/identity-model/issues/773)), so Python is `in-progress`.
+> - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
+> - **UserInfo** — Python: `UI-001`, `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)) and `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)), so Python is `in-progress`.
 > - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
-> - **OIDC Discovery** (including the cache TTL cases) — Python: `DISC-003` (no check that the document's issuer matches the requested issuer, [#574](https://github.com/jamescrowley321/identity-model/issues/574)) and `DISC-008 missing-multiple-fields` (neither `token_endpoint` nor `authorization_endpoint` is required, [#771](https://github.com/jamescrowley321/identity-model/issues/771)), so Python is `in-progress`.
-> - **Token Introspection** — Python: `INTR-001` and `INTR-002` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)), `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `INTR-003 client-secret-post` (‡).
-> - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)), `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)) and `EXCH-001 client-secret-post` (‡).
-> - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)), `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)) and `CC-003 client-secret-post` (‡).
+> - **Token Introspection** — Python: `INTR-001` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)) and `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
+> - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation` and `client-secret-post`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)) and `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)).
+> - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)).
 > - **Authorization Code + PKCE** (HTTP vectors for the code exchange, public and confidential clients and the OAuth error; data vectors for PKCE verifier generation and the RFC 7636 Appendix B S256 challenge) — Python: `ACG-001` and `ACG-004` (its `AuthorizationCodeTokenResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)) and `ACG-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)), so Python is `in-progress`.
-> - **DPoP** (data vectors for proof building and `jti` uniqueness, `ath`, RFC 7638 key thumbprints, proof verification and rejection — `htm`/`htu`, signature, `typ`, `alg`, `jwk`, `iat` window, `ath` and `nonce` — and key generation; HTTP vectors for the token-request proof, the `use_dpop_nonce` retry and the `Authorization: DPoP` resource request) — Rust has no DPoP ([#675](https://github.com/jamescrowley321/identity-model/pull/675)), so its runners skip `dpop.json`. Python: `DPOP-006` (no proof verifier, [#478](https://github.com/jamescrowley321/identity-model/issues/478)) and `DPOP-004 nonce-cached` (the server nonce is not reused on later requests, [#784](https://github.com/jamescrowley321/identity-model/issues/784)), so Python is `in-progress`. Python also cannot load a DPoP key from JWK or PEM ([#786](https://github.com/jamescrowley321/identity-model/issues/786)); its runner installs the fixture key directly.
->
-> ‡ **Python is `in-progress`, not `implemented`, for these four** because this document's own client-auth
-> MUSTs are not met. Client Credentials (§Client Credentials), Introspection, Revocation and Token Exchange
-> each require support for **both** `client_secret_basic` *and* `client_secret_post`. Python implements
-> `private_key_jwt`, mTLS and Basic only — there is no `client_secret_post` path in
-> `core/token_client_logic.py`, `introspection_logic.py` or `revocation_logic.py`. Go and Rust both ship it.
-> The cells were previously marked `implemented`, which contradicted the requirements a few screens below
-> them. Rather than soften a MUST that two of three languages already meet, the status now reflects
-> reality; it flips back to `implemented` when
-> [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574) lands.
+> - **DPoP** (data vectors for proof building and `jti` uniqueness, `ath`, RFC 7638 key thumbprints, proof verification and rejection — `htm`/`htu`, signature, `typ`, `alg`, `jwk`, `iat` window, `ath` and `nonce` — and key generation; HTTP vectors for the token-request proof, the `use_dpop_nonce` retry and the `Authorization: DPoP` resource request) — Rust has no DPoP ([#675](https://github.com/jamescrowley321/identity-model/pull/675)), so its runners skip `dpop.json`. Python: `DPOP-004 nonce-cached` (the server nonce is not reused on later requests, [#784](https://github.com/jamescrowley321/identity-model/issues/784)), so Python is `in-progress`. Python also cannot load a DPoP key from JWK or PEM ([#786](https://github.com/jamescrowley321/identity-model/issues/786)); its runner installs the fixture key directly.
 >
 > § **Rust DPoP is `in-progress`**: the key pairs, proof generation, and proof
 > verification are implemented and proven against `DPOP-001`, `DPOP-002`,
@@ -86,17 +75,17 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > transport lands under
 > [identity-model#573](https://github.com/jamescrowley321/identity-model/issues/573).
 >
-> † **Configuration** is specified in [`config.md`](config.md) and its cases live in [`vectors/config.json`](vectors/config.json), but that file is a **prose contract** (no executable `vectors`), so no language runs a vector runner for it. Each language flips to `implemented` when its Configuration epic lands the implementation together with its runner. TypeScript is not shown (the `node/` package is an unimplemented placeholder; TS Configuration is tracked in the config-api epics).
+> † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `HTTPConfig` and `CacheConfig`. Go and Rust flip to `implemented` when they have the same settings, defaults, ranges and cache rules, each checked by a unit test against the page ([#757](https://github.com/jamescrowley321/identity-model/issues/757), [#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
 >
-> **Known cross-language divergences.** Two remain, both places where the ports beat the Python reference:
-> Go and Rust support `client_secret_post` and enforce the RFC 8414 issuer-identifier match; Python does
-> neither. Tracked on [identity-model#574](https://github.com/jamescrowley321/identity-model/issues/574).
-> A third divergence is deliberate and is not being reconciled: Rust enforces `azp` on base token
-> validation whenever an expected audience is set, while Python and Go enforce it in the narrower
-> id-token profile. Rust stays strict.
+> **Known cross-language divergences.** None remain.
 >
-> Previously listed here and now resolved: id-token `nonce` validation and `azp`, both of which Python and
-> Go gained with the id-token profile (#629–#632).
+> Previously listed here and now resolved: `client_secret_post`, which Python gained with
+> `ClientAuthMethod` ([#1056](https://github.com/jamescrowley321/identity-model/issues/1056)); id-token `nonce` validation and `azp`, both of which Python and
+> Go gained with the id-token profile (#629–#632), and the RFC 8414 issuer-identifier match, which Python
+> now enforces unconditionally (#574). All three languages check `azp` only in that profile,
+> never on base token validation, and only when the caller opts in (Python `validate_azp=True`, Go
+> `WithAZPValidation()`, Rust `.validate_azp(true)`): OIDC Core 1.0 errata set 2 makes neither `azp` rule a
+> MUST (§3.1.3.7 steps 4-5), and §2 tells relying parties that use no extensions to ignore `azp`.
 >
 > **Mutation pressure (per-language CI gates).** Beyond vector coverage, every language's security surface carries a diff-scoped mutation gate in CI: mutants on the lines a PR changed must be killed by tests or waived as content-hashed equivalent mutants, fail-closed. Python — `security-gate` (mutmut, `py/tools/mutation_security.py`); Go — `go-mutation-gate` (go-gremlins, `tools/mutation_security_native.py`, surface `GO_SURFACE`); Rust — `rust-mutation-gate` (cargo-mutants, same driver, surface `RUST_SURFACE`). A PR that touches no in-scope line passes each gate vacuously.
 
@@ -105,16 +94,19 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ### OIDC Discovery
 
 - Implementations MUST fetch `{issuer}/.well-known/openid-configuration` per [OIDC Discovery 1.0 §4.1](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationRequest).
-- The response MUST contain the required metadata fields: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported` ([§3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)).
+- The response MUST contain the required metadata fields: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `response_types_supported`, `subject_types_supported`, `id_token_signing_alg_values_supported` ([§3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)). A required string field that is null or `""`, or a required array field that is null or `[]`, counts as missing, and every missing field MUST be reported, in this order (DISC-008). How a required field of the wrong JSON type (e.g. `jwks_uri: []`) is classified is unspecified ([#890](https://github.com/jamescrowley321/identity-model/issues/890)). §3 makes `token_endpoint` REQUIRED "unless only the Implicit Flow is used"; requiring it unconditionally is deliberate library policy. No configuration option relaxes any of these fields.
 - The `issuer` in the response MUST exactly match the requested issuer ([§4.3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfigurationValidation)); a mismatch MUST error.
 - Implementations MUST cache the parsed document with a configurable TTL. A cache hit MUST NOT make a network request; after TTL expiry the next call MUST re-fetch.
-- Implementations MUST surface distinct, typed errors for transport failures, non-JSON bodies, and missing required fields. Unknown extra fields MUST be ignored, not rejected.
+- Implementations MUST surface distinct, typed errors for transport failures, non-JSON bodies (including a JSON value that is not an object, DISC-007), and missing required fields. Unknown extra fields MUST be ignored, not rejected.
 
 ### JWKS Retrieval + Caching
 
 - Implementations MUST fetch the JWK Set from `jwks_uri` and parse it per [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5).
 - Each key MUST expose `kty`, `kid`, `use`, `alg`; RSA keys expose `n`/`e`, EC keys expose `crv`/`x`/`y` ([RFC 7517 §4](https://www.rfc-editor.org/rfc/rfc7517#section-4)).
 - Resolving a `kid` not in the cached set MUST trigger a forced refresh and retry before returning a key-not-found error (supports key rotation).
+- A key whose `use` is anything other than `sig` or absent, such as `enc`, MUST NOT be used to verify a signature, whether the token's `kid` names it or the token has no `kid` ([RFC 7517 §4.2](https://www.rfc-editor.org/rfc/rfc7517#section-4.2); [OIDC Core 1.0 §10.1.1](https://openid.net/specs/openid-connect-core-1_0.html#RotateSigKeys) requires `use` on every key of a set that mixes signing and encryption keys so they are not confused). Only signing keys are candidates for verification. A `kid` that names no signing key, including one naming only an `enc` key, is a kid miss: forced refresh, then key-not-found. A token with no `kid` against a set with no signing key is key-not-found, with no forced refresh (JWKS-011). Lookups that are not for signature verification may still return any key.
+- For a token with no `kid` (an OP MAY omit it when its set holds a single key, [OIDC Core 1.0 §10.1](https://openid.net/specs/openid-connect-core-1_0.html#Signing)), implementations MUST take the signing keys (`use` absent or `sig`, [RFC 7517 §4.2](https://www.rfc-editor.org/rfc/rfc7517#section-4.2)) and narrow them, while more than one remains, to keys whose `alg` is absent or equals the header `alg` ([§4.4](https://www.rfc-editor.org/rfc/rfc7517#section-4.4)), then to keys whose `kty` matches it. Each of those two steps applies only when it leaves at least one key; otherwise the set from the previous step is kept. Exactly one remaining key is used, with no forced refresh; more than one MUST be a typed ambiguous-key error, distinct from key-not-found (JWKS-009); none is key-not-found (JWKS-011). `alg: "none"` is rejected before key selection.
+- Whether found by `kid` or selected without one, a key that declares an `alg` other than the token header `alg` MUST NOT be used ([RFC 7517 §4.4](https://www.rfc-editor.org/rfc/rfc7517#section-4.4)); resolution fails with a typed key-alg-mismatch error, distinct from key-not-found and ambiguous-key (JWKS-010).
 - The key set MUST be cached with a configurable TTL; concurrent fetches for the same URI SHOULD be deduplicated.
 
 ### JWT Validation
@@ -134,7 +126,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 ### UserInfo
 
 - Implementations MUST GET the `userinfo_endpoint` with `Authorization: Bearer {token}` and return typed standard claims plus an overflow map ([OIDC Core 1.0 §5.3](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo)).
-- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)).
+- When an expected `sub` is supplied, the UserInfo `sub` MUST match the ID token `sub`; a mismatch MUST error ([§5.3.4](https://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse)). A signed or encrypted (`application/jwt`) response that the implementation cannot verify MUST error when an expected `sub` is supplied, rather than succeed with the `sub` unchecked (`UI-009`).
 - Implementations MUST let the caller supply the HTTP client and bound the request with a timeout. This is an API-shape contract with no vector (formerly `UI-008`); it is covered by Go `TestFetch_FunctionalOptions` (`go/pkg/userinfo/userinfo_test.go`), Rust `timeout_bounds_slow_endpoint` (`rust/src/userinfo/mod.rs`), and Python `TestSyncDI::test_userinfo_with_injected_client` / `TestAsyncDI::test_userinfo_with_injected_client` (`py/src/tests/unit/test_http_client_di.py`), which show only that `get_userinfo` accepts an injected `HTTPClient`, not that the request goes through it or that its timeout applies ([#775](https://github.com/jamescrowley321/identity-model/issues/775)).
 
 ## Capability Definitions (Extended Tier)
@@ -171,6 +163,18 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
   `introspection_endpoint` field of the Authorization Server Metadata / OIDC
   Discovery document rather than requiring manual configuration
   ([RFC 8414 §2](https://www.rfc-editor.org/rfc/rfc8414#section-2)).
+- A client configured for signed responses MUST send
+  `Accept: application/token-introspection+jwt` and MUST accept only an
+  `application/token-introspection+jwt` response whose JWT has
+  `typ: token-introspection+jwt`, an allowed asymmetric `alg` (the verify
+  allowlist of [`config.md`](config.md#algorithm-allowlists) by default; a FAPI
+  2.0 client passes PS256/ES256/EdDSA), a signature that verifies against the
+  authorization server's keys, `iss` equal to its issuer, `aud` equal to the
+  client's `client_id`, and an `iat`. The introspection response is the
+  `token_introspection` claim, with the same `active` rule as above
+  ([RFC 9701 §4–5](https://www.rfc-editor.org/rfc/rfc9701#section-5),
+  FAPI 2.0 Message Signing §5.5.2). The discovery model carries
+  `introspection_signing_alg_values_supported` (RFC 9701 §7).
 
 **Worked example** — introspecting an active token with `client_secret_basic`
 (`Authorization` is `Basic BASE64("s6BhdRkqt3" + ":" + "gX1fBat3bV")`):

@@ -25,7 +25,7 @@ from ..core.registration_logic import (
     process_registration_response,
     process_update_response,
 )
-from .http_client import get_async_http_client, retry_with_backoff_async
+from .http_client import get_default_async_http_client, retry_with_backoff_async
 from .managed_client import AsyncHTTPClient
 
 
@@ -79,7 +79,9 @@ async def register_client(
     response = None
     try:
         body, headers = prepare_registration_request(request)
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _post_registration(client, request.address, body, headers)
         return process_registration_response(response)
     except Exception as e:
@@ -105,7 +107,9 @@ async def read_client(
     response = None
     try:
         headers = prepare_management_headers(request.registration_access_token)
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _get_client(client, request.address, headers)
         return process_read_response(response)
     except Exception as e:
@@ -132,7 +136,9 @@ async def update_client(
     response = None
     try:
         body, headers = prepare_update_request(request)
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _put_client(client, request.address, body, headers)
         return process_update_response(response)
     except Exception as e:
@@ -158,7 +164,9 @@ async def delete_client(
     response = None
     try:
         headers = prepare_management_headers(request.registration_access_token)
-        client = http_client.client if http_client else get_async_http_client()
+        client = (
+            http_client if http_client is not None else get_default_async_http_client()
+        )
         response = await _delete_client(client, request.address, headers)
         return process_delete_response(response)
     except Exception as e:

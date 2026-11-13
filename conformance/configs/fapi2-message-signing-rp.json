@@ -4,7 +4,7 @@
     "client_auth_type": "private_key_jwt",
     "sender_constrain": "dpop",
     "authorization_request_type": "simple",
-    "fapi_request_method": "unsigned",
+    "fapi_request_method": "signed_non_repudiation",
     "fapi_client_type": "oidc",
     "fapi_profile": "plain_fapi",
     "fapi_response_mode": "jarm"
@@ -12,6 +12,7 @@
   "alias": "py-identity-model-fapi2-message-signing-rp",
   "fapi2": true,
   "jarm": true,
+  "signed_request": true,
   "client": {
     "client_id": "conformance-rp"
   }

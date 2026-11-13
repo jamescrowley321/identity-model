@@ -10,21 +10,29 @@ import httpx
 
 from ..logging_config import logger
 from ..logging_utils import redact_url
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from .client_auth import apply_client_auth
 from .dpop import create_dpop_proof
-from .models import PushedAuthorizationRequest, PushedAuthorizationResponse
-from .mtls import apply_mtls_client_auth
+from .models import (
+    PushedAuthorizationRequest,
+    PushedAuthorizationResponse,
+    SignedPushedAuthorizationRequest,
+)
 
 
-def log_par_request(request: PushedAuthorizationRequest) -> None:
+def log_par_request(
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
+) -> None:
     """Log pushed authorization request."""
     logger.info(f"Pushing authorization request to {redact_url(request.address)}")
     logger.debug(f"Client ID: {request.client_id}")
 
 
+RequestParts = tuple[dict, dict, tuple[str, str] | None]
+"""Form data, headers and optional HTTP Basic auth for one request attempt."""
+
+
 def prepare_par_request_data(
-    request: PushedAuthorizationRequest,
+    request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
     dpop_nonce: str | None = None,
 ) -> tuple[dict, dict, tuple[str, str] | None]:
     """Prepare request data, headers, and optional auth for PAR.
@@ -38,6 +46,33 @@ def prepare_par_request_data(
     Returns:
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
     """
+    if isinstance(request, SignedPushedAuthorizationRequest):
+        request.check_request()
+        # RFC 9126 §3: only ``request`` and client authentication go in the form.
+        params = {"client_id": request.client_id, "request": request.request}
+    else:
+        params = _plain_params(request)
+
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    if request.dpop_key is not None:
+        # RFC 9449: bind the PAR to the client's key. The PAR-endpoint proof
+        # carries no ``ath`` (that is reserved for resource-server requests).
+        headers["DPoP"] = create_dpop_proof(
+            request.dpop_key, "POST", request.address, nonce=dpop_nonce
+        )
+
+    auth = apply_client_auth(
+        params, request, client_secret=request.client_secret or None
+    )
+
+    return params, headers, auth
+
+
+def _plain_params(request: PushedAuthorizationRequest) -> dict[str, str]:
+    """The authorization parameters as form fields (RFC 9126 §2.1)."""
+    if not request.redirect_uri:
+        raise ValueError("redirect_uri is required")
     if bool(request.code_challenge) != bool(request.code_challenge_method):
         raise ValueError(
             "code_challenge and code_challenge_method must both be set or both be absent"
@@ -61,34 +96,7 @@ def prepare_par_request_data(
         # JARM (JWT-Secured Authorization Response Mode): request a signed
         # authorization response, e.g. "jwt" / "query.jwt".
         params["response_mode"] = request.response_mode
-
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-
-    if request.dpop_key is not None:
-        # RFC 9449: bind the PAR to the client's key. The PAR-endpoint proof
-        # carries no ``ath`` (that is reserved for resource-server requests).
-        headers["DPoP"] = create_dpop_proof(
-            request.dpop_key, "POST", request.address, nonce=dpop_nonce
-        )
-
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body (client_id already
-        # present for PAR per RFC 9126), no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret:
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-
-    return params, headers, auth
+    return params
 
 
 def process_par_response(
@@ -108,7 +116,8 @@ def process_par_response(
         expires_in = data.get("expires_in")
 
         missing: list[str] = []
-        if not request_uri:
+        # RFC 9126 §2.2: request_uri is a string.
+        if not isinstance(request_uri, str) or not request_uri.strip():
             missing.append("request_uri")
         if not isinstance(expires_in, int) or expires_in <= 0:
             missing.append("expires_in")

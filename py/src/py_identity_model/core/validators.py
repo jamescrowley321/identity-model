@@ -15,8 +15,13 @@ from ..exceptions import (
     DiscoveryException,
     DiscoveryHTTPSRequiredError,
     DiscoveryMissingFieldsError,
+    DiscoveryParseError,
 )
 from .discovery_policy import DiscoveryPolicy, is_loopback
+from .token_binding import TokenBinding
+
+
+REQUIRED_BINDING_TYPE_MESSAGE = "required_binding must be a TokenBinding"
 
 
 if TYPE_CHECKING:
@@ -78,19 +83,34 @@ def validate_https_url(url: str, parameter_name: str) -> None:
         )
 
 
-def validate_required_parameters(response_data: dict) -> None:
-    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3"""
-    required_params = [
-        "issuer",
-        "response_types_supported",
-        "subject_types_supported",
-        "id_token_signing_alg_values_supported",
-    ]
+_REQUIRED_PARAMETERS = (
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "response_types_supported",
+    "subject_types_supported",
+    "id_token_signing_alg_values_supported",
+)
 
+
+def validate_required_parameters(response_data: dict) -> None:
+    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3.
+
+    All seven REQUIRED fields are checked unconditionally. §3 exempts
+    ``token_endpoint`` when only the Implicit Flow is used; requiring it anyway
+    is library policy. A field whose value is falsy (absent, ``null``, ``""``,
+    ``[]``, ``false``, ``0`` or ``{}``) is missing, and every missing field is
+    reported in spec order.
+
+    Raises:
+        DiscoveryParseError: If the document is not a JSON object.
+        DiscoveryMissingFieldsError: If any required field is missing.
+    """
+    if not isinstance(response_data, dict):
+        raise DiscoveryParseError("Discovery document must be a JSON object")
     missing_params = [
-        param
-        for param in required_params
-        if param not in response_data or response_data[param] is None
+        param for param in _REQUIRED_PARAMETERS if not response_data.get(param)
     ]
 
     if missing_params:
@@ -198,12 +218,15 @@ def validate_token_config(
                 "leeway must be a finite number",
             )
 
+    if not isinstance(token_validation_config.required_binding, TokenBinding):
+        raise ConfigurationException(REQUIRED_BINDING_TYPE_MESSAGE)
+
     if token_validation_config.perform_disco:
         return
 
-    if not token_validation_config.key and not token_validation_config.algorithms:
+    if not token_validation_config.key:
         raise ConfigurationException(
-            "TokenValidationConfig.key and TokenValidationConfig.algorithms are required if perform_disco is False",
+            "TokenValidationConfig.key is required if perform_disco is False",
         )
 
 
