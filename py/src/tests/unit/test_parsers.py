@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+from typing import Any
 
 import pytest
 
@@ -179,6 +180,67 @@ class TestFindKeyByKid:
 
         assert key_dict["kid"] == "ec-key"
         assert alg == "ES256"
+
+    def test_find_key_by_kid_shared_kid_selects_key_of_matching_type(self):
+        """RFC 7517 §4.5: keys of different kty may share a kid."""
+        okp = JsonWebKey(
+            kty="OKP", kid="shared", alg="EdDSA", use="sig", crv="Ed25519", x="o"
+        )
+        ec = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-256", x="x", y="y")
+
+        assert find_key_by_kid("shared", [okp, ec], jwt_alg="ES256") == (
+            ec.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_skips_key_declaring_other_alg(self):
+        es384 = JsonWebKey(
+            kty="EC", kid="shared", alg="ES384", use="sig", crv="P-384", x="a", y="b"
+        )
+        es256 = JsonWebKey(
+            kty="EC", kid="shared", alg="ES256", use="sig", crv="P-256", x="x", y="y"
+        )
+
+        assert find_key_by_kid("shared", [es384, es256], jwt_alg="ES256") == (
+            es256.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_skips_key_on_other_curve(self):
+        p384 = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-384", x="a", y="b")
+        p256 = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-256", x="x", y="y")
+
+        assert find_key_by_kid("shared", [p384, p256], jwt_alg="ES256") == (
+            p256.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_non_string_alg_is_rejected(self):
+        keys = [
+            JsonWebKey(kty="RSA", kid="shared", use="sig", n="abc", e="def"),
+            JsonWebKey(kty="RSA", kid="shared", use="sig", n="ghi", e="def"),
+        ]
+
+        list_alg: Any = ["RS256"]
+
+        with pytest.raises(TokenValidationException) as excinfo:
+            find_key_by_kid("shared", keys, jwt_alg=list_alg)
+
+        assert excinfo.value.message == "Invalid 'alg' header: expected a string"
+
+    def test_find_key_by_kid_shared_kid_without_usable_key_is_rejected(self):
+        okp = JsonWebKey(
+            kty="OKP", kid="shared", alg="EdDSA", use="sig", crv="Ed25519", x="o"
+        )
+        rsa = JsonWebKey(kty="RSA", kid="shared", use="sig", n="abc", e="def")
+
+        with pytest.raises(TokenValidationException) as excinfo:
+            find_key_by_kid("shared", [okp, rsa], jwt_alg="ES256")
+
+        assert excinfo.value.message == (
+            "Key type 'OKP' is incompatible with algorithm 'ES256' "
+            "(expected key type 'EC')"
+        )
 
     def test_find_key_by_kid_none_kid_uses_jwt_alg_as_default(self):
         """When single signing key has no alg, use jwt_alg as default."""

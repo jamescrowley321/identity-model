@@ -57,6 +57,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/hosted/*-latest.json
+
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
