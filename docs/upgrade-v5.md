@@ -359,8 +359,9 @@ private_key_jwt = PrivateKeyJwt(
 )
 ```
 
-Leaving out `issuer` raises `TypeError`. A `None`, empty or whitespace-only
-value, or one that is not a `str` (for example a list), raises
+Leaving out `issuer` raises `TypeError`. A `None` or empty value, one with
+leading or trailing whitespace, or one that is not a `str` (for example a
+list), raises
 `ConfigurationException` when the `PrivateKeyJwt` is built. 4.x signed a
 list into the assertion as a JSON array.
 

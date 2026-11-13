@@ -690,8 +690,8 @@ class PrivateKeyJwt:
             assertion's sole ``aud`` value, a single string: RFC 10070 §4
             requires the issuer identifier and forbids the token endpoint URL
             for client authentication (also FAPI 2.0 Security Profile
-            §5.3.3.1).  ``None``, a non-string, or an empty or whitespace-only
-            value raises
+            §5.3.3.1).  ``None``, a non-string, an empty value, or one with
+            leading or trailing whitespace raises
             :class:`~py_identity_model.exceptions.ConfigurationException`.
         lifetime: Assertion validity in seconds (default 300).
     """
@@ -706,7 +706,11 @@ class PrivateKeyJwt:
     issuer: str = field(kw_only=True)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.issuer, str) or not self.issuer.strip():
+        if (
+            not isinstance(self.issuer, str)
+            or not self.issuer
+            or self.issuer != self.issuer.strip()
+        ):
             raise ConfigurationException(
                 "PrivateKeyJwt.issuer must be the authorization server's issuer "
                 f"identifier (RFC 10070 §4), got {self.issuer!r}"

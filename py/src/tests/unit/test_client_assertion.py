@@ -347,11 +347,29 @@ class TestPrivateKeyJwtIssuer:
 
     @pytest.mark.parametrize(
         "value",
-        [None, "", "   ", [ISSUER], (ISSUER,), b"https://as.example.com"],
-        ids=["none", "empty", "whitespace", "list", "tuple", "bytes"],
+        [
+            None,
+            "",
+            "   ",
+            f" {ISSUER}",
+            f"{ISSUER}\n",
+            [ISSUER],
+            (ISSUER,),
+            b"https://as.example.com",
+        ],
+        ids=[
+            "none",
+            "empty",
+            "whitespace",
+            "leading-space",
+            "trailing-newline",
+            "list",
+            "tuple",
+            "bytes",
+        ],
     )
     def test_blank_or_non_string_issuer_raises(self, value):
-        # aud is one non-blank string (RFC 10070 §4, FAPI 2.0 SP §5.3.3.1).
+        # aud is one exact, non-blank string (RFC 10070 §4, FAPI 2.0 SP §5.3.3.1).
         private_pem, _ = _ec_keypair()
         with pytest.raises(ConfigurationException) as exc_info:
             PrivateKeyJwt(private_key=private_pem, algorithm="ES256", issuer=value)

@@ -1026,6 +1026,7 @@ def _authorize_fapi2(
             client_auth=(
                 _fapi2_mtls_auth()
                 if mtls
+                # A successful discovery response always has issuer (§3 REQUIRED).
                 else _fapi2_private_key_jwt(disco.issuer or "")
             ),
             native_app=True,
@@ -1035,7 +1036,7 @@ def _authorize_fapi2(
                 _fapi2_request_object_key() if signed_request else None
             ),
         )
-    except (FAPIProfileError, ConfigurationException) as exc:
+    except FAPIProfileError as exc:
         return _fapi2_rejected(issuer, test_id, "fapi_profile", str(exc))
 
     state = secrets.token_urlsafe(32)

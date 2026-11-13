@@ -50,7 +50,7 @@ def build_profile_example() -> FAPI2ClientProfile:
         client_auth=PrivateKeyJwt(
             private_key=client_key.private_key_pem,
             algorithm="ES256",
-            issuer=DISCOVERY.issuer or "",
+            issuer=ISSUER,
         ),
     )
     print(f"\n  Issuer: {profile.issuer}")

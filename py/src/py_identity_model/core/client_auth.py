@@ -101,13 +101,10 @@ def apply_client_auth(
     method = resolve_client_auth_method(request, client_secret=client_secret)
 
     if method is ClientAuthMethod.PRIVATE_KEY_JWT:
-        if request.private_key_jwt is None:
+        private_key_jwt = request.private_key_jwt
+        if private_key_jwt is None:
             raise _missing(method, "private_key_jwt")
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-        )
+        apply_private_key_jwt(params, private_key_jwt, client_id=request.client_id)
         return None
 
     if method.is_mtls:
