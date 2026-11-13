@@ -21,6 +21,7 @@ from py_identity_model.core.models import DiscoveryDocumentResponse
 
 from .test_fapi_profile import (
     DPOP_KEY,
+    ED448_PEM,
     ISSUER,
     _discovery,
     _mtls,
@@ -87,6 +88,9 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
     ),
     FAPIViolationCode.ALGORITHM_NOT_ALLOWED: lambda: _request(
         dpop_key=generate_dpop_key("RS256")
+    ),
+    FAPIViolationCode.KEY_NOT_ALLOWED: lambda: _request(
+        private_key_jwt=_pkj(private_key=ED448_PEM, algorithm="EdDSA")
     ),
     FAPIViolationCode.SENDER_CONSTRAINT_MISSING: lambda: _request(dpop_key=None),
     FAPIViolationCode.MTLS_WITH_DPOP: lambda: _refused(

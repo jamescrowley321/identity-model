@@ -775,6 +775,17 @@ reported violations for compliant signed requests
 ([#1016](https://github.com/jamescrowley321/identity-model/issues/1016)). It
 does not verify the request object's signature or `aud`.
 
+### FAPI 2.0: signing keys are checked, not just algorithms ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`validate_fapi_client_config`, `validate_fapi_authorization_request` and
+`FAPI2ClientProfile` now check the `PrivateKeyJwt` key, and
+`FAPI2ClientProfile` the `RequestObjectKey` key, against
+[FAPI 2.0 Security Profile §5.4.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.4.1):
+PS256, ES256 or EdDSA "using the Ed25519 variant", and RSA keys of at least
+2048 bits. An Ed448 key with `EdDSA` or an RSA key under 2048 bits is a
+`FAPIViolationCode.KEY_NOT_ALLOWED` violation, so a profile built with one
+raises `FAPIProfileError`. 4.x reported such clients as compliant.
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC
@@ -1344,6 +1355,52 @@ try:
 except WeakKeyException as exc:
     print(exc.details["kid"], exc.details["bits"], exc.details["min_bits"])
 ```
+
+## Request objects and client assertions
+
+### `request` and `request_uri` can't go inside a request object ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`create_request_object` raises `RequestObjectError` with kind
+`RequestObjectErrorKind.FORBIDDEN_CLAIM` when `request` or `request_uri` is
+passed as an extra claim. [RFC 9101 §4](https://www.rfc-editor.org/rfc/rfc9101#section-4)
+says these "MUST NOT be included in Request Objects". 4.x signed them in.
+Send a request object by value (`request`) or by reference (`request_uri`) as
+an authorization request parameter, never as a claim.
+
+### The authorization URL `client_id` must match the request object ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`build_jar_authorization_url` reads the request object's `client_id` claim
+(without verifying the signature) and raises `RequestObjectError` when it
+doesn't match the `client_id` argument
+([RFC 9101 §5](https://www.rfc-editor.org/rfc/rfc9101#section-5)). The kinds are
+`CLIENT_ID_MISMATCH` (absent or different), `NOT_A_JWT` and `ENCRYPTED` (a
+compact JWE, whose claims can't be read). Pass the request object that
+`create_request_object` returned for the same `client_id`.
+
+```python
+from py_identity_model import (
+    RequestObjectError,
+    RequestObjectErrorKind,
+    build_jar_authorization_url,
+)
+
+try:
+    url = build_jar_authorization_url(endpoint, client_id, request_object)
+except RequestObjectError as exc:
+    if exc.kind is RequestObjectErrorKind.CLIENT_ID_MISMATCH:
+        ...
+```
+
+### RSA signing keys under 2048 bits are refused ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`create_request_object` and `build_client_assertion` (and so every request
+sent with a `PrivateKeyJwt` or `RequestObjectKey`) raise `WeakSigningKeyError`
+before signing with an RSA key under 2048 bits
+([RFC 7518 §3.3](https://www.rfc-editor.org/rfc/rfc7518#section-3.3),
+[§3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.5)). It is a
+`ConfigurationException` with `kty`, `bits` and `min_bits`. This is the floor
+verification keys meet. Replace the key with one of 2048 bits or more, or use
+an EC or Ed25519 key.
 
 ## UserInfo
 

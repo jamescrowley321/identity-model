@@ -26,6 +26,7 @@ from py_identity_model import (
     TokenExchangeRequest,
     TokenIntrospectionRequest,
     TokenRevocationRequest,
+    WeakSigningKeyError,
     request_authorization_code_token,
     request_client_credentials_token,
 )
@@ -43,6 +44,7 @@ from py_identity_model.core.device_auth_logic import (
 from py_identity_model.core.introspection_logic import (
     prepare_introspection_request_data,
 )
+from py_identity_model.core.key_strength import MIN_RSA_KEY_BITS
 from py_identity_model.core.par_logic import prepare_par_request_data
 from py_identity_model.core.revocation_logic import prepare_revocation_request_data
 from py_identity_model.core.token_client_logic import (
@@ -56,6 +58,7 @@ from py_identity_model.core.token_exchange_logic import (
 
 
 UUID_STRING_LENGTH = 36
+WEAK_RSA_BITS = MIN_RSA_KEY_BITS - 1
 ISSUER = "https://as.example.com"
 JWT_BEARER_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 
@@ -661,3 +664,42 @@ class TestSigningFailureReturnsErrorResponse:
         response = await async_request_client_credentials_token(request)
         assert response.is_successful is False
         assert response.error
+
+
+@pytest.mark.unit
+class TestClientAssertionKeyStrength:
+    """RFC 7518 §3.3 / §3.5: RSA signing keys of at least 2048 bits."""
+
+    @pytest.mark.parametrize("algorithm", ["RS256", "PS256"])
+    def test_rsa_under_2048_refused(self, algorithm):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=WEAK_RSA_BITS)
+        with pytest.raises(WeakSigningKeyError) as exc_info:
+            build_client_assertion(
+                client_id="c1",
+                audience="https://auth.example.com",
+                private_key=key.private_bytes(
+                    Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+                ),
+                algorithm=algorithm,
+            )
+        assert (exc_info.value.kty, exc_info.value.bits, exc_info.value.min_bits) == (
+            "RSA",
+            WEAK_RSA_BITS,
+            MIN_RSA_KEY_BITS,
+        )
+
+    def test_rsa_2048_signs(self):
+        private_pem, public_pem = _rsa_keypair()
+        assertion = build_client_assertion(
+            client_id="c1",
+            audience="https://auth.example.com",
+            private_key=private_pem,
+            algorithm="PS256",
+        )
+        claims = pyjwt.decode(
+            assertion,
+            public_pem,
+            algorithms=["PS256"],
+            audience="https://auth.example.com",
+        )
+        assert (claims["iss"], claims["sub"]) == ("c1", "c1")

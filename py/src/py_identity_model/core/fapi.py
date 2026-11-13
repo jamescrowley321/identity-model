@@ -22,11 +22,14 @@ import math
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlparse
 
+from cryptography.hazmat.primitives.asymmetric import ed25519
 import jwt as pyjwt
 
+from ..exceptions import WeakSigningKeyError
 from .authorize_url import build_par_authorization_url
 from .client_auth_method import ClientAuthMethod
 from .jar import create_request_object
+from .key_strength import enforce_signing_key_strength, load_signing_key
 from .models import (
     AuthorizationCodeTokenRequest,
     MtlsClientAuth,
@@ -123,6 +126,9 @@ class FAPIViolationCode(enum.Enum):
     ALGORITHM_NOT_ALLOWED = "algorithm_not_allowed"
     """A ``private_key_jwt``, DPoP or request object algorithm other than
     PS256, ES256 or EdDSA (§5.4.1)."""
+    KEY_NOT_ALLOWED = "key_not_allowed"
+    """A ``private_key_jwt`` or request object signing key §5.4.1 does not
+    allow: an RSA key under 2048 bits or an EdDSA key that is not Ed25519."""
     SENDER_CONSTRAINT_MISSING = "sender_constraint_missing"
     """Neither a DPoP key nor mTLS sender-constrains the tokens (§5.3.3.1)."""
     MTLS_WITH_DPOP = "mtls_with_dpop"
@@ -282,6 +288,42 @@ def _algorithm_violation(what: str, algorithm: str) -> list[FAPIViolation]:
             "(FAPI 2.0 Security Profile §5.4.1)",
         )
     ]
+
+
+def _signing_key_violations(
+    what: str, private_key: str | bytes, algorithm: str
+) -> list[FAPIViolation]:
+    """§5.4.1: RSA of 2048 bits or more, EdDSA on Ed25519.
+
+    ES256 is bound to P-256, so the EC floor of 224 bits always holds. A key
+    PyJWT can't prepare for *algorithm* is left to signing to reject.
+    """
+    if algorithm not in FAPI2_ALLOWED_SIGNING_ALGORITHMS:
+        # Already reported as ALGORITHM_NOT_ALLOWED.
+        return []
+    try:
+        enforce_signing_key_strength(private_key, algorithm)
+    except WeakSigningKeyError as exc:
+        return [
+            FAPIViolation(
+                FAPIViolationCode.KEY_NOT_ALLOWED,
+                f"{what} {exc.kty} key is {exc.bits} bits; at least "
+                f"{exc.min_bits} required (FAPI 2.0 Security Profile §5.4.1)",
+            )
+        ]
+    key = load_signing_key(private_key, algorithm)
+    if (
+        algorithm == "EdDSA"
+        and key is not None
+        and not isinstance(key, ed25519.Ed25519PrivateKey)
+    ):
+        return [
+            FAPIViolation(
+                FAPIViolationCode.KEY_NOT_ALLOWED,
+                f"{what} EdDSA key must be Ed25519 (FAPI 2.0 Security Profile §5.4.1)",
+            )
+        ]
+    return []
 
 
 def validate_fapi_authorization_request(
@@ -558,6 +600,13 @@ def _client_authentication_violations(
         violations.extend(
             _algorithm_violation("private_key_jwt", private_key_jwt.algorithm)
         )
+        violations.extend(
+            _signing_key_violations(
+                "private_key_jwt",
+                private_key_jwt.private_key,
+                private_key_jwt.algorithm,
+            )
+        )
     return violations
 
 
@@ -611,7 +660,8 @@ def validate_fapi_client_config(
     mTLS.  A ``private_key_jwt`` assertion's ``aud`` must be the issuer as a
     single string, so an ``audience`` or ``issuer`` naming anything else, or
     neither being set (the endpoint-URL fallback), is a violation.  JWT
-    algorithms are limited by §5.4.1.
+    algorithms and the ``private_key_jwt`` key are limited by §5.4.1: RSA
+    keys of at least 2048 bits and Ed25519 for EdDSA.
 
     This checks the specification, so it is wider than
     :class:`FAPI2ClientProfile`.  It accepts two combinations §5.3.3.1
@@ -891,10 +941,13 @@ def validate_fapi_discovery(
 def _request_object_key_violations(
     key: RequestObjectKey | None, advertised: tuple[str, ...] | None
 ) -> list[FAPIViolation]:
-    """Message Signing §5.3.2: FAPI algorithm, lifetime of at most 3600 s."""
+    """FAPI algorithm and key (§5.4.1), lifetime of at most 3600 s (MS §5.3.2)."""
     if key is None:
         return []
-    violations = _algorithm_violation("request object", key.algorithm)
+    violations = [
+        *_algorithm_violation("request object", key.algorithm),
+        *_signing_key_violations("request object", key.private_key, key.algorithm),
+    ]
     if not 0 < key.lifetime <= FAPI2_MAX_REQUEST_OBJECT_LIFETIME:
         violations.append(
             FAPIViolation(

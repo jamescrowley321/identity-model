@@ -15,7 +15,9 @@ import uuid
 
 import jwt as pyjwt
 
+from ..exceptions import RequestObjectError, RequestObjectErrorKind
 from .jwt_signing import validate_signing_algorithm
+from .key_strength import enforce_signing_key_strength
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,13 @@ _RESERVED_CLAIMS = frozenset(
     }
 )
 
+# RFC 9101 §4: "request and request_uri parameters MUST NOT be included in
+# Request Objects."
+_FORBIDDEN_CLAIMS = frozenset({"request", "request_uri"})
+
+# A compact JWE has five dot-separated parts (RFC 7516 §7.1).
+_JWE_COMPACT_DOTS = 4
+
 
 def _validate_request_params(params: _RequestParams) -> None:
     """Validate all inputs for :func:`create_request_object`."""
@@ -86,11 +95,16 @@ def _validate_request_params(params: _RequestParams) -> None:
         if value is not None and not value:
             raise ValueError(f"{name} must be non-empty when provided")
 
+    if _FORBIDDEN_CLAIMS & params.extra_claims.keys():
+        raise RequestObjectError(RequestObjectErrorKind.FORBIDDEN_CLAIM)
+
     collisions = set(params.extra_claims) & _RESERVED_CLAIMS
     if collisions:
         raise ValueError(
             f"extra_claims cannot override reserved claims: {sorted(collisions)}"
         )
+
+    enforce_signing_key_strength(params.private_key, params.algorithm)
 
 
 def create_request_object(  # noqa: PLR0913  # RFC 9101 §4 request object carries all authorization params
@@ -132,6 +146,7 @@ def create_request_object(  # noqa: PLR0913  # RFC 9101 §4 request object carri
         lifetime: JWT validity in seconds (default 300).
         kid: Key ID to include in the JWT header for key lookup.
         **extra_claims: Additional claims to include in the request object.
+            ``request`` and ``request_uri`` are refused (RFC 9101 §4).
 
     Returns:
         The signed JWT string.
@@ -141,6 +156,10 @@ def create_request_object(  # noqa: PLR0913  # RFC 9101 §4 request object carri
             are empty, *lifetime* is not positive, *code_challenge* and
             *code_challenge_method* are not both provided, or
             *extra_claims* contains a reserved claim name.
+        RequestObjectError: ``FORBIDDEN_CLAIM`` if *extra_claims* contains
+            ``request`` or ``request_uri``.
+        WeakSigningKeyError: If *private_key* is an RSA key under 2048 bits
+            (RFC 7518 §3.3, §3.5).
     """
     _validate_request_params(
         _RequestParams(
@@ -194,6 +213,20 @@ def create_request_object(  # noqa: PLR0913  # RFC 9101 §4 request object carri
     return pyjwt.encode(claims, private_key, algorithm=algorithm, headers=headers)
 
 
+def _require_matching_client_id(request_object: str, client_id: str) -> None:
+    """RFC 9101 §5: the query ``client_id`` matches the request object's."""
+    if not isinstance(request_object, str):
+        raise RequestObjectError(RequestObjectErrorKind.NOT_A_JWT)
+    if request_object.count(".") == _JWE_COMPACT_DOTS:
+        raise RequestObjectError(RequestObjectErrorKind.ENCRYPTED)
+    try:
+        claims = pyjwt.decode(request_object, options={"verify_signature": False})
+    except pyjwt.PyJWTError as exc:
+        raise RequestObjectError(RequestObjectErrorKind.NOT_A_JWT) from exc
+    if claims.get("client_id") != client_id:
+        raise RequestObjectError(RequestObjectErrorKind.CLIENT_ID_MISMATCH)
+
+
 def build_jar_authorization_url(
     authorization_endpoint: str,
     client_id: str,
@@ -205,7 +238,9 @@ def build_jar_authorization_url(
 
     Per RFC 9101 Section 6.3, ``client_id`` MUST appear as a query
     parameter and ``scope``/``response_type`` SHOULD be duplicated
-    outside the request object for backward compatibility.
+    outside the request object for backward compatibility.  The query
+    ``client_id`` must match the request object's ``client_id`` claim
+    (RFC 9101 §5); the claim is read without verifying the signature.
 
     Args:
         authorization_endpoint: The authorization server's authorize URL.
@@ -216,7 +251,15 @@ def build_jar_authorization_url(
 
     Returns:
         The full authorization URL with the ``request`` parameter.
+
+    Raises:
+        RequestObjectError: ``ENCRYPTED`` if *request_object* is a compact
+            JWE, ``NOT_A_JWT`` if it is not a JWT with a claims object, or
+            ``CLIENT_ID_MISMATCH`` if its ``client_id`` is absent or is not
+            *client_id*.
     """
+    _require_matching_client_id(request_object, client_id)
+
     params: dict[str, str] = {
         "client_id": client_id,
         "request": request_object,

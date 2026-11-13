@@ -41,6 +41,8 @@ from .exceptions import (
     LogoutTokenValidationException,
     NetworkException,
     PyIdentityModelException,
+    RequestObjectError,
+    RequestObjectErrorKind,
     SignatureVerificationException,
     SuccessfulResponseAccessError,
     TokenExpiredException,
@@ -50,6 +52,7 @@ from .exceptions import (
     UserInfoException,
     ValidationException,
     WeakKeyException,
+    WeakSigningKeyError,
 )
 
 # Identity models (shared)
@@ -314,6 +317,8 @@ __all__ = [
     # Refresh Token
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "RequestObjectError",
+    "RequestObjectErrorKind",
     "RequestObjectKey",
     "SignatureVerificationException",
     "SignedIntrospectionOptions",
@@ -344,6 +349,7 @@ __all__ = [
     "ValidationCache",
     "ValidationException",
     "WeakKeyException",
+    "WeakSigningKeyError",
     "build_authorization_url",
     "build_dpop_headers",
     "build_end_session_url",

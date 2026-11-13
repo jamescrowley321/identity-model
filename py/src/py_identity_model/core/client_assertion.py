@@ -18,6 +18,7 @@ import jwt as pyjwt
 
 from ..oidc_constants import ClientAssertionTypes, TokenRequest
 from .jwt_signing import validate_signing_algorithm
+from .key_strength import enforce_signing_key_strength
 
 
 if TYPE_CHECKING:
@@ -64,6 +65,8 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         ValueError: If a required parameter is empty, *algorithm* is not a
             supported asymmetric signing algorithm, *lifetime* is not
             positive, or *kid* is an empty string.
+        WeakSigningKeyError: If *private_key* is an RSA key under 2048 bits
+            (RFC 7518 §3.3, §3.5).
     """
     for name, value in (
         ("client_id", client_id),
@@ -88,6 +91,9 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
 
     if kid is not None and not kid.strip():
         raise ValueError("kid must be non-empty when provided")
+
+    # RFC 7518 §3.3 / §3.5: RSA keys of 2048 bits or larger.
+    enforce_signing_key_strength(private_key, algorithm)
 
     issued_at = int(time.time()) - _CLOCK_SKEW_LEEWAY_SECONDS
     claims = {
