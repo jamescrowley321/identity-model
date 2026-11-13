@@ -775,7 +775,7 @@ reported violations for compliant signed requests
 ([#1016](https://github.com/jamescrowley321/identity-model/issues/1016)). It
 does not verify the request object's signature or `aud`.
 
-### FAPI 2.0: signing keys are checked, not just algorithms ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### FAPI 2.0: signing keys are checked, not just algorithms ([#1124](https://github.com/jamescrowley321/identity-model/pull/1124))
 
 `validate_fapi_client_config`, `validate_fapi_authorization_request` and
 `FAPI2ClientProfile` now check the `PrivateKeyJwt` key, and
@@ -1358,7 +1358,7 @@ except WeakKeyException as exc:
 
 ## Request objects and client assertions
 
-### `request` and `request_uri` can't go inside a request object ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### `request` and `request_uri` can't go inside a request object ([#1124](https://github.com/jamescrowley321/identity-model/pull/1124))
 
 `create_request_object` raises `RequestObjectError` with kind
 `RequestObjectErrorKind.FORBIDDEN_CLAIM` when `request` or `request_uri` is
@@ -1367,7 +1367,7 @@ says these "MUST NOT be included in Request Objects". 4.x signed them in.
 Send a request object by value (`request`) or by reference (`request_uri`) as
 an authorization request parameter, never as a claim.
 
-### The authorization URL `client_id` must match the request object ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### The authorization URL `client_id` must match the request object ([#1124](https://github.com/jamescrowley321/identity-model/pull/1124))
 
 `build_jar_authorization_url` reads the request object's `client_id` claim
 (without verifying the signature) and raises `RequestObjectError` when it
@@ -1391,7 +1391,7 @@ except RequestObjectError as exc:
         ...
 ```
 
-### RSA signing keys under 2048 bits are refused ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### RSA signing keys under 2048 bits are refused ([#1124](https://github.com/jamescrowley321/identity-model/pull/1124))
 
 `create_request_object` and `build_client_assertion` (and so every request
 sent with a `PrivateKeyJwt` or `RequestObjectKey`) raise `WeakSigningKeyError`
