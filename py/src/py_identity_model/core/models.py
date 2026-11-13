@@ -1371,7 +1371,7 @@ class DeviceTokenResponse(BaseResponse):
     When ``is_successful`` is ``False``, check ``error_code``:
 
     - ``"authorization_pending"`` - user hasn't authorized yet, poll again
-    - ``"slow_down"`` - increase polling interval (see ``interval``)
+    - ``"slow_down"`` - add 5 seconds to the polling interval (RFC 8628 §3.5)
     - ``"expired_token"`` - device code expired, restart flow
     - ``"access_denied"`` - user denied authorization
 

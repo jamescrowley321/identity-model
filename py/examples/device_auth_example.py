@@ -57,7 +57,7 @@ def device_auth_example():
     print("      elif token_resp.error_code == 'authorization_pending':")
     print("          continue  # keep polling")
     print("      elif token_resp.error_code == 'slow_down':")
-    print("          interval = token_resp.interval or interval + 5")
+    print("          interval += 5  # RFC 8628 §3.5: for this and all later polls")
     print("      else:")
     print("          break  # expired_token or access_denied")
     print("  ```")
