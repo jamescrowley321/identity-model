@@ -796,12 +796,19 @@ def _parse_module_expectation(plan: str, name: str, raw: dict) -> ModuleExpectat
         expect = Expectation(raw.get("expect"))
     except ValueError as exc:
         raise ManifestError(f"{where}: invalid expect {raw.get('expect')!r}") from exc
-    reasons = frozenset(raw.get("reasons", []))
+    raw_reasons = raw.get("reasons", [])
+    if not isinstance(raw_reasons, list) or not all(
+        isinstance(reason, str) for reason in raw_reasons
+    ):
+        raise ManifestError(f"{where}: reasons must be a list of strings")
+    reasons = frozenset(raw_reasons)
     if expect is Expectation.REJECT and not reasons:
         raise ManifestError(f"{where}: a reject module must list its reasons")
     if expect is not Expectation.REJECT and reasons:
         raise ManifestError(f"{where}: only reject modules take reasons")
     allow = raw.get("allow", {})
+    if not isinstance(allow, dict):
+        raise ManifestError(f"{where}: allow must be an object")
     for status, why in allow.items():
         if status not in ALLOWLISTABLE_STATUSES:
             raise ManifestError(f"{where}: {status!r} cannot be allowlisted")

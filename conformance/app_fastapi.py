@@ -310,6 +310,8 @@ async def authorize(
     parks the flow client for the callback.
     """
     _set_active_test(profile, test_name)
+    # A new flow starts with no recorded outcome (see app.py /authorize).
+    test_results.pop(test_id, None)
     try:
         disco_endpoint = parse_discovery_url(issuer)
     except ConfigurationException as exc:

@@ -768,6 +768,9 @@ def authorize(
     The conformance test runner calls this to start an authorization flow.
     """
     _set_active_test(profile, test_name)
+    # A new flow starts with no recorded outcome, so a flow that never reaches
+    # the callback can't be read as an earlier flow's result.
+    test_results.pop(test_id, None)
     http_client = _get_http_client()
 
     # Dynamic RP: the runner registers a client (RFC 7591) and passes back its

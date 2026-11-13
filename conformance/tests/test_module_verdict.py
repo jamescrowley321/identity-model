@@ -272,6 +272,14 @@ def test_load_manifest_parses_entries(tmp_path):
             "plan/m: allowlisted SKIPPED needs a reason",
         ),
         ({"expect": "maybe"}, "plan/m: invalid expect 'maybe'"),
+        (
+            {"expect": "reject", "reasons": "id_token_validation"},
+            "plan/m: reasons must be a list of strings",
+        ),
+        (
+            {"expect": "accept", "allow": ["SKIPPED"]},
+            "plan/m: allow must be an object",
+        ),
         ({"expect": "accept", "extra": 1}, "plan/m: unknown keys ['extra']"),
     ],
 )
@@ -534,3 +542,26 @@ def test_fastapi_harness_records_unknown_state(monkeypatch):
         "status": "error",
         "error": "state_validation: unknown state",
     }
+
+
+def test_authorize_clears_the_previous_flow_record(harness, monkeypatch):
+    """A flow that dies before recording leaves no stale success behind."""
+    from fastapi.testclient import TestClient
+
+    harness.test_results["m9"] = harness.AuthSession(issuer=ISSUER, state="", nonce="")
+    harness.test_results["m9"].result = ACCEPTED
+    monkeypatch.setattr(harness, "parse_discovery_url", _crash)
+    client = TestClient(harness.app, raise_server_exceptions=False)
+
+    authorize = client.get(
+        "/authorize", params={"issuer": ISSUER, "client_id": "c", "test_id": "m9"}
+    )
+
+    assert (authorize.status_code, client.get("/results/m9").json()) == (
+        httpx.codes.INTERNAL_SERVER_ERROR,
+        {"error": "not_found"},
+    )
+
+
+def _crash(_issuer):
+    raise RuntimeError("harness bug")
