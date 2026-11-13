@@ -252,6 +252,15 @@ def _no_kid_candidates(
     return signing_keys
 
 
+# The curve each ECDSA algorithm is defined on (RFC 7518 §3.4, RFC 8812 §3.2).
+_ALG_TO_CRV: dict[str, str] = {
+    "ES256": "P-256",
+    "ES384": "P-384",
+    "ES512": "P-521",
+    "ES256K": "secp256k1",
+}
+
+
 def _first_usable_kid_match(
     matches: list[JsonWebKey],
     jwt_alg: str | None,
@@ -259,14 +268,21 @@ def _first_usable_kid_match(
     """Pick the key among those sharing the token's ``kid``.
 
     RFC 7517 §4.5 allows keys of different ``kty`` to share a ``kid``, so the
-    first key whose ``kty`` and ``alg`` fit the header ``alg`` is used. When
+    first key whose ``kty``, ``alg`` and (for ECDSA) ``crv`` fit the header
+    ``alg`` is used. When
     none fits, the first match is returned so the consistency check reports
     why it cannot verify the token.
     """
+    _reject_non_string_alg(jwt_alg)
     if len(matches) > 1 and jwt_alg:
         expected_kty = _ALG_TO_KTY.get(jwt_alg)
+        expected_crv = _ALG_TO_CRV.get(jwt_alg)
         for key in matches:
-            if expected_kty in (None, key.kty) and key.alg in (None, jwt_alg):
+            if (
+                expected_kty in (None, key.kty)
+                and key.alg in (None, jwt_alg)
+                and (expected_crv is None or key.crv in (None, expected_crv))
+            ):
                 return key
     return matches[0]
 
