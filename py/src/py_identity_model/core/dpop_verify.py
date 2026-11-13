@@ -347,13 +347,17 @@ def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
     )
 
 
+# Placeholders bound against a check_and_store signature; only the count matters.
+_REPLAY_ARGUMENTS = ("jkt", "jti", "expires_at", "now")
+
+
 def _takes_replay_arguments(check: Callable[..., object]) -> bool:
     """Whether *check* takes ``(jkt, jti, expires_at, now)`` (not the 4.x three).
 
     A method with no introspectable signature (a C extension) is accepted.
     """
     try:
-        inspect.signature(check).bind("jkt", "jti", 0.0, 0.0)
+        inspect.signature(check).bind(*_REPLAY_ARGUMENTS)
     except TypeError:
         return False
     except ValueError:
