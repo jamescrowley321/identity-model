@@ -11,7 +11,7 @@ from ..logging_config import logger
 from ..logging_utils import redact_url
 from .dpop import create_dpop_proof
 from .error_handlers import handle_userinfo_error
-from .models import UserInfoRequest, UserInfoResponse
+from .models import UserInfoErrorKind, UserInfoRequest, UserInfoResponse
 from .response_processors import parse_userinfo_response
 
 
@@ -43,6 +43,8 @@ def prepare_userinfo_headers(
         request: The UserInfo request (address, token, and optional dpop_key).
         dpop_nonce: Server-provided DPoP nonce to embed in the proof when a
             prior ``use_dpop_nonce`` challenge was returned (RFC 9449 §8).
+            Defaults to the nonce the key remembers for this server
+            (:meth:`DPoPKey.nonce_for`, RFC 9449 §8.2).
 
     Returns:
         Headers dict — ``Authorization: Bearer <token>``, or (when DPoP-bound)
@@ -56,7 +58,7 @@ def prepare_userinfo_headers(
         "GET",
         request.address,
         access_token=request.token,
-        nonce=dpop_nonce,
+        nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
     )
     return {"Authorization": f"DPoP {request.token}", "DPoP": proof}
 
@@ -81,27 +83,28 @@ def process_userinfo_response(response: httpx.Response) -> UserInfoResponse:
 
 def validate_userinfo_sub(
     response: UserInfoResponse,
-    expected_sub: str | None,
+    expected_sub: str,
 ) -> UserInfoResponse:
     """Validate that the UserInfo ``sub`` matches the ID token ``sub``.
 
-    Per OIDC Core 1.0 Section 5.3.4, the ``sub`` claim in the UserInfo
-    response MUST exactly match the ``sub`` in the ID token.
+    Per OIDC Core 1.0 Section 5.3.2, the ``sub`` claim in the UserInfo
+    response MUST exactly match the ``sub`` in the ID token; if they do not
+    match, the UserInfo response values MUST NOT be used.
 
     Args:
         response: A parsed UserInfo response.
-        expected_sub: The ``sub`` from the caller's ID token.  When
-            ``None``, validation is skipped (opt-in).
+        expected_sub: The ``sub`` from the caller's ID token.
 
     Returns:
-        The original response when validation passes or is skipped,
-        otherwise an error ``UserInfoResponse``.  A signed or encrypted
-        (``application/jwt``) response with ``expected_sub`` set is an
-        error: this client has no keys to verify it, and comparing the
-        ``sub`` of an unverified JWT would give false assurance.
+        The original response when it is a failure already or its ``sub``
+        matches, otherwise an error ``UserInfoResponse``: a different ``sub``
+        fails with :attr:`UserInfoErrorKind.SUB_MISMATCH`.  A signed or
+        encrypted (``application/jwt``) response fails with
+        :attr:`UserInfoErrorKind.UNVERIFIABLE_SUB`, with the JWT on
+        ``unverified_jwt``: this client has no keys to verify it, and
+        comparing the ``sub`` of an unverified JWT would give false assurance.
     """
-    # Skip validation when not requested or on failure
-    if expected_sub is None or not response.is_successful:
+    if not response.is_successful:
         return response
 
     if response.raw is not None:
@@ -109,9 +112,10 @@ def validate_userinfo_sub(
             is_successful=False,
             error=(
                 "UserInfo sub cannot be verified: the response is a signed or "
-                "encrypted JWT (application/jwt). Verify and decode it, then "
-                "compare its sub, or omit expected_sub."
+                "encrypted JWT (application/jwt)"
             ),
+            error_kind=UserInfoErrorKind.UNVERIFIABLE_SUB,
+            unverified_jwt=response.raw,
         )
 
     claims = object.__getattribute__(response, "claims")
@@ -119,6 +123,7 @@ def validate_userinfo_sub(
         return UserInfoResponse(
             is_successful=False,
             error="UserInfo response contains no claims to validate sub against",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
         )
 
     actual_sub = claims.get("sub")
@@ -126,6 +131,7 @@ def validate_userinfo_sub(
         return UserInfoResponse(
             is_successful=False,
             error="UserInfo response is missing required 'sub' claim",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
         )
 
     if actual_sub != expected_sub:
@@ -134,6 +140,7 @@ def validate_userinfo_sub(
             error=(
                 f"UserInfo sub mismatch: expected '{expected_sub}', got '{actual_sub}'"
             ),
+            error_kind=UserInfoErrorKind.SUB_MISMATCH,
         )
 
     return response

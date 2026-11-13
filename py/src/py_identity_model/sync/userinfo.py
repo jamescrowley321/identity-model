@@ -7,7 +7,7 @@ per OIDC Core 1.0 Section 5.3.
 
 import httpx
 
-from ..core.dpop import extract_dpop_nonce
+from ..core.dpop import extract_dpop_nonce, remember_dpop_nonce
 from ..core.error_handlers import handle_userinfo_error
 from ..core.models import UserInfoRequest, UserInfoResponse
 from ..core.userinfo_logic import (
@@ -61,11 +61,14 @@ def get_userinfo(
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
+            remember_dpop_nonce(request.dpop_key, request.address, response)
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 response.close()
                 headers = prepare_userinfo_headers(request, dpop_nonce=nonce)
                 response = _request_userinfo(client, request.address, headers)
+        if request.dpop_key is not None:
+            remember_dpop_nonce(request.dpop_key, request.address, response)
         result = process_userinfo_response(response)
         return validate_userinfo_sub(result, request.expected_sub)
     except Exception as e:

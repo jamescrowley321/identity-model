@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import httpx
 
-from ..core.dpop import extract_dpop_nonce
+from ..core.dpop import extract_dpop_nonce, remember_dpop_nonce
 from ..core.error_handlers import (
     handle_auth_code_token_error,
     handle_refresh_token_error,
@@ -126,6 +126,7 @@ def request_authorization_code_token(
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
+            remember_dpop_nonce(request.dpop_key, request.address, response)
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 response.close()
@@ -136,6 +137,8 @@ def request_authorization_code_token(
                         request, dpop_nonce=nonce
                     ),
                 )
+        if request.dpop_key is not None:
+            remember_dpop_nonce(request.dpop_key, request.address, response)
         return process_auth_code_token_response(
             response, require_dpop_token_type=request.require_dpop_token_type
         )
@@ -173,6 +176,7 @@ def refresh_token(
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
+            remember_dpop_nonce(request.dpop_key, request.address, response)
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 response.close()
@@ -183,6 +187,8 @@ def refresh_token(
                         request, dpop_nonce=nonce
                     ),
                 )
+        if request.dpop_key is not None:
+            remember_dpop_nonce(request.dpop_key, request.address, response)
         return process_refresh_token_response(
             response, require_dpop_token_type=request.require_dpop_token_type
         )

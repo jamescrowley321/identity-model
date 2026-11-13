@@ -35,6 +35,7 @@ from py_identity_model.aio.par import (
 from py_identity_model.aio.token_client import (
     request_authorization_code_token as request_authorization_code_token_async,
 )
+from py_identity_model.core.dpop import remember_dpop_nonce
 from py_identity_model.sync.par import push_authorization_request
 from py_identity_model.sync.token_client import request_authorization_code_token
 
@@ -100,9 +101,13 @@ class TestExtractDpopNonce:
         resp = httpx.Response(400, json={"error": "use_dpop_nonce"})
         assert extract_dpop_nonce(resp) is None
 
-    def test_none_on_success_even_with_nonce_header(self):
+    def test_success_nonce_is_remembered_not_retried(self):
+        """RFC 9449 §8.2: a 200's nonce is for the next request, not a retry."""
         resp = httpx.Response(200, json={}, headers={"DPoP-Nonce": "n"})
+        key = generate_dpop_key()
         assert extract_dpop_nonce(resp) is None
+        remember_dpop_nonce(key, TOKEN_URL, resp)
+        assert key.nonce_for(TOKEN_URL) == "n"
 
     def test_none_on_unrelated_error(self):
         resp = httpx.Response(
@@ -296,6 +301,7 @@ class TestSyncTokenDpop:
                 client_id="app1",
                 code="auth-code",
                 redirect_uri="https://app.com/cb",
+                code_verifier="verifier",
                 dpop_key=key,
             )
         )
@@ -317,6 +323,7 @@ class TestSyncTokenDpop:
                 client_id="app1",
                 code="auth-code",
                 redirect_uri="https://app.com/cb",
+                code_verifier="verifier",
             )
         )
         assert route.calls[0].request.headers.get("DPoP") is None
@@ -392,6 +399,7 @@ class TestAsyncTokenDpop:
                 client_id="app1",
                 code="auth-code",
                 redirect_uri="https://app.com/cb",
+                code_verifier="verifier",
                 dpop_key=key,
             )
         )
@@ -420,6 +428,7 @@ class TestAsyncTokenDpop:
                 client_id="app1",
                 code="auth-code",
                 redirect_uri="https://app.com/cb",
+                code_verifier="verifier",
                 dpop_key=key,
             )
         )

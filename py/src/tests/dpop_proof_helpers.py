@@ -37,9 +37,7 @@ def fixture(name: str) -> dict:
 def dpop_fixture_key(name: str) -> tuple[DPoPKey, object]:
     """Return a DPoPKey holding the fixture's private key, and its public key."""
     doc = fixture(name)
-    key = DPoPKey.__new__(DPoPKey)
-    key._algorithm = doc["algorithm"]
-    key._private_key = PyJWK(doc["private"]).key
+    key = DPoPKey.from_jwk(doc["private"], doc["algorithm"])
     return key, PyJWK(doc["public"]).key
 
 

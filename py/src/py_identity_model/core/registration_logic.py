@@ -9,6 +9,7 @@ import json
 
 import httpx
 
+from ..exceptions import ProtocolParameterError, ProtocolParameterErrorReason
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from .models import (
@@ -34,6 +35,16 @@ _METADATA_FIELDS = (
     "token_endpoint_auth_method",
     "scope",
     "jwks_uri",
+)
+
+# RFC 7592 Section 2.2: fields the server issues, which an update request
+# MUST NOT include. A read response carries them, so they are dropped when
+# its metadata is passed back as ``extra_metadata``.
+_UPDATE_FORBIDDEN_FIELDS = (
+    "registration_access_token",
+    "registration_client_uri",
+    "client_secret_expires_at",
+    "client_id_issued_at",
 )
 
 
@@ -94,10 +105,25 @@ def prepare_update_request(request: ClientUpdateRequest) -> tuple[dict, dict]:
     """Prepare the JSON body and headers for a client update (RFC 7592 Section 2.2).
 
     The body includes ``client_id`` and the full client metadata; headers carry
-    the registration access token.
+    the registration access token. ``registration_access_token``,
+    ``registration_client_uri``, ``client_secret_expires_at`` and
+    ``client_id_issued_at`` are left out even when ``extra_metadata`` has them,
+    so a read response's metadata can be passed back as is.
+
+    Raises:
+        ProtocolParameterError: ``extra_metadata`` has a ``client_id`` other
+            than ``request.client_id``
+            (:attr:`ProtocolParameterErrorReason.CLIENT_ID_MISMATCH`).
     """
     logger.info(f"Updating client at {redact_url(request.address)}")
+    extra_client_id = (request.extra_metadata or {}).get("client_id")
+    if extra_client_id is not None and extra_client_id != request.client_id:
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.CLIENT_ID_MISMATCH, "extra_metadata"
+        )
     body = _build_client_metadata(request)
+    for name in _UPDATE_FORBIDDEN_FIELDS:
+        body.pop(name, None)
     headers = prepare_management_headers(request.registration_access_token)
     headers["Content-Type"] = "application/json"
     return body, headers

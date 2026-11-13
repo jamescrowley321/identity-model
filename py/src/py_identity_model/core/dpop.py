@@ -11,10 +11,11 @@ from base64 import urlsafe_b64encode
 from enum import StrEnum
 import hashlib
 import json
+import threading
 import time
 import types
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunparse
 import uuid
 
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -112,6 +113,10 @@ class DPoPKey:
     usable across restarts.  The key pair is immutable and thread-safe after
     construction.
 
+    The key also remembers the latest ``DPoP-Nonce`` each server (origin) sent,
+    on any response, and the library's DPoP-bound requests put it in the next
+    proof to that server (RFC 9449 §8.2, §9). See :meth:`nonce_for`.
+
     Args:
         algorithm: The signing algorithm, as a :class:`DPoPAlgorithm` or its
             string value.
@@ -120,12 +125,15 @@ class DPoPKey:
         ValueError: If *algorithm* is not a :class:`DPoPAlgorithm`.
     """
 
-    __slots__ = ("_algorithm", "_private_key")
+    __slots__ = ("_algorithm", "_nonce_lock", "_nonces", "_private_key")
 
     _algorithm: DPoPAlgorithm
     _private_key: _PrivateKey
+    _nonces: dict[str, str]
+    _nonce_lock: threading.Lock
 
     def __init__(self, algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256) -> None:
+        self._init_nonces()
         self._algorithm = _parse_algorithm(algorithm)
         curve = _EC_CURVES.get(self._algorithm)
         if curve is not None:
@@ -140,9 +148,33 @@ class DPoPKey:
     @classmethod
     def _wrap(cls, algorithm: DPoPAlgorithm, private_key: object) -> DPoPKey:
         key = cls.__new__(cls)
+        key._init_nonces()
         key._private_key = _check_key_fits(algorithm, private_key)
         key._algorithm = algorithm
         return key
+
+    def _init_nonces(self) -> None:
+        self._nonces = {}
+        self._nonce_lock = threading.Lock()
+
+    def nonce_for(self, uri: str) -> str | None:
+        """The latest ``DPoP-Nonce`` the server at *uri*'s origin supplied.
+
+        RFC 9449 §8.2: the client MUST use a nonce the server supplied, also
+        on a ``200`` response, for all subsequent requests until the server
+        supplies a new one. Nonces are kept per origin (scheme, host, port),
+        so one server's nonce is never sent to another (§9).
+
+        Returns:
+            The nonce, or ``None`` when that server has supplied none.
+        """
+        with self._nonce_lock:
+            return self._nonces.get(_origin(uri))
+
+    def remember_nonce(self, uri: str, nonce: str) -> None:
+        """Record *nonce* as the latest ``DPoP-Nonce`` from *uri*'s origin."""
+        with self._nonce_lock:
+            self._nonces[_origin(uri)] = nonce
 
     @classmethod
     def from_pem(
@@ -439,6 +471,22 @@ def build_dpop_headers(
     return headers
 
 
+def _origin(uri: str) -> str:
+    parts = urlsplit(uri)
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+
+
+def remember_dpop_nonce(key: DPoPKey, uri: str, response: httpx.Response) -> None:
+    """Record a ``DPoP-Nonce`` header from *response* on *key* for *uri*'s server.
+
+    Any status counts: a server may supply the next nonce on a ``200``
+    response (RFC 9449 §8.2) or with a ``use_dpop_nonce`` error (§8, §9).
+    """
+    nonce = response.headers.get("DPoP-Nonce")
+    if nonce:
+        key.remember_nonce(uri, nonce)
+
+
 def extract_dpop_nonce(response: httpx.Response) -> str | None:
     """Return the server DPoP nonce when a response demands a nonced retry.
 
@@ -481,4 +529,5 @@ __all__ = [
     "create_dpop_proof",
     "extract_dpop_nonce",
     "generate_dpop_key",
+    "remember_dpop_nonce",
 ]

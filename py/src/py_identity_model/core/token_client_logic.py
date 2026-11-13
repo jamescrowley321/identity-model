@@ -7,10 +7,12 @@ token client implementations, reducing code duplication.
 
 import httpx
 
+from ..exceptions import ProtocolParameterError, ProtocolParameterErrorReason
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from ..oidc_constants import TokenResponse
-from .client_auth import apply_client_auth
+from .client_auth import apply_client_auth, resolve_client_auth_method
+from .client_auth_method import ClientAuthMethod
 from .dpop import create_dpop_proof
 from .error_handlers import (
     handle_auth_code_token_error,
@@ -129,11 +131,26 @@ def prepare_auth_code_token_request_data(
         request: The authorization code token exchange request.
         dpop_nonce: Server-provided DPoP nonce to embed in the proof when the
             request is DPoP-bound and a prior ``use_dpop_nonce`` challenge was
-            returned (RFC 9449 §8).
+            returned (RFC 9449 §8). Defaults to the nonce the key remembers
+            for this server (:meth:`DPoPKey.nonce_for`, RFC 9449 §8.2).
 
     Returns:
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
+
+    Raises:
+        ProtocolParameterError: The client is public (it resolves to
+            ``ClientAuthMethod.NONE``) and has no ``code_verifier``
+            (:attr:`ProtocolParameterErrorReason.PKCE_REQUIRED`): RFC 9700
+            §2.1.1 requires public clients to use PKCE. Raised before
+            anything is sent.
     """
+    if request.code_verifier is None and (
+        resolve_client_auth_method(request, client_secret=request.client_secret)
+        is ClientAuthMethod.NONE
+    ):
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.PKCE_REQUIRED, "code_verifier"
+        )
     params: dict[str, str] = {
         "grant_type": "authorization_code",
         "code": request.code,
@@ -151,7 +168,10 @@ def prepare_auth_code_token_request_data(
         # endpoint proof carries no ``ath`` (that is reserved for resource-
         # server requests, which hash the access token).
         headers["DPoP"] = create_dpop_proof(
-            request.dpop_key, "POST", request.address, nonce=dpop_nonce
+            request.dpop_key,
+            "POST",
+            request.address,
+            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
         )
 
     auth = apply_client_auth(params, request, client_secret=request.client_secret)
@@ -234,7 +254,8 @@ def prepare_refresh_token_request_data(
     Args:
         request: The refresh token request.
         dpop_nonce: Server-provided DPoP nonce to embed in the proof after a
-            ``use_dpop_nonce`` challenge (RFC 9449 §8).
+            ``use_dpop_nonce`` challenge (RFC 9449 §8). Defaults to the nonce
+            the key remembers for this server (:meth:`DPoPKey.nonce_for`).
     """
     params: dict[str, str] = {
         "grant_type": "refresh_token",
@@ -249,7 +270,10 @@ def prepare_refresh_token_request_data(
         # RFC 9449 §5: the refreshed access token stays bound to the key.  A
         # token-endpoint proof carries no ``ath``.
         headers["DPoP"] = create_dpop_proof(
-            request.dpop_key, "POST", request.address, nonce=dpop_nonce
+            request.dpop_key,
+            "POST",
+            request.address,
+            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
         )
 
     auth = apply_client_auth(params, request, client_secret=request.client_secret)

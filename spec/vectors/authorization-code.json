@@ -17,7 +17,8 @@
           "name": "public-client",
           "input": {
             "code": "SplxlOBeZQQYbYS6WxSbIA",
-            "redirect_uri": "https://client.example.org/cb"
+            "redirect_uri": "https://client.example.org/cb",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
           },
           "http": {
             "/token": {
@@ -37,7 +38,7 @@
               "code": "SplxlOBeZQQYbYS6WxSbIA",
               "redirect_uri": "https://client.example.org/cb",
               "client_id": "cid",
-              "code_verifier": ""
+              "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
             }
           },
           "expect": {

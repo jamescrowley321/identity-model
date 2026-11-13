@@ -17,6 +17,7 @@ from .models import (
     PushedAuthorizationResponse,
     SignedPushedAuthorizationRequest,
 )
+from .validators import validate_absolute_uri_without_fragment
 
 
 def log_par_request(
@@ -41,7 +42,8 @@ def prepare_par_request_data(
         request: The pushed authorization request.
         dpop_nonce: Server-provided DPoP nonce to embed in the proof when the
             PAR is DPoP-bound and a prior ``use_dpop_nonce`` challenge was
-            returned (RFC 9449 §8).
+            returned (RFC 9449 §8). Defaults to the nonce the key remembers
+            for this server (:meth:`DPoPKey.nonce_for`, RFC 9449 §8.2).
 
     Returns:
         ``(data, headers, auth)`` where *auth* is ``None`` for public clients.
@@ -59,7 +61,10 @@ def prepare_par_request_data(
         # RFC 9449: bind the PAR to the client's key. The PAR-endpoint proof
         # carries no ``ath`` (that is reserved for resource-server requests).
         headers["DPoP"] = create_dpop_proof(
-            request.dpop_key, "POST", request.address, nonce=dpop_nonce
+            request.dpop_key,
+            "POST",
+            request.address,
+            nonce=dpop_nonce or request.dpop_key.nonce_for(request.address),
         )
 
     auth = apply_client_auth(
@@ -73,6 +78,7 @@ def _plain_params(request: PushedAuthorizationRequest) -> dict[str, str]:
     """The authorization parameters as form fields (RFC 9126 §2.1)."""
     if not request.redirect_uri:
         raise ValueError("redirect_uri is required")
+    validate_absolute_uri_without_fragment(request.redirect_uri, "redirect_uri")
     if bool(request.code_challenge) != bool(request.code_challenge_method):
         raise ValueError(
             "code_challenge and code_challenge_method must both be set or both be absent"

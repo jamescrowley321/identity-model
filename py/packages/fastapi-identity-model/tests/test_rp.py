@@ -24,6 +24,7 @@ from fastapi_identity_model import (
 from py_identity_model import (
     AuthorizeCallbackException,
     TokenValidationException,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from py_identity_model.aio import validate_id_token as avalidate_id_token
@@ -371,6 +372,25 @@ async def test_callback_userinfo_sub_mismatch_aborts(monkeypatch):
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
     assert "subject" in resp.json()["detail"].lower()
+
+
+async def test_callback_userinfo_sub_mismatch_kind_aborts(monkeypatch):
+    # get_userinfo enforces the expected_sub the RP passes; its SUB_MISMATCH
+    # failure must fail the login, not be tolerated as a transient error.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub mismatch: expected 'user-1', got 'someone-else'",
+            error_kind=UserInfoErrorKind.SUB_MISMATCH,
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
+    [call] = rp.get_userinfo.call_args_list
+    assert call.args[0].expected_sub == "user-1"
 
 
 async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
