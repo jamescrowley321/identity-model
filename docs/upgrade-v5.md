@@ -522,12 +522,34 @@ config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
   (`py_identity_model.aio.validate_token`,
   `py_identity_model.aio.check_introspection_binding`,
   `py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
-  async cache with `ConfigurationException`.
+  async cache, or any cache that returns an awaitable, with
+  `ConfigurationException`.
+- A cache answer that is not a `DPoPReplayCheck` raises
+  `ConfigurationException`.
+- `py_identity_model.aio.check_introspection_binding` and
+  `py_identity_model.aio.verify_dpop_proof` are coroutines, like every `aio`
+  function, and must be awaited. A call without `await` runs no check and
+  raises nothing, so an inactive, unbound or replayed token is accepted:
+
+  ```python
+  from py_identity_model.aio import check_introspection_binding, verify_dpop_proof
+
+  await check_introspection_binding(response, access_token, presentation, dpop=dpop)
+  proof = await verify_dpop_proof(dpop_header, proof_request, dpop)
+
+  # Wrong: returns an unawaited coroutine; nothing is checked.
+  check_introspection_binding(response, access_token, presentation, dpop=dpop)
+  ```
+
+  Python only logs `RuntimeWarning: coroutine ... was never awaited`. A type
+  checker catches a missing `await`: pyright's `reportUnusedCoroutine` and
+  pyrefly's `unused-coroutine` are on by default; keep them on.
 - The proof is recorded last, after the certificate binding check too, so a
   token refused for its certificate does not use up its proof.
 - In the FastAPI package, `AuthOptions.dpop` defaults to options with an
   `InMemoryDPoPReplayCache` owned by that `AuthOptions`; pass the same
   `AuthOptions` to the middleware and the WebSocket authenticator to share it.
+  `AuthOptions(dpop=None)` means that default.
 
 ## Discovery
 

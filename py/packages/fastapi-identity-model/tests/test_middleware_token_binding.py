@@ -862,6 +862,13 @@ class TestSharedOptions:
             len({id(o.dpop.replay_cache) for o in (first, second, from_settings)}) == 3
         )
 
+    def test_dpop_none_means_the_default(self):
+        given = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+        defaulted = AuthOptions(dpop=None)  # type: ignore[arg-type]
+
+        assert isinstance(defaulted.dpop.replay_cache, InMemoryDPoPReplayCache)
+        assert AuthOptions(dpop=given).dpop is given
+
     def test_options_are_frozen(self):
         options = AuthOptions()
         field_name = "required_binding"

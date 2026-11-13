@@ -37,7 +37,7 @@ from .dpop_verify import (
     DPoPProofRequest,
     DPoPValidationError,
     DPoPVerificationOptions,
-    check_dpop_proof,
+    _check_dpop_proof,
     record_proof,
 )
 from .mtls import validate_certificate_binding
@@ -220,7 +220,7 @@ def _check_dpop_binding(
         expected_jkt=jkt,
         expected_nonce=presentation.expected_nonce,
     )
-    _, record = check_dpop_proof(presentation.dpop_proof, request, options)
+    _, record = _check_dpop_proof(presentation.dpop_proof, request, options)
     return record
 
 
@@ -268,7 +268,7 @@ def check_token_binding(
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
-    record = check_binding_before_replay(
+    record = _check_binding_before_replay(
         claims, access_token, config.required_binding, config.dpop, presentation
     )
     if record is not None:
@@ -326,21 +326,24 @@ def check_introspection_binding(
         ValueError: If a DPoP proof is checked without an absolute
             ``presentation.url`` or a ``presentation.method``.
     """
-    record = introspection_binding_before_replay(
+    record = _introspection_binding_before_replay(
         response, access_token, presentation, required_binding, dpop
     )
     if record is not None:
         record_proof(record)
 
 
-def introspection_binding_before_replay(
+def _introspection_binding_before_replay(
     response: TokenIntrospectionResponse,
     access_token: str,
     presentation: TokenPresentation | None,
     required_binding: TokenBinding,
     dpop: DPoPVerificationOptions | None,
 ) -> _ReplayRecord | None:
-    """Every check of :func:`check_introspection_binding` but the replay check."""
+    """Every check of :func:`check_introspection_binding` but the replay check.
+
+    A returned record must go to ``record_proof`` before the token is accepted.
+    """
     _require_presentation(required_binding, presentation)
     if not response.is_successful:
         raise IntrospectedTokenError(
@@ -349,12 +352,12 @@ def introspection_binding_before_replay(
     claims = response.claims or {}
     if claims.get("active") is not True:
         raise IntrospectedTokenError(IntrospectedTokenErrorKind.INACTIVE)
-    return check_binding_before_replay(
+    return _check_binding_before_replay(
         claims, access_token, required_binding, dpop, presentation
     )
 
 
-def check_binding_before_replay(
+def _check_binding_before_replay(
     claims: dict,
     access_token: str,
     binding: TokenBinding,
@@ -365,7 +368,8 @@ def check_binding_before_replay(
 
     Returns the DPoP proof's replay record, or ``None`` when no proof was
     checked. The caller records it, so a token rejected by a later check (the
-    certificate binding) never records its proof.
+    certificate binding) never records its proof. The token is not accepted
+    until ``record_proof`` returns: without it a replay passes.
     """
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     cnf = cnf if isinstance(cnf, dict) else {}

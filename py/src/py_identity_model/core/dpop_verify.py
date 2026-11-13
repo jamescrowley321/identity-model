@@ -15,6 +15,7 @@ Every failure raises :class:`DPoPValidationError` with a typed
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import enum
 import hmac
@@ -54,6 +55,7 @@ _REPLAY_CACHE_MESSAGE = (
 ASYNC_REPLAY_CACHE_MESSAGE = (
     "An AsyncDPoPReplayCache needs the async validators (py_identity_model.aio)"
 )
+REPLAY_ANSWER_MESSAGE = "replay_cache.check_and_store must return a DPoPReplayCheck"
 
 # RFC 9449 §4.3 check 6: the key family each allowed ``alg`` requires.
 _ALG_KEY_TYPES: types.MappingProxyType[str, tuple[str, str | None]] = (
@@ -368,7 +370,9 @@ class DPoPVerificationOptions:
     iat_leeway: float = DEFAULT_DPOP_IAT_LEEWAY
 
     def __post_init__(self) -> None:
-        if not callable(getattr(self.replay_cache, "check_and_store", None)):
+        if isinstance(self.replay_cache, type) or not callable(
+            getattr(self.replay_cache, "check_and_store", None)
+        ):
             raise TypeError(_REPLAY_CACHE_MESSAGE)
         if self.algorithms is not None:
             unsupported = set(self.algorithms) - DEFAULT_ALLOWED_ALGORITHMS
@@ -402,7 +406,14 @@ class _ReplayRecord:
 
 
 def _replay_result(result: object) -> None:
-    """Raise for a proof the replay cache did not record (any other answer)."""
+    """Raise for a proof the replay cache did not record (any other answer).
+
+    Raises:
+        ConfigurationException: If *result* is not a :class:`DPoPReplayCheck`.
+        DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
+    """
+    if not isinstance(result, DPoPReplayCheck):
+        raise ConfigurationException(REPLAY_ANSWER_MESSAGE)
     if result is DPoPReplayCheck.REPLAYED:
         raise DPoPValidationError(DPoPErrorKind.REPLAYED_JTI)
     if result is not DPoPReplayCheck.RECORDED:
@@ -414,14 +425,19 @@ def record_proof(record: _ReplayRecord) -> None:
 
     Raises:
         ConfigurationException: If the cache is an
-            :class:`AsyncDPoPReplayCache`; use the async validators.
+            :class:`AsyncDPoPReplayCache` (use the async validators), or its
+            answer is not a :class:`DPoPReplayCheck`.
         DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
     """
     result = record.cache.check_and_store(
         record.jkt, record.jti, record.expires_at, record.now
     )
-    if inspect.iscoroutine(result):
-        result.close()  # never run: nothing is recorded, and no warning
+    if inspect.isawaitable(result):
+        # Never run: nothing is recorded, and no "never awaited" warning.
+        if inspect.iscoroutine(result):
+            result.close()
+        elif isinstance(result, asyncio.Future):
+            result.cancel()
         raise ConfigurationException(ASYNC_REPLAY_CACHE_MESSAGE)
     _replay_result(result)
 
@@ -430,6 +446,8 @@ async def record_proof_async(record: _ReplayRecord) -> None:
     """Run the replay check with a sync or an async cache.
 
     Raises:
+        ConfigurationException: If the cache's answer is not a
+            :class:`DPoPReplayCheck`.
         DPoPValidationError: ``REPLAYED_JTI`` or ``REPLAY_CACHE_FULL``.
     """
     result = record.cache.check_and_store(
@@ -619,12 +637,12 @@ def verify_dpop_proof(
         ConfigurationException: If ``options.replay_cache`` is an
             :class:`AsyncDPoPReplayCache`.
     """
-    verified, record = check_dpop_proof(proof, request, options, now=now)
+    verified, record = _check_dpop_proof(proof, request, options, now=now)
     record_proof(record)
     return verified
 
 
-def check_dpop_proof(
+def _check_dpop_proof(
     proof: str,
     request: DPoPProofRequest,
     options: DPoPVerificationOptions,
@@ -634,7 +652,8 @@ def check_dpop_proof(
     """Run every check of :func:`verify_dpop_proof` except the replay check.
 
     Returns the verified proof and the record the caller must pass to
-    :func:`record_proof` or :func:`record_proof_async` before accepting it.
+    :func:`record_proof` or :func:`record_proof_async`. The proof is not
+    accepted until that call returns: without it a replay passes.
     """
     if not isinstance(proof, str) or not proof.isascii() or not proof.strip():
         raise DPoPValidationError(DPoPErrorKind.MALFORMED)

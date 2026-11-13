@@ -111,7 +111,7 @@ class AuthOptions:
             :class:`~py_identity_model.InMemoryDPoPReplayCache` owned by this
             options value, so the HTTP middleware and WebSocket routes given
             the same ``AuthOptions`` share one cache. Behind a load balancer,
-            pass a shared cache.
+            pass a shared cache. ``None`` means the default.
         client_certificate: Returns the connection's mTLS client certificate
             (PEM or DER) for certificate-bound tokens, or ``None``. It receives
             the ``Request`` (HTTP) or ``WebSocket`` (handshake). Without it
@@ -139,6 +139,8 @@ class AuthOptions:
         object.__setattr__(
             self, "required_binding", TokenBinding(self.required_binding)
         )
+        if self.dpop is None:
+            object.__setattr__(self, "dpop", _default_dpop_options())
         if (
             self.required_binding is TokenBinding.MTLS
             and self.client_certificate is None
@@ -173,7 +175,7 @@ class AuthOptions:
             )
         return cls(
             required_binding=settings.required_binding,
-            dpop=dpop if dpop is not None else _default_dpop_options(),
+            dpop=dpop,
             client_certificate=client_certificate,
             expected_origin=settings.expected_origin,
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from base64 import urlsafe_b64encode
 import inspect
 import json
@@ -457,7 +458,10 @@ class TestKeyChecks:
         with pytest.raises(TypeError, match="replay_cache"):
             DPoPVerificationOptions()  # type: ignore[call-arg]
 
-    @pytest.mark.parametrize("cache", [None, object(), "cache"])
+    # The class itself has a check_and_store but is not a cache.
+    @pytest.mark.parametrize(
+        "cache", [None, object(), "cache", InMemoryDPoPReplayCache]
+    )
     def test_replay_cache_must_be_a_cache(self, cache):
         with pytest.raises(
             TypeError,
@@ -471,6 +475,12 @@ class TestKeyChecks:
     def test_options_are_keyword_only(self):
         with pytest.raises(TypeError):
             DPoPVerificationOptions(InMemoryDPoPReplayCache())  # type: ignore[misc]
+
+    def test_verifier_needs_options(self):
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        with pytest.raises(TypeError, match="options"):
+            verify_dpop_proof(_sign(generate_dpop_key()), request)  # type: ignore[call-arg]
 
 
 @pytest.mark.unit
@@ -704,9 +714,6 @@ class TestReplayCache:
         [
             (DPoPReplayCheck.REPLAYED, DPoPErrorKind.REPLAYED_JTI),
             (DPoPReplayCheck.FULL, DPoPErrorKind.REPLAY_CACHE_FULL),
-            # Anything but RECORDED fails closed.
-            (False, DPoPErrorKind.REPLAY_CACHE_FULL),
-            (None, DPoPErrorKind.REPLAY_CACHE_FULL),
         ],
     )
     def test_cache_answer_maps_to_one_error(self, result, kind):
@@ -717,6 +724,38 @@ class TestReplayCache:
         options = _options(replay_cache=Answering())
 
         assert _kind(_sign(generate_dpop_key()), options=options) is kind
+
+    @pytest.mark.parametrize("result", [True, False, None, "recorded"])
+    def test_cache_answer_must_be_a_replay_check(self, result):
+        class Answering:
+            def check_and_store(self, *_args: object):
+                return result
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "replay_cache.check_and_store must return a DPoPReplayCheck"
+            ),
+        ):
+            _verify(
+                _sign(generate_dpop_key()), options=_options(replay_cache=Answering())
+            )
+
+    async def test_async_cache_answer_must_be_a_replay_check(self):
+        class Answering:
+            async def check_and_store(self, *_args: object):
+                return True
+
+        options = _options(replay_cache=Answering())
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "replay_cache.check_and_store must return a DPoPReplayCheck"
+            ),
+        ):
+            await averify_dpop_proof(_sign(generate_dpop_key()), request, options)
 
     def test_replay_refused_at_window_edge(self):
         # Retention must outlive acceptance: at now == iat + max_age + leeway
@@ -822,6 +861,52 @@ class TestReplayCache:
         assert [inspect.getcoroutinestate(c) for c in cache.coroutines] == [
             inspect.CORO_CLOSED
         ]
+
+    def test_sync_verifier_cancels_a_future_from_the_cache(self):
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.create_future()
+
+            class FutureCache:
+                def check_and_store(self, *_args: object):
+                    return future
+
+            with pytest.raises(
+                ConfigurationException,
+                match=_exactly(
+                    "An AsyncDPoPReplayCache needs the async validators "
+                    "(py_identity_model.aio)"
+                ),
+            ):
+                _verify(
+                    _sign(generate_dpop_key()),
+                    options=_options(replay_cache=FutureCache()),
+                )
+            assert future.cancelled()
+        finally:
+            loop.close()
+
+    def test_sync_verifier_refuses_any_awaitable(self):
+        class Pending:
+            def __await__(self):
+                yield
+                return DPoPReplayCheck.RECORDED
+
+        class AwaitableCache:
+            def check_and_store(self, *_args: object):
+                return Pending()
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "An AsyncDPoPReplayCache needs the async validators "
+                "(py_identity_model.aio)"
+            ),
+        ):
+            _verify(
+                _sign(generate_dpop_key()),
+                options=_options(replay_cache=AwaitableCache()),
+            )
 
 
 @pytest.mark.unit

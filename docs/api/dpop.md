@@ -164,13 +164,34 @@ store so a proof replayed to another worker is refused (RFC 9449 §11.1).
 A store implements `DPoPReplayCache`, whose
 `check_and_store(jkt, jti, expires_at, now)` returns a `DPoPReplayCheck`:
 `RECORDED`, `REPLAYED` or `FULL`. It returns its answer and does not raise for
-a replay or a full store; any answer other than `RECORDED` refuses the proof.
+a replay or a full store; `REPLAYED` and `FULL` refuse the proof, and an
+answer that is not a `DPoPReplayCheck` raises `ConfigurationException`.
 A store reached over the network can implement `AsyncDPoPReplayCache`
 (`async def check_and_store`) instead, with the async validators
 (`py_identity_model.aio.validate_token`,
 `py_identity_model.aio.check_introspection_binding`,
 `py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
 async cache with `ConfigurationException`.
+
+`py_identity_model.aio.verify_dpop_proof` and
+`py_identity_model.aio.check_introspection_binding` are coroutines and must be
+awaited. A call without `await` runs no check (signature, `htm`/`htu`, `iat`,
+`ath`, `jkt` or replay) and raises nothing:
+
+```python
+from py_identity_model import DPoPProofRequest
+from py_identity_model.aio import verify_dpop_proof
+
+proof = await verify_dpop_proof(  # raises DPoPValidationError on any failure
+    request.headers["DPoP"],
+    DPoPProofRequest(
+        method=request.method,
+        url="https://api.example.com/orders",
+        access_token=access_token,
+    ),
+    dpop,
+)
+```
 
 ### FastAPI
 

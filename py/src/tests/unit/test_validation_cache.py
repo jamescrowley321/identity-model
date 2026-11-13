@@ -225,6 +225,13 @@ class TestInjectedCache:
         assert ValidationCache().config == CacheConfig()
         assert AsyncValidationCache().config == CacheConfig()
 
+    @pytest.mark.parametrize("cache_type", [ValidationCache, AsyncValidationCache])
+    def test_config_is_the_only_public_attribute(self, cache_type):
+        # 969-B: the cache state is private; no public alias may come back.
+        public = {name for name in dir(cache_type()) if not name.startswith("_")}
+
+        assert public == {"config"}
+
     def test_default_cache_is_one_object_per_process(self):
         assert get_default_validation_cache() is get_default_validation_cache()
         assert (

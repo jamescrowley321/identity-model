@@ -13,11 +13,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..core.dpop_verify import check_dpop_proof, record_proof_async
+from ..core.dpop_verify import _check_dpop_proof, record_proof_async
 from ..core.token_binding import (
     TokenBinding,
-    check_binding_before_replay,
-    introspection_binding_before_replay,
+    _check_binding_before_replay,
+    _introspection_binding_before_replay,
 )
 
 
@@ -47,7 +47,7 @@ async def verify_dpop_proof(
     Raises:
         DPoPValidationError: If any check fails; ``kind`` says which.
     """
-    verified, record = check_dpop_proof(proof, request, options, now=now)
+    verified, record = _check_dpop_proof(proof, request, options, now=now)
     await record_proof_async(record)
     return verified
 
@@ -63,7 +63,7 @@ async def check_token_binding(
     The async counterpart of
     :func:`py_identity_model.core.token_binding.check_token_binding`.
     """
-    record = check_binding_before_replay(
+    record = _check_binding_before_replay(
         claims, access_token, config.required_binding, config.dpop, presentation
     )
     if record is not None:
@@ -84,7 +84,7 @@ async def check_introspection_binding(
     :func:`py_identity_model.core.token_binding.check_introspection_binding`,
     with the same rules and errors.
     """
-    record = introspection_binding_before_replay(
+    record = _introspection_binding_before_replay(
         response, access_token, presentation, required_binding, dpop
     )
     if record is not None:
