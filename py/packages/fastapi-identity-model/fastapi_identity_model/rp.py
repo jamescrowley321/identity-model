@@ -321,9 +321,11 @@ async def _fetch_userinfo(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UserInfo response has no subject",
         )
-    if ui.error_kind is UserInfoErrorKind.SUB_MISMATCH or (
-        ui.is_successful and (ui.claims or {}).get("sub") != expected_sub
-    ):
+    # A signed UserInfo (UNVERIFIABLE_SUB) cannot be checked here: fail closed.
+    if ui.error_kind in (
+        UserInfoErrorKind.SUB_MISMATCH,
+        UserInfoErrorKind.UNVERIFIABLE_SUB,
+    ) or (ui.is_successful and (ui.claims or {}).get("sub") != expected_sub):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UserInfo subject does not match ID token subject",

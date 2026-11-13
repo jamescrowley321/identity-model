@@ -5,6 +5,8 @@ These tests verify sync-specific UserInfo client logic including
 the get_userinfo function with JSON and JWT response handling.
 """
 
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -251,3 +253,10 @@ class TestSyncUserInfoSubValidation:
         )
         assert response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
         assert response.unverified_jwt == jwt_string
+
+
+def test_expected_sub_is_required():
+    """OIDC Core 1.0 §5.3.2: there is no UserInfoRequest without expected_sub."""
+    kwargs: dict[str, Any] = {"address": "https://example.com/userinfo", "token": "tok"}
+    with pytest.raises(TypeError, match="expected_sub"):
+        UserInfoRequest(**kwargs)

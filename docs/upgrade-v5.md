@@ -1511,9 +1511,10 @@ else:
 ```
 
 The FastAPI relying-party router passes the ID token `sub` and fails the login
-with `401` on `MISSING_SUB` ("UserInfo response has no subject") or
-`SUB_MISMATCH` ("UserInfo subject does not match ID token subject"). Other
-UserInfo failures are still logged and the login continues on the ID Token.
+with `401` on `MISSING_SUB` ("UserInfo response has no subject") or on
+`SUB_MISMATCH` and `UNVERIFIABLE_SUB` ("UserInfo subject does not match ID
+token subject"): it cannot verify a signed UserInfo response. Other UserInfo
+failures are still logged and the login continues on the ID Token.
 
 ## Back-Channel Logout
 

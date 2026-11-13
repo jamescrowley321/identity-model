@@ -393,6 +393,24 @@ async def test_callback_userinfo_sub_mismatch_kind_aborts(monkeypatch):
     assert call.args[0].expected_sub == "user-1"
 
 
+async def test_callback_signed_userinfo_aborts(monkeypatch):
+    # The RP cannot verify a signed UserInfo response, so its sub is unchecked:
+    # the login fails closed, as it did in 4.x.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub cannot be verified",
+            error_kind=UserInfoErrorKind.UNVERIFIABLE_SUB,
+            unverified_jwt="header.payload.sig",
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
+
+
 async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
     # A 200 UserInfo body with no sub (OIDC Core 5.3.2) is an identity
     # failure, not a transient one: the login must fail and keep no tokens.
