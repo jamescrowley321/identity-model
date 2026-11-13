@@ -25,6 +25,7 @@ from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DiscoveryMissingFieldsError,
     InvalidIssuerException,
     SignatureVerificationException,
     TokenExpiredException,
@@ -96,7 +97,7 @@ class TestAsyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryMissingFieldsError,
             match=r"Missing required parameters: jwks_uri",
         ):
             await validate_token(
@@ -120,7 +121,7 @@ class TestAsyncTokenValidation:
 
         async with AsyncHTTPClient() as client:
             with pytest.raises(
-                TokenValidationException,
+                DiscoveryMissingFieldsError,
                 match=r"Missing required parameters: jwks_uri",
             ):
                 await validate_token(
@@ -145,7 +146,7 @@ class TestAsyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryMissingFieldsError,
             match=r"Missing required parameters: jwks_uri",
         ):
             await validate_token(

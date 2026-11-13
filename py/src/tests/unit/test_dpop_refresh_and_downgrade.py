@@ -32,6 +32,7 @@ from py_identity_model.aio.token_client import (
 from py_identity_model.aio.token_client import (
     request_authorization_code_token as request_authorization_code_token_async,
 )
+from py_identity_model.exceptions import InvalidArgumentError
 from py_identity_model.sync.token_client import (
     refresh_token,
     request_authorization_code_token,
@@ -297,7 +298,7 @@ class TestOptInNeedsKey:
     @pytest.mark.parametrize("build", [_refresh, _auth_code])
     def test_flag_without_key_refused(self, build):
         with pytest.raises(
-            ValueError, match=r"^require_dpop_token_type needs a dpop_key$"
+            InvalidArgumentError, match=r"^require_dpop_token_type needs a dpop_key$"
         ):
             build(dpop_key=None, require_dpop_token_type=True)
 

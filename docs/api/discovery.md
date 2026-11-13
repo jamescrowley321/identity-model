@@ -35,15 +35,22 @@ if response.error_kind is DiscoveryErrorKind.UNEXPECTED_STATUS:
 | `INVALID_JSON` | The response body could not be decoded as JSON | |
 | `MISSING_FIELDS` | A required-field check failed | `missing_fields` lists the fields rejected by that check |
 | `HTTPS_REQUIRED` | A URL violated the policy's HTTPS requirement | |
-| `ISSUER_MISMATCH` | The document's `issuer` is not the issuer the discovery URL was built from | |
+| `ISSUER_MISMATCH` | The document's `issuer` is not the issuer the discovery URL was built from | `requested_issuer` and `returned_issuer` |
 | `INVALID_CONFIGURATION` | Another URL or configuration check failed | |
 | `INVALID_DOCUMENT` | Another discovery document check failed | |
 | `NETWORK_ERROR` | The HTTP transport failed | |
 | `UNEXPECTED_ERROR` | An unclassified exception occurred | |
 
-On success, `error_kind` and `status_code` are `None`, and `missing_fields` is
-empty. These fields are optional keyword-only additions; existing positional
-response constructors and exception base classes remain compatible.
+On success, `error_kind`, `status_code`, `requested_issuer` and
+`returned_issuer` are `None`, and `missing_fields` is empty.
+
+`validate_token` raises a typed exception for a failed discovery response:
+`DiscoveryException` (a `NetworkException`) for `UNEXPECTED_STATUS`,
+`NETWORK_ERROR` and `UNEXPECTED_ERROR`; `DiscoveryParseError`,
+`DiscoveryMissingFieldsError`, `DiscoveryIssuerMismatchError` or
+`DiscoveryValidationError` (all `ValidationException`s) for an invalid
+document; `DiscoveryHTTPSRequiredError` or `ConfigurationException` for a URL
+check. See [Exceptions](exceptions.md).
 
 The metadata describes the checks the library actually performs.
 

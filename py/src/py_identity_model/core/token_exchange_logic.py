@@ -11,6 +11,7 @@ import httpx
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from .client_auth import apply_client_auth
+from .error_handlers import raise_configuration_error
 from .models import TokenExchangeRequest, TokenExchangeResponse
 
 
@@ -206,6 +207,7 @@ def process_token_exchange_response(
 
 def handle_token_exchange_error(e: Exception) -> TokenExchangeResponse:
     """Handle errors during token exchange requests."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during token exchange: {e!s}"
         logger.error(error_msg, exc_info=True)

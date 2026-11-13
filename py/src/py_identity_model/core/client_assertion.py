@@ -16,6 +16,7 @@ import uuid
 
 import jwt as pyjwt
 
+from ..exceptions import InvalidArgumentError, InvalidArgumentKind
 from ..oidc_constants import ClientAssertionTypes, TokenRequest
 from .jwt_signing import validate_signing_algorithm
 
@@ -61,7 +62,7 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         The signed client assertion JWT.
 
     Raises:
-        ValueError: If a required parameter is empty, *algorithm* is not a
+        InvalidArgumentError: If a required parameter is empty, *algorithm* is not a
             supported asymmetric signing algorithm, *lifetime* is not
             positive, or *kid* is an empty string.
     """
@@ -73,7 +74,9 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         # Reject whitespace-only string values: they are truthy but would be
         # signed into ``iss``/``sub``/``aud`` and rejected opaquely by the AS.
         if not value or (isinstance(value, str) and not value.strip()):
-            raise ValueError(f"{name} must not be empty")
+            raise InvalidArgumentError(
+                name, InvalidArgumentKind.MISSING, f"{name} must not be empty"
+            )
 
     validate_signing_algorithm(algorithm, context="client assertion")
 
@@ -81,13 +84,17 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
     # lifetime at or below the leeway yields an assertion already expired at
     # mint time. Require a lifetime that clears the skew window.
     if lifetime <= _CLOCK_SKEW_LEEWAY_SECONDS:
-        raise ValueError(
+        raise InvalidArgumentError(
+            "lifetime",
+            InvalidArgumentKind.INVALID_VALUE,
             f"lifetime must be greater than the {_CLOCK_SKEW_LEEWAY_SECONDS}s "
-            f"clock-skew leeway, got {lifetime}"
+            f"clock-skew leeway, got {lifetime}",
         )
 
     if kid is not None and not kid.strip():
-        raise ValueError("kid must be non-empty when provided")
+        raise InvalidArgumentError(
+            "kid", InvalidArgumentKind.MISSING, "kid must be non-empty when provided"
+        )
 
     issued_at = int(time.time()) - _CLOCK_SKEW_LEEWAY_SECONDS
     claims = {
@@ -132,12 +139,16 @@ def apply_private_key_jwt(
             nor ``config.issuer`` is set.
 
     Raises:
-        ValueError: If ``config.audience`` or ``config.issuer`` is set to
-            something other than a string.
+        InvalidArgumentError: If ``config.audience`` or ``config.issuer`` is
+            set to something other than a string.
     """
     for name, value in (("audience", config.audience), ("issuer", config.issuer)):
         if value is not None and not isinstance(value, str):
-            raise ValueError(f"{name} must be a string, got {type(value).__name__}")
+            raise InvalidArgumentError(
+                name,
+                InvalidArgumentKind.INVALID_TYPE,
+                f"{name} must be a string, got {type(value).__name__}",
+            )
     assertion = build_client_assertion(
         client_id=client_id,
         audience=config.audience or config.issuer or default_audience,

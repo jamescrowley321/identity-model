@@ -30,6 +30,7 @@ from ..exceptions import (
     CertificateBindingError,
     CertificateBindingErrorKind,
     ConfigurationException,
+    InvalidArgumentError,
     TokenValidationException,
 )
 from ..jwt_claim_types import ConfirmationMethods, JwtClaimTypes
@@ -212,7 +213,7 @@ def _check_dpop_binding(
             expected_jkt=jkt,
             expected_nonce=presentation.expected_nonce,
         )
-    except ValueError as exc:
+    except InvalidArgumentError as exc:
         raise ConfigurationException(f"presentation: {exc}") from exc
     _, record = _check_dpop_proof(presentation.dpop_proof, request, options)
     return record

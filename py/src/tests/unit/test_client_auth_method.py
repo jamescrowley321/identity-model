@@ -347,19 +347,21 @@ def test_explicit_tls_method_sends_client_id_only(endpoint: Endpoint):
 
 
 @respx.mock
-def test_public_request_function_sends_nothing_when_credential_missing():
-    # Request functions return error responses rather than raising; the
-    # misconfiguration must still stop the request before it is sent.
+def test_public_request_function_raises_when_credential_missing():
+    # A misconfigured request is a programming error: the request function
+    # raises it and sends nothing.
     route = respx.post(ADDRESS).mock(return_value=httpx.Response(200, json={}))
-    response = request_client_credentials_token(
-        ClientCredentialsTokenRequest(
-            address=ADDRESS,
-            client_id=CLIENT_ID,
-            client_auth_method=ClientAuthMethod.CLIENT_SECRET_POST,
+    with pytest.raises(ClientAuthMethodError) as excinfo:
+        request_client_credentials_token(
+            ClientCredentialsTokenRequest(
+                address=ADDRESS,
+                client_id=CLIENT_ID,
+                client_auth_method=ClientAuthMethod.CLIENT_SECRET_POST,
+            )
         )
-    )
-    assert response.is_successful is False
-    assert "client_secret" in (response.error or "")
+    assert excinfo.value.reason is ClientAuthMethodErrorReason.MISSING_CREDENTIAL
+    assert excinfo.value.method is ClientAuthMethod.CLIENT_SECRET_POST
+    assert excinfo.value.credential == "client_secret"
     assert route.call_count == 0
 
 

@@ -16,19 +16,70 @@ from ..core.jwt_helpers import (
 from ..core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from ..core.models import (
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
     JsonWebKey,
+    JwksErrorKind,
     JwksResponse,
     TokenValidationConfig,
 )
 from ..core.parsers import extract_jwt_header_fields
 from ..exceptions import (
     ConfigurationException,
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryIssuerMismatchError,
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+    DiscoveryValidationError,
     InvalidIssuerException,
+    JwksException,
+    JwksValidationError,
     KeyAlgorithmMismatchException,
+    PyIdentityModelException,
     TokenValidationException,
 )
 from ..logging_config import logger
 from ..logging_utils import redact_token
+
+
+_DISCOVERY_FAILURE_TYPES: dict[DiscoveryErrorKind, type[PyIdentityModelException]] = {
+    DiscoveryErrorKind.INVALID_JSON: DiscoveryParseError,
+    DiscoveryErrorKind.INVALID_DOCUMENT: DiscoveryValidationError,
+    DiscoveryErrorKind.HTTPS_REQUIRED: DiscoveryHTTPSRequiredError,
+    DiscoveryErrorKind.INVALID_CONFIGURATION: ConfigurationException,
+}
+
+
+def discovery_failure(
+    disco_doc_response: DiscoveryDocumentResponse,
+) -> PyIdentityModelException:
+    """The typed exception for a failed discovery response.
+
+    The response's ``error_kind`` picks the type:
+
+    - ``UNEXPECTED_STATUS``, ``NETWORK_ERROR``, ``UNEXPECTED_ERROR`` (or no
+      kind): :class:`DiscoveryException`, a ``NetworkException`` carrying the
+      ``status_code``. The provider is unavailable.
+    - ``INVALID_JSON``: :class:`DiscoveryParseError`.
+    - ``MISSING_FIELDS``: :class:`DiscoveryMissingFieldsError`.
+    - ``ISSUER_MISMATCH``: :class:`DiscoveryIssuerMismatchError`.
+    - ``INVALID_DOCUMENT``: :class:`DiscoveryValidationError`.
+    - ``HTTPS_REQUIRED``: :class:`DiscoveryHTTPSRequiredError`.
+    - ``INVALID_CONFIGURATION``: :class:`ConfigurationException`.
+    """
+    kind = disco_doc_response.error_kind
+    message = disco_doc_response.error or "Discovery document request failed"
+    if kind is DiscoveryErrorKind.MISSING_FIELDS:
+        return DiscoveryMissingFieldsError(message, disco_doc_response.missing_fields)
+    if kind is DiscoveryErrorKind.ISSUER_MISMATCH:
+        return DiscoveryIssuerMismatchError(
+            disco_doc_response.requested_issuer or "",
+            disco_doc_response.returned_issuer or "",
+        )
+    exception_type = _DISCOVERY_FAILURE_TYPES.get(kind) if kind is not None else None
+    if exception_type is None:
+        return DiscoveryException(message, status_code=disco_doc_response.status_code)
+    return exception_type(message)
 
 
 def validate_disco_response(
@@ -41,12 +92,14 @@ def validate_disco_response(
         disco_doc_response: Discovery document response to validate
 
     Raises:
-        TokenValidationException: If discovery response is not successful
+        DiscoveryException: If the document could not be fetched (a
+            ``NetworkException``).
+        DiscoveryValidationError: If the fetched document is invalid.
+        ConfigurationException: If a URL or policy check failed.
     """
     if not disco_doc_response.is_successful:
-        error_msg = disco_doc_response.error or "Discovery document request failed"
-        logger.error(f"Discovery failed: {error_msg}")
-        raise TokenValidationException(error_msg)
+        logger.error(f"Discovery failed: {disco_doc_response.error}")
+        raise discovery_failure(disco_doc_response)
 
 
 def validate_jwks_uri(
@@ -61,11 +114,31 @@ def validate_jwks_uri(
         The non-empty jwks_uri string.
 
     Raises:
-        ConfigurationException: If jwks_uri is missing or empty.
+        DiscoveryMissingFieldsError: If jwks_uri is missing or empty.
     """
     if not disco_doc_response.jwks_uri:
-        raise ConfigurationException("Discovery document missing jwks_uri")
+        raise DiscoveryMissingFieldsError(
+            "Discovery document missing jwks_uri", ("jwks_uri",)
+        )
     return disco_doc_response.jwks_uri
+
+
+def jwks_failure(jwks_response: JwksResponse) -> PyIdentityModelException:
+    """The typed exception for a failed JWKS response.
+
+    ``INVALID_JSON`` and ``INVALID_DOCUMENT`` give
+    :class:`JwksValidationError`; ``INVALID_CONFIGURATION`` gives
+    :class:`ConfigurationException`; any other kind (or none) gives
+    :class:`JwksException`, a ``NetworkException`` carrying the
+    ``status_code``.
+    """
+    kind = jwks_response.error_kind
+    message = jwks_response.error or "JWKS request failed"
+    if kind in (JwksErrorKind.INVALID_JSON, JwksErrorKind.INVALID_DOCUMENT):
+        return JwksValidationError(message)
+    if kind is JwksErrorKind.INVALID_CONFIGURATION:
+        return ConfigurationException(message)
+    return JwksException(message, status_code=jwks_response.status_code)
 
 
 def validate_jwks_response(jwks_response: JwksResponse) -> None:
@@ -76,17 +149,20 @@ def validate_jwks_response(jwks_response: JwksResponse) -> None:
         jwks_response: JWKS response to validate
 
     Raises:
-        TokenValidationException: If JWKS response is not successful or has no keys
+        JwksException: If the JWK Set could not be fetched (a
+            ``NetworkException``).
+        JwksValidationError: If the fetched JWK Set is unusable or has no
+            keys.
+        ConfigurationException: If the JWKS URL failed a URL or policy check.
     """
     if not jwks_response.is_successful:
-        error_msg = jwks_response.error or "JWKS request failed"
-        logger.error(f"JWKS fetch failed: {error_msg}")
-        raise TokenValidationException(error_msg)
+        logger.error(f"JWKS fetch failed: {jwks_response.error}")
+        raise jwks_failure(jwks_response)
 
     if not jwks_response.keys:
         error_msg = "No keys available in JWKS response"
         logger.error(error_msg)
-        raise TokenValidationException(error_msg)
+        raise JwksValidationError(error_msg)
 
 
 _EMPTY_ALGORITHMS_MESSAGE = (
@@ -442,6 +518,8 @@ def log_validation_success(decoded_token: dict) -> None:
 __all__ = [
     "build_resolved_config",
     "decode_with_config",
+    "discovery_failure",
+    "jwks_failure",
     "log_validation_start",
     "log_validation_success",
     "resolve_algorithms",

@@ -34,7 +34,9 @@ from py_identity_model.aio.validation_cache import (
 )
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    DiscoveryValidationError,
+)
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
 )
@@ -177,7 +179,7 @@ class TestSyncDiscoveryPolicyInjection:
 
         config = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
 
-        with pytest.raises(TokenValidationException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             sync_validate_token(
                 jwt=token,
                 token_validation_config=config,
@@ -214,7 +216,7 @@ class TestSyncDiscoveryPolicyInjection:
         assert CDN_KEY in _sync_disco_cache()
 
         strict = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
-        with pytest.raises(TokenValidationException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             sync_validate_token(
                 jwt=token,
                 token_validation_config=strict,
@@ -275,7 +277,7 @@ class TestAsyncDiscoveryPolicyInjection:
         assert CDN_KEY in _async_disco_cache()
 
         strict = TokenValidationConfig(perform_disco=True, audience=None, issuer=ISSUER)
-        with pytest.raises(TokenValidationException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             await async_validate_token(
                 jwt=token,
                 token_validation_config=strict,

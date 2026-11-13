@@ -19,6 +19,7 @@ from py_identity_model import (
     ClientAuthMethod,
     ConfigError,
     ConfigIssue,
+    ConfigurationException,
     HTTPConfig,
 )
 from py_identity_model.core import config as config_module
@@ -317,10 +318,10 @@ def test_ca_bundle_path_the_os_cannot_stat_is_reported_with_the_other_issues(
     )
 
 
-def test_config_error_is_a_value_error():
-    # Callers catching ValueError around construction still catch it.
-    with pytest.raises(ValueError, match="http_timeout"):
+def test_config_error_is_a_configuration_exception():
+    with pytest.raises(ConfigurationException, match="http_timeout") as excinfo:
         HTTPConfig(http_timeout=0)
+    assert type(excinfo.value) is ConfigError
 
 
 # --------------------------------------------------------------------------- #

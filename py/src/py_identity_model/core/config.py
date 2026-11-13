@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from ..exceptions import ConfigurationException
 from .client_auth_method import ClientAuthMethod
 from .http_utils import (
     DEFAULT_HTTP_TIMEOUT,
@@ -72,7 +73,7 @@ class ConfigIssue:
         return f"{self.setting}: {self.message}"
 
 
-class ConfigError(ValueError):
+class ConfigError(ConfigurationException):
     """Raised when an :class:`HTTPConfig` or :class:`CacheConfig` is invalid. Carries every issue at once."""
 
     def __init__(self, issues: Sequence[ConfigIssue]) -> None:

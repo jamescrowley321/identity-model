@@ -28,6 +28,7 @@ from py_identity_model.core.dpop_verify import (
     verify_dpop_proof,
 )
 from py_identity_model.core.pkce import generate_code_challenge, generate_code_verifier
+from py_identity_model.exceptions import DPoPKeyError
 
 from ..dpop_proof_helpers import (
     assert_dpop_proof,
@@ -148,7 +149,7 @@ def _verify_proof(case_id: str, inp: dict, expect: dict) -> None:
 def _generate_key(case_id: str, inp: dict, expect: dict) -> None:
     if expect["outcome"] == "reject":
         assert expect["error"] == "unsupported_algorithm", case_id
-        with pytest.raises(ValueError, match="Unsupported DPoP algorithm"):
+        with pytest.raises(DPoPKeyError, match="Unsupported DPoP algorithm"):
             dpop.generate_dpop_key(inp["alg"])
         return
     jwk = dpop.generate_dpop_key(inp["alg"]).public_jwk

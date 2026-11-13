@@ -33,6 +33,8 @@ from jwt.api_jws import PyJWS
 
 from ..exceptions import (
     DPoPReplayCacheError,
+    InvalidArgumentError,
+    InvalidArgumentKind,
     TokenValidationException,
     WeakKeyException,
 )
@@ -307,7 +309,9 @@ class InMemoryDPoPReplayCache:
             or not isinstance(max_entries, int)
             or max_entries < 1
         ):
-            raise ValueError(_MAX_ENTRIES_MESSAGE)
+            raise InvalidArgumentError(
+                "max_entries", InvalidArgumentKind.INVALID_VALUE, _MAX_ENTRIES_MESSAGE
+            )
         self._max_entries = max_entries
         self._entries: dict[tuple[str, str], float] = {}
         self._lock = threading.Lock()
@@ -422,15 +426,25 @@ class DPoPVerificationOptions:
         if self.algorithms is not None:
             unsupported = set(self.algorithms) - DEFAULT_ALLOWED_ALGORITHMS
             if unsupported or not self.algorithms:
-                raise ValueError(
+                raise InvalidArgumentError(
+                    "algorithms",
+                    InvalidArgumentKind.INVALID_VALUE,
                     f"algorithms must be a non-empty subset of "
                     f"{sorted(DEFAULT_ALLOWED_ALGORITHMS)}; got unsupported "
-                    f"{sorted(unsupported)}"
+                    f"{sorted(unsupported)}",
                 )
         if not _is_number(self.max_age) or self.max_age <= 0:
-            raise ValueError("max_age must be a positive number of seconds")
+            raise InvalidArgumentError(
+                "max_age",
+                InvalidArgumentKind.INVALID_VALUE,
+                "max_age must be a positive number of seconds",
+            )
         if not _is_number(self.iat_leeway) or self.iat_leeway < 0:
-            raise ValueError("iat_leeway must be a non-negative number of seconds")
+            raise InvalidArgumentError(
+                "iat_leeway",
+                InvalidArgumentKind.INVALID_VALUE,
+                "iat_leeway must be a non-negative number of seconds",
+            )
 
     @property
     def accepted_algorithms(self) -> tuple[str, ...]:
@@ -628,7 +642,7 @@ class DPoPProofRequest:
         expected_nonce: The nonce the server requires, if it enforces one (§9).
 
     Raises:
-        ValueError: If *method* is empty or *url* is not an absolute http(s)
+        InvalidArgumentError: If *method* is empty or *url* is not an absolute http(s)
             URI.
     """
 
@@ -640,9 +654,15 @@ class DPoPProofRequest:
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method.strip():
-            raise ValueError("method must not be empty")
+            raise InvalidArgumentError(
+                "method", InvalidArgumentKind.MISSING, "method must not be empty"
+            )
         if _normalize_http_uri(self.url) is None:
-            raise ValueError("url must be an absolute http(s) URI")
+            raise InvalidArgumentError(
+                "url",
+                InvalidArgumentKind.INVALID_VALUE,
+                "url must be an absolute http(s) URI",
+            )
 
 
 def verify_dpop_proof(

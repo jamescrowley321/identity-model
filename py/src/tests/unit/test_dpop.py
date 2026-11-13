@@ -12,6 +12,7 @@ from py_identity_model.core.dpop import (
     create_dpop_proof,
     generate_dpop_key,
 )
+from py_identity_model.exceptions import DPoPKeyError, InvalidArgumentError
 
 
 # RFC 8032 §5.1.5: an Ed25519 public key is 32 octets.
@@ -73,7 +74,7 @@ class TestDPoPKeyGeneration:
         assert key.jwk_thumbprint == "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"
 
     def test_unsupported_algorithm(self):
-        with pytest.raises(ValueError, match="Unsupported"):
+        with pytest.raises(DPoPKeyError, match="Unsupported"):
             generate_dpop_key("HS256")
 
     def test_public_jwk_ec(self):
@@ -202,27 +203,31 @@ class TestDPoPProofCreation:
 
     def test_empty_method_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="method must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="method must not be empty"):
             create_dpop_proof(key, "", "https://example.com")
 
     def test_whitespace_method_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="method must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="method must not be empty"):
             create_dpop_proof(key, "   ", "https://example.com")
 
     def test_empty_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="uri must not be empty"):
             create_dpop_proof(key, "GET", "")
 
     def test_relative_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must be an absolute HTTP URI"):
+        with pytest.raises(
+            InvalidArgumentError, match="uri must be an absolute HTTP URI"
+        ):
             create_dpop_proof(key, "GET", "/relative/path")
 
     def test_schemeless_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must be an absolute HTTP URI"):
+        with pytest.raises(
+            InvalidArgumentError, match="uri must be an absolute HTTP URI"
+        ):
             create_dpop_proof(key, "GET", "just-a-path")
 
     def test_htu_preserves_path_params(self):
@@ -292,15 +297,19 @@ class TestComputeAth:
         assert "=" not in ath
 
     def test_empty_string_raises(self):
-        with pytest.raises(ValueError, match="access_token must not be empty"):
+        with pytest.raises(
+            InvalidArgumentError, match="access_token must not be empty"
+        ):
             compute_ath("")
 
     def test_whitespace_only_raises(self):
-        with pytest.raises(ValueError, match="access_token must not be empty"):
+        with pytest.raises(
+            InvalidArgumentError, match="access_token must not be empty"
+        ):
             compute_ath("   ")
 
     def test_non_ascii_raises(self):
-        with pytest.raises(ValueError, match="ASCII"):
+        with pytest.raises(InvalidArgumentError, match="ASCII"):
             compute_ath("tök\u00e9n")
 
 
@@ -327,11 +336,11 @@ class TestBuildDPoPHeaders:
         assert "Authorization" not in headers
 
     def test_empty_proof_raises(self):
-        with pytest.raises(ValueError, match="proof must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="proof must not be empty"):
             build_dpop_headers("")
 
     def test_whitespace_proof_raises(self):
-        with pytest.raises(ValueError, match="proof must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="proof must not be empty"):
             build_dpop_headers("   ")
 
     def test_whitespace_access_token_no_auth_header(self):
