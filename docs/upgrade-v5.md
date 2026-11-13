@@ -329,19 +329,29 @@ request_client_credentials_token(
 )
 ```
 
-### `private_key_jwt` assertions are addressed to the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950))
+### `PrivateKeyJwt` requires `issuer`; the assertion `aud` is the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950), [#1120](https://github.com/jamescrowley321/identity-model/issues/1120))
 
-`PrivateKeyJwt` has a new `issuer` field. Set it to the authorization
-server's issuer identifier (the discovery document's `issuer`), and every
-client assertion the library builds (PAR, token, introspection, revocation,
-device authorization and token exchange) carries it as `aud`, as
+`PrivateKeyJwt.audience` is removed. `PrivateKeyJwt` takes a required,
+keyword-only `issuer`: the authorization server's issuer identifier (the
+discovery document's `issuer`). Every client assertion the library builds
+(PAR, token, introspection, revocation, device authorization and token
+exchange) carries it as its only `aud`, a single string.
+[RFC 10070 §4](https://www.rfc-editor.org/rfc/rfc10070#section-4) requires
+this for client authentication and forbids the token endpoint URL as `aud`;
 [FAPI 2.0 Security Profile §5.3.3.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.3.1)
-requires. An explicit `audience` still wins. With neither set, `aud` is still
-the request `address` (the endpoint URL), as in 4.x.
+agrees. 4.x used `audience` if set and otherwise the request `address` (the
+endpoint URL). There is no fallback any more.
 
 ```python
 from py_identity_model import PrivateKeyJwt
 
+# Before
+private_key_jwt = PrivateKeyJwt(private_key=pem, algorithm="ES256")
+private_key_jwt = PrivateKeyJwt(
+    private_key=pem, algorithm="ES256", audience=token_endpoint
+)
+
+# After
 private_key_jwt = PrivateKeyJwt(
     private_key=pem,
     algorithm="ES256",
@@ -349,9 +359,10 @@ private_key_jwt = PrivateKeyJwt(
 )
 ```
 
-`aud` is always a single string. An `audience` or `issuer` that is not a
-`str` (for example a list) raises `ValueError` when the request is built;
-4.x signed a list into the assertion as a JSON array.
+Leaving out `issuer` raises `TypeError`. A `None`, empty or whitespace-only
+value, or one that is not a `str` (for example a list), raises
+`ConfigurationException` when the `PrivateKeyJwt` is built. 4.x signed a
+list into the assertion as a JSON array.
 
 ### FastAPI: `OIDCSettings.from_env` is a separate helper ([#899](https://github.com/jamescrowley321/identity-model/pull/899))
 
@@ -657,10 +668,8 @@ the authorization server's discovery document. It raises `FAPIProfileError`
 (a `ValueError` with a `violations` list) when the document fails
 `validate_fapi_discovery`, when the client does not authenticate with
 `private_key_jwt` or mTLS, or when the redirect URI is not `https` (an `http`
-loopback URI is allowed with `native_app=True`). It fills
-`PrivateKeyJwt.issuer` from the discovery issuer and refuses an `audience` or
-`issuer` that names anything else, so the assertion `aud` is never the
-endpoint URL. Its request builders fix PAR, `response_type=code` and PKCE
+loopback URI is allowed with `native_app=True`). It refuses a
+`PrivateKeyJwt` whose `issuer` is not the discovery issuer. Its request builders fix PAR, `response_type=code` and PKCE
 `S256`, require a DPoP key for a `private_key_jwt` client whose algorithm the
 server lists in `dpop_signing_alg_values_supported`, cap `nonce` at 64
 characters, and raise on anything that would weaken the flow. The issuer and
@@ -674,7 +683,9 @@ profile = FAPI2ClientProfile(
     discovery,
     client_id="fapi-client",
     redirect_uri="https://client.example.com/callback",
-    client_auth=PrivateKeyJwt(private_key=pem, algorithm="ES256"),
+    client_auth=PrivateKeyJwt(
+        private_key=pem, algorithm="ES256", issuer=discovery.issuer
+    ),
 )
 dpop_key = generate_dpop_key("ES256")
 par = push_authorization_request(

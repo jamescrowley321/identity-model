@@ -237,7 +237,11 @@ class TestSyncParDpop:
                 address=PAR_URL,
                 client_id="app1",
                 redirect_uri="https://app.com/cb",
-                private_key_jwt=PrivateKeyJwt(private_key=_ec_pem(), algorithm="ES256"),
+                private_key_jwt=PrivateKeyJwt(
+                    private_key=_ec_pem(),
+                    algorithm="ES256",
+                    issuer="https://auth.example.com",
+                ),
                 dpop_key=key,
             )
         )

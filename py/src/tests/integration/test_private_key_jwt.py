@@ -115,12 +115,12 @@ def _require_node_oidc(raw_discovery: dict) -> None:
         )
 
 
-def _private_key_jwt(audience: str | None = None) -> PrivateKeyJwt:
+def _private_key_jwt(issuer: str) -> PrivateKeyJwt:
     return PrivateKeyJwt(
         private_key=PKJWT_PRIVATE_KEY,
         algorithm=PKJWT_ALGORITHM,
         kid=PKJWT_KID,
-        audience=audience,
+        issuer=issuer,
     )
 
 
@@ -145,7 +145,7 @@ class TestPrivateKeyJwtLive:
                 address=token_endpoint,
                 client_id=PKJWT_CLIENT_ID,
                 scope="api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -181,6 +181,7 @@ class TestPrivateKeyJwtLive:
                     private_key=wrong_key,
                     algorithm=PKJWT_ALGORITHM,
                     kid=PKJWT_KID,
+                    issuer=raw_discovery["issuer"],
                 ),
             )
         )
@@ -210,7 +211,7 @@ class TestPrivateKeyJwtLive:
                 code_challenge=challenge,
                 code_challenge_method="S256",
                 state=secrets.token_urlsafe(32),
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -239,7 +240,7 @@ class TestPrivateKeyJwtLive:
             address=raw_discovery["pushed_authorization_request_endpoint"],
             client_id=PKJWT_CLIENT_ID,
             request=request_object,
-            private_key_jwt=_private_key_jwt(),
+            private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
         )
 
     def test_par_with_signed_request_object(
@@ -307,7 +308,7 @@ class TestPrivateKeyJwtLive:
             config=AuthCodeFlowConfig(
                 scope="openid profile email offline_access",
                 resource="urn:test:api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             ),
         )
 
@@ -340,7 +341,7 @@ class TestPrivateKeyJwtLiveAsync:
                 address=token_endpoint,
                 client_id=PKJWT_CLIENT_ID,
                 scope="api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -371,6 +372,7 @@ class TestPrivateKeyJwtLiveAsync:
                     private_key=wrong_key,
                     algorithm=PKJWT_ALGORITHM,
                     kid=PKJWT_KID,
+                    issuer=raw_discovery["issuer"],
                 ),
             )
         )

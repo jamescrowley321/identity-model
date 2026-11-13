@@ -81,7 +81,9 @@ def _client_credentials() -> ClientCredentialsTokenRequest:
         address=TOKEN_URL,
         client_id="app1",
         private_key_jwt=PrivateKeyJwt(
-            private_key=DPOP_KEY.private_key_pem, algorithm="ES256"
+            private_key=DPOP_KEY.private_key_pem,
+            algorithm="ES256",
+            issuer="https://auth.example.com",
         ),
     )
 

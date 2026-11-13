@@ -685,15 +685,15 @@ class PrivateKeyJwt:
             FAPI 2.0 requires ``PS256``, ``ES256`` or ``EdDSA``.
         kid: Optional key ID placed in the assertion JWT header to aid the
             authorization server's key lookup.
-        audience: Override for the assertion ``aud`` claim.  Wins over
-            ``issuer`` when both are set.
+        issuer: Required, keyword-only.  The authorization server's issuer
+            identifier (the discovery document's ``issuer``).  It is the
+            assertion's sole ``aud`` value, a single string: RFC 10070 §4
+            requires the issuer identifier and forbids the token endpoint URL
+            for client authentication (also FAPI 2.0 Security Profile
+            §5.3.3.1).  ``None``, a non-string, or an empty or whitespace-only
+            value raises
+            :class:`~py_identity_model.exceptions.ConfigurationException`.
         lifetime: Assertion validity in seconds (default 300).
-        issuer: The authorization server's issuer identifier (the discovery
-            document's ``issuer``).  When set and ``audience`` is not, the
-            assertion ``aud`` is the issuer, a single string, as FAPI 2.0
-            Security Profile §5.3.3.1 requires.  With
-            neither set, ``aud`` falls back to the request ``address`` (the
-            endpoint URL, OpenID Connect Core 1.0 §9).
     """
 
     # repr suppressed: the raw PEM signing key must never leak into logs,
@@ -702,9 +702,15 @@ class PrivateKeyJwt:
     private_key: str | bytes = field(repr=False)
     algorithm: str = "PS256"
     kid: str | None = None
-    audience: str | None = None
     lifetime: int = 300
-    issuer: str | None = None
+    issuer: str = field(kw_only=True)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.issuer, str) or not self.issuer.strip():
+            raise ConfigurationException(
+                "PrivateKeyJwt.issuer must be the authorization server's issuer "
+                f"identifier (RFC 10070 §4), got {self.issuer!r}"
+            )
 
 
 @dataclass(frozen=True)

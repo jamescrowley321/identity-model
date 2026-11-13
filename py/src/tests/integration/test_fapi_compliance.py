@@ -70,7 +70,7 @@ class TestFAPIDiscoveryCompliance:
             discovery_document,
             client_id="fapi-client",
             redirect_uri=REDIRECT_URI,
-            client_auth=_pkj(),
+            client_auth=_pkj(issuer=issuer),
         )
         if violations:
             with pytest.raises(FAPIProfileError) as exc_info:
@@ -101,6 +101,7 @@ def _pkj(**overrides: Any) -> PrivateKeyJwt:
     fields: dict[str, Any] = {
         "private_key": DPOP_KEY.private_key_pem,
         "algorithm": "ES256",
+        "issuer": "https://auth.example.com",
         **overrides,
     }
     return PrivateKeyJwt(**fields)
@@ -151,10 +152,10 @@ class TestFAPIClientConfigValidation:
         )
         assert result.is_compliant is False
 
-    def test_endpoint_url_audience_rejected(self, discovery_document):
+    def test_token_endpoint_as_issuer_rejected(self, discovery_document):
         result = validate_fapi_client_config(
             issuer=discovery_document.issuer,
-            private_key_jwt=_pkj(audience=discovery_document.token_endpoint),
+            private_key_jwt=_pkj(issuer=discovery_document.token_endpoint),
             dpop_key=DPOP_KEY,
         )
         assert result.is_compliant is False

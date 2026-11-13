@@ -107,7 +107,6 @@ def apply_client_auth(
             params,
             request.private_key_jwt,
             client_id=request.client_id,
-            default_audience=request.address,
         )
         return None
 

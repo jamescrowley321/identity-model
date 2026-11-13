@@ -506,7 +506,9 @@ class TestPrepareFunctionMtls:
         )
         request_obj.mtls = MtlsClientAuth(certificate="/c.pem", private_key="/k.pem")
         request_obj.private_key_jwt = PrivateKeyJwt(
-            private_key=private_pem, algorithm="PS256"
+            private_key=private_pem,
+            algorithm="PS256",
+            issuer="https://as.example.com",
         )
         params, _headers, auth = prepare_fn(request_obj)
 
