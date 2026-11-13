@@ -40,13 +40,21 @@ def basic_auth_credentials(client_id: str, client_secret: str) -> tuple[str, str
 
 
 class ClientAuthenticatingRequest(Protocol):
-    """The fields a confidential-client request carries for authentication."""
+    """The fields a confidential-client request carries for authentication.
 
-    address: str
-    client_id: str
-    private_key_jwt: PrivateKeyJwt | None
-    mtls: MtlsClientAuth | None
-    client_auth_method: ClientAuthMethod | None
+    Read-only, so the frozen request types satisfy it.
+    """
+
+    @property
+    def address(self) -> str: ...
+    @property
+    def client_id(self) -> str: ...
+    @property
+    def private_key_jwt(self) -> PrivateKeyJwt | None: ...
+    @property
+    def mtls(self) -> MtlsClientAuth | None: ...
+    @property
+    def client_auth_method(self) -> ClientAuthMethod | None: ...
 
 
 def resolve_client_auth_method(

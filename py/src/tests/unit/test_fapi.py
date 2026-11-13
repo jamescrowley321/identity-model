@@ -29,7 +29,9 @@ class TestFAPIValidationResult:
         assert result.is_compliant is True
 
     def test_violations_is_not_compliant(self):
-        problem = FAPIViolation(FAPIViolationCode.DISCOVERY_FAILED, "problem")
+        problem = FAPIViolation(
+            code=FAPIViolationCode.DISCOVERY_FAILED, message="problem"
+        )
         result = FAPIValidationResult(violations=[problem])
         assert result.is_compliant is False
         assert result.codes == [FAPIViolationCode.DISCOVERY_FAILED]

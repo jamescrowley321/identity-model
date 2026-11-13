@@ -157,7 +157,7 @@ config = TokenValidationConfig(
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
 def get_endpoints():
-    request = DiscoveryDocumentRequest(address="https://auth.example.com")
+    request = DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
     response = get_discovery_document(request)
 
     if response.is_successful:
@@ -176,7 +176,7 @@ from py_identity_model import DiscoveryDocumentRequest
 from py_identity_model.aio import get_discovery_document
 
 async def get_endpoints():
-    request = DiscoveryDocumentRequest(address="https://auth.example.com")
+    request = DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
     response = await get_discovery_document(request)
 
     if response.is_successful:
@@ -205,7 +205,7 @@ def validate_request_token(token: str):
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com",
+            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
         )
         return claims
     except PyIdentityModelException as e:
@@ -228,7 +228,7 @@ async def validate_request_token(token: str):
         claims = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com",
+            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
         )
         return claims
     except PyIdentityModelException as e:
@@ -250,7 +250,7 @@ from py_identity_model import (
 def get_access_token():
     # Get token endpoint from discovery
     disco_response = get_discovery_document(
-        DiscoveryDocumentRequest(address="https://auth.example.com")
+        DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
     )
 
     if not disco_response.is_successful:
@@ -282,7 +282,7 @@ from py_identity_model.aio import (
 async def get_access_token():
     # Get token endpoint from discovery
     disco_response = await get_discovery_document(
-        DiscoveryDocumentRequest(address="https://auth.example.com")
+        DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
     )
 
     if not disco_response.is_successful:
@@ -323,7 +323,7 @@ def verify_token(token: str = Depends(oauth2_scheme)):
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com",
+            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
         )
         return claims
     except Exception:
@@ -349,7 +349,7 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
         claims = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com",
+            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
         )
         return claims
     except Exception:
@@ -386,7 +386,7 @@ def protected_route():
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com",
+            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
         )
         return jsonify({"user": claims["sub"]})
     except Exception as e:
@@ -614,7 +614,7 @@ from py_identity_model import DiscoveryDocumentRequest
 
 @pytest.mark.asyncio
 async def test_async_discovery():
-    request = DiscoveryDocumentRequest(address="https://demo.duendesoftware.com")
+    request = DiscoveryDocumentRequest(address="https://demo.duendesoftware.com/.well-known/openid-configuration")
     response = await get_discovery_document(request)
 
     assert response.is_successful

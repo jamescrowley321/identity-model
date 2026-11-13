@@ -34,7 +34,7 @@ config = TokenValidationConfig(
 claims = validate_token(
     jwt=token,
     token_validation_config=config,
-    disco_doc_address="https://issuer.example",
+    disco_doc_address="https://issuer.example/.well-known/openid-configuration",
 )
 ```
 
@@ -45,11 +45,20 @@ under a lax policy is never served to a caller using a stricter one.
 
 ::: py_identity_model.core.discovery_policy.DiscoveryPolicy
 
-## Endpoint Parsing
+## Discovery Document URL
 
-::: py_identity_model.core.discovery_policy.DiscoveryEndpoint
+`DiscoveryDocumentRequest.address` and `disco_doc_address` take the discovery
+document URL. `discovery_document_url` derives it from an issuer identifier
+(OpenID Connect Discovery 1.0 §4.1).
 
-::: py_identity_model.core.discovery_policy.parse_discovery_url
+```python
+from py_identity_model import discovery_document_url
+
+discovery_document_url("https://auth.example.com/tenant1")
+# "https://auth.example.com/tenant1/.well-known/openid-configuration"
+```
+
+::: py_identity_model.core.discovery_policy.discovery_document_url
 
 ## Utilities
 

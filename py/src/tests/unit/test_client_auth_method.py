@@ -178,7 +178,7 @@ def _mtls(
     method: ClientAuthMethod = ClientAuthMethod.TLS_CLIENT_AUTH,
 ) -> MtlsClientAuth:
     return MtlsClientAuth(
-        certificate="/c.pem", private_key="/k.pem", auth_method=method
+        certificate_path="/c.pem", private_key_path="/k.pem", auth_method=method
     )
 
 
@@ -371,7 +371,16 @@ def test_client_auth_method_is_keyword_only():
     key = generate_dpop_key()
     # address, client_id, refresh_token, scope, client_secret,
     # private_key_jwt, mtls, dpop_key
-    request = RefreshTokenRequest(ADDRESS, CLIENT_ID, "rt", None, None, None, None, key)
+    request = RefreshTokenRequest(
+        address=ADDRESS,
+        client_id=CLIENT_ID,
+        refresh_token="rt",
+        scope=None,
+        client_secret=None,
+        private_key_jwt=None,
+        mtls=None,
+        dpop_key=key,
+    )
     assert (request.dpop_key, request.client_auth_method) == (key, None)
     # address, token, client_id, token_type_hint, client_secret,
     # private_key_jwt, mtls — then one more positional argument. Called
@@ -389,7 +398,7 @@ def test_client_auth_method_is_keyword_only():
 
 def test_mtls_defaults_to_tls_client_auth():
     assert (
-        MtlsClientAuth(certificate="/c.pem", private_key="/k.pem").auth_method
+        MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem").auth_method
         is ClientAuthMethod.TLS_CLIENT_AUTH
     )
 

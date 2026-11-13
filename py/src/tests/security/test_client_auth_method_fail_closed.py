@@ -29,7 +29,7 @@ class _Request:
 
 def _mtls(method: ClientAuthMethod) -> MtlsClientAuth:
     return MtlsClientAuth(
-        certificate="/c.pem", private_key="/k.pem", auth_method=method
+        certificate_path="/c.pem", private_key_path="/k.pem", auth_method=method
     )
 
 

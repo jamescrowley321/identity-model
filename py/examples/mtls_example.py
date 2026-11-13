@@ -131,8 +131,8 @@ def mtls_token_request_example(token_endpoint: str, cert_path: str, key_path: st
     #     use "self_signed_tls_client_auth" for a self-registered certificate.
     #   - certificate/private_key are filesystem paths to PEM files.
     mtls = MtlsClientAuth(
-        certificate=cert_path,
-        private_key=key_path,
+        certificate_path=cert_path,
+        private_key_path=key_path,
         auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 

@@ -183,7 +183,7 @@ def test_upper_bounds_are_inclusive():
 def test_out_of_range_value_is_rejected(setting, value, message):
     with pytest.raises(ConfigError) as ei:
         _config_for(setting)(**{setting: value})
-    assert ei.value.issues == (ConfigIssue(setting, message),)
+    assert ei.value.issues == (ConfigIssue(setting=setting, message=message),)
 
 
 @pytest.mark.parametrize(
@@ -207,7 +207,7 @@ def test_out_of_range_value_is_rejected(setting, value, message):
 def test_wrong_type_is_rejected(setting, value, message):
     with pytest.raises(ConfigError) as ei:
         _config_for(setting)(**{setting: value})
-    assert ei.value.issues == (ConfigIssue(setting, message),)
+    assert ei.value.issues == (ConfigIssue(setting=setting, message=message),)
 
 
 def test_every_invalid_setting_is_reported_in_one_error_in_field_order(
@@ -221,10 +221,10 @@ def test_every_invalid_setting_is_reported_in_one_error_in_field_order(
             ca_bundle=str(tmp_path / "missing.pem"),
         )
     assert ei.value.issues == (
-        ConfigIssue("http_timeout", "must be greater than 0"),
-        ConfigIssue("http_retry_max_attempts", "must be at least 0"),
-        ConfigIssue("ca_bundle", "must be a path to a readable file"),
-        ConfigIssue("jwks_max_keys", "must be at least 1"),
+        ConfigIssue(setting="http_timeout", message="must be greater than 0"),
+        ConfigIssue(setting="http_retry_max_attempts", message="must be at least 0"),
+        ConfigIssue(setting="ca_bundle", message="must be a path to a readable file"),
+        ConfigIssue(setting="jwks_max_keys", message="must be at least 1"),
     )
     assert str(ei.value) == (
         "configuration is invalid:\n"
@@ -236,8 +236,8 @@ def test_every_invalid_setting_is_reported_in_one_error_in_field_order(
     with pytest.raises(ConfigError) as ei:
         CacheConfig(cache_max_entries=0, jwks_cache_ttl=1)
     assert ei.value.issues == (
-        ConfigIssue("jwks_cache_ttl", "must be at least 60"),
-        ConfigIssue("cache_max_entries", "must be at least 1"),
+        ConfigIssue(setting="jwks_cache_ttl", message="must be at least 60"),
+        ConfigIssue(setting="cache_max_entries", message="must be at least 1"),
     )
 
 
@@ -259,7 +259,7 @@ def test_ca_bundle_directory_is_rejected(tmp_path: Path):
     with pytest.raises(ConfigError) as ei:
         HTTPConfig(ca_bundle=str(tmp_path))
     assert ei.value.issues == (
-        ConfigIssue("ca_bundle", "must be a path to a readable file"),
+        ConfigIssue(setting="ca_bundle", message="must be a path to a readable file"),
     )
 
 
@@ -276,7 +276,7 @@ def test_ca_bundle_unreadable_file_is_rejected(tmp_path: Path):
     finally:
         bundle.chmod(0o600)
     assert ei.value.issues == (
-        ConfigIssue("ca_bundle", "must be a path to a readable file"),
+        ConfigIssue(setting="ca_bundle", message="must be a path to a readable file"),
     )
 
 
@@ -284,7 +284,7 @@ def test_ca_bundle_empty_string_is_rejected():
     with pytest.raises(ConfigError) as ei:
         HTTPConfig(ca_bundle="")
     assert ei.value.issues == (
-        ConfigIssue("ca_bundle", "must be a path to a readable file"),
+        ConfigIssue(setting="ca_bundle", message="must be a path to a readable file"),
     )
 
 
@@ -298,8 +298,8 @@ def test_int_too_large_for_a_float_is_reported_with_the_other_issues():
     with pytest.raises(ConfigError) as ei:
         HTTPConfig(http_timeout=HUGE_INT, jwks_max_keys=0)
     assert ei.value.issues == (
-        ConfigIssue("http_timeout", "must be a finite number"),
-        ConfigIssue("jwks_max_keys", "must be at least 1"),
+        ConfigIssue(setting="http_timeout", message="must be a finite number"),
+        ConfigIssue(setting="jwks_max_keys", message="must be at least 1"),
     )
 
 
@@ -312,8 +312,8 @@ def test_ca_bundle_path_the_os_cannot_stat_is_reported_with_the_other_issues(
     with pytest.raises(ConfigError) as ei:
         HTTPConfig(ca_bundle=name, jwks_max_keys=0)
     assert ei.value.issues == (
-        ConfigIssue("ca_bundle", "must be a path to a readable file"),
-        ConfigIssue("jwks_max_keys", "must be at least 1"),
+        ConfigIssue(setting="ca_bundle", message="must be a path to a readable file"),
+        ConfigIssue(setting="jwks_max_keys", message="must be at least 1"),
     )
 
 

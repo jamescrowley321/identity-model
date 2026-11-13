@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from .config import HTTPConfig
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class TrustScope:
     """The trust scope of an HTTP client's transport.
 

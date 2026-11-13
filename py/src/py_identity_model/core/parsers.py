@@ -5,6 +5,7 @@ This module contains parsing logic used by both sync and async implementations.
 """
 
 import copy
+import dataclasses
 import warnings
 
 from jwt import get_unverified_header
@@ -372,7 +373,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
             key = copy.deepcopy(signing_keys[0])
             _validate_key_alg_consistency(key, jwt_alg)
             if not key.alg:
-                key.alg = jwt_alg
+                key = dataclasses.replace(key, alg=jwt_alg)
             return key
         raise AmbiguousKeyException(
             "JWT has no kid header and JWKS contains multiple signing keys; "
@@ -394,7 +395,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     jwt_alg = headers.get("alg")
     _validate_key_alg_consistency(key, jwt_alg)
     if not key.alg:
-        key.alg = jwt_alg
+        key = dataclasses.replace(key, alg=jwt_alg)
 
     logger.debug(f"Found matching key with kid: {kid}, alg: {key.alg}")
     return key
