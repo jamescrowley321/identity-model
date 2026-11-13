@@ -63,7 +63,6 @@ def _validate(token: str, test_config, require_https) -> dict:
     """Validate a token against the live provider's discovery + JWKS."""
     config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_VALIDATION_OPTIONS,
         require_https=require_https,
     )

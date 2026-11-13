@@ -277,6 +277,7 @@ async def _validate_id_token(
             http_client=http_client,
             trusted_audiences=settings.trusted_audiences,
             validate_azp=settings.validate_azp,
+            nonce=expected_nonce,
         )
     except PyIdentityModelException as exc:
         logger.info("ID token validation failed: %s", exc)
@@ -285,12 +286,6 @@ async def _validate_id_token(
             detail="ID token validation failed",
         ) from exc
 
-    # Checked here (not via nonce=) to keep the "Nonce mismatch" 401 detail.
-    if claims.get("nonce") != expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Nonce mismatch",
-        )
     return claims
 
 

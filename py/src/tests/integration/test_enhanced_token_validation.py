@@ -17,7 +17,6 @@ class TestEnhancedTokenValidation:
         token = client_credentials_token.token["access_token"]
         config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config.get("TEST_AUDIENCE") or None,
             leeway=60,
             require_https=require_https,
             options={"verify_aud": False, "require_aud": False},

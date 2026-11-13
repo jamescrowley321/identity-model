@@ -59,6 +59,7 @@ from ..core.fapi import (
     validate_fapi_client_config,
     validate_fapi_discovery,
 )
+from ..core.id_token_logic import RefreshNonce
 from ..core.jar import build_jar_authorization_url, create_request_object
 from ..core.jarm import (
     extract_jarm_response_jwt,
@@ -262,6 +263,7 @@ __all__ = [
     "PushedAuthorizationRequest",
     "PushedAuthorizationResponse",
     # Refresh Token
+    "RefreshNonce",
     "RefreshTokenRequest",
     "RefreshTokenResponse",
     "RequestObjectKey",

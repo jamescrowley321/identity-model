@@ -29,7 +29,8 @@ def test_key_that_does_not_fit_alg_full_contract(caplog):
         pytest.raises(TokenValidationException) as exc_info,
     ):
         decode_and_validate_jwt(
-            "a.b.c",
+            # Header {"alg": "RS256"}: readable, so the failure is the key.
+            "eyJhbGciOiJSUzI1NiJ9.e30.c2ln",
             {"kty": "RSA"},
             ["RS256"],
             audience=None,

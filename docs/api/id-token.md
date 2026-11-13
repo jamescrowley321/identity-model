@@ -5,6 +5,12 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
 `exp`) and then enforces the ID-token profile of OIDC Core 1.0 §3.1.3.7 /
 §3.3.2.11 on top:
 
+- **`iss`** — always checked. With discovery it must equal the discovered
+  issuer; with `perform_disco=False`, `token_validation_config.issuer` is
+  required and a config without one raises `ConfigurationException`
+  (§3.1.3.7 step 2).
+- **`exp` / `iat`** — required, always (§2). A missing one raises
+  `IdTokenMissingClaimError`, whose `claim` is an `IdTokenRequiredClaim`.
 - **`sub`** — required and non-empty, always.
 - **`aud`** — required, always (§2): a token with no audience is rejected even
   without a `client_id`. Every audience must be your `client_id` or one you
@@ -25,8 +31,14 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   `validate_azp` off, any audience in `trusted_audiences` is accepted with no
   `azp` check, so a relying party that trusts extra audiences should pass
   `validate_azp=True`.
-- **`nonce`** — when you pass `nonce=`, the claim must be present and equal
-  (compared in constant time).
+- **`nonce`** — `nonce=` is a required argument: the value you sent on the
+  authorization request, or `None` when you sent none. A string means the
+  claim must be present and equal (compared in constant time; §3.1.3.7 step
+  11, §3.2.2.11 step 2). `None` means a token carrying a `nonce` is rejected,
+  since §2 requires a present `nonce` to equal the value sent. For an ID Token
+  returned by a token refresh, pass `RefreshNonce(original)`: the `nonce` may
+  be absent, and if present must equal the original authentication's nonce
+  (§12.2).
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
   present and recent enough (`now - auth_time <= max_age + leeway`).
 - **`at_hash` / `c_hash`** — when you pass `access_token=` / `code=`, the
@@ -40,7 +52,7 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   when the value did not come back with the ID Token, and an absent claim is
   accepted while a present one must still match.
 
-The optional checks activate only when you supply the corresponding argument,
+The other optional checks activate only when you supply the corresponding argument,
 so validation is exactly as strict as the flow you are running. Set
 `token_validation_config.audience` to your `client_id`.
 
@@ -89,8 +101,14 @@ as a pure function over an already-validated claim set:
 
 ::: py_identity_model.core.id_token_logic.validate_id_token_claims
 
+::: py_identity_model.core.id_token_logic.RefreshNonce
+
 ## Exceptions
 
 ::: py_identity_model.exceptions.IdTokenValidationException
 
 ::: py_identity_model.exceptions.UntrustedAudienceException
+
+::: py_identity_model.exceptions.IdTokenMissingClaimError
+
+::: py_identity_model.exceptions.IdTokenRequiredClaim

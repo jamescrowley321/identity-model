@@ -30,10 +30,9 @@ JWT_SEGMENT_SEPARATOR_COUNT = 2
 def test_token_validation_expired_token(test_config, expired_token, require_https):
     """Test expired token validation using cached config."""
 
-    # Descope session tokens use issuer format https://api.descope.com/v1/apps/{id}
-    # which differs from the OIDC discovery issuer https://api.descope.com/{id}.
-    # Disable issuer verification so we test expiration, not issuer mismatch.
-    expired_options = {**DEFAULT_OPTIONS, "verify_iss": False}
+    # Descope session tokens use a different issuer format than OIDC
+    # discovery; PyJWT checks exp before iss, so expiry is still reported.
+    expired_options = DEFAULT_OPTIONS
 
     with pytest.raises(TokenExpiredException):
         validate_token(
@@ -55,7 +54,6 @@ def test_token_validation_succeeds(
 
     validation_config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -79,7 +77,6 @@ def test_token_validation_with_invalid_config_throws_exception(
 
     validation_config = TokenValidationConfig(
         perform_disco=False,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -100,7 +97,6 @@ def test_cache_succeeds(
 
     validation_config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -145,7 +141,6 @@ def test_benchmark_validation(
     assert client_credentials_token.token is not None
     validation_config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -187,7 +182,6 @@ def test_claim_validation_function_succeeds(
 
     validation_config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         claims_validator=validate_claims,
         require_https=require_https,
@@ -319,7 +313,6 @@ def test_claim_validation_function_fails(
 
     validation_config = TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         claims_validator=validate_claims,
         require_https=require_https,

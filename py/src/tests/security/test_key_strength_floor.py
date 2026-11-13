@@ -1,7 +1,8 @@
 """Security tests: weak verification keys never verify a token (#952).
 
-RFC 7518 §3.3 requires RSA keys of at least 2048 bits for RS*/PS*, and FAPI 2.0
-Security Profile §5.4.1 requires at least 224 bits for EC keys. The floor sits
+RFC 7518 §3.3 requires RSA keys of at least 2048 bits for RS*/PS*, FAPI 2.0
+Security Profile §5.4.1 requires at least 224 bits for EC keys, and RFC 7518
+§3.2 requires HMAC keys at least as long as the hash output. The floor sits
 in ``decode_and_validate_jwt``, which every token-verification path reaches, so
 a token signed with a factorable key is refused whatever ``algorithms`` says.
 Uses the shared ``spec/test-fixtures/validation`` keys and tokens (JWT-014).
@@ -9,9 +10,13 @@ Uses the shared ``spec/test-fixtures/validation`` keys and tokens (JWT-014).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from pathlib import Path
 
+import jwt as pyjwt
+from jwt.utils import base64url_encode
 import pytest
 
 from py_identity_model.core.jwt_helpers import decode_and_validate_jwt
@@ -96,3 +101,78 @@ def test_unmeasurable_modulus_is_left_to_key_conversion(n):
     unmeasurable = {**_KEYS["weak-rsa-1024"], "n": n}
 
     assert enforce_key_strength(unmeasurable) is None
+
+
+_HMAC_FLOORS = {"HS256": 32, "HS384": 48, "HS512": 64}
+
+
+_HMAC_HASHES = {
+    "HS256": hashlib.sha256,
+    "HS384": hashlib.sha384,
+    "HS512": hashlib.sha512,
+}
+
+
+def _hmac_token(secret: bytes, alg: str) -> str:
+    # Built by hand: PyJWT refuses to sign with a key under the floor.
+    signing_input = b".".join(
+        base64url_encode(json.dumps(part).encode())
+        for part in ({"alg": alg, "typ": "JWT"}, {"sub": "s"})
+    )
+    signature = hmac.new(secret, signing_input, _HMAC_HASHES[alg]).digest()
+    return (signing_input + b"." + base64url_encode(signature)).decode()
+
+
+def _oct_jwk(octets: int) -> dict:
+    return {"kty": "oct", "kid": "hmac", "k": base64url_encode(b"k" * octets).decode()}
+
+
+@pytest.mark.parametrize("alg", sorted(_HMAC_FLOORS))
+def test_short_hmac_key_refused(alg):
+    # RFC 7518 §3.2: an HMAC key at least as long as the hash output MUST be used.
+    octets = _HMAC_FLOORS[alg] - 1
+    token = _hmac_token(b"k" * octets, alg)
+
+    with pytest.raises(WeakKeyException) as exc_info:
+        decode_and_validate_jwt(token, _oct_jwk(octets), [alg], None, None, None)
+
+    assert exc_info.value.details == {
+        "kid": "hmac",
+        "kty": "oct",
+        "bits": octets * 8,
+        "min_bits": _HMAC_FLOORS[alg] * 8,
+    }
+
+
+@pytest.mark.parametrize("alg", sorted(_HMAC_FLOORS))
+def test_hmac_key_at_floor_verifies(alg):
+    octets = _HMAC_FLOORS[alg]
+    token = pyjwt.encode({"sub": "s"}, b"k" * octets, algorithm=alg)
+
+    claims = decode_and_validate_jwt(token, _oct_jwk(octets), [alg], None, None, None)
+
+    assert claims == {"sub": "s"}
+
+
+def test_oct_key_without_hmac_alg_has_no_floor():
+    assert enforce_key_strength(_oct_jwk(1)) is None
+
+
+@pytest.mark.parametrize("alg", sorted(_HMAC_FLOORS))
+@pytest.mark.parametrize("k", ["", None, "é"], ids=["empty", "missing", "undecodable"])
+def test_empty_hmac_key_refused(alg, k):
+    # PyJWT accepts an empty HMAC secret, so an empty k must not skip the floor.
+    jwk = {"kty": "oct", "kid": "hmac"}
+    if k is not None:
+        jwk["k"] = k
+    token = _hmac_token(b"", alg)
+
+    with pytest.raises(WeakKeyException) as exc_info:
+        decode_and_validate_jwt(token, jwk, [alg], None, None, None)
+
+    assert exc_info.value.details == {
+        "kid": "hmac",
+        "kty": "oct",
+        "bits": 0,
+        "min_bits": _HMAC_FLOORS[alg] * 8,
+    }

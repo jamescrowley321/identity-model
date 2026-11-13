@@ -3,18 +3,23 @@
 Pure, protocol-agnostic logic shared by the synchronous and asynchronous
 surfaces. Contains no I/O.
 
-The standard JWT validation — signature (via JWKS), ``iss``, ``aud``, ``iat``
-and ``exp`` — is performed by the existing ``validate_token`` path;
-``validate_id_token_claims`` enforces only the additional rules that make an
-ID Token an ID Token:
+The standard JWT validation — signature (via JWKS), ``iss``, ``aud``, and the
+``exp``/``iat``/``nbf`` values when present — is performed by the existing
+``validate_token`` path; ``validate_id_token_claims`` enforces the additional
+rules that make an ID Token an ID Token:
 
+* ``exp`` and ``iat`` are REQUIRED (§2), so their absence is rejected.
 * ``sub`` is REQUIRED (§2 / §3.1.3.7).
 * Every ``aud`` value is the ``client_id`` or an audience the caller trusts
   (§3.1.3.7 step 3).
 * ``azp`` authorized-party rules, only when the caller opts in with
   ``validate_azp`` (§3.1.3.7 steps 4-5; §2 says to ignore ``azp`` otherwise).
-* ``nonce`` binding, when the caller supplies the ``nonce`` it sent on the
-  authorization request (§3.1.3.7 step 11).
+* ``nonce`` binding against the ``nonce`` the caller sent on the
+  authorization request (§2, §3.1.3.7 step 11, §3.2.2.11 step 2). The caller
+  always states it; ``None`` means none was sent, and a token carrying a
+  ``nonce`` is then rejected. ``RefreshNonce(original)`` marks an ID Token
+  from a refresh, whose ``nonce`` may be absent but, if present, must equal
+  the original (§12.2).
 * ``auth_time`` freshness against ``max_age`` (§3.1.3.7 step 12).
 * ``at_hash`` / ``c_hash`` token/code binding for the hybrid and
   authorization-code flows (§3.3.2.11).
@@ -37,9 +42,12 @@ from typing import TYPE_CHECKING
 from ..exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
+    IdTokenMissingClaimError,
+    IdTokenRequiredClaim,
     IdTokenValidationException,
     UntrustedAudienceException,
 )
+from .jwt_helpers import reject_blank_issuer_entries
 
 
 if TYPE_CHECKING:
@@ -144,21 +152,25 @@ def _hashes_equal(actual: str, expected: str, field: str) -> bool:
         ) from exc
 
 
-def _reject_untrusted_audiences(
+def find_untrusted_audiences(
     claims: dict, client_id: str | None, trusted_audiences: Iterable[str] | None
-) -> None:
-    """Enforce §3.1.3.7 step 3: no audience the client does not trust.
+) -> list | None:
+    """Return the ``aud`` values the client does not trust (§3.1.3.7 step 3).
 
     The trusted set is ``client_id`` plus ``trusted_audiences``. The list only
     adds trusted values; an empty or omitted list leaves ``client_id`` as the
     sole trusted audience, so nothing here can switch the check off. With no
     ``client_id`` and no list, every audience is untrusted (fail closed).
 
-    ``aud`` is REQUIRED (§2): a token whose ``aud`` is absent, ``null``, or
-    holds only empty strings names no audience and is rejected first.
+    Shared by ID Tokens and Logout Tokens (Back-Channel Logout 1.0 §2.6 step 4
+    validates ``aud`` "in the same way" as for ID Tokens).
+
+    Returns:
+        ``None`` when ``aud`` is absent, ``null`` or holds only empty strings
+        (the token names no audience); otherwise the untrusted values, empty
+        when every audience is trusted.
 
     Raises:
-        IdTokenValidationException: If the token names no audience.
         ConfigurationException: If ``trusted_audiences`` is a bare ``str`` or
             ``bytes``, which would otherwise iterate as single characters.
     """
@@ -175,17 +187,77 @@ def _reject_untrusted_audiences(
     else:
         audiences = [aud]
     if all(a == "" for a in audiences):
-        raise IdTokenValidationException(
-            "ID token missing required 'aud' claim", token_part="payload"
-        )
+        return None
     trusted = set(trusted_audiences or ())
     if client_id:
         trusted.add(client_id)
-    untrusted = [a for a in audiences if not isinstance(a, str) or a not in trusted]
+    return [a for a in audiences if not isinstance(a, str) or a not in trusted]
+
+
+def _reject_untrusted_audiences(
+    claims: dict, client_id: str | None, trusted_audiences: Iterable[str] | None
+) -> None:
+    """Enforce §3.1.3.7 step 3 for an ID Token.
+
+    ``aud`` is REQUIRED (§2): a token that names no audience is rejected first.
+
+    Raises:
+        IdTokenValidationException: If the token names no audience.
+        UntrustedAudienceException: If an audience is not trusted.
+        ConfigurationException: If ``trusted_audiences`` is a bare string.
+    """
+    untrusted = find_untrusted_audiences(claims, client_id, trusted_audiences)
+    if untrusted is None:
+        raise IdTokenValidationException(
+            "ID token missing required 'aud' claim", token_part="payload"
+        )
     if untrusted:
         raise UntrustedAudienceException(
             "ID token contains audience(s) not trusted by the client",
             untrusted_audiences=untrusted,
+        )
+
+
+def require_issuer_without_discovery(
+    token_validation_config: TokenValidationConfig,
+) -> None:
+    """Reject a manual-mode config that pins no issuer.
+
+    OIDC Core §3.1.3.7 step 2: the OP's Issuer Identifier MUST exactly match
+    the ``iss`` claim. Back-Channel Logout 1.0 §2.6 step 4 applies the same
+    rule to Logout Tokens. Discovery mode always pins the discovered issuer;
+    with ``perform_disco=False`` the issuer must come from the config, or the
+    check could not run.
+
+    Raises:
+        ConfigurationException: If ``perform_disco`` is ``False`` and
+            ``issuer`` is ``None``, empty or whitespace, or an empty list; or
+            if ``issuer`` is a list with an empty, whitespace or non-string
+            entry.
+    """
+    issuer = token_validation_config.issuer
+    reject_blank_issuer_entries(issuer)
+    blank = issuer is None or (isinstance(issuer, str) and not issuer.strip())
+    if not token_validation_config.perform_disco and (blank or issuer == []):
+        raise ConfigurationException(
+            "TokenValidationConfig.issuer is required when perform_disco is "
+            "False: the OP issuer must match the token's 'iss' claim"
+        )
+
+
+def require_nonce_argument(nonce: object) -> None:
+    """Reject ``nonce=""``: an empty string is not a nonce that was sent.
+
+    Pass ``None`` when no nonce was sent (``RefreshNonce("")`` is rejected
+    the same way).
+
+    Raises:
+        ConfigurationException: If *nonce* is ``""``.
+    """
+    if nonce == "":
+        raise ConfigurationException(
+            "nonce must be the non-empty nonce sent on the authorization "
+            "request, RefreshNonce(original), or None when none was sent"
         )
 
 
@@ -281,6 +353,67 @@ def _validate_hash_binding(
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class RefreshNonce:
+    """The expected ``nonce`` of an ID Token returned by a token refresh.
+
+    OIDC Core §12.2: a refresh-issued ID Token SHOULD NOT have a ``nonce``
+    claim, but if it is present its value MUST be the same as in the ID Token
+    issued at the original authentication. Pass ``nonce=RefreshNonce(original)``
+    to accept an absent ``nonce`` and require a present one to equal
+    ``original``. Use ``nonce=None`` if the original authentication sent no
+    nonce.
+
+    Attributes:
+        original: The ``nonce`` of the ID Token from the original
+            authentication. Must be a non-empty string.
+
+    Raises:
+        ConfigurationException: If ``original`` is not a non-empty string.
+    """
+
+    original: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.original, str) or not self.original:
+            raise ConfigurationException(
+                "RefreshNonce.original must be the non-empty nonce of the "
+                "original ID Token"
+            )
+
+
+def _check_nonce(claims: dict, nonce: str | RefreshNonce | None) -> None:
+    """Bind the token's ``nonce`` to the one sent (§2, §3.1.3.7 step 11, §12.2).
+
+    ``None`` means no nonce was sent, so a token carrying one is rejected: §2
+    requires a present ``nonce`` to equal the value sent. A sent nonce MUST be
+    present in the token and equal it (compared in constant time). A
+    :class:`RefreshNonce` allows an absent ``nonce``; a present one MUST equal
+    the original (§12.2).
+    """
+    if nonce is None:
+        if "nonce" in claims:
+            raise IdTokenValidationException(
+                "ID token carries a 'nonce' claim but no nonce was sent",
+                token_part="payload",
+            )
+        return
+    if isinstance(nonce, RefreshNonce):
+        if "nonce" not in claims:
+            return
+        expected = nonce.original
+    else:
+        expected = nonce
+    token_nonce = claims.get("nonce")
+    if not isinstance(token_nonce, str) or not _hashes_equal(
+        token_nonce, expected, "'nonce'"
+    ):
+        raise IdTokenValidationException(
+            "ID token 'nonce' claim does not match the expected value",
+            token_part="payload",
+        )
+
+
 def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knobs
     claims: dict,
     header_alg: str | None,
@@ -288,7 +421,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     client_id: str | None = None,
     trusted_audiences: Iterable[str] | None = None,
     validate_azp: bool = False,
-    nonce: str | None = None,
+    nonce: str | RefreshNonce | None,
     access_token: str | None = None,
     code: str | None = None,
     access_token_issued_with_id_token: bool = True,
@@ -299,11 +432,12 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
 ) -> None:
     """Validate the ID-Token-specific claim rules (OIDC Core §3.1.3.7 / §3.3.2.11).
 
-    Assumes the JWT signature, ``iss``, ``aud``, ``iat`` and (when present)
-    ``exp`` have ALREADY been verified by the standard token-validation path,
-    and that the caller's ``client_id`` has already been enforced as an
-    ``aud`` member there. This function enforces only the rules unique to ID
-    Tokens; every violation raises :class:`IdTokenValidationException`.
+    Assumes the JWT signature, ``iss``, ``aud`` and (when present) ``exp``,
+    ``iat`` and ``nbf`` values have ALREADY been verified by the standard
+    token-validation path, and that the caller's ``client_id`` has already been
+    enforced as an ``aud`` member there. This function enforces the rules unique
+    to ID Tokens, including the presence of ``exp`` and ``iat`` (§2); every
+    violation raises :class:`IdTokenValidationException`.
 
     Args:
         claims: The decoded (and already signature/iss/aud/exp-validated) claim
@@ -327,8 +461,13 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             SHOULD that errata set 2 removed. Requires ``client_id``. Defaults
             to ``False``: ``azp`` is ignored, as §2 advises relying parties
             that use no extensions.
-        nonce: When provided, the token's ``nonce`` MUST be present and equal
-            this value (§3.1.3.7 step 11).
+        nonce: Required. The ``nonce`` sent on the authorization request:
+            the token's ``nonce`` MUST be present and equal it (§3.1.3.7 step
+            11). ``None`` when none was sent: a token carrying a ``nonce`` is
+            rejected, since §2 requires a present ``nonce`` to equal the value
+            sent. :class:`RefreshNonce` for an ID Token from a refresh: an
+            absent ``nonce`` is accepted and a present one MUST equal the
+            original (§12.2).
         access_token: When provided, the token's ``at_hash`` MUST match the
             left-half hash of this access token (§3.3.2.11). It MUST also be
             present unless ``access_token_issued_with_id_token`` is ``False``.
@@ -361,12 +500,20 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             ``bytes`` instead of an iterable of audiences.
         UntrustedAudienceException: If ``aud`` carries a value that is neither
             ``client_id`` nor in ``trusted_audiences`` (§3.1.3.7 step 3).
+        IdTokenMissingClaimError: If ``exp`` or ``iat`` is absent (§2).
         IdTokenValidationException: If ``aud`` is absent, ``null`` or holds
             only empty strings (§2), or any other ID-Token profile rule is
             violated.
     """
     # §3.1.3.7 step 5 needs a client_id to compare ``azp`` with.
     check_azp_config(client_id, validate_azp)
+    require_nonce_argument(nonce)
+
+    # §2 — ``exp`` and ``iat`` are REQUIRED. Standard JWT validation checks
+    # their values only when present.
+    for required in IdTokenRequiredClaim:
+        if claims.get(required.value) is None:
+            raise IdTokenMissingClaimError(required)
 
     # §2 / §3.1.3.7 — ``sub`` is REQUIRED and must be non-empty.
     if not claims.get("sub"):
@@ -382,16 +529,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     if validate_azp and client_id:
         _validate_azp(claims, client_id)
 
-    # §3.1.3.7 step 11 — ``nonce`` binding (only when the caller passed one).
-    if nonce is not None:
-        token_nonce = claims.get("nonce")
-        if not isinstance(token_nonce, str) or not _hashes_equal(
-            token_nonce, nonce, "'nonce'"
-        ):
-            raise IdTokenValidationException(
-                "ID token 'nonce' claim does not match the expected value",
-                token_part="payload",
-            )
+    _check_nonce(claims, nonce)
 
     # §3.1.3.7 step 12 — ``auth_time`` freshness (only when ``max_age`` passed).
     if max_age is not None:
@@ -430,4 +568,11 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
         )
 
 
-__all__ = ["check_azp_config", "validate_id_token_claims"]
+__all__ = [
+    "RefreshNonce",
+    "check_azp_config",
+    "find_untrusted_audiences",
+    "require_issuer_without_discovery",
+    "require_nonce_argument",
+    "validate_id_token_claims",
+]

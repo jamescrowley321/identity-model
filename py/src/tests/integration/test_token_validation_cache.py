@@ -44,11 +44,10 @@ def clear_validation_caches():
 
 
 @pytest.fixture
-def validation_config(test_config, require_https):
+def validation_config(require_https):
     """Create standard validation config for tests."""
     return TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -181,9 +180,9 @@ class TestCacheIsolationBetweenProviders:
 
         This ensures the cache doesn't bypass expiration checks.
         """
-        # Descope session tokens use a different issuer format than OIDC discovery.
-        # Disable issuer verification so we test expiration, not issuer mismatch.
-        expired_options = {**DEFAULT_OPTIONS, "verify_iss": False}
+        # Descope session tokens use a different issuer format than OIDC
+        # discovery; PyJWT checks exp before iss, so expiry is still reported.
+        expired_options = DEFAULT_OPTIONS
         validation_config = TokenValidationConfig(
             perform_disco=True,
             options=expired_options,
