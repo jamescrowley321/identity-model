@@ -281,7 +281,7 @@ def _first_usable_kid_match(
             if (
                 expected_kty in (None, key.kty)
                 and (not key.alg or key.alg == jwt_alg)
-                and (expected_crv is None or not key.crv or key.crv == expected_crv)
+                and (expected_crv is None or key.crv == expected_crv)
             ):
                 return key
     return matches[0]

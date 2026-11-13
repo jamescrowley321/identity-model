@@ -323,3 +323,12 @@ def test_shared_kid_non_string_alg_is_typed_error():
         find_key_by_kid("shared", [_okp("shared"), _ec_on("P-256")], jwt_alg=list_alg)
 
     assert excinfo.value.message == "Invalid 'alg' header: expected a string"
+
+
+def test_shared_kid_selects_okp_key_for_eddsa():
+    okp = _okp("shared", alg=None)
+
+    assert find_key_by_kid("shared", [_rsa(kid="shared"), okp], jwt_alg="EdDSA") == (
+        okp.as_dict(),
+        "EdDSA",
+    )

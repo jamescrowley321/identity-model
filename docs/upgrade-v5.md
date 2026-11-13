@@ -1224,8 +1224,8 @@ except KeyNotFoundException as exc:
 [RFC 7517 §4.5](https://www.rfc-editor.org/rfc/rfc7517#section-4.5) allows keys
 with different `kty` values to share a `kid`. When several signing keys carry the
 token's `kid`, 5.0 uses the first one whose `kty` fits the header `alg`, whose
-`alg` is absent (or empty) or equal to it, and, for ECDSA, whose `crv` is absent
-or the algorithm's curve (`ES256` → `P-256`, `ES384` → `P-384`, `ES512` →
+`alg` is absent (or empty) or equal to it, and, for ECDSA, whose `crv` is the
+algorithm's curve (`ES256` → `P-256`, `ES384` → `P-384`, `ES512` →
 `P-521`, `ES256K` → `secp256k1`). In 4.x the first key with that `kid` was used, so
 an ES256 token whose `kid` was also on an Ed25519 (`OKP`) key failed with
 `Key type 'OKP' is incompatible with algorithm 'ES256'` if the `OKP` key was
