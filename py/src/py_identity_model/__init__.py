@@ -30,6 +30,8 @@ from .exceptions import (
     DiscoveryParseError,
     DPoPReplayCacheError,
     FailedResponseAccessError,
+    IdTokenMissingClaimError,
+    IdTokenRequiredClaim,
     IdTokenValidationException,
     InvalidAudienceException,
     InvalidIssuerException,
@@ -284,6 +286,8 @@ __all__ = [
     # HTTP Client
     "HTTPClient",
     "HTTPConfig",
+    "IdTokenMissingClaimError",
+    "IdTokenRequiredClaim",
     "IdTokenValidationException",
     "InMemoryDPoPReplayCache",
     "IntrospectedTokenError",

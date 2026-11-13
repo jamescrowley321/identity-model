@@ -89,6 +89,7 @@ class TestEmptyClientId:
                 trusted_audiences=[_CLIENT_ID],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_validate_azp_with_real_client_id_runs(self):
@@ -98,6 +99,7 @@ class TestEmptyClientId:
             client_id=_CLIENT_ID,
             validate_azp=True,
             now=_NOW,
+            nonce=None,
         )
 
     @pytest.mark.parametrize("client_id", ["", None], ids=["empty", "missing"])
@@ -109,6 +111,7 @@ class TestEmptyClientId:
                 client_id=client_id,
                 trusted_audiences=[_OTHER_AUD],
                 now=_NOW,
+                nonce=None,
             )
         assert exc_info.value.details == {"untrusted_audiences": [""]}
 
@@ -119,6 +122,7 @@ class TestEmptyClientId:
             client_id=_CLIENT_ID,
             trusted_audiences=[_OTHER_AUD],
             now=_NOW,
+            nonce=None,
         )
 
     def test_empty_audience_listed_in_trusted_audiences_is_trusted(self):
@@ -129,6 +133,7 @@ class TestEmptyClientId:
             client_id=None,
             trusted_audiences=[_OTHER_AUD, ""],
             now=_NOW,
+            nonce=None,
         )
 
     @respx.mock

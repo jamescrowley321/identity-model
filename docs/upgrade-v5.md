@@ -1030,6 +1030,7 @@ claims = validate_id_token(
     id_token,
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
     disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
 )
 ```
 
@@ -1040,6 +1041,7 @@ claims = validate_id_token(
     id_token,
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
     disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
     trusted_audiences=["https://api.example.com"],
 )
 ```
@@ -1067,7 +1069,7 @@ from py_identity_model.core.id_token_logic import validate_id_token_claims
 claims = {"iss": ISSUER, "sub": "248289761001", "iat": 1699999900, "exp": 1700003600}
 
 try:
-    validate_id_token_claims(claims, "RS256")  # accepted in 4.x
+    validate_id_token_claims(claims, "RS256", nonce=None)  # accepted in 4.x
 except IdTokenValidationException:
     ...  # 5.0: no aud
 ```
@@ -1083,14 +1085,20 @@ tokens whose `azp` is not your `client_id`.
 Before:
 
 ```python
-claims = validate_id_token(id_token, validation_config, disco_doc_address=DISCOVERY_URL)
+claims = validate_id_token(
+    id_token, validation_config, disco_doc_address=DISCOVERY_URL, nonce=expected_nonce
+)
 ```
 
 After, keeping the 4.x behaviour:
 
 ```python
 claims = validate_id_token(
-    id_token, validation_config, disco_doc_address=DISCOVERY_URL, validate_azp=True
+    id_token,
+    validation_config,
+    disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
+    validate_azp=True,
 )
 ```
 
@@ -1108,7 +1116,11 @@ Before:
 ```python
 config = TokenValidationConfig(perform_disco=True, issuer=ISSUER)
 claims = validate_id_token(
-    id_token, config, disco_doc_address=DISCOVERY_URL, validate_azp=True
+    id_token,
+    config,
+    disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
+    validate_azp=True,
 )
 ```
 
@@ -1117,7 +1129,11 @@ After:
 ```python
 config = TokenValidationConfig(perform_disco=True, issuer=ISSUER, audience=CLIENT_ID)
 claims = validate_id_token(
-    id_token, config, disco_doc_address=DISCOVERY_URL, validate_azp=True
+    id_token,
+    config,
+    disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
+    validate_azp=True,
 )
 ```
 
@@ -1142,6 +1158,70 @@ unsetting it there would turn the `aud` check off.
 
 Pass your real `client_id`.
 
+### `nonce` is a required argument ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`validate_id_token` (sync and async) and `validate_id_token_claims` take a
+required keyword `nonce: str | None`. Pass the `nonce` you sent on the
+authorization request, or `None` when you sent none. In 4.x leaving it out
+skipped the check, so a token carrying a `nonce` was accepted unchecked.
+
+- A string: the token's `nonce` MUST be present and equal it (OIDC Core
+  §3.1.3.7 step 11, §3.2.2.11 step 2). For an ID Token from a refresh, pass
+  the original nonce (§12.2).
+- `None`: a token that carries a `nonce` raises `IdTokenValidationException`,
+  because §2 requires a present `nonce` to equal the value sent, and none was.
+
+Before:
+
+```python
+claims = validate_id_token(id_token, validation_config, disco_doc_address=DISCOVERY_URL)
+```
+
+After:
+
+```python
+claims = validate_id_token(
+    id_token, validation_config, disco_doc_address=DISCOVERY_URL, nonce=expected_nonce
+)
+```
+
+### ID Tokens require `exp` and `iat` ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`exp` and `iat` are REQUIRED in an ID Token (OIDC Core §2). `validate_id_token`
+and `validate_id_token_claims` raise the new `IdTokenMissingClaimError` (an
+`IdTokenValidationException`) when either is absent. Its `claim` is an
+`IdTokenRequiredClaim` (`EXP` or `IAT`). In 4.x the values were checked only
+when present, so a validly signed ID Token without them was accepted.
+
+```python
+from py_identity_model import IdTokenMissingClaimError, IdTokenRequiredClaim
+
+try:
+    claims = validate_id_token(id_token, validation_config, DISCOVERY_URL, nonce=nonce)
+except IdTokenMissingClaimError as exc:
+    assert exc.claim in (IdTokenRequiredClaim.EXP, IdTokenRequiredClaim.IAT)
+```
+
+`validate_token` is unchanged: for a generic JWT, RFC 7519 §4.1.4 and §4.1.6
+make `exp` and `iat` OPTIONAL. Its `exp` and `iat` values are checked when
+present.
+
+### Without discovery, an issuer is required ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+With `perform_disco=False`, `validate_id_token` and `validate_logout_token`
+(sync and async) raise `ConfigurationException` when
+`TokenValidationConfig.issuer` is `None`, `""` or empty. The OP issuer MUST
+match the token's `iss` (OIDC Core §3.1.3.7 step 2; Back-Channel Logout 1.0
+§2.6 step 4), and in 4.x such a config skipped the `iss` check. Discovery mode
+is unchanged: it always checks the discovered issuer.
+
+```python
+config = TokenValidationConfig(
+    perform_disco=False, key=op_public_jwk, audience=CLIENT_ID, issuer=ISSUER
+)
+claims = validate_id_token(id_token, config, nonce=expected_nonce)
+```
+
 ### A missing `at_hash` / `c_hash` is reported as missing ([#887](https://github.com/jamescrowley321/identity-model/pull/887))
 
 When you pass `access_token=` or `code=`, the matching hash claim is still
@@ -1160,6 +1240,7 @@ claims = validate_id_token(
     id_token,
     validation_config,
     disco_doc_address=DISCOVERY_URL,
+    nonce=expected_nonce,
     access_token=token_response.access_token,
     access_token_issued_with_id_token=False,  # code flow: from the token endpoint
 )
@@ -1345,6 +1426,53 @@ except WeakKeyException as exc:
     print(exc.details["kid"], exc.details["bits"], exc.details["min_bits"])
 ```
 
+### `options` cannot disable a configured audience or issuer check ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+`TokenValidationConfig.options` is passed to PyJWT. In 4.x,
+`options={"verify_aud": False}` or `{"verify_iss": False}` silently turned off
+the check for a configured `audience` or `issuer`. Now `verify_aud=False`
+raises `ConfigurationException` when an `audience` is set, and
+`verify_iss=False` raises it when an issuer is set or comes from discovery.
+`require` must be a list of claim names. With no audience configured,
+`verify_aud=False` is still accepted.
+
+Before:
+
+```python
+TokenValidationConfig(perform_disco=True, audience="api", options={"verify_aud": False})
+```
+
+After, either check the audience:
+
+```python
+TokenValidationConfig(perform_disco=True, audience="api")
+```
+
+or configure none:
+
+```python
+TokenValidationConfig(perform_disco=True, options={"verify_aud": False})
+```
+
+### Every algorithm in an explicit list is usable ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+RFC 8725 §3.1 lets the caller specify a set of algorithms. In 4.x a manual key
+without `alg` was bound to the first entry of `algorithms`, so with
+`algorithms=["RS256", "PS256"]` a valid PS256 token was rejected. The key is
+now bound to the token's header `alg` when that is in the list, and the key
+type must fit it.
+
+A key that declares `alg` is used only with that algorithm (RFC 7517 §4.4,
+RFC 8725 §3.1). In 4.x an explicit `algorithms` list overrode it; now a token
+signed with another listed algorithm raises `KeyAlgorithmMismatchException`.
+
+### Short HMAC keys are rejected ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+RFC 7518 §3.2 requires an HMAC key at least as long as the hash output. When
+you allow an HS* algorithm, a verification key (`kty: "oct"`) under 256, 384
+or 512 bits for HS256, HS384 or HS512 raises `WeakKeyException`. In 4.x PyJWT
+only warned. Use a longer secret.
+
 ## UserInfo
 
 ### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))
@@ -1426,6 +1554,28 @@ try:
 except LogoutTokenValidationException:
     ...  # 5.0: also raised when exp is missing
 ```
+
+### Logout Tokens with an untrusted audience are rejected ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+
+Back-Channel Logout 1.0 §2.6 step 4 validates `aud` as for ID Tokens, so
+`validate_logout_token` (sync and async) now rejects a Logout Token whose
+`aud` holds any value other than your `client_id` (OIDC Core §3.1.3.7 step 3).
+The error is `LogoutTokenValidationException` with the rejected values in
+`details["untrusted_audiences"]`. List other audiences you trust in the new
+`trusted_audiences=` argument. `validate_logout_token_claims` takes a required
+keyword `client_id` and an optional `trusted_audiences`.
+
+```python
+claims = validate_logout_token(
+    logout_token,
+    validation_config,
+    DISCOVERY_URL,
+    trusted_audiences=["https://partner.example.com"],
+)
+```
+
+With `perform_disco=False`, `validate_logout_token` also requires an issuer;
+see [Without discovery, an issuer is required](#without-discovery-an-issuer-is-required).
 
 ## Go and Rust
 

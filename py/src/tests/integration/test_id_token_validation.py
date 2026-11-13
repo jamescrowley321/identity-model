@@ -134,6 +134,7 @@ class TestValidateIdTokenLive:
             id_token_flow["id_token"],
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            nonce=None,
         )
 
         # Signature/iss/aud/exp are enforced inside validate_id_token; assert the
@@ -157,6 +158,7 @@ class TestValidateIdTokenLive:
                 id_token_flow["id_token"],
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                nonce=None,
             )
 
     def test_nonce_binding(self, id_token_flow, test_config, issuer, require_https):
@@ -199,6 +201,7 @@ class TestValidateIdTokenLive:
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
             max_age=id_token_flow["max_age"],
+            nonce=None,
         )
         assert isinstance(claims["auth_time"], int)
 
@@ -225,6 +228,7 @@ class TestValidateIdTokenLive:
             disco_doc_address=disco,
             access_token=access_token,
             access_token_issued_with_id_token=False,
+            nonce=None,
         )
 
         if "at_hash" in _decode_unverified(id_token):
@@ -239,9 +243,14 @@ class TestValidateIdTokenLive:
                     disco_doc_address=disco,
                     access_token=access_token + "tampered",
                     access_token_issued_with_id_token=False,
+                    nonce=None,
                 )
             validate_id_token(
-                id_token, config, disco_doc_address=disco, access_token=access_token
+                id_token,
+                config,
+                disco_doc_address=disco,
+                access_token=access_token,
+                nonce=None,
             )
         else:
             # No at_hash: nothing binds, so only the default presence rule rejects.
@@ -249,5 +258,9 @@ class TestValidateIdTokenLive:
                 IdTokenValidationException, match=r"missing required 'at_hash'"
             ):
                 validate_id_token(
-                    id_token, config, disco_doc_address=disco, access_token=access_token
+                    id_token,
+                    config,
+                    disco_doc_address=disco,
+                    access_token=access_token,
+                    nonce=None,
                 )

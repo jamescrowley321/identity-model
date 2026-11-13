@@ -1724,9 +1724,12 @@ class TokenValidationConfig:
             accepted issuers for multi-tenant validation.
         subject: Expected ``sub`` claim.  Validated after decoding.
         options: Additional PyJWT decode options (e.g., {'require': ['sub']}).
-            Security-critical options (verify_signature, verify_exp, verify_nbf,
-            verify_iat) cannot be disabled and will raise ConfigurationException
-            if set to False.
+            They cannot weaken a check: ``verify_signature``, ``verify_exp``,
+            ``verify_nbf`` and ``verify_iat`` can never be ``False``;
+            ``verify_aud`` cannot be ``False`` while ``audience`` is set, nor
+            ``verify_iss`` while an issuer is set or discovered; ``require``
+            must be a list of claim names. A violation raises
+            ``ConfigurationException``.
         claims_validator: Optional injectable claims validator, run after the
                          standard checks pass. A ``ClaimsValidator`` is any
                          callable ``(claims) -> None`` — sync, or async in the

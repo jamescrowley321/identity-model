@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..core.id_token_logic import (
     check_azp_config,
+    require_issuer_without_discovery,
     unset_empty_client_id,
     validate_id_token_claims,
 )
@@ -36,10 +37,10 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
     disco_doc_address: str | None = None,
     http_client: AsyncHTTPClient | None = None,
     *,
+    nonce: str | None,
     cache: AsyncValidationCache | None = None,
     trusted_audiences: Iterable[str] | None = None,
     validate_azp: bool = False,
-    nonce: str | None = None,
     access_token: str | None = None,
     code: str | None = None,
     access_token_issued_with_id_token: bool = True,
@@ -49,12 +50,13 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
     """Validate an OpenID Connect ID Token (async) (OIDC Core §3.1.3.7 / §3.3.2.11).
 
     Runs the standard async JWT validation of ``validate_token`` (signature,
-    ``iss``, ``aud``, ``iat`` and ``exp`` when present) — set
+    ``iss``, ``aud``, and ``iat``/``exp`` when present) — set
     ``token_validation_config.audience`` to the RP's ``client_id`` so the
     ``aud`` check is enforced there — then applies the ID-Token profile:
-    required ``sub``, no audience the client does not trust, and the optional
-    ``azp`` / ``nonce`` / ``max_age`` / ``at_hash`` / ``c_hash`` checks, each
-    run only when the corresponding argument is supplied.
+    required ``exp``, ``iat`` and ``sub``, no audience the client does not
+    trust, the ``nonce`` binding, and the optional ``azp`` / ``max_age`` /
+    ``at_hash`` / ``c_hash`` checks, each run only when the corresponding
+    argument is supplied.
 
     The access-token sender-constraint check (RFC 9449 §7, RFC 8705 §3) is not
     run: an ID Token (OIDC Core §3.1.3.7) arrives with no presentation, so a
@@ -79,8 +81,13 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
             Core 1.0 errata set 2 (§3.1.3.7 steps 4-5), so the default is
             ``False`` and ``azp`` is ignored (§2). Requires
             ``token_validation_config.audience``.
-        nonce: The ``nonce`` the RP sent on the authorization request. When
-            provided, the token's ``nonce`` MUST match it (§3.1.3.7 step 11).
+        nonce: The ``nonce`` the RP sent on the authorization request, or
+            ``None`` when it sent none. Required, so the choice is explicit.
+            A string means the token's ``nonce`` MUST be present and match it
+            (§3.1.3.7 step 11, §3.2.2.11 step 2); a refresh-issued ID Token
+            takes the original nonce (§12.2). ``None`` means a token that
+            carries a ``nonce`` is rejected (§2: a present ``nonce`` MUST equal
+            the value sent).
         access_token: The access token that came with the ID Token. When
             provided, the token's ``at_hash`` MUST match it (§3.3.2.11), and
             MUST be present unless ``access_token_issued_with_id_token`` is
@@ -109,12 +116,15 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
             signature, wrong issuer/audience, expired token).
         UntrustedAudienceException: If ``aud`` carries an audience the client
             does not trust (§3.1.3.7 step 3).
+        IdTokenMissingClaimError: If ``exp`` or ``iat`` is absent (§2).
         IdTokenValidationException: If an ID-Token-profile rule fails.
         AzpRequiresClientIdError: If ``validate_azp`` is set without
             ``token_validation_config.audience``. Raised before any I/O.
-        ConfigurationException: If the configuration is invalid.
+        ConfigurationException: If the configuration is invalid, including
+            ``perform_disco=False`` with no ``issuer`` (§3.1.3.7 step 2).
     """
     token_validation_config = unset_empty_client_id(token_validation_config)
+    require_issuer_without_discovery(token_validation_config)
     check_azp_config(token_validation_config.audience, validate_azp)
     claims = await _validate_jwt_without_binding(
         id_token,

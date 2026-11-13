@@ -18,6 +18,7 @@ surfaces. Contains no I/O:
 from __future__ import annotations
 
 import hmac
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urlparse
 
 from ..exceptions import (
@@ -25,6 +26,11 @@ from ..exceptions import (
     LogoutTokenValidationException,
 )
 from ..oidc_constants import BackChannelLogoutRequest, Events
+from .id_token_logic import find_untrusted_audiences
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 # The event member that MUST be present in a Logout Token's ``events`` claim
@@ -59,7 +65,12 @@ _RESERVED_END_SESSION_PARAMS = frozenset(
 _REQUIRED_CLAIMS = ("iss", "aud", "iat", "exp", "jti", "events")
 
 
-def validate_logout_token_claims(claims: dict) -> None:
+def validate_logout_token_claims(
+    claims: dict,
+    *,
+    client_id: str | None,
+    trusted_audiences: Iterable[str] | None = None,
+) -> None:
     """Validate the Logout-Token-specific claim rules (Back-Channel Logout 1.0 §2.4).
 
     Assumes the JWT signature, ``iss``, ``aud``, ``iat`` and (when present)
@@ -73,13 +84,21 @@ def validate_logout_token_claims(claims: dict) -> None:
     3. ``sub`` and/or ``sid`` MUST be present (at least one).
     5. A ``nonce`` claim MUST NOT be present (a Logout Token must not be
        usable as an ID Token).
+    6. Every ``aud`` value MUST be ``client_id`` or in ``trusted_audiences``
+       (§2.6 step 4 validates ``aud`` as for ID Tokens, OIDC Core §3.1.3.7
+       step 3).
 
     Args:
         claims: The decoded (and already signature/iss/aud/exp-validated)
             JWT claim set.
+        client_id: The relying party's ``client_id``
+            (``TokenValidationConfig.audience``), the one audience trusted
+            without being listed. ``None`` means every audience is untrusted.
+        trusted_audiences: Additional audiences the client trusts.
 
     Raises:
         LogoutTokenValidationException: If any Logout-Token rule is violated.
+        ConfigurationException: If ``trusted_audiences`` is a bare string.
     """
     # Step 2 — required claims.
     for required in _REQUIRED_CLAIMS:
@@ -88,6 +107,20 @@ def validate_logout_token_claims(claims: dict) -> None:
                 f"Logout token missing required '{required}' claim",
                 token_part="payload",
             )
+
+    # §2.6 step 4 / OIDC Core §3.1.3.7 step 3 — no untrusted audience.
+    untrusted = find_untrusted_audiences(claims, client_id, trusted_audiences)
+    if untrusted is None:
+        raise LogoutTokenValidationException(
+            "Logout token missing required 'aud' claim",
+            token_part="payload",
+        )
+    if untrusted:
+        raise LogoutTokenValidationException(
+            "Logout token contains audience(s) not trusted by the client",
+            token_part="payload",
+            details={"untrusted_audiences": untrusted},
+        )
 
     # Step 5 — a Logout Token MUST NOT contain a ``nonce`` claim.
     if "nonce" in claims:

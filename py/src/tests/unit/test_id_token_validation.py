@@ -30,6 +30,8 @@ from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
+    IdTokenMissingClaimError,
+    IdTokenRequiredClaim,
     IdTokenValidationException,
     InvalidAudienceException,
     TokenValidationException,
@@ -79,8 +81,9 @@ def _valid_id_claims(**overrides) -> dict:
 
     ``iat``/``exp`` use wall-clock time so tokens run through the full
     signature + ``exp`` validation in ``validate_token`` unexpired. The
-    ID-Token profile itself does not read ``iat``/``exp``; the injectable
-    ``now``/``auth_time`` arithmetic in the pure tests uses the fixed ``_NOW``.
+    ID-Token profile checks only that ``iat``/``exp`` are present; the
+    injectable ``now``/``auth_time`` arithmetic in the pure tests uses the
+    fixed ``_NOW``.
     """
     issued_at = int(time.time())
     claims = {
@@ -133,7 +136,7 @@ class TestPureIdTokenClaimValidation:
     def test_valid_claims_accepted(self):
         # §3.1.3.7: a well-formed single-audience ID Token validates cleanly.
         validate_id_token_claims(
-            _valid_id_claims(), "RS256", client_id=_AUDIENCE, now=_NOW
+            _valid_id_claims(), "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
         )
 
     def test_missing_sub_rejected(self):
@@ -141,13 +144,19 @@ class TestPureIdTokenClaimValidation:
         claims = _valid_id_claims()
         del claims["sub"]
         with pytest.raises(IdTokenValidationException, match=r"sub"):
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
 
     def test_empty_sub_rejected(self):
         # §3.1.3.7: a present-but-empty ``sub`` is not a valid subject.
         with pytest.raises(IdTokenValidationException, match=r"sub"):
             validate_id_token_claims(
-                _valid_id_claims(sub=""), "RS256", client_id=_AUDIENCE, now=_NOW
+                _valid_id_claims(sub=""),
+                "RS256",
+                client_id=_AUDIENCE,
+                now=_NOW,
+                nonce=None,
             )
 
     def test_multi_aud_without_azp_accepted_by_default(self):
@@ -160,6 +169,7 @@ class TestPureIdTokenClaimValidation:
             client_id=_AUDIENCE,
             trusted_audiences=["other-client"],
             now=_NOW,
+            nonce=None,
         )
 
     def test_multi_aud_without_azp_rejected_when_opted_in(self):
@@ -174,6 +184,7 @@ class TestPureIdTokenClaimValidation:
                 trusted_audiences=["other-client"],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_multi_aud_with_wrong_azp_accepted_by_default(self):
@@ -184,6 +195,7 @@ class TestPureIdTokenClaimValidation:
             client_id=_AUDIENCE,
             trusted_audiences=["other-client"],
             now=_NOW,
+            nonce=None,
         )
 
     def test_multi_aud_with_wrong_azp_rejected_when_opted_in(self):
@@ -197,6 +209,7 @@ class TestPureIdTokenClaimValidation:
                 trusted_audiences=["other-client"],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     @pytest.mark.parametrize("validate_azp", [False, True])
@@ -209,19 +222,27 @@ class TestPureIdTokenClaimValidation:
             trusted_audiences=["other-client"],
             validate_azp=validate_azp,
             now=_NOW,
+            nonce=None,
         )
 
     def test_cross_client_azp_accepted_by_default(self):
         # Google's Android-to-backend flow: aud is this client, azp is the
         # presenting mobile client.
         claims = _valid_id_claims(azp="android-client")
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        validate_id_token_claims(
+            claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+        )
 
     def test_single_aud_with_wrong_azp_rejected_when_opted_in(self):
         claims = _valid_id_claims(azp="android-client")
         with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
             validate_id_token_claims(
-                claims, "RS256", client_id=_AUDIENCE, validate_azp=True, now=_NOW
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                validate_azp=True,
+                now=_NOW,
+                nonce=None,
             )
 
     def test_empty_azp_with_multi_aud_rejected_when_opted_in(self):
@@ -237,6 +258,7 @@ class TestPureIdTokenClaimValidation:
                 trusted_audiences=["other-client"],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     @pytest.mark.parametrize(
@@ -259,6 +281,7 @@ class TestPureIdTokenClaimValidation:
                 trusted_audiences=[_AUDIENCE],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_azp_requires_client_id_error_is_configuration_exception(self):
@@ -291,17 +314,29 @@ class TestPureIdTokenClaimValidation:
                 now=_NOW,
             )
 
-    def test_token_nonce_ignored_when_not_requested(self):
-        # A ``nonce`` in the token is not checked when the caller does not pass
-        # one — the RP only binds ``nonce`` when it sent one.
+    def test_token_nonce_rejected_when_none_sent(self):
+        # OIDC Core §2: a present ``nonce`` MUST equal the value sent. With no
+        # nonce sent (``nonce=None``) a token carrying one is rejected.
         claims = _valid_id_claims(nonce="left-over")
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
+        assert (exc_info.value.message, exc_info.value.token_part) == (
+            "ID token carries a 'nonce' claim but no nonce was sent",
+            "payload",
+        )
+
+    def test_no_nonce_sent_and_none_in_token_accepted(self):
+        validate_id_token_claims(
+            _valid_id_claims(), "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+        )
 
     def test_max_age_within_window_accepted(self):
         # §3.1.3.7 step 12 (positive): a recent ``auth_time`` is within max_age.
         claims = _valid_id_claims(auth_time=int(_NOW) - 100)
         validate_id_token_claims(
-            claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
+            claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW, nonce=None
         )
 
     def test_max_age_stale_auth_time_rejected(self):
@@ -309,14 +344,19 @@ class TestPureIdTokenClaimValidation:
         claims = _valid_id_claims(auth_time=int(_NOW) - 3600)
         with pytest.raises(IdTokenValidationException, match=r"max_age"):
             validate_id_token_claims(
-                claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
+                claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW, nonce=None
             )
 
     def test_max_age_missing_auth_time_rejected(self):
         # §3.1.3.7 step 12: ``max_age`` requested but no ``auth_time`` present.
         with pytest.raises(IdTokenValidationException, match=r"auth_time"):
             validate_id_token_claims(
-                _valid_id_claims(), "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                max_age=300,
+                now=_NOW,
+                nonce=None,
             )
 
     def test_max_age_boolean_auth_time_rejected(self):
@@ -325,7 +365,7 @@ class TestPureIdTokenClaimValidation:
         claims = _valid_id_claims(auth_time=True)
         with pytest.raises(IdTokenValidationException, match=r"auth_time"):
             validate_id_token_claims(
-                claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW
+                claims, "RS256", client_id=_AUDIENCE, max_age=300, now=_NOW, nonce=None
             )
 
     def test_max_age_leeway_absorbs_small_skew(self):
@@ -333,21 +373,34 @@ class TestPureIdTokenClaimValidation:
         claims = _valid_id_claims(auth_time=int(_NOW) - 310)
         # Without leeway 310 > 300 would fail; leeway=30 pulls it back in.
         validate_id_token_claims(
-            claims, "RS256", client_id=_AUDIENCE, max_age=300, leeway=30, now=_NOW
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            max_age=300,
+            leeway=30,
+            now=_NOW,
+            nonce=None,
         )
 
     def test_max_age_uses_wall_clock_when_now_omitted(self):
         # ``now`` is injectable for tests but defaults to the wall clock; a
         # just-issued ``auth_time`` is comfortably within the window.
         claims = _valid_id_claims(auth_time=int(time.time()))
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, max_age=300)
+        validate_id_token_claims(
+            claims, "RS256", client_id=_AUDIENCE, max_age=300, nonce=None
+        )
 
     def test_at_hash_correct_accepted(self):
         # §3.3.2.11 (positive): a correct RS256 (SHA-256) ``at_hash`` validates.
         access_token = "SlAV32hkKG-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha256))
         validate_id_token_claims(
-            claims, "RS256", client_id=_AUDIENCE, access_token=access_token, now=_NOW
+            claims,
+            "RS256",
+            client_id=_AUDIENCE,
+            access_token=access_token,
+            now=_NOW,
+            nonce=None,
         )
 
     def test_at_hash_wrong_rejected(self):
@@ -362,6 +415,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_at_hash_absent_accepted_for_token_endpoint_access_token(self):
@@ -374,6 +428,7 @@ class TestPureIdTokenClaimValidation:
             access_token="SlAV32hkKG-access-token",
             access_token_issued_with_id_token=False,
             now=_NOW,
+            nonce=None,
         )
 
     def test_at_hash_missing_rejected_by_default(self):
@@ -389,6 +444,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_at_hash_wrong_rejected_when_issued_with_id_token(self):
@@ -406,6 +462,7 @@ class TestPureIdTokenClaimValidation:
                 access_token="SlAV32hkKG-access-token",
                 access_token_issued_with_id_token=True,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_at_hash_non_string_rejected_when_not_required(self):
@@ -420,6 +477,7 @@ class TestPureIdTokenClaimValidation:
                 access_token="SlAV32hkKG-access-token",
                 access_token_issued_with_id_token=False,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_absent_unrequired_at_hash_skips_alg_lookup(self):
@@ -431,6 +489,7 @@ class TestPureIdTokenClaimValidation:
             access_token="SlAV32hkKG-access-token",
             access_token_issued_with_id_token=False,
             now=_NOW,
+            nonce=None,
         )
 
     def test_issued_with_id_token_flags_without_values_are_noops(self):
@@ -442,6 +501,7 @@ class TestPureIdTokenClaimValidation:
             access_token_issued_with_id_token=True,
             code_issued_with_id_token=True,
             now=_NOW,
+            nonce=None,
         )
 
     def test_c_hash_absent_accepted_when_code_not_issued_with_id_token(self):
@@ -452,6 +512,7 @@ class TestPureIdTokenClaimValidation:
             code="Qcb0Orv1-authorization-code",
             code_issued_with_id_token=False,
             now=_NOW,
+            nonce=None,
         )
 
     def test_c_hash_missing_rejected_by_default(self):
@@ -466,6 +527,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 code="Qcb0Orv1-authorization-code",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_c_hash_correct_accepted_when_issued_with_id_token(self):
@@ -478,19 +540,22 @@ class TestPureIdTokenClaimValidation:
             code=code,
             code_issued_with_id_token=True,
             now=_NOW,
+            nonce=None,
         )
 
     def test_at_hash_ignored_when_no_access_token(self):
         # ``at_hash`` is not checked when the caller passes no access token.
         claims = _valid_id_claims(at_hash="whatever-unchecked")
-        validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+        validate_id_token_claims(
+            claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+        )
 
     def test_c_hash_correct_accepted(self):
         # §3.3.2.11 (positive): a correct RS256 (SHA-256) ``c_hash`` validates.
         code = "SplxlOBeZQQYbYS6WxSbIA-code"
         claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha256))
         validate_id_token_claims(
-            claims, "RS256", client_id=_AUDIENCE, code=code, now=_NOW
+            claims, "RS256", client_id=_AUDIENCE, code=code, now=_NOW, nonce=None
         )
 
     def test_c_hash_wrong_rejected(self):
@@ -503,6 +568,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 code="SplxlOBeZQQYbYS6WxSbIA-code",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_at_hash_es384_uses_sha384(self):
@@ -510,7 +576,12 @@ class TestPureIdTokenClaimValidation:
         access_token = "es384-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha384))
         validate_id_token_claims(
-            claims, "ES384", client_id=_AUDIENCE, access_token=access_token, now=_NOW
+            claims,
+            "ES384",
+            client_id=_AUDIENCE,
+            access_token=access_token,
+            now=_NOW,
+            nonce=None,
         )
 
     def test_c_hash_ps512_uses_sha512(self):
@@ -518,7 +589,7 @@ class TestPureIdTokenClaimValidation:
         code = "ps512-code"
         claims = _valid_id_claims(c_hash=_oidc_left_half(code, hashlib.sha512))
         validate_id_token_claims(
-            claims, "PS512", client_id=_AUDIENCE, code=code, now=_NOW
+            claims, "PS512", client_id=_AUDIENCE, code=code, now=_NOW, nonce=None
         )
 
     def test_at_hash_eddsa_uses_sha512(self):
@@ -526,7 +597,12 @@ class TestPureIdTokenClaimValidation:
         access_token = "eddsa-access-token"
         claims = _valid_id_claims(at_hash=_oidc_left_half(access_token, hashlib.sha512))
         validate_id_token_claims(
-            claims, "EdDSA", client_id=_AUDIENCE, access_token=access_token, now=_NOW
+            claims,
+            "EdDSA",
+            client_id=_AUDIENCE,
+            access_token=access_token,
+            now=_NOW,
+            nonce=None,
         )
 
     def test_unsupported_alg_for_hash_check_rejected(self):
@@ -540,6 +616,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_missing_header_alg_for_hash_check_rejected(self):
@@ -552,6 +629,7 @@ class TestPureIdTokenClaimValidation:
                 client_id=_AUDIENCE,
                 access_token="SlAV32hkKG-access-token",
                 now=_NOW,
+                nonce=None,
             )
 
 
@@ -578,6 +656,7 @@ class TestNonAsciiInputsFailClosed:
                 client_id=_AUDIENCE,
                 access_token="café-access-token",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_non_ascii_code_raises_id_token_exception(self):
@@ -589,6 +668,7 @@ class TestNonAsciiInputsFailClosed:
                 client_id=_AUDIENCE,
                 code="café-code",
                 now=_NOW,
+                nonce=None,
             )
 
     def test_non_ascii_expected_nonce_raises_id_token_exception(self):
@@ -621,7 +701,9 @@ class TestUntrustedAudiences:
     def test_untrusted_second_audience_rejected(self):
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
         with pytest.raises(UntrustedAudienceException) as exc_info:
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
         assert exc_info.value.details == {"untrusted_audiences": ["other-client"]}
 
     def test_untrusted_audience_is_an_id_token_profile_failure(self):
@@ -637,6 +719,7 @@ class TestUntrustedAudiences:
             client_id=_AUDIENCE,
             trusted_audiences=["other-client"],
             now=_NOW,
+            nonce=None,
         )
 
     def test_empty_trusted_list_still_rejects(self):
@@ -645,7 +728,12 @@ class TestUntrustedAudiences:
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"], azp=_AUDIENCE)
         with pytest.raises(UntrustedAudienceException):
             validate_id_token_claims(
-                claims, "RS256", client_id=_AUDIENCE, trusted_audiences=[], now=_NOW
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                trusted_audiences=[],
+                now=_NOW,
+                nonce=None,
             )
 
     def test_only_the_untrusted_values_are_reported(self):
@@ -659,6 +747,7 @@ class TestUntrustedAudiences:
                 client_id=_AUDIENCE,
                 trusted_audiences=["trusted-api"],
                 now=_NOW,
+                nonce=None,
             )
         assert exc_info.value.details == {"untrusted_audiences": ["rogue-api"]}
 
@@ -669,6 +758,7 @@ class TestUntrustedAudiences:
             client_id=_AUDIENCE,
             trusted_audiences=["other-client"],
             now=_NOW,
+            nonce=None,
         )
 
     def test_untrusted_audience_checked_before_azp(self):
@@ -676,20 +766,27 @@ class TestUntrustedAudiences:
         claims = _valid_id_claims(aud=[_AUDIENCE, "other-client"])
         with pytest.raises(UntrustedAudienceException):
             validate_id_token_claims(
-                claims, "RS256", client_id=_AUDIENCE, validate_azp=True, now=_NOW
+                claims,
+                "RS256",
+                client_id=_AUDIENCE,
+                validate_azp=True,
+                now=_NOW,
+                nonce=None,
             )
 
     def test_without_client_id_every_audience_is_untrusted(self):
         # Fails closed: with no client_id and no trusted list there is nothing
         # the token's audience can be trusted as.
         with pytest.raises(UntrustedAudienceException) as exc_info:
-            validate_id_token_claims(_valid_id_claims(), "RS256", now=_NOW)
+            validate_id_token_claims(_valid_id_claims(), "RS256", now=_NOW, nonce=None)
         assert exc_info.value.details == {"untrusted_audiences": [_AUDIENCE]}
 
     def test_non_string_audience_is_untrusted(self):
         claims = _valid_id_claims(aud=[_AUDIENCE, 7], azp=_AUDIENCE)
         with pytest.raises(UntrustedAudienceException) as exc_info:
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
         assert exc_info.value.details == {"untrusted_audiences": [7]}
 
     @pytest.mark.parametrize(
@@ -704,6 +801,7 @@ class TestUntrustedAudiences:
                 client_id=_AUDIENCE,
                 trusted_audiences=bare,
                 now=_NOW,
+                nonce=None,
             )
 
     @pytest.mark.parametrize("client_id", [_AUDIENCE, None], ids=["client", "none"])
@@ -712,7 +810,9 @@ class TestUntrustedAudiences:
         claims = _valid_id_claims()
         del claims["aud"]
         with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
-            validate_id_token_claims(claims, "RS256", client_id=client_id, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=client_id, now=_NOW, nonce=None
+            )
 
     @pytest.mark.parametrize(
         "aud",
@@ -722,19 +822,27 @@ class TestUntrustedAudiences:
     def test_empty_audience_rejected(self, aud):
         with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
             validate_id_token_claims(
-                _valid_id_claims(aud=aud), "RS256", client_id=_AUDIENCE, now=_NOW
+                _valid_id_claims(aud=aud),
+                "RS256",
+                client_id=_AUDIENCE,
+                now=_NOW,
+                nonce=None,
             )
 
     def test_missing_audience_is_not_an_untrusted_audience(self):
         claims = _valid_id_claims(aud=[])
         with pytest.raises(IdTokenValidationException) as exc_info:
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
         assert not isinstance(exc_info.value, UntrustedAudienceException)
 
     def test_empty_string_beside_a_real_audience_is_untrusted(self):
         claims = _valid_id_claims(aud=[_AUDIENCE, ""], azp=_AUDIENCE)
         with pytest.raises(UntrustedAudienceException) as exc_info:
-            validate_id_token_claims(claims, "RS256", client_id=_AUDIENCE, now=_NOW)
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
         assert exc_info.value.details == {"untrusted_audiences": [""]}
 
     @respx.mock
@@ -751,7 +859,7 @@ class TestUntrustedAudiences:
             perform_disco=True, audience=None, issuer=_ISSUER
         )
         with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
-            validate_id_token(token, config, disco_doc_address=DISCO_URL)
+            validate_id_token(token, config, disco_doc_address=DISCO_URL, nonce=None)
 
     @respx.mock
     def test_sync_wrapper_rejects_untrusted_audience(self, rsa_keypair):
@@ -764,7 +872,7 @@ class TestUntrustedAudiences:
             headers={"kid": key_dict["kid"]},
         )
         with pytest.raises(UntrustedAudienceException):
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
 
     @respx.mock
     def test_sync_wrapper_forwards_trusted_audiences(self, rsa_keypair):
@@ -781,6 +889,7 @@ class TestUntrustedAudiences:
             _config(),
             disco_doc_address=DISCO_URL,
             trusted_audiences=["other-client"],
+            nonce=None,
         )
         assert claims["aud"] == [_AUDIENCE, "other-client"]
 
@@ -796,7 +905,9 @@ class TestUntrustedAudiences:
             headers={"kid": key_dict["kid"]},
         )
         with pytest.raises(UntrustedAudienceException):
-            await aio_validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+            await aio_validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, nonce=None
+            )
 
     @pytest.mark.asyncio
     @respx.mock
@@ -814,6 +925,7 @@ class TestUntrustedAudiences:
             _config(),
             disco_doc_address=DISCO_URL,
             trusted_audiences=["other-client"],
+            nonce=None,
         )
         assert claims["aud"] == [_AUDIENCE, "other-client"]
 
@@ -840,7 +952,11 @@ class TestSyncValidateIdToken:
         )
         with pytest.raises(AzpRequiresClientIdError):
             validate_id_token(
-                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+                "not-a-jwt",
+                config,
+                disco_doc_address=DISCO_URL,
+                validate_azp=True,
+                nonce=None,
             )
         assert respx.calls.call_count == 0
 
@@ -865,6 +981,7 @@ class TestSyncValidateIdToken:
                     config,
                     disco_doc_address=DISCO_URL,
                     trusted_audiences=["other-api", ""],
+                    nonce=None,
                 )
             return type(exc_info.value), str(exc_info.value)
 
@@ -880,7 +997,9 @@ class TestSyncValidateIdToken:
         _mock_disco_and_jwks(key_dict)
         token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
 
-        claims = validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+        claims = validate_id_token(
+            token, _config(), disco_doc_address=DISCO_URL, nonce=None
+        )
 
         assert claims["sub"] == "user-1"
         assert claims["aud"] == _AUDIENCE
@@ -895,7 +1014,7 @@ class TestSyncValidateIdToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenValidationException, match=r"sub"):
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
 
     @respx.mock
     def test_signed_cross_client_azp_accepted_by_default(self, rsa_keypair):
@@ -904,7 +1023,9 @@ class TestSyncValidateIdToken:
         token_claims = _valid_id_claims(azp="android-client")
         token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
 
-        claims = validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+        claims = validate_id_token(
+            token, _config(), disco_doc_address=DISCO_URL, nonce=None
+        )
 
         assert claims == token_claims
 
@@ -920,7 +1041,11 @@ class TestSyncValidateIdToken:
 
         with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
             validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, validate_azp=True
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                validate_azp=True,
+                nonce=None,
             )
 
     @respx.mock
@@ -967,6 +1092,7 @@ class TestSyncValidateIdToken:
             _config(),
             disco_doc_address=DISCO_URL,
             access_token=access_token,
+            nonce=None,
         )
         assert claims["sub"] == "user-1"
 
@@ -986,6 +1112,7 @@ class TestSyncValidateIdToken:
                 _config(),
                 disco_doc_address=DISCO_URL,
                 access_token="real-access-token-xyz",
+                nonce=None,
             )
 
     @respx.mock
@@ -1001,6 +1128,7 @@ class TestSyncValidateIdToken:
             disco_doc_address=DISCO_URL,
             access_token="real-access-token-xyz",
             access_token_issued_with_id_token=False,
+            nonce=None,
         )
         assert claims["sub"] == "user-1"
 
@@ -1019,6 +1147,7 @@ class TestSyncValidateIdToken:
                 disco_doc_address=DISCO_URL,
                 access_token="real-access-token-xyz",
                 access_token_issued_with_id_token=True,
+                nonce=None,
             )
 
     @respx.mock
@@ -1036,6 +1165,7 @@ class TestSyncValidateIdToken:
                 disco_doc_address=DISCO_URL,
                 code="real-auth-code-abc",
                 code_issued_with_id_token=True,
+                nonce=None,
             )
 
     @respx.mock
@@ -1052,7 +1182,7 @@ class TestSyncValidateIdToken:
         )
 
         claims = validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, code=code
+            token, _config(), disco_doc_address=DISCO_URL, code=code, nonce=None
         )
         assert claims["sub"] == "user-1"
 
@@ -1074,6 +1204,7 @@ class TestSyncValidateIdToken:
                 _config(),
                 disco_doc_address=DISCO_URL,
                 code="real-auth-code-abc",
+                nonce=None,
             )
 
     @respx.mock
@@ -1087,7 +1218,9 @@ class TestSyncValidateIdToken:
         )
 
         with pytest.raises(IdTokenValidationException, match=r"max_age"):
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, max_age=60)
+            validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, max_age=60, nonce=None
+            )
 
 
 class TestAsyncValidateIdToken:
@@ -1114,7 +1247,11 @@ class TestAsyncValidateIdToken:
         )
         with pytest.raises(AzpRequiresClientIdError):
             await aio_validate_id_token(
-                "not-a-jwt", config, disco_doc_address=DISCO_URL, validate_azp=True
+                "not-a-jwt",
+                config,
+                disco_doc_address=DISCO_URL,
+                validate_azp=True,
+                nonce=None,
             )
         assert respx.calls.call_count == 0
 
@@ -1140,6 +1277,7 @@ class TestAsyncValidateIdToken:
                     config,
                     disco_doc_address=DISCO_URL,
                     trusted_audiences=["other-api", ""],
+                    nonce=None,
                 )
             return type(exc_info.value), str(exc_info.value)
 
@@ -1155,7 +1293,7 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL
+            token, _config(), disco_doc_address=DISCO_URL, nonce=None
         )
 
         assert claims["sub"] == "user-1"
@@ -1171,7 +1309,9 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenValidationException, match=r"sub"):
-            await aio_validate_id_token(token, _config(), disco_doc_address=DISCO_URL)
+            await aio_validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, nonce=None
+            )
 
     @pytest.mark.asyncio
     @respx.mock
@@ -1182,7 +1322,7 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL
+            token, _config(), disco_doc_address=DISCO_URL, nonce=None
         )
 
         assert claims == token_claims
@@ -1200,7 +1340,11 @@ class TestAsyncValidateIdToken:
 
         with pytest.raises(IdTokenValidationException, match=r"'azp' claim does not"):
             await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, validate_azp=True
+                token,
+                _config(),
+                disco_doc_address=DISCO_URL,
+                validate_azp=True,
+                nonce=None,
             )
 
     @pytest.mark.asyncio
@@ -1220,6 +1364,7 @@ class TestAsyncValidateIdToken:
             _config(),
             disco_doc_address=DISCO_URL,
             access_token=access_token,
+            nonce=None,
         )
         assert claims["sub"] == "user-1"
 
@@ -1236,6 +1381,7 @@ class TestAsyncValidateIdToken:
             disco_doc_address=DISCO_URL,
             access_token="real-access-token-xyz",
             access_token_issued_with_id_token=False,
+            nonce=None,
         )
         assert claims["sub"] == "user-1"
 
@@ -1257,6 +1403,7 @@ class TestAsyncValidateIdToken:
                 disco_doc_address=DISCO_URL,
                 access_token="real-access-token-xyz",
                 access_token_issued_with_id_token=True,
+                nonce=None,
             )
 
     @pytest.mark.asyncio
@@ -1277,6 +1424,7 @@ class TestAsyncValidateIdToken:
                 disco_doc_address=DISCO_URL,
                 code="real-auth-code-abc",
                 code_issued_with_id_token=True,
+                nonce=None,
             )
 
     @pytest.mark.asyncio
@@ -1293,7 +1441,7 @@ class TestAsyncValidateIdToken:
         )
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, code=code
+            token, _config(), disco_doc_address=DISCO_URL, code=code, nonce=None
         )
         assert claims["sub"] == "user-1"
 
@@ -1315,6 +1463,7 @@ class TestAsyncValidateIdToken:
                 _config(),
                 disco_doc_address=DISCO_URL,
                 code="real-auth-code-abc",
+                nonce=None,
             )
 
     @pytest.mark.asyncio
@@ -1415,3 +1564,99 @@ class TestSyncAsyncPureAgreement:
             await aio_validate_id_token(
                 token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
             )
+
+
+class TestRequiredTimeClaims:
+    """OIDC Core §2: ``exp`` and ``iat`` are REQUIRED in an ID Token."""
+
+    @pytest.mark.parametrize("claim", list(IdTokenRequiredClaim))
+    def test_missing_claim_rejected(self, claim):
+        claims = _valid_id_claims()
+        del claims[claim.value]
+        with pytest.raises(IdTokenMissingClaimError) as exc_info:
+            validate_id_token_claims(
+                claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
+            )
+        assert (
+            exc_info.value.claim,
+            exc_info.value.message,
+            exc_info.value.token_part,
+            exc_info.value.details,
+        ) == (
+            claim,
+            f"ID token missing required '{claim.value}' claim",
+            "payload",
+            {"claim": claim.value},
+        )
+
+    @pytest.mark.parametrize("claim", list(IdTokenRequiredClaim))
+    @respx.mock
+    def test_sync_wrapper_rejects_missing_claim(self, rsa_keypair, claim):
+        clear_discovery_cache()
+        clear_jwks_cache()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        claims = _valid_id_claims()
+        del claims[claim.value]
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(IdTokenMissingClaimError) as exc_info:
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
+        assert exc_info.value.claim is claim
+
+    @pytest.mark.parametrize("claim", list(IdTokenRequiredClaim))
+    @respx.mock
+    async def test_async_wrapper_rejects_missing_claim(self, rsa_keypair, claim):
+        await aio_clear_discovery_cache()
+        await aio_clear_jwks_cache()
+        key_dict, pem = rsa_keypair
+        _mock_disco_and_jwks(key_dict)
+        claims = _valid_id_claims()
+        del claims[claim.value]
+        token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
+
+        with pytest.raises(IdTokenMissingClaimError) as exc_info:
+            await aio_validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, nonce=None
+            )
+        assert exc_info.value.claim is claim
+
+
+_NO_ISSUER_MESSAGE = (
+    "TokenValidationConfig.issuer is required when perform_disco is False: "
+    "the OP issuer must match the token's 'iss' claim"
+)
+
+
+class TestManualModeRequiresIssuer:
+    """OIDC Core §3.1.3.7 step 2: without discovery the issuer is configured."""
+
+    @pytest.mark.parametrize("issuer", [None, "", []], ids=["none", "empty", "list"])
+    def test_sync_rejects_missing_issuer(self, rsa_keypair, issuer):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(iss="https://evil.example"), headers={})
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=issuer
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_id_token(token, config, nonce=None)
+        assert exc_info.value.message == _NO_ISSUER_MESSAGE
+
+    async def test_async_rejects_missing_issuer(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(), headers={})
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            await aio_validate_id_token(token, config, nonce=None)
+        assert exc_info.value.message == _NO_ISSUER_MESSAGE
+
+    def test_manual_mode_with_issuer_validates(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(), headers={})
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=_ISSUER
+        )
+        claims = validate_id_token(token, config, nonce=None)
+        assert claims["iss"] == _ISSUER

@@ -202,6 +202,30 @@ class UntrustedAudienceException(IdTokenValidationException):
         )
 
 
+class IdTokenRequiredClaim(Enum):
+    """An ID Token claim OpenID Connect Core 1.0 §2 marks REQUIRED and that
+    standard JWT validation does not itself require."""
+
+    EXP = "exp"
+    """Expiration time (§2; checked in §3.1.3.7 step 9)."""
+    IAT = "iat"
+    """Issued-at time (§2)."""
+
+
+class IdTokenMissingClaimError(IdTokenValidationException):
+    """Raised when an ID Token lacks a claim OpenID Connect Core 1.0 §2 marks
+    REQUIRED. ``claim`` says which one; ``details["claim"]`` carries its name.
+    """
+
+    def __init__(self, claim: IdTokenRequiredClaim) -> None:
+        self.claim = claim
+        super().__init__(
+            f"ID token missing required '{claim.value}' claim",
+            token_part="payload",
+            details={"claim": claim.value},
+        )
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.

@@ -20,10 +20,12 @@ Two deliberate deviations from the Go runner, both semantics-preserving:
   claims-validator extension point (``TokenValidationConfig.claims_validator``
   + ``core.token_validation_logic.validate_claims``), not a dedicated option;
   the executor wires the vector's ``expected_nonce`` through that path.
-* **iat presence** (JWT-013): Go/Rust hard-require ``iat`` natively; PIM keeps
-  it opt-in (default-off) for backward compatibility, so the executor drives
-  PIM into the required behaviour via its ``require`` option. An intentional,
-  documented default difference — see the PARITY NOTE in ``_execute``.
+* **iat presence** (JWT-013): Go/Rust hard-require ``iat`` natively. For a
+  generic JWT, RFC 7519 §4.1.6 makes ``iat`` OPTIONAL, so PIM's
+  ``validate_token`` does not require it by default and the executor drives
+  PIM into the capability's behaviour via its ``require`` option. ID Tokens
+  are different: OIDC Core §2 makes ``iat`` REQUIRED and ``validate_id_token``
+  always enforces it. See the PARITY NOTE in ``_execute``.
 
 Coverage: a case without vectors fails module collection (``_vector_params``),
 and ``test_every_vector_case_is_parametrized`` checks every case id is
