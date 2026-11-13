@@ -756,7 +756,8 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         r.getMessage()
         for r in caplog.records
-        if r.levelno == logging.WARNING and r.funcName == "_discover_and_resolve_key"
+        # By source module: mutation testing renames functions, not files.
+        if r.levelno == logging.WARNING and r.module == "token_validation"
     ]
 
 
