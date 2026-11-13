@@ -22,6 +22,7 @@ from ..core.discovery_policy import (
     parse_discovery_url,
 )
 from ..core.dpop import (
+    DPoPAlgorithm,
     DPoPKey,
     build_dpop_headers,
     compute_ath,
@@ -213,8 +214,9 @@ __all__ = [
     "ClientRegistrationRequest",
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
-    "DPoPErrorKind",
     # DPoP
+    "DPoPAlgorithm",
+    "DPoPErrorKind",
     "DPoPKey",
     "DPoPProof",
     "DPoPProofRequest",
