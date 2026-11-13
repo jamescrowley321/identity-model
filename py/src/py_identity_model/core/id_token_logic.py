@@ -47,6 +47,7 @@ from ..exceptions import (
     IdTokenValidationException,
     UntrustedAudienceException,
 )
+from .jwt_helpers import reject_blank_issuer_entries
 
 
 if TYPE_CHECKING:
@@ -230,14 +231,33 @@ def require_issuer_without_discovery(
 
     Raises:
         ConfigurationException: If ``perform_disco`` is ``False`` and
-            ``issuer`` is ``None``, ``""`` or an empty list.
+            ``issuer`` is ``None``, empty or whitespace, or an empty list; or
+            if ``issuer`` is a list with an empty, whitespace or non-string
+            entry.
     """
-    if not token_validation_config.perform_disco and not (
-        token_validation_config.issuer
-    ):
+    issuer = token_validation_config.issuer
+    reject_blank_issuer_entries(issuer)
+    blank = issuer is None or (isinstance(issuer, str) and not issuer.strip())
+    if not token_validation_config.perform_disco and (blank or issuer == []):
         raise ConfigurationException(
             "TokenValidationConfig.issuer is required when perform_disco is "
             "False: the OP issuer must match the token's 'iss' claim"
+        )
+
+
+def require_nonce_argument(nonce: object) -> None:
+    """Reject ``nonce=""``: an empty string is not a nonce that was sent.
+
+    Pass ``None`` when no nonce was sent (``RefreshNonce("")`` is rejected
+    the same way).
+
+    Raises:
+        ConfigurationException: If *nonce* is ``""``.
+    """
+    if nonce == "":
+        raise ConfigurationException(
+            "nonce must be the non-empty nonce sent on the authorization "
+            "request, RefreshNonce(original), or None when none was sent"
         )
 
 
@@ -487,6 +507,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     """
     # §3.1.3.7 step 5 needs a client_id to compare ``azp`` with.
     check_azp_config(client_id, validate_azp)
+    require_nonce_argument(nonce)
 
     # §2 — ``exp`` and ``iat`` are REQUIRED. Standard JWT validation checks
     # their values only when present.
@@ -552,5 +573,6 @@ __all__ = [
     "check_azp_config",
     "find_untrusted_audiences",
     "require_issuer_without_discovery",
+    "require_nonce_argument",
     "validate_id_token_claims",
 ]

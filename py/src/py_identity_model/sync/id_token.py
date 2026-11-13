@@ -16,6 +16,7 @@ from ..core.id_token_logic import (
     RefreshNonce,
     check_azp_config,
     require_issuer_without_discovery,
+    require_nonce_argument,
     unset_empty_client_id,
     validate_id_token_claims,
 )
@@ -125,10 +126,12 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
         AzpRequiresClientIdError: If ``validate_azp`` is set without
             ``token_validation_config.audience``. Raised before any I/O.
         ConfigurationException: If the configuration is invalid, including
-            ``perform_disco=False`` with no ``issuer`` (§3.1.3.7 step 2).
+            ``perform_disco=False`` with no ``issuer`` (§3.1.3.7 step 2), an
+            issuer list with a blank entry, or ``nonce=""``.
     """
     token_validation_config = unset_empty_client_id(token_validation_config)
     require_issuer_without_discovery(token_validation_config)
+    require_nonce_argument(nonce)
     check_azp_config(token_validation_config.audience, validate_azp)
     claims = _validate_jwt_without_binding(
         id_token,

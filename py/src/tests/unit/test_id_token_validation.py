@@ -44,6 +44,7 @@ from py_identity_model.sync.id_token import validate_id_token
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
+    validate_token,
 )
 
 from ..constants import DISCO_URL
@@ -1634,7 +1635,9 @@ _NO_ISSUER_MESSAGE = (
 class TestManualModeRequiresIssuer:
     """OIDC Core §3.1.3.7 step 2: without discovery the issuer is configured."""
 
-    @pytest.mark.parametrize("issuer", [None, "", []], ids=["none", "empty", "list"])
+    @pytest.mark.parametrize(
+        "issuer", [None, "", "  ", []], ids=["none", "empty", "whitespace", "list"]
+    )
     def test_sync_rejects_missing_issuer(self, rsa_keypair, issuer):
         key_dict, pem = rsa_keypair
         token = sign_jwt(pem, _valid_id_claims(iss="https://evil.example"), headers={})
@@ -1772,3 +1775,93 @@ class TestRefreshNonce:
                 token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
             )
         assert exc_info.value.message == _NONCE_MISMATCH
+
+
+_BLANK_ISSUER_ENTRY = (
+    "issuer list entries must be non-empty strings; an empty or whitespace "
+    "entry names no issuer"
+)
+
+
+class TestBlankIssuerEntries:
+    """An issuer list entry that names no issuer is a configuration error."""
+
+    @pytest.mark.parametrize(
+        "issuer",
+        [[""], ["  "], [_ISSUER, ""], [_ISSUER, None]],
+        ids=["empty", "whitespace", "mixed-empty", "non-string"],
+    )
+    @pytest.mark.parametrize("perform_disco", [False, True], ids=["manual", "disco"])
+    def test_sync_rejects_blank_entry(self, rsa_keypair, issuer, perform_disco):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(iss=""))
+        config = TokenValidationConfig(
+            perform_disco=perform_disco,
+            key=key_dict,
+            audience=_AUDIENCE,
+            issuer=issuer,
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_id_token(token, config, disco_doc_address=DISCO_URL, nonce=None)
+        assert exc_info.value.message == _BLANK_ISSUER_ENTRY
+
+    async def test_async_rejects_blank_entry(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(iss=""))
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=[""]
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            await aio_validate_id_token(token, config, nonce=None)
+        assert exc_info.value.message == _BLANK_ISSUER_ENTRY
+
+    def test_validate_token_rejects_blank_entry(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(iss=""))
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=[_ISSUER, " "]
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_token(token, config)
+        assert exc_info.value.message == _BLANK_ISSUER_ENTRY
+
+
+_EMPTY_NONCE = (
+    "nonce must be the non-empty nonce sent on the authorization request, "
+    "RefreshNonce(original), or None when none was sent"
+)
+
+
+class TestEmptyNonceArgument:
+    """``nonce=""`` is rejected like ``RefreshNonce("")``; ``None`` means none sent."""
+
+    def test_pure_rejects_empty_nonce(self):
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_id_token_claims(
+                _valid_id_claims(nonce=""),
+                "RS256",
+                client_id=_AUDIENCE,
+                now=_NOW,
+                nonce="",
+            )
+        assert exc_info.value.message == _EMPTY_NONCE
+
+    @respx.mock
+    def test_sync_rejects_empty_nonce_before_io(self, rsa_keypair):
+        _key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(nonce=""))
+        with pytest.raises(ConfigurationException) as exc_info:
+            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce="")
+        assert exc_info.value.message == _EMPTY_NONCE
+        assert respx.calls.call_count == 0
+
+    @respx.mock
+    async def test_async_rejects_empty_nonce_before_io(self, rsa_keypair):
+        _key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(nonce=""))
+        with pytest.raises(ConfigurationException) as exc_info:
+            await aio_validate_id_token(
+                token, _config(), disco_doc_address=DISCO_URL, nonce=""
+            )
+        assert exc_info.value.message == _EMPTY_NONCE
+        assert respx.calls.call_count == 0

@@ -101,6 +101,27 @@ def _sanitize_options(
     return options
 
 
+BLANK_ISSUER_ENTRY_MESSAGE = (
+    "issuer list entries must be non-empty strings; an empty or whitespace "
+    "entry names no issuer"
+)
+
+
+def reject_blank_issuer_entries(issuer: object) -> None:
+    """Reject an issuer list holding an empty, whitespace or non-string entry.
+
+    Such an entry names no issuer, so a list containing one is a
+    misconfiguration, never a value to compare ``iss`` against.
+
+    Raises:
+        ConfigurationException: If *issuer* is a list with such an entry.
+    """
+    if isinstance(issuer, list) and any(
+        not isinstance(entry, str) or not entry.strip() for entry in issuer
+    ):
+        raise ConfigurationException(BLANK_ISSUER_ENTRY_MESSAGE)
+
+
 def _normalize_verification_key(key: dict | JsonWebKey) -> dict:
     """Normalize a verification key into a PyJWK-safe JWK mapping.
 
@@ -277,6 +298,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
             raise ConfigurationException(
                 "issuer must not be an empty list; omit or set to None to skip issuer validation"
             )
+        reject_blank_issuer_entries(issuer)
 
         # Sanitize options — block attempts to disable core security checks
         sanitized_options = _sanitize_options(options, audience, issuer)

@@ -1170,6 +1170,8 @@ skipped the check, so a token carrying a `nonce` was accepted unchecked.
 - `None`, when you sent none: a token that carries a `nonce` raises
   `IdTokenValidationException`, because §2 requires a present `nonce` to equal
   the value sent, and none was.
+- `nonce=""` raises `ConfigurationException`, as does `RefreshNonce("")`: an
+  empty string is not a nonce that was sent. Pass `None` instead.
 - `RefreshNonce(original)`, for an ID Token returned by a token refresh: the
   `nonce` may be absent, and if present MUST equal `original`, the nonce of the
   ID Token from the original authentication (§12.2). Passing the original
@@ -1195,11 +1197,14 @@ For an ID Token from a refresh:
 ```python
 from py_identity_model import RefreshNonce
 
+# original_claims: the ID Token claims from the original authentication.
+original_nonce = original_claims.get("nonce")
 refreshed = validate_id_token(
     refresh_response.id_token,
     validation_config,
     disco_doc_address=DISCOVERY_URL,
-    nonce=RefreshNonce(original_claims["nonce"]),
+    # No nonce at the original login: None, so a nonce on refresh is rejected.
+    nonce=RefreshNonce(original_nonce) if original_nonce else None,
 )
 ```
 
@@ -1228,10 +1233,15 @@ present.
 
 With `perform_disco=False`, `validate_id_token` and `validate_logout_token`
 (sync and async) raise `ConfigurationException` when
-`TokenValidationConfig.issuer` is `None`, `""` or empty. The OP issuer MUST
-match the token's `iss` (OIDC Core §3.1.3.7 step 2; Back-Channel Logout 1.0
-§2.6 step 4), and in 4.x such a config skipped the `iss` check. Discovery mode
-is unchanged: it always checks the discovered issuer.
+`TokenValidationConfig.issuer` is `None`, empty, whitespace or an empty list.
+The OP issuer MUST match the token's `iss` (OIDC Core §3.1.3.7 step 2;
+Back-Channel Logout 1.0 §2.6 step 4), and in 4.x such a config skipped the
+`iss` check. Discovery mode is unchanged: it always checks the discovered
+issuer.
+
+In every mode, and for `validate_token` too, an issuer list with an empty,
+whitespace or non-string entry raises `ConfigurationException`, since that
+entry names no issuer.
 
 ```python
 config = TokenValidationConfig(
