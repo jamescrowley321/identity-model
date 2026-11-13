@@ -274,14 +274,14 @@ def _first_usable_kid_match(
     why it cannot verify the token.
     """
     _reject_non_string_alg(jwt_alg)
-    if len(matches) > 1 and jwt_alg:
+    if jwt_alg:
         expected_kty = _ALG_TO_KTY.get(jwt_alg)
         expected_crv = _ALG_TO_CRV.get(jwt_alg)
         for key in matches:
             if (
                 expected_kty in (None, key.kty)
-                and key.alg in (None, jwt_alg)
-                and (expected_crv is None or key.crv in (None, expected_crv))
+                and (not key.alg or key.alg == jwt_alg)
+                and (expected_crv is None or not key.crv or key.crv == expected_crv)
             ):
                 return key
     return matches[0]
