@@ -810,7 +810,7 @@ responses.
 
 ```python
 profile = FAPI2ClientProfile(
-    discovery,
+    discovery=discovery,
     client_id="fapi-client",
     redirect_uri="https://client.example.com/callback",
     client_auth=PrivateKeyJwt(
