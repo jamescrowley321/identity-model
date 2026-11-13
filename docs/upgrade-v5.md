@@ -819,6 +819,109 @@ disco = process_discovery_response(
 )
 ```
 
+## OAuth requests
+
+### Authorization code and refresh token requests are sent once
+
+`request_authorization_code_token` and `refresh_token` (sync and async) no
+longer retry on `429`, `5xx` or transport errors. The authorization code is
+single-use (RFC 6749 §4.1.2: "The client MUST NOT use the authorization code
+more than once"), and a rotating refresh token is too: if a request reached
+the server and only its response was lost, a retry presents a used credential,
+the server refuses it and may revoke the tokens it already issued. A failure
+now comes back as an unsuccessful response on the first attempt; start a new
+login, or retry the refresh yourself only when you know the request was not
+processed.
+
+The single `use_dpop_nonce` retry (RFC 9449 §8) is kept: the server refused the
+first request before using the credential. Client credentials, token
+exchange, PAR and the other calls still retry with backoff.
+
+### Device token polling is one request per call
+
+`poll_device_token` (sync and async) sends one request and never retries it.
+In 4.x it retried after 1 s and 2 s, faster than the polling interval RFC 8628
+§3.5 requires. Your polling loop sets the rate:
+
+```python
+interval = auth_response.interval or 5  # RFC 8628 §3.5 default
+while True:
+    time.sleep(interval)
+    poll = poll_device_token(token_request)
+    if poll.is_successful:
+        break
+    if poll.error_code == "authorization_pending":
+        continue
+    if poll.error_code == "slow_down":
+        interval += 5  # for this and every later poll
+        continue
+    raise RuntimeError(poll.error)  # any other error: stop polling
+```
+
+### A token response must carry `access_token` and `token_type`
+
+RFC 6749 §5.1 makes both REQUIRED, and §7.1 says the client "MUST NOT use an
+access token if it does not understand the token type". The client
+credentials, authorization code and refresh token calls now fail a `2xx`
+response that is not a JSON object with non-empty string `access_token` and
+`token_type` members, with `error_kind` `TokenErrorKind.INVALID_TOKEN_RESPONSE`.
+In 4.x `{}` was a successful response. `ClientCredentialsTokenResponse` gains
+the `error_kind` field. On the authorization code and refresh token responses
+a JSON object body is kept on `rejected_token`, so a rotated refresh token is
+not lost. The value of `token_type` is not checked here; compare
+it with the types you support before using the token.
+
+### Public clients must send a `code_verifier`
+
+RFC 9700 §2.1.1: "Public clients MUST use PKCE". An authorization code
+redemption whose client authenticates with `ClientAuthMethod.NONE` (no secret,
+no `private_key_jwt`, no mTLS, or `client_auth_method=ClientAuthMethod.NONE`)
+and has no non-empty `code_verifier` is refused before anything is sent:
+`request_authorization_code_token` returns an unsuccessful response whose
+`error` includes the `ProtocolParameterError` message ("a public client must
+send a code_verifier (PKCE)"). The response carries no reason;
+`prepare_auth_code_token_request_data` raises the error with reason
+`PKCE_REQUIRED`. An empty `client_secret` counts as no
+secret. Confidential clients are unchanged.
+
+```python
+verifier, challenge = generate_pkce_pair()
+# send code_challenge=challenge, code_challenge_method="S256" when authorizing
+response = request_authorization_code_token(
+    AuthorizationCodeTokenRequest(
+        address=token_endpoint,
+        client_id="public-app",
+        code=code,
+        redirect_uri=REDIRECT_URI,
+        code_verifier=verifier,
+    )
+)
+```
+
+### `redirect_uri` and `resource` must be absolute URIs without a fragment
+
+RFC 6749 §3.1.2 and RFC 8707 §2 require both to be absolute URIs (RFC 3986
+§4.3) with no fragment component. `build_authorization_url` raises
+`ProtocolParameterError` (reason `NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`) for
+its `redirect_uri` and for a `resource` passed as an extra parameter. PAR
+(`redirect_uri`) and token exchange (`resource`) are refused before anything
+is sent and return an unsuccessful response whose `error` includes that
+error's message. In 4.x `redirect_uri="cb#frag"` was
+sent as is. A query component is still allowed.
+
+### A client update leaves out server-issued fields and keeps its `client_id`
+
+RFC 7592 §2.2: the update request "MUST NOT include the
+`registration_access_token`, `registration_client_uri`,
+`client_secret_expires_at`, or `client_id_issued_at` fields", and its
+`client_id` "MUST be the same as its currently issued client identifier".
+`update_client` now drops those four fields from `extra_metadata`, so the
+metadata of a read response can be passed back as is. When `extra_metadata`
+has a `client_id` key with any other value (including `None`), it sends
+nothing and returns an unsuccessful response whose `error` includes the
+`ProtocolParameterError` message; `prepare_update_request` raises it with
+reason `CLIENT_ID_MISMATCH`. In 4.x both reached the server.
+
 ## DPoP client
 
 ### A refused Bearer answer keeps its tokens; the opt-in needs a key ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
@@ -861,10 +964,25 @@ still compares equal to `"ES256"` and the other strings, and
 
 ### Each retry attempt mints a fresh DPoP proof ([#1019](https://github.com/jamescrowley321/identity-model/issues/1019))
 
-The authorization code, refresh, client credentials and PAR calls now build
-the request, including the DPoP proof and any `private_key_jwt` assertion,
-on every `429`/`5xx` backoff attempt. A server that remembers `jti` values
-(RFC 9449 §11.1) no longer rejects the retry as a replay. No API change.
+The client credentials and PAR calls now build the request, including the
+DPoP proof and any `private_key_jwt` assertion, on every `429`/`5xx` backoff
+attempt. A server that remembers `jti` values (RFC 9449 §11.1) no longer
+rejects the retry as a replay. No API change. (The authorization code and
+refresh token calls are not retried; see
+[OAuth requests](#authorization-code-and-refresh-token-requests-are-sent-once).)
+
+### The server's `DPoP-Nonce` is used in the next proof
+
+RFC 9449 §8.2: "The client MUST use the new nonce value supplied for the next
+token request and for all subsequent token requests until the authorization
+server supplies a new nonce." In 4.x a nonce sent on a `200` response was
+dropped, and a nonce from a `use_dpop_nonce` challenge was used only for that
+call's retry. Now a `DPoPKey` remembers the latest `DPoP-Nonce` each server
+(scheme, host and port) and role sent, on any response, and the token, PAR
+and UserInfo calls put it in their next proof to that server. A resource
+server's nonce is never sent to the authorization server, even on a shared
+origin (§9). `DPoPKey.nonce_for(uri, resource_server=...)` returns the nonce
+for a server. No code change is needed.
 
 ## Access token validation
 
@@ -1347,66 +1465,59 @@ except WeakKeyException as exc:
 
 ## UserInfo
 
-### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))
+### `expected_sub` is required
 
-Every UserInfo response must carry `sub` (OIDC Core §5.3.2). `get_userinfo`
-returns an unsuccessful `UserInfoResponse` when the JSON body has no
-non-empty string `sub`, whether or not you pass `expected_sub`. In 4.x this
-was checked only when `expected_sub` was set.
+OIDC Core §5.3.2: "The sub Claim in the UserInfo Response MUST be verified to
+exactly match the sub Claim in the ID Token; if they do not match, the
+UserInfo Response values MUST NOT be used." `UserInfoRequest` now requires the
+keyword argument `expected_sub`, the `sub` of the validated ID token of the
+login the access token belongs to. There is no default. In 4.x the check ran
+only when you passed it.
 
 ```python
-from py_identity_model import get_userinfo, UserInfoRequest
-
+# Before
 response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token))
-if not response.is_successful:
-    print(response.error)  # 5.0: also when the body has no sub
+
+# After
+response = get_userinfo(
+    UserInfoRequest(
+        address=USERINFO_URL, token=access_token, expected_sub=id_token_claims["sub"]
+    )
+)
 ```
 
-The failed response's `error_kind` is `UserInfoErrorKind.MISSING_SUB`, so you
-can tell a missing `sub` from a failed request:
+A failed check sets `error_kind`:
 
-```python
-from py_identity_model import UserInfoErrorKind
+| `error_kind` | Meaning |
+|---|---|
+| `UserInfoErrorKind.MISSING_SUB` | The JSON body has no non-empty string `sub` ([#884](https://github.com/jamescrowley321/identity-model/pull/884)) |
+| `UserInfoErrorKind.SUB_MISMATCH` | The `sub` differs from `expected_sub` |
+| `UserInfoErrorKind.UNVERIFIABLE_SUB` | The response is a signed or encrypted JWT (`application/jwt`) ([#882](https://github.com/jamescrowley321/identity-model/pull/882)) |
 
-if response.error_kind is UserInfoErrorKind.MISSING_SUB:
-    ...  # the provider answered, but without sub
-```
-
-The FastAPI relying-party router fails the login with `401` ("UserInfo
-response has no subject") when the UserInfo response has no `sub`. Other
-UserInfo failures are still logged and the login continues on the ID Token.
-
-### `expected_sub` is enforced on signed UserInfo ([#882](https://github.com/jamescrowley321/identity-model/pull/882))
-
-With `expected_sub` set, a signed or encrypted (`application/jwt`) UserInfo
-response is now an error. The UserInfo call has no keys to verify the JWT,
-and comparing the `sub` of an unverified JWT would prove nothing (OIDC Core
-§5.3.4). In 4.x it was returned as successful without checking `sub`.
-
-Before:
+The library has no keys to verify a signed UserInfo response, and comparing
+the `sub` of an unverified JWT would prove nothing (OIDC Core §5.3.4). Such a
+response fails with `UNVERIFIABLE_SUB` and keeps the JWT on
+`unverified_jwt`; verify it, then compare its `sub`:
 
 ```python
 response = get_userinfo(
     UserInfoRequest(address=USERINFO_URL, token=access_token, expected_sub=id_token_sub)
 )
-jwt = response.raw  # sub was never compared
-```
-
-`expected_sub` still checks a JSON UserInfo response. For a provider that
-returns signed UserInfo, omit `expected_sub`, verify the JWT yourself, and
-compare `sub` for both response formats:
-
-```python
-response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token))
-if not response.is_successful:
+if response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB:
+    claims = validate_token(response.unverified_jwt, validation_config, DISCOVERY_URL)
+    if claims.get("sub") != id_token_sub:
+        raise ValueError("UserInfo sub does not match the ID Token")
+elif response.is_successful:
+    claims = response.claims  # sub already matched
+else:
     raise ValueError(response.error)
-if response.raw is not None:  # application/jwt: verify before reading claims
-    claims = validate_token(response.raw, validation_config, DISCOVERY_URL)
-else:  # JSON
-    claims = response.claims
-if claims.get("sub") != id_token_sub:
-    raise ValueError("UserInfo sub does not match the ID Token")
 ```
+
+The FastAPI relying-party router passes the ID token `sub` and fails the login
+with `401` on `MISSING_SUB` ("UserInfo response has no subject") or on
+`SUB_MISMATCH` and `UNVERIFIABLE_SUB` ("UserInfo subject does not match ID
+token subject"): it cannot verify a signed UserInfo response. Other UserInfo
+failures are still logged and the login continues on the ID Token.
 
 ## Back-Channel Logout
 

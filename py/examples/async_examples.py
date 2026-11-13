@@ -164,8 +164,13 @@ async def validate_token_example(access_token: str):
 # =============================================================================
 
 
-async def userinfo_example(access_token: str):
-    """Fetch user claims from the UserInfo endpoint asynchronously."""
+async def userinfo_example(access_token: str, id_token_sub: str):
+    """Fetch user claims from the UserInfo endpoint asynchronously.
+
+    Needs an end-user access token from an authorization code login and the
+    ``sub`` of that login's validated ID token: the UserInfo ``sub`` must match
+    it (OIDC Core 1.0 §5.3.2).
+    """
     print("\\n" + "=" * 60)
     print("Example 5: Async UserInfo Endpoint")
     print("=" * 60)
@@ -189,6 +194,7 @@ async def userinfo_example(access_token: str):
     userinfo_request = UserInfoRequest(
         address=userinfo_endpoint,
         token=access_token,
+        expected_sub=id_token_sub,
     )
 
     response = await get_userinfo(userinfo_request)
@@ -200,9 +206,6 @@ async def userinfo_example(access_token: str):
                 print(f"  {claim_name}: {claim_value}")
         return response
     print(f"✗ UserInfo request failed: {response.error}")
-    print(
-        "  Note: Client credentials tokens may not have a userinfo endpoint available"
-    )
     return response
 
 
@@ -378,8 +381,9 @@ async def main():
     if access_token:
         await validate_token_example(access_token)
 
-        # Example 5: UserInfo
-        await userinfo_example(access_token)
+        # Example 5 (userinfo_example) needs an end-user login (authorization
+        # code flow) and its ID token's sub, so this client credentials token
+        # does not run it.
 
     # Example 6: Concurrent Operations (the power of async!)
     await concurrent_operations_example()

@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import httpx
 
-from ..core.dpop import extract_dpop_nonce
+from ..core.dpop import extract_dpop_nonce, remember_dpop_nonce
 from ..core.error_handlers import handle_par_error
 from ..core.models import (
     PushedAuthorizationRequest,
@@ -67,6 +67,9 @@ def push_authorization_request(
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
+            remember_dpop_nonce(
+                request.dpop_key, request.address, response, resource_server=False
+            )
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 response.close()
@@ -74,6 +77,12 @@ def push_authorization_request(
                     client,
                     request.address,
                     lambda: prepare_par_request_data(request, dpop_nonce=nonce),
+                )
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=False,
                 )
         return process_par_response(response)
     except Exception as e:

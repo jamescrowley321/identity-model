@@ -5,6 +5,8 @@ These tests verify sync-specific UserInfo client logic including
 the get_userinfo function with JSON and JWT response handling.
 """
 
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -35,6 +37,7 @@ class TestSyncUserInfo:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="test_access_token",
+            expected_sub="248289761001",
         )
 
         response = get_userinfo(request)
@@ -48,7 +51,7 @@ class TestSyncUserInfo:
 
     @respx.mock
     def test_get_userinfo_jwt_response(self):
-        """Test UserInfo request with JWT response (raw stored, claims empty)."""
+        """A JWT response cannot be checked against the ID token sub."""
         jwt_string = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyNDgyODk3NjEwMDEifQ.signature"
         respx.get("https://example.com/userinfo").mock(
             return_value=httpx.Response(
@@ -61,13 +64,14 @@ class TestSyncUserInfo:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="test_access_token",
+            expected_sub="248289761001",
         )
 
         response = get_userinfo(request)
 
-        assert response.is_successful is True
-        assert response.raw == jwt_string
-        assert response.claims is None
+        assert response.is_successful is False
+        assert response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert response.unverified_jwt == jwt_string
 
     @respx.mock
     def test_get_userinfo_http_error(self):
@@ -82,6 +86,7 @@ class TestSyncUserInfo:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="expired_token",
+            expected_sub="248289761001",
         )
 
         response = get_userinfo(request)
@@ -101,6 +106,7 @@ class TestSyncUserInfo:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="test_access_token",
+            expected_sub="248289761001",
         )
 
         response = get_userinfo(request)
@@ -111,7 +117,7 @@ class TestSyncUserInfo:
 
 
 class TestSyncUserInfoSubValidation:
-    """Test sub claim validation per OIDC Core 1.0 Section 5.3.4."""
+    """Test sub claim validation per OIDC Core 1.0 Section 5.3.2."""
 
     @respx.mock
     def test_sub_validation_match(self):
@@ -154,10 +160,10 @@ class TestSyncUserInfoSubValidation:
         response = get_userinfo(request)
 
         assert response.is_successful is False
-        assert response.error is not None
-        assert "sub mismatch" in response.error
-        assert "user-123" in response.error
-        assert "user-999" in response.error
+        assert response.error == (
+            "UserInfo sub mismatch: expected 'user-123', got 'user-999'"
+        )
+        assert response.error_kind is UserInfoErrorKind.SUB_MISMATCH
 
     @respx.mock
     def test_sub_validation_missing_sub(self):
@@ -193,8 +199,8 @@ class TestSyncUserInfoSubValidation:
         ids=["absent", "empty", "non-string", "null", "non-object"],
     )
     @respx.mock
-    def test_missing_sub_rejected_without_expected_sub(self, body):
-        """A response with no usable sub is rejected even without expected_sub.
+    def test_missing_sub_rejected(self, body):
+        """A response with no usable sub is rejected.
 
         OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
         """
@@ -209,33 +215,13 @@ class TestSyncUserInfoSubValidation:
         request = UserInfoRequest(
             address="https://example.com/userinfo",
             token="tok",
+            expected_sub="248289761001",
         )
         response = get_userinfo(request)
 
         assert response.is_successful is False
         assert response.error == "UserInfo response is missing required 'sub' claim"
         assert response.error_kind is UserInfoErrorKind.MISSING_SUB
-
-    @respx.mock
-    def test_sub_validation_not_requested(self):
-        """No expected_sub skips validation entirely."""
-        respx.get("https://example.com/userinfo").mock(
-            return_value=httpx.Response(
-                200,
-                json={"sub": "user-123", "name": "Test"},
-                headers={"Content-Type": "application/json"},
-            )
-        )
-
-        request = UserInfoRequest(
-            address="https://example.com/userinfo",
-            token="tok",
-        )
-        response = get_userinfo(request)
-
-        assert response.is_successful is True
-        assert response.claims is not None
-        assert response.claims["sub"] == "user-123"
 
     @respx.mock
     def test_sub_validation_jwt_response(self):
@@ -263,6 +249,14 @@ class TestSyncUserInfoSubValidation:
         assert response.is_successful is False
         assert response.error == (
             "UserInfo sub cannot be verified: the response is a signed or encrypted "
-            "JWT (application/jwt). Verify and decode it, then compare its sub, "
-            "or omit expected_sub."
+            "JWT (application/jwt)"
         )
+        assert response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert response.unverified_jwt == jwt_string
+
+
+def test_expected_sub_is_required():
+    """OIDC Core 1.0 §5.3.2: there is no UserInfoRequest without expected_sub."""
+    kwargs: dict[str, Any] = {"address": "https://example.com/userinfo", "token": "tok"}
+    with pytest.raises(TypeError, match="expected_sub"):
+        UserInfoRequest(**kwargs)

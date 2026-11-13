@@ -28,7 +28,7 @@ from unittest.mock import patch
 import app as harness_app
 from fastapi.testclient import TestClient
 
-from py_identity_model import JwksResponse, UserInfoResponse
+from py_identity_model import JwksResponse, UserInfoErrorKind, UserInfoResponse
 
 # Importing the real exception class so the harness's `except` clause matches.
 from py_identity_model.exceptions import TokenValidationException
@@ -169,6 +169,8 @@ class TestUserInfoValidationFailedEscaping:
             is_successful = False
             claims = None
             error = XSS_PAYLOAD
+            error_kind = UserInfoErrorKind.SUB_MISMATCH
+            unverified_jwt = None
 
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),

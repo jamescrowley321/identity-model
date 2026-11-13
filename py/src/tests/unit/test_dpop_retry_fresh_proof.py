@@ -1,7 +1,12 @@
-"""Each backoff retry carries a freshly minted DPoP proof (RFC 9449 §11.1, #1019).
+"""Retry behaviour of DPoP-bound and single-use requests.
 
-A server may reject a proof whose ``jti`` it has already seen, so a ``5xx``
+Each backoff retry carries a freshly minted DPoP proof (RFC 9449 §11.1, #1019):
+a server may reject a proof whose ``jti`` it has already seen, so a ``5xx``
 followed by a retry must not resend the first attempt's proof.
+
+The authorization code and refresh token grants are never retried: the code is
+single-use (RFC 6749 §4.1.2) and a rotating refresh token is too, so a resend
+after a lost response would present a used credential.
 """
 
 from collections.abc import Awaitable, Callable
@@ -106,31 +111,11 @@ def _jtis(route: respx.Route) -> list[str]:
 
 
 SYNC_CALLS = [
-    pytest.param(refresh_token, _refresh, TOKEN_URL, DPOP_TOKEN, 200, id="refresh"),
-    pytest.param(
-        request_authorization_code_token,
-        _auth_code,
-        TOKEN_URL,
-        DPOP_TOKEN,
-        200,
-        id="auth_code",
-    ),
     pytest.param(
         push_authorization_request, _par, PAR_URL, PAR_RESPONSE, 201, id="par"
     ),
 ]
 ASYNC_CALLS = [
-    pytest.param(
-        refresh_token_async, _refresh, TOKEN_URL, DPOP_TOKEN, 200, id="refresh"
-    ),
-    pytest.param(
-        request_authorization_code_token_async,
-        _auth_code,
-        TOKEN_URL,
-        DPOP_TOKEN,
-        200,
-        id="auth_code",
-    ),
     pytest.param(
         push_authorization_request_async, _par, PAR_URL, PAR_RESPONSE, 201, id="par"
     ),
@@ -201,3 +186,48 @@ class TestAsyncRetryMintsFreshClientAssertion:
         assert response.is_successful, response.error
         first, second = _assertion_jtis(route)
         assert first != second
+
+
+SINGLE_USE_SYNC_CALLS = [
+    pytest.param(refresh_token, _refresh, id="refresh"),
+    pytest.param(request_authorization_code_token, _auth_code, id="auth_code"),
+]
+SINGLE_USE_ASYNC_CALLS = [
+    pytest.param(refresh_token_async, _refresh, id="refresh"),
+    pytest.param(request_authorization_code_token_async, _auth_code, id="auth_code"),
+]
+NOT_SENT_TWICE = [
+    pytest.param(httpx.Response(503), id="503"),
+    pytest.param(httpx.Response(429), id="429"),
+    pytest.param(httpx.ReadTimeout("response lost"), id="read_timeout"),
+]
+
+
+@pytest.mark.unit
+class TestSyncSingleUseGrantIsNotRetried:
+    @pytest.mark.parametrize(("call", "build"), SINGLE_USE_SYNC_CALLS)
+    @pytest.mark.parametrize("first", NOT_SENT_TWICE)
+    @respx.mock
+    def test_sent_once(self, call: Callable[..., Any], build, first):
+        route = respx.post(TOKEN_URL).mock(
+            side_effect=[first, httpx.Response(200, json=DPOP_TOKEN)]
+        )
+        with HTTPClient(config=NO_SLEEP_ONE_RETRY) as client:
+            response = call(build(), http_client=client)
+        assert response.is_successful is False
+        assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+class TestAsyncSingleUseGrantIsNotRetried:
+    @pytest.mark.parametrize(("call", "build"), SINGLE_USE_ASYNC_CALLS)
+    @pytest.mark.parametrize("first", NOT_SENT_TWICE)
+    @respx.mock
+    async def test_sent_once(self, call: Callable[..., Awaitable[Any]], build, first):
+        route = respx.post(TOKEN_URL).mock(
+            side_effect=[first, httpx.Response(200, json=DPOP_TOKEN)]
+        )
+        async with AsyncHTTPClient(config=NO_SLEEP_ONE_RETRY) as client:
+            response = await call(build(), http_client=client)
+        assert response.is_successful is False
+        assert route.call_count == 1

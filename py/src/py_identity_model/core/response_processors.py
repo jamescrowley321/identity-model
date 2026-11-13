@@ -19,6 +19,7 @@ from ..exceptions import (
     DiscoveryParseError,
 )
 from ..logging_config import logger
+from ..oidc_constants import TokenResponse
 from .discovery_policy import _WELL_KNOWN_PATH, DiscoveryPolicy
 from .models import (
     AuthorizationCodeTokenResponse,
@@ -27,6 +28,7 @@ from .models import (
     JsonWebKey,
     JwksResponse,
     RefreshTokenResponse,
+    TokenErrorKind,
     TokenIntrospectionResponse,
     UserInfoErrorKind,
     UserInfoResponse,
@@ -598,11 +600,43 @@ def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksRes
     )
 
 
+def token_response_error(data: object) -> str | None:
+    """Why a successful token response body is not a valid access token response.
+
+    RFC 6749 §5.1: the body is a JSON object whose ``access_token`` and
+    ``token_type`` are REQUIRED. The client may not use an access token whose
+    type it does not know (RFC 6749 §7.1), so a body without one is refused.
+
+    Returns:
+        ``None`` when the body is valid, otherwise the error message.
+    """
+    if not isinstance(data, dict):
+        return f"Token response is not a JSON object: {type(data).__name__}"
+    missing = [
+        name
+        for name in (
+            TokenResponse.ACCESS_TOKEN.value,
+            TokenResponse.TOKEN_TYPE.value,
+        )
+        if not isinstance(data.get(name), str) or not data[name]
+    ]
+    if missing:
+        return (
+            "Token response is missing required fields per RFC 6749 "
+            f"Section 5.1: {', '.join(missing)}"
+        )
+    return None
+
+
 def parse_token_response(
     response: httpx.Response,
 ) -> ClientCredentialsTokenResponse:
     """
     Parse token HTTP response.
+
+    A success response must carry ``access_token`` and ``token_type``
+    (RFC 6749 §5.1); otherwise it fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE`.
 
     Args:
         response: HTTP response from token endpoint
@@ -612,6 +646,13 @@ def parse_token_response(
     """
     if response.is_success:
         response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return ClientCredentialsTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+            )
         return ClientCredentialsTokenResponse(
             is_successful=True,
             token=response_json,
@@ -630,11 +671,28 @@ def parse_token_response(
 def parse_auth_code_token_response(
     response: httpx.Response,
 ) -> AuthorizationCodeTokenResponse:
-    """Parse authorization code token exchange HTTP response."""
+    """Parse authorization code token exchange HTTP response.
+
+    A success response without ``access_token`` and ``token_type`` fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
+    """
     if response.is_success:
+        response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return AuthorizationCodeTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
+            )
         return AuthorizationCodeTokenResponse(
             is_successful=True,
-            token=response.json(),
+            token=response_json,
         )
 
     error_msg = (
@@ -650,9 +708,26 @@ def parse_auth_code_token_response(
 def parse_refresh_token_response(
     response: httpx.Response,
 ) -> RefreshTokenResponse:
-    """Parse refresh token grant HTTP response."""
+    """Parse refresh token grant HTTP response.
+
+    A success response without ``access_token`` and ``token_type`` fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
+    """
     if response.is_success:
-        return RefreshTokenResponse(is_successful=True, token=response.json())
+        response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return RefreshTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
+            )
+        return RefreshTokenResponse(is_successful=True, token=response_json)
 
     error_msg = (
         f"Token refresh failed with status code: "
@@ -739,7 +814,9 @@ __all__ = [
     "parse_auth_code_token_response",
     "parse_introspection_response",
     "parse_jwks_response",
+    "parse_refresh_token_response",
     "parse_token_response",
     "parse_userinfo_response",
+    "token_response_error",
     "validate_and_parse_discovery_response",
 ]

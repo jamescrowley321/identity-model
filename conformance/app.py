@@ -49,6 +49,7 @@ from py_identity_model import (
     PrivateKeyJwt,
     RequestObjectKey,
     TokenValidationConfig,
+    UserInfoErrorKind,
     UserInfoRequest,
     build_authorization_url,
     build_end_session_url,
@@ -77,7 +78,6 @@ from py_identity_model.core.parsers import (
     extract_jwt_header_fields,
     find_key_by_kid,
 )
-from py_identity_model.core.userinfo_logic import validate_userinfo_sub
 from py_identity_model.exceptions import (
     ConfigurationException,
     JarmValidationException,
@@ -1232,7 +1232,7 @@ def _fetch_userinfo(
     session: AuthSession,
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
-    expected_sub: str | None,
+    expected_sub: str,
     http_client: HTTPClient,
 ) -> dict | HTMLResponse:
     """Fetch + validate UserInfo, returning claims or an error ``HTMLResponse``.
@@ -1265,6 +1265,7 @@ def _fetch_userinfo(
             UserInfoRequest(
                 address=userinfo_endpoint,
                 token=access_token,
+                expected_sub=expected_sub,
                 dpop_key=(
                     session.dpop_key if (session.fapi2 and not session.mtls) else None
                 ),
@@ -1278,16 +1279,20 @@ def _fetch_userinfo(
         return {}
 
     error_msg: str | None
-    if userinfo_response.is_successful and userinfo_response.raw is not None:
+    signed = userinfo_response.unverified_jwt
+    if (
+        userinfo_response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        and signed is not None
+    ):
         try:
             if not jwks_response.is_successful:
                 raise TokenValidationException(
                     f"OP JWKS unavailable: {jwks_response.error}"
                 )
-            kid, jwt_alg = extract_jwt_header_fields(userinfo_response.raw)
+            kid, jwt_alg = extract_jwt_header_fields(signed)
             key, alg = find_key_by_kid(kid, jwks_response.keys or [], jwt_alg=jwt_alg)
             return validate_token(
-                userinfo_response.raw,
+                signed,
                 token_validation_config=TokenValidationConfig(
                     perform_disco=False,
                     key=key,
@@ -1303,14 +1308,9 @@ def _fetch_userinfo(
         except PyJWTError as exc:
             logger.error("Malformed signed UserInfo: %s", exc)
             error_msg = "malformed signed UserInfo"
-    elif userinfo_response.is_successful and not isinstance(
-        userinfo_response.claims, dict
-    ):
-        error_msg = "UserInfo response is not a JSON object"
+    elif userinfo_response.is_successful:
+        return userinfo_response.claims or {}
     else:
-        userinfo_response = validate_userinfo_sub(userinfo_response, expected_sub)
-        if userinfo_response.is_successful:
-            return userinfo_response.claims or {}
         error_msg = userinfo_response.error
 
     # OIDC Core 1.0 §5.3.2/§5.3.4: an unverifiable signed response or a sub
@@ -1353,6 +1353,7 @@ def _fetch_fapi2_resource(
     session: AuthSession,
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
+    id_token_sub: str,
     http_client: HTTPClient,
 ) -> None:
     """Make the FAPI 2.0 sender-constrained resource ("accounts") request.
@@ -1360,8 +1361,9 @@ def _fetch_fapi2_resource(
     For the ``plain_fapi`` profile the OIDF client test treats a dedicated
     resource endpoint — not userinfo — as the resource server, and the
     happy-path module only reaches FINISHED once the RP calls it (see
-    ``_FAPI2_RESOURCE_PATH``). We reuse ``get_userinfo`` (``expected_sub=None`` so
-    no OIDC sub check runs) purely as a sender-constrained GET presenting the
+    ``_FAPI2_RESOURCE_PATH``). We reuse ``get_userinfo`` (its ``sub`` check
+    against *id_token_sub* is irrelevant here, as only the request matters)
+    purely as a sender-constrained GET presenting the
     cnf-bound access token: DPoP sessions attach a resource proof (``ath``) with
     the RFC 9449 §8 nonce retry; mTLS sessions present the client certificate at
     the mtls resource host (derived from the mtls token endpoint). Best-effort —
@@ -1377,14 +1379,14 @@ def _fetch_fapi2_resource(
         request = UserInfoRequest(
             address=f"{base.rstrip('/')}/{_FAPI2_RESOURCE_PATH}",
             token=access_token,
-            expected_sub=None,
+            expected_sub=id_token_sub,
             mtls=_fapi2_mtls_auth(),
         )
     elif session.dpop_key:
         request = UserInfoRequest(
             address=session.issuer.rstrip("/") + "/" + _FAPI2_RESOURCE_PATH,
             token=access_token,
-            expected_sub=None,
+            expected_sub=id_token_sub,
             dpop_key=session.dpop_key,
         )
     else:
@@ -1635,8 +1637,9 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             )
 
     # Fetch UserInfo (if endpoint is available and we have an access token)
+    id_token_sub = claims.get("sub") or ""
     userinfo_result = _fetch_userinfo(
-        session, disco, access_token, claims.get("sub"), http_client
+        session, disco, access_token, id_token_sub, http_client
     )
     if isinstance(userinfo_result, HTMLResponse):
         return userinfo_result
@@ -1645,7 +1648,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # FAPI 2.0 (plain_fapi): drive the dedicated resource endpoint so the OIDF
     # happy-path module transitions to FINISHED (userinfo alone leaves it
     # WAITING for this profile).
-    _fetch_fapi2_resource(session, disco, access_token, http_client)
+    _fetch_fapi2_resource(session, disco, access_token, id_token_sub, http_client)
 
     # Record the id_token + end-session endpoint so a later /logout can build the
     # RP-Initiated Logout URL. /logout carries no flow parameters of its own, so

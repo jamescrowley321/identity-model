@@ -827,6 +827,7 @@ class ClientCredentialsTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token"})
 
+    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
     token: dict | None = None
 
 
@@ -895,6 +896,12 @@ class TokenErrorKind(Enum):
     """A request with ``require_dpop_token_type`` got a ``token_type`` other
     than ``DPoP`` (RFC 9449 §5). The issued tokens are on the response's
     ``rejected_token``."""
+
+    INVALID_TOKEN_RESPONSE = "invalid_token_response"
+    """A success response that is not a JSON object with non-empty string
+    ``access_token`` and ``token_type`` members (RFC 6749 §5.1). On the
+    authorization code and refresh token responses a JSON object body is kept
+    on ``rejected_token``."""
 
 
 @dataclass(repr=False, eq=False)
@@ -1371,7 +1378,7 @@ class DeviceTokenResponse(BaseResponse):
     When ``is_successful`` is ``False``, check ``error_code``:
 
     - ``"authorization_pending"`` - user hasn't authorized yet, poll again
-    - ``"slow_down"`` - increase polling interval (see ``interval``)
+    - ``"slow_down"`` - add 5 seconds to the polling interval (RFC 8628 §3.5)
     - ``"expired_token"`` - device code expired, restart flow
     - ``"access_denied"`` - user denied authorization
 
@@ -1507,13 +1514,14 @@ class UserInfoRequest(BaseRequest):
     Attributes:
         address: The UserInfo endpoint URL.
         token: A valid access token with ``openid`` scope.
-        expected_sub: Expected ``sub`` claim from the ID token for
-            verification per OIDC Core 1.0 Section 5.3.4.  When provided,
-            the ``sub`` in the UserInfo response is compared against this
-            value and a mismatch produces an error response.  A signed or
-            encrypted (``application/jwt``) response cannot be checked here,
-            so it also produces an error response; omit ``expected_sub`` to
-            receive the raw JWT, then verify it and compare its ``sub``.
+        expected_sub: The ``sub`` of the ID token the access token was issued
+            with.  Required and keyword-only: OIDC Core 1.0 §5.3.2 says the
+            UserInfo ``sub`` MUST exactly match the ID token's ``sub``, so a
+            response whose ``sub`` differs fails with
+            :attr:`UserInfoErrorKind.SUB_MISMATCH`.  A signed or encrypted
+            (``application/jwt``) response cannot be checked here and fails
+            with :attr:`UserInfoErrorKind.UNVERIFIABLE_SUB`, keeping the JWT
+            on ``unverified_jwt`` for you to verify and compare yourself.
         dpop_key: When set, the UserInfo request is DPoP-bound (RFC 9449): the
             access token is presented with ``Authorization: DPoP <token>`` and
             a resource-request DPoP proof (carrying the ``ath`` access-token
@@ -1526,7 +1534,7 @@ class UserInfoRequest(BaseRequest):
     """
 
     token: str = field(repr=False)
-    expected_sub: str | None = None
+    expected_sub: str = field(kw_only=True)
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
 
@@ -1537,17 +1545,33 @@ class UserInfoErrorKind(Enum):
     MISSING_SUB = "missing_sub"
     """The response has no non-empty string ``sub`` (OIDC Core 1.0 §5.3.2)."""
 
+    SUB_MISMATCH = "sub_mismatch"
+    """The response ``sub`` differs from the request's ``expected_sub``, the
+    ID token ``sub`` (OIDC Core 1.0 §5.3.2)."""
+
+    UNVERIFIABLE_SUB = "unverifiable_sub"
+    """The response is a signed or encrypted JWT (``application/jwt``), whose
+    ``sub`` this client cannot verify against ``expected_sub``. The JWT is on
+    the response's ``unverified_jwt``."""
+
 
 @dataclass(repr=False, eq=False)
 class UserInfoResponse(BaseResponse):
     """Response from the UserInfo endpoint.
 
     Check ``is_successful`` before accessing ``claims`` or ``raw``.
+
+    ``unverified_jwt`` holds the JWT of a response refused with
+    :attr:`UserInfoErrorKind.UNVERIFIABLE_SUB`, so the caller can verify its
+    signature, then compare its ``sub`` with the ID token's before using any
+    claim (OIDC Core 1.0 §5.3.2, §5.3.4); it is ``None`` otherwise.
     """
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "raw"})
+    _secret_fields: ClassVar[frozenset[str]] = frozenset({"unverified_jwt"})
 
     error_kind: UserInfoErrorKind | None = field(default=None, kw_only=True)
+    unverified_jwt: str | None = field(default=None, kw_only=True)
     claims: dict | None = None
     raw: str | None = None
 
