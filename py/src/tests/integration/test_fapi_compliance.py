@@ -14,6 +14,8 @@ import pytest
 from py_identity_model import (
     FAPI2ClientProfile,
     FAPIProfileError,
+    FAPIViolation,
+    FAPIViolationCode,
     MtlsClientAuth,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
@@ -22,6 +24,10 @@ from py_identity_model import (
     validate_fapi_client_config,
     validate_fapi_discovery,
 )
+
+
+def _messages(violations: list[FAPIViolation]) -> list[str]:
+    return [v.message for v in violations]
 
 
 @pytest.mark.integration
@@ -42,12 +48,12 @@ class TestFAPIDiscoveryCompliance:
         assert result.is_compliant == (len(result.violations) == 0)
 
     def test_fapi_violations_are_descriptive(self, discovery_document):
-        """Each violation string describes what's wrong."""
+        """Each violation has a code and a message describing what's wrong."""
         result = validate_fapi_discovery(discovery_document)
 
         for violation in result.violations:
-            assert isinstance(violation, str)
-            assert len(violation) > 0
+            assert isinstance(violation.code, FAPIViolationCode)
+            assert violation.message
 
     def test_profile_from_live_discovery(self, discovery_document):
         """The profile refuses whatever validate_fapi_discovery refuses, and more.
@@ -70,10 +76,17 @@ class TestFAPIDiscoveryCompliance:
             with pytest.raises(FAPIProfileError) as exc_info:
                 build()
             assert exc_info.value.violations == violations
+            assert exc_info.value.codes == [v.code for v in violations]
         elif urlparse(issuer).scheme != "https":
             with pytest.raises(FAPIProfileError) as exc_info:
                 build()
-            assert f"issuer must use https, got {issuer!r}" in exc_info.value.violations
+            assert (
+                FAPIViolation(
+                    FAPIViolationCode.ENDPOINT_INVALID,
+                    f"issuer must use https, got {issuer!r}",
+                )
+                in exc_info.value.violations
+            )
         else:
             profile = build()
             assert profile.issuer == issuer
@@ -116,14 +129,14 @@ class TestFAPIClientConfigValidation:
         result = validate_fapi_client_config(
             issuer=issuer, private_key_jwt=_pkj(issuer=issuer), dpop_key=DPOP_KEY
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_tls_client_auth_with_mtls(self, discovery_document):
         result = validate_fapi_client_config(
             issuer=discovery_document.issuer,
             mtls=MtlsClientAuth(certificate="client.pem", private_key="client.key"),
         )
-        assert result.violations == []
+        assert _messages(result.violations) == []
 
     def test_no_client_auth_rejected(self, discovery_document):
         result = validate_fapi_client_config(
@@ -152,11 +165,13 @@ class TestFAPIAuthRequestValidation:
     """FAPI authorization request validation on real request objects."""
 
     def test_fully_compliant_request(self):
-        assert validate_fapi_authorization_request(_par()).violations == []
+        assert _messages(validate_fapi_authorization_request(_par()).violations) == []
 
     def test_implicit_flow_rejected(self):
         result = validate_fapi_authorization_request(_par(response_type="token"))
-        assert result.violations == ["response_type must be 'code', got 'token'"]
+        assert _messages(result.violations) == [
+            "response_type must be 'code', got 'token'"
+        ]
 
     def test_http_redirect_uri_rejected(self):
         result = validate_fapi_authorization_request(
@@ -168,4 +183,6 @@ class TestFAPIAuthRequestValidation:
         result = validate_fapi_authorization_request(
             _par(code_challenge_method="plain")
         )
-        assert result.violations == ["PKCE method must be 'S256', got 'plain'"]
+        assert _messages(result.violations) == [
+            "PKCE method must be 'S256', got 'plain'"
+        ]

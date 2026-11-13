@@ -661,9 +661,11 @@ class JwksResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True)
 class PrivateKeyJwt:
     """``private_key_jwt`` client authentication parameters (RFC 7523).
+
+    Immutable: use :func:`dataclasses.replace` to derive a changed copy.
 
     When supplied on a client-authenticating request, the client is
     authenticated by a signed JWT assertion (OpenID Connect Core 1.0
@@ -699,9 +701,11 @@ class PrivateKeyJwt:
     issuer: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class RequestObjectKey:
     """Key for signing JAR request objects (RFC 9101).
+
+    Immutable: use :func:`dataclasses.replace` to derive a changed copy.
 
     Used by ``FAPI2ClientProfile`` to send the authorization request to the
     PAR endpoint as a signed request object (FAPI 2.0 Message Signing
@@ -725,9 +729,11 @@ class RequestObjectKey:
     lifetime: int = 300
 
 
-@dataclass
+@dataclass(frozen=True)
 class MtlsClientAuth:
     """Mutual-TLS client authentication parameters (RFC 8705).
+
+    Immutable: use :func:`dataclasses.replace` to derive a changed copy.
 
     When supplied on a client-authenticating request, the client is
     authenticated by presenting an X.509 certificate at the TLS layer
@@ -1115,12 +1121,9 @@ class PushedAuthorizationRequest(BaseRequest):
     Pushes authorization parameters to the PAR endpoint and receives
     a ``request_uri`` for use in the authorization URL.
 
-    The parameters are sent either as plain form fields or, when ``request``
-    is set, inside a signed request object (RFC 9101).  With ``request`` the
-    form carries only ``client_id``, ``request`` and client authentication
-    (RFC 9126 §3), so the authorization fields (``redirect_uri``, ``scope``,
-    ``response_type``, ``state``, ``nonce``, PKCE, ``response_mode``) must be
-    left at their defaults; setting one raises ``ValueError``.
+    The parameters are sent as plain form fields (RFC 9126 §2.1).  To send
+    them inside a signed request object (RFC 9101), use
+    :class:`SignedPushedAuthorizationRequest` instead.
 
     Attributes:
         address: The pushed authorization request endpoint URL.
@@ -1142,9 +1145,6 @@ class PushedAuthorizationRequest(BaseRequest):
         response_mode: OAuth 2.0 ``response_mode`` to push (e.g. ``"jwt"`` /
             ``"query.jwt"`` for JWT-Secured Authorization Response Mode, JARM).
             Omitted from the pushed parameters when ``None``.
-        request: A signed request object (RFC 9101 §2.1), e.g. from
-            ``create_request_object``, carrying every authorization
-            parameter as a claim (FAPI 2.0 Message Signing §5.3.2).
         client_auth_method: How to authenticate the client. ``None`` (default)
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
@@ -1168,7 +1168,57 @@ class PushedAuthorizationRequest(BaseRequest):
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     response_mode: str | None = None
-    request: str | None = None
+
+
+@dataclass
+class SignedPushedAuthorizationRequest(BaseRequest):
+    """A pushed authorization request sent as a signed request object.
+
+    RFC 9126 §3: the form carries only ``client_id``, ``request`` and client
+    authentication.  Every authorization parameter (``redirect_uri``,
+    ``scope``, ``response_type``, ``state``, ``nonce``, PKCE,
+    ``response_mode``) is a claim of the request object, so this type has no
+    fields for them.
+
+    Attributes:
+        address: The pushed authorization request endpoint URL.
+        client_id: The client identifier.
+        request: The signed request object (RFC 9101 §2.1), e.g. from
+            ``create_request_object`` (FAPI 2.0 Message Signing §5.3.2).  A
+            blank value raises
+            :class:`~py_identity_model.exceptions.ConfigurationException`.
+        client_secret: Client secret (optional for public clients).
+        private_key_jwt: ``private_key_jwt`` authentication parameters.
+        dpop_key: When set, the PAR is DPoP-bound (RFC 9449), as on
+            :class:`PushedAuthorizationRequest`.
+        mtls: Mutual-TLS client authentication parameters (RFC 8705).
+        client_auth_method: How to authenticate the client, as on
+            :class:`PushedAuthorizationRequest`.  Keyword-only.
+    """
+
+    client_id: str
+    # repr suppressed: the client secret and the signed request object must
+    # not leak into logs or exception diagnostics.
+    request: str = field(repr=False)
+    client_secret: str | None = field(default=None, repr=False)
+    private_key_jwt: PrivateKeyJwt | None = None
+    dpop_key: DPoPKey | None = None
+    mtls: MtlsClientAuth | None = None
+    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        self.check_request()
+
+    def check_request(self) -> None:
+        """Raise when ``request`` is blank or not a string.
+
+        Also run before sending, because the field can be reassigned.
+        """
+        if not isinstance(self.request, str) or not self.request.strip():
+            raise ConfigurationException(
+                "SignedPushedAuthorizationRequest.request must be a signed "
+                "request object (RFC 9126 §3)"
+            )
 
 
 @dataclass(repr=False, eq=False)

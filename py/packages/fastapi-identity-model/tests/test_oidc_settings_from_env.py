@@ -38,6 +38,8 @@ def clean_env(monkeypatch):
         "REQUIRED_BINDING",
         "CLIENT_CERTIFICATE_HEADER",
         "EXPECTED_ORIGIN",
+        "TRUSTED_AUDIENCES",
+        "VALIDATE_AZP",
     ):
         monkeypatch.delenv(f"OIDC_{name}", raising=False)
         monkeypatch.delenv(f"APP_{name}", raising=False)
@@ -59,6 +61,8 @@ def test_every_setting_is_read(clean_env):
     clean_env.setenv("OIDC_REQUIRED_BINDING", "dpop")
     clean_env.setenv("OIDC_CLIENT_CERTIFICATE_HEADER", "X-Client-Cert")
     clean_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com")
+    clean_env.setenv("OIDC_TRUSTED_AUDIENCES", "urn:api, https://other")
+    clean_env.setenv("OIDC_VALIDATE_AZP", "true")
 
     assert oidc_settings_from_env() == OIDCSettings(
         discovery_url="https://op/.well-known/openid-configuration",
@@ -73,6 +77,8 @@ def test_every_setting_is_read(clean_env):
         required_binding=TokenBinding.DPOP,
         client_certificate_header="X-Client-Cert",
         expected_origin="https://api.example.com",
+        trusted_audiences=["urn:api", "https://other"],
+        validate_azp=True,
     )
 
 
@@ -91,6 +97,7 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
         None,
         None,
     )
+    assert (settings.trusted_audiences, settings.validate_azp) == ([], False)
 
 
 def test_unknown_required_binding_is_rejected(clean_env):
@@ -144,3 +151,40 @@ def test_settings_have_no_environment_constructor():
 def test_helper_is_not_re_exported_at_the_top_level():
     assert "oidc_settings_from_env" not in fastapi_identity_model.__all__
     assert hasattr(fastapi_identity_model, "oidc_settings_from_env") is False
+
+
+@pytest.mark.parametrize("value", ["urn:api,", "urn:api,,other", " , urn:api"])
+def test_empty_trusted_audience_entry_is_rejected(clean_env, value):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_TRUSTED_AUDIENCES", value)
+
+    with pytest.raises(ValueError, match="trusted_audiences entries"):
+        oidc_settings_from_env()
+
+
+def test_empty_trusted_audiences_variable_means_none(clean_env):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_TRUSTED_AUDIENCES", "")
+
+    assert oidc_settings_from_env().trusted_audiences == []
+
+
+@pytest.mark.parametrize(("value", "expected"), [("TRUE", True), ("False", False)])
+def test_validate_azp_is_case_insensitive(clean_env, value, expected):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_VALIDATE_AZP", value)
+
+    assert oidc_settings_from_env().validate_azp is expected
+
+
+@pytest.mark.parametrize("value", ["1", "yes", "on"])
+def test_validate_azp_rejects_other_values(clean_env, value):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_VALIDATE_AZP", value)
+
+    with pytest.raises(ValueError, match="OIDC_VALIDATE_AZP must be 'true' or 'false'"):
+        oidc_settings_from_env()

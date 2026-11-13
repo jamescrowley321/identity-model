@@ -70,7 +70,6 @@ def build_requests_example(profile: FAPI2ClientProfile) -> None:
         state="state-value", code_challenge=challenge, dpop_key=dpop_key
     )
     print(f"\n  PAR endpoint: {request.address}")
-    print(f"  PKCE method: {request.code_challenge_method}")
     print(f"  Authorization URL: {profile.authorization_url('urn:example:request')}")
 
 
@@ -87,7 +86,7 @@ def refused_example(profile: FAPI2ClientProfile) -> None:
     except FAPIProfileError as exc:
         print("\n  PAR without a DPoP key refused:")
         for violation in exc.violations:
-            print(f"    - {violation}")
+            print(f"    - {violation.code.value}: {violation}")
 
 
 def main():
