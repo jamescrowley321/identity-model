@@ -69,10 +69,12 @@ def get_userinfo(
                 response.close()
                 headers = prepare_userinfo_headers(request, dpop_nonce=nonce)
                 response = _request_userinfo(client, request.address, headers)
-        if request.dpop_key is not None:
-            remember_dpop_nonce(
-                request.dpop_key, request.address, response, resource_server=True
-            )
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=True,
+                )
         result = process_userinfo_response(response)
         return validate_userinfo_sub(result, request.expected_sub)
     except Exception as e:

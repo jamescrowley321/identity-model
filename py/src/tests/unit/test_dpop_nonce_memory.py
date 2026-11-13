@@ -6,6 +6,9 @@ a new nonce." Resource servers supply nonces the same way (§9); each server's
 nonce goes only to that server.
 """
 
+from collections.abc import Awaitable, Callable
+from typing import Any, NamedTuple
+
 import httpx
 import jwt as pyjwt
 import pytest
@@ -26,6 +29,7 @@ from py_identity_model.aio.token_client import (
     request_authorization_code_token as request_authorization_code_token_async,
 )
 from py_identity_model.aio.userinfo import get_userinfo as get_userinfo_async
+from py_identity_model.core.dpop import remember_dpop_nonce
 from py_identity_model.sync.par import push_authorization_request
 from py_identity_model.sync.token_client import (
     refresh_token,
@@ -223,3 +227,176 @@ class TestAsyncAndAuthCodeCallSites:
         assert (await request_authorization_code_token_async(request)).is_successful
         assert request_authorization_code_token(request).is_successful
         assert _nonces(route) == [None, "n-1", "n-2"]
+
+
+def _challenge(nonce: str, *, resource_server: bool) -> httpx.Response:
+    if resource_server:
+        return httpx.Response(
+            401,
+            headers={
+                "WWW-Authenticate": 'DPoP error="use_dpop_nonce"',
+                "DPoP-Nonce": nonce,
+            },
+        )
+    return httpx.Response(
+        400, json={"error": "use_dpop_nonce"}, headers={"DPoP-Nonce": nonce}
+    )
+
+
+def _auth_code(key) -> AuthorizationCodeTokenRequest:
+    return AuthorizationCodeTokenRequest(
+        address=TOKEN_URL,
+        client_id="app1",
+        code="code",
+        redirect_uri="https://app.example.com/cb",
+        code_verifier="verifier",
+        dpop_key=key,
+    )
+
+
+def _par(key) -> PushedAuthorizationRequest:
+    return PushedAuthorizationRequest(
+        address=PAR_URL,
+        client_id="app1",
+        redirect_uri="https://app.example.com/cb",
+        dpop_key=key,
+    )
+
+
+def _userinfo(key) -> UserInfoRequest:
+    return UserInfoRequest(
+        address=USERINFO_URL, token="at-1", expected_sub=SUB, dpop_key=key
+    )
+
+
+class CallSite(NamedTuple):
+    call: Callable[..., Any]
+    acall: Callable[..., Awaitable[Any]]
+    build: Callable[[Any], Any]
+    method: str
+    url: str
+    body: dict
+    status: int
+    resource_server: bool
+
+
+CALL_SITES = [
+    pytest.param(
+        CallSite(
+            refresh_token,
+            refresh_token_async,
+            _refresh,
+            "POST",
+            TOKEN_URL,
+            DPOP_TOKEN,
+            200,
+            False,
+        ),
+        id="refresh",
+    ),
+    pytest.param(
+        CallSite(
+            request_authorization_code_token,
+            request_authorization_code_token_async,
+            _auth_code,
+            "POST",
+            TOKEN_URL,
+            DPOP_TOKEN,
+            200,
+            False,
+        ),
+        id="auth_code",
+    ),
+    pytest.param(
+        CallSite(
+            push_authorization_request,
+            push_authorization_request_async,
+            _par,
+            "POST",
+            PAR_URL,
+            PAR_RESPONSE,
+            201,
+            False,
+        ),
+        id="par",
+    ),
+    pytest.param(
+        CallSite(
+            get_userinfo,
+            get_userinfo_async,
+            _userinfo,
+            "GET",
+            USERINFO_URL,
+            {"sub": SUB},
+            200,
+            True,
+        ),
+        id="userinfo",
+    ),
+]
+
+
+@pytest.mark.unit
+class TestRetryResponseNonce:
+    """A nonce on the response to the ``use_dpop_nonce`` retry is kept too."""
+
+    @pytest.mark.parametrize("site", CALL_SITES)
+    @respx.mock
+    def test_sync(self, site: CallSite):
+        key = generate_dpop_key()
+        rs = site.resource_server
+        route = respx.route(method=site.method, url=site.url).mock(
+            side_effect=[
+                _challenge("n-1", resource_server=rs),
+                _ok("n-2", body=site.body, status=site.status),
+                _ok(body=site.body, status=site.status),
+            ]
+        )
+        assert site.call(site.build(key)).is_successful
+        assert site.call(site.build(key)).is_successful
+        assert _nonces(route) == [None, "n-1", "n-2"]
+        assert key.nonce_for(site.url, resource_server=rs) == "n-2"
+        assert key.nonce_for(site.url, resource_server=not rs) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("site", CALL_SITES)
+    @respx.mock
+    async def test_async(self, site: CallSite):
+        key = generate_dpop_key()
+        rs = site.resource_server
+        route = respx.route(method=site.method, url=site.url).mock(
+            side_effect=[
+                _challenge("n-1", resource_server=rs),
+                _ok("n-2", body=site.body, status=site.status),
+                _ok("n-3", body=site.body, status=site.status),
+                _ok(body=site.body, status=site.status),
+            ]
+        )
+        for _ in range(3):
+            assert (await site.acall(site.build(key))).is_successful
+        assert _nonces(route) == [None, "n-1", "n-2", "n-3"]
+        assert key.nonce_for(site.url, resource_server=rs) == "n-3"
+        assert key.nonce_for(site.url, resource_server=not rs) is None
+
+
+@pytest.mark.unit
+class TestRememberDpopNonce:
+    @pytest.mark.parametrize("rs", [True, False])
+    def test_records_under_the_role(self, rs):
+        key = generate_dpop_key()
+        response = httpx.Response(200, headers={"DPoP-Nonce": "n-1"})
+        remember_dpop_nonce(key, TOKEN_URL, response, resource_server=rs)
+        assert key.nonce_for(TOKEN_URL, resource_server=rs) == "n-1"
+        assert key.nonce_for(TOKEN_URL, resource_server=not rs) is None
+
+    def test_no_header_records_nothing(self):
+        key = generate_dpop_key()
+        remember_dpop_nonce(key, TOKEN_URL, httpx.Response(200), resource_server=False)
+        assert key.nonce_for(TOKEN_URL, resource_server=False) is None
+
+    def test_scheme_and_host_case_are_ignored(self):
+        key = generate_dpop_key()
+        key.remember_nonce(
+            "HTTPS://AUTH.EXAMPLE.COM/token", "n-1", resource_server=False
+        )
+        assert key.nonce_for(TOKEN_URL, resource_server=False) == "n-1"

@@ -139,10 +139,12 @@ def request_authorization_code_token(
                         request, dpop_nonce=nonce
                     ),
                 )
-        if request.dpop_key is not None:
-            remember_dpop_nonce(
-                request.dpop_key, request.address, response, resource_server=False
-            )
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=False,
+                )
         return process_auth_code_token_response(
             response, require_dpop_token_type=request.require_dpop_token_type
         )
@@ -193,10 +195,12 @@ def refresh_token(
                         request, dpop_nonce=nonce
                     ),
                 )
-        if request.dpop_key is not None:
-            remember_dpop_nonce(
-                request.dpop_key, request.address, response, resource_server=False
-            )
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=False,
+                )
         return process_refresh_token_response(
             response, require_dpop_token_type=request.require_dpop_token_type
         )

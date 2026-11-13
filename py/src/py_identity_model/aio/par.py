@@ -78,10 +78,12 @@ async def push_authorization_request(
                     request.address,
                     lambda: prepare_par_request_data(request, dpop_nonce=nonce),
                 )
-        if request.dpop_key is not None:
-            remember_dpop_nonce(
-                request.dpop_key, request.address, response, resource_server=False
-            )
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=False,
+                )
         return process_par_response(response)
     except Exception as e:
         return handle_par_error(e)
