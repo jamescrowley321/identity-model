@@ -386,6 +386,32 @@ class TestChallenge:
             GENERIC_BODY,
         )
 
+    async def test_expired_bearer_token_is_invalid_token(self, client, signing_key):
+        pem = signing_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        expired = pyjwt.encode(
+            {
+                "iss": ISSUER,
+                "aud": AUDIENCE,
+                "sub": "user",
+                "iat": int(time.time()) - 600,
+                "exp": int(time.time()) - 300,
+            },
+            pem,
+            algorithm="RS256",
+        )
+        async with client() as c:
+            resp = await c.get("/me", headers={"Authorization": f"Bearer {expired}"})
+
+        assert _rejected(resp) == (
+            401,
+            'Bearer error="invalid_token"',
+            GENERIC_BODY,
+        )
+
     async def test_invalid_dpop_scheme_token_gets_a_dpop_challenge(self, client):
         async with client() as c:
             resp = await c.get("/me", headers={"Authorization": "DPoP x.y.z"})

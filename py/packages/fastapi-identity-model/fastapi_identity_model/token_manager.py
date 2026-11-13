@@ -238,12 +238,19 @@ class TokenManager:
             if not new_access_token:
                 raise TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
 
+            # Keep a rotated refresh token even when the access token is
+            # refused: the server may already have invalidated the old one.
+            refreshed = response.token.get("refresh_token") or self._refresh_token
+            try:
+                token_type = _token_type(response.token.get("token_type"))
+            except TokenManagerError:
+                self._refresh_token = refreshed
+                raise
             self.set_tokens(
                 access_token=new_access_token,
-                refresh_token=response.token.get("refresh_token")
-                or self._refresh_token,
+                refresh_token=refreshed,
                 expires_in=response.token.get("expires_in"),
-                token_type=response.token.get("token_type"),
+                token_type=token_type,
             )
             return self._access_token
 

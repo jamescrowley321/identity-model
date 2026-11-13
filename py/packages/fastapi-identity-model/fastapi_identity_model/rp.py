@@ -65,6 +65,8 @@ from py_identity_model.aio import (
     validate_id_token,
 )
 
+from .middleware import _is_upstream_fetch_failure
+
 
 if TYPE_CHECKING:
     from py_identity_model.aio import AsyncHTTPClient
@@ -284,21 +286,21 @@ async def _validate_id_token(
             trusted_audiences=settings.trusted_audiences,
             validate_azp=settings.validate_azp,
         )
-    except NetworkException as exc:
-        logger.warning("Provider unreachable during ID token validation: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Identity provider unavailable",
-        ) from exc
     except ConfigurationException:
         # A misconfigured RP is a server fault, not a bad ID token: let it
         # surface as a 500.
         raise
     except PyIdentityModelException as exc:
-        logger.info("ID token validation failed: %s", exc)
+        if not (isinstance(exc, NetworkException) or _is_upstream_fetch_failure(exc)):
+            logger.info("ID token validation failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="ID token validation failed",
+            ) from exc
+        logger.warning("Provider unreachable during ID token validation: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token validation failed",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Identity provider unavailable",
         ) from exc
 
     # Checked here (not via nonce=) to keep the "Nonce mismatch" 401 detail.

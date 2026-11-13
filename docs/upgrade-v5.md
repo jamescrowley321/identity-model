@@ -494,7 +494,8 @@ RFC 6750 §3 requires every `Bearer` challenge to carry at least one
 auth-param; 4.x sent a bare `WWW-Authenticate: Bearer`.
 
 - No credentials, or an unsupported scheme: `401`, `Bearer realm="api"` (no
-  `error`, RFC 6750 §3.1). Set `AuthOptions(realm=...)` to name the realm; it
+  `error`, RFC 6750 §3.1), or `DPoP algs="..."` with
+  `required_binding=TokenBinding.DPOP`. Set `AuthOptions(realm=...)` to name the realm; it
   is then added to every challenge. A realm that would need escaping (`"`,
   `\`, non-ASCII or control characters) raises `ConfigurationException`.
 - A malformed `Authorization` header with the `Bearer` or `DPoP` scheme
@@ -557,8 +558,8 @@ headers = {"Authorization": f"{tm.token_type.value} {await tm.get_access_token()
   `REFRESH_FAILED` (`details["error"]` holds the token endpoint's error),
   `MISSING_ACCESS_TOKEN`, `UNSUPPORTED_TOKEN_TYPE`. Match on `kind`, not the
   message.
-- In the login callback, a `NetworkException` during ID Token validation
-  answers `502` "Identity provider unavailable", and a
+- In the login callback, a discovery or JWKS fetch failure during ID Token
+  validation answers `502` "Identity provider unavailable", and a
   `ConfigurationException` propagates (a `500`). Both were a `401` "ID token
   validation failed".
 

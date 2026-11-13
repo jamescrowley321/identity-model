@@ -137,7 +137,25 @@ async def test_refresh_with_unknown_token_type_raises(monkeypatch, token):
         TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
         {"kind": "unsupported_token_type"},
     )
-    assert tm.access_token == "stale"
+    assert (tm.access_token, tm.refresh_token) == ("stale", "r1")
+
+
+async def test_refused_token_type_keeps_the_rotated_refresh_token(monkeypatch):
+    _patch_refresh(
+        monkeypatch,
+        _refresh_response(
+            token={"access_token": "fresh", "refresh_token": "r2", "token_type": "mac"}
+        ),
+    )
+    tm = _stale()
+    with pytest.raises(TokenManagerError) as exc:
+        await tm.get_access_token()
+    assert (exc.value.kind, tm.access_token, tm.refresh_token, tm.token_type) == (
+        TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
+        "stale",
+        "r2",
+        AuthorizationScheme.BEARER,
+    )
 
 
 async def test_no_refresh_token_raises():

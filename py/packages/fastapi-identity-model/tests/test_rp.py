@@ -695,9 +695,17 @@ async def test_userinfo_skipped_for_a_non_bearer_token(monkeypatch, token_type):
 # --- ID token validation error mapping ---------------------------------------
 
 
-async def test_provider_outage_during_id_token_validation_is_502(monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkException("JWKS fetch failed"),
+        TokenValidationException("Network error during JWKS request: timed out"),
+        TokenValidationException("Network error during discovery: timed out"),
+    ],
+)
+async def test_provider_outage_during_id_token_validation_is_502(monkeypatch, error):
     _patch(monkeypatch)
-    rp.validate_id_token.side_effect = NetworkException("JWKS fetch failed")
+    rp.validate_id_token.side_effect = error
     async with _client(_app()) as client:
         state, _ = await _login(client)
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
