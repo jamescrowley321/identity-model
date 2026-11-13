@@ -1158,7 +1158,7 @@ unsetting it there would turn the `aud` check off.
 
 Pass your real `client_id`.
 
-### `nonce` is a required argument ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### `nonce` is a required argument ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 `validate_id_token` (sync and async) and `validate_id_token_claims` take a
 required keyword `nonce: str | None`. Pass the `nonce` you sent on the
@@ -1185,7 +1185,7 @@ claims = validate_id_token(
 )
 ```
 
-### ID Tokens require `exp` and `iat` ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### ID Tokens require `exp` and `iat` ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 `exp` and `iat` are REQUIRED in an ID Token (OIDC Core §2). `validate_id_token`
 and `validate_id_token_claims` raise the new `IdTokenMissingClaimError` (an
@@ -1206,7 +1206,7 @@ except IdTokenMissingClaimError as exc:
 make `exp` and `iat` OPTIONAL. Its `exp` and `iat` values are checked when
 present.
 
-### Without discovery, an issuer is required ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### Without discovery, an issuer is required ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 With `perform_disco=False`, `validate_id_token` and `validate_logout_token`
 (sync and async) raise `ConfigurationException` when
@@ -1426,7 +1426,7 @@ except WeakKeyException as exc:
     print(exc.details["kid"], exc.details["bits"], exc.details["min_bits"])
 ```
 
-### `options` cannot disable a configured audience or issuer check ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### `options` cannot disable a configured audience or issuer check ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 `TokenValidationConfig.options` is passed to PyJWT. In 4.x,
 `options={"verify_aud": False}` or `{"verify_iss": False}` silently turned off
@@ -1454,7 +1454,7 @@ or configure none:
 TokenValidationConfig(perform_disco=True, options={"verify_aud": False})
 ```
 
-### Every algorithm in an explicit list is usable ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### Every algorithm in an explicit list is usable ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 RFC 8725 §3.1 lets the caller specify a set of algorithms. In 4.x a manual key
 without `alg` was bound to the first entry of `algorithms`, so with
@@ -1466,7 +1466,7 @@ A key that declares `alg` is used only with that algorithm (RFC 7517 §4.4,
 RFC 8725 §3.1). In 4.x an explicit `algorithms` list overrode it; now a token
 signed with another listed algorithm raises `KeyAlgorithmMismatchException`.
 
-### Short HMAC keys are rejected ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### Short HMAC keys are rejected ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 RFC 7518 §3.2 requires an HMAC key at least as long as the hash output. When
 you allow an HS* algorithm, a verification key (`kty: "oct"`) under 256, 384
@@ -1555,7 +1555,7 @@ except LogoutTokenValidationException:
     ...  # 5.0: also raised when exp is missing
 ```
 
-### Logout Tokens with an untrusted audience are rejected ([#PRNUM](https://github.com/jamescrowley321/identity-model/pull/PRNUM))
+### Logout Tokens with an untrusted audience are rejected ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 Back-Channel Logout 1.0 §2.6 step 4 validates `aud` as for ID Tokens, so
 `validate_logout_token` (sync and async) now rejects a Logout Token whose
