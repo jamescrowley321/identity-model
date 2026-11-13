@@ -220,6 +220,7 @@ def _failed_disco(**fields) -> DiscoveryDocumentResponse:
 class TestDiscoveryFailure:
     def test_default_message(self):
         exc = discovery_failure(_failed_disco())
+        assert isinstance(exc, DiscoveryException)
         assert (type(exc), str(exc), exc.status_code) == (
             DiscoveryException,
             "Discovery document request failed",
@@ -241,6 +242,7 @@ class TestDiscoveryFailure:
                 missing_fields=("issuer",),
             )
         )
+        assert isinstance(exc, DiscoveryMissingFieldsError)
         assert (type(exc), str(exc), exc.fields) == (
             DiscoveryMissingFieldsError,
             "boom",
@@ -289,10 +291,9 @@ class TestDiscoveryFailure:
             json=document,
             request=httpx.Request("GET", DISCO_ADDR),
         )
-        try:
+        with pytest.raises(TypeError) as crash:
             iter(5)  # type: ignore[call-overload]
-        except TypeError as e:
-            cause = str(e)
+        cause = str(crash.value)
         result = process_discovery_response(response, requested_address=DISCO_ADDR)
         assert (result.is_successful, result.error_kind, result.error) == (
             False,
@@ -304,6 +305,7 @@ class TestDiscoveryFailure:
 class TestJwksFailure:
     def test_default_message(self):
         exc = jwks_failure(JwksResponse(is_successful=False))
+        assert isinstance(exc, JwksException)
         assert (type(exc), str(exc), exc.status_code) == (
             JwksException,
             "JWKS request failed",
