@@ -42,13 +42,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import WebSocket, WebSocketException, status  # type: ignore[attr-defined]
-from jwt import InvalidTokenError
 
 from py_identity_model import (
     AuthorizationScheme,
-    DPoPReplayCacheError,
-    NetworkException,
-    PyIdentityModelException,
     TokenValidationConfig,
     to_principal,
 )
@@ -56,7 +52,8 @@ from py_identity_model.aio import validate_token
 
 from .middleware import (
     _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
-    _is_upstream_fetch_failure,
+    _classify_validation_failure,
+    _ValidationFailure,
     evaluate_token_type,
     parse_authorization,
     presentation,
@@ -237,32 +234,23 @@ def build_ws_authenticator(
                     ),
                 ),
             )
-        except DPoPReplayCacheError as e:
-            # A replay cache that cannot be used is the server's fault.
-            logger.exception("Replay cache error during WS token validation")
-            raise WebSocketException(
-                code=_WS_INTERNAL_ERROR,
-                reason="Internal error during authentication",
-            ) from e
-        except PyIdentityModelException as e:
-            if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):
+        except WebSocketException:
+            raise
+        except Exception as e:
+            failure = _classify_validation_failure(e)
+            if failure is _ValidationFailure.UNAVAILABLE:
                 logger.exception("Upstream fetch failure during WS token validation")
                 raise WebSocketException(
                     code=_WS_TRY_AGAIN_LATER,
                     reason="Authentication temporarily unavailable",
                 ) from e
-            logger.info("WS token rejected during validation: %s", e)
-            raise WebSocketException(
-                code=_WS_POLICY_VIOLATION, reason=_GENERIC_REJECT_REASON
-            ) from e
-        except InvalidTokenError as e:
-            logger.info("Malformed WS token rejected: %s", e)
-            raise WebSocketException(
-                code=_WS_POLICY_VIOLATION, reason=_GENERIC_REJECT_REASON
-            ) from e
-        except WebSocketException:
-            raise
-        except Exception as e:
+            if failure is _ValidationFailure.REJECTED:
+                logger.info("WS token rejected during validation: %s", e)
+                raise WebSocketException(
+                    code=_WS_POLICY_VIOLATION, reason=_GENERIC_REJECT_REASON
+                ) from e
+            # An unusable replay cache or a non-library failure is the
+            # server's fault.
             logger.exception("Unexpected error during WS token validation")
             raise WebSocketException(
                 code=_WS_INTERNAL_ERROR,

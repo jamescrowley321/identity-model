@@ -15,13 +15,17 @@ avoided on purpose: it pulls in the deprecated httpx TestClient path.
 
 from types import SimpleNamespace
 
-from fastapi import WebSocketException
+from fastapi import WebSocketException, status
 from jwt import DecodeError
 import pytest
 from starlette.datastructures import URL, Headers
 
 from fastapi_identity_model import build_ws_authenticator, ws
-from py_identity_model import NetworkException, TokenValidationException
+from py_identity_model import (
+    DiscoveryException,
+    NetworkException,
+    TokenValidationException,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -124,16 +128,26 @@ async def test_upstream_outage_closes_try_again_later(monkeypatch):
     assert exc.value.code == 1013
 
 
-async def test_upstream_fetch_failure_prefix_maps_to_try_again_later(monkeypatch):
-    # A discovery/JWKS fetch failure surfaces as a TokenValidationException whose
-    # message carries a known prefix; it must map to 1013, not a 1008 rejection.
+async def test_discovery_fetch_failure_maps_to_try_again_later(monkeypatch):
+    auth = _authenticator(
+        monkeypatch,
+        raises=DiscoveryException("Discovery request failed", status_code=503),
+    )
+    with pytest.raises(WebSocketException) as exc:
+        await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+    assert exc.value.code == status.WS_1013_TRY_AGAIN_LATER
+
+
+async def test_outage_like_message_is_still_a_rejection(monkeypatch):
+    # Classified by type: a TokenValidationException is a 1008 rejection even
+    # when its message reads like an outage.
     auth = _authenticator(
         monkeypatch,
         raises=TokenValidationException("Network error during discovery: boom"),
     )
     with pytest.raises(WebSocketException) as exc:
         await auth(_FakeWebSocket(query_params={"access_token": "good"}))
-    assert exc.value.code == 1013
+    assert exc.value.code == status.WS_1008_POLICY_VIOLATION
 
 
 async def test_unexpected_error_closes_internal_error(monkeypatch):
