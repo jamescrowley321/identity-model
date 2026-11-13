@@ -9,6 +9,7 @@ import httpx
 import pytest
 import respx
 from run_tests import (
+    drive_rp_register,
     MANIFEST_PATH,
     Expectation,
     ManifestError,
@@ -272,6 +273,7 @@ def test_load_manifest_parses_entries(tmp_path):
             "plan/m: allowlisted SKIPPED needs a reason",
         ),
         ({"expect": "maybe"}, "plan/m: invalid expect 'maybe'"),
+        (None, "plan/m: entry must be an object"),
         (
             {"expect": "reject", "reasons": "id_token_validation"},
             "plan/m: reasons must be a list of strings",
@@ -565,3 +567,42 @@ def test_authorize_clears_the_previous_flow_record(harness, monkeypatch):
 
 def _crash(_issuer):
     raise RuntimeError("harness bug")
+
+
+@respx.mock
+def test_register_500_is_a_crash():
+    respx.get(f"{RP}/register").mock(return_value=httpx.Response(500))
+
+    assert drive_rp_register(rp_base_url=RP, issuer=ISSUER) == (
+        None,
+        ["RP returned HTTP 500 at /register"],
+    )
+
+
+@respx.mock
+def test_register_unreachable_is_a_crash():
+    respx.get(f"{RP}/register").mock(side_effect=httpx.ConnectError("refused"))
+
+    assert drive_rp_register(rp_base_url=RP, issuer=ISSUER) == (
+        None,
+        ["RP request failed at /register: refused"],
+    )
+
+
+@respx.mock
+def test_register_success_returns_client_id():
+    respx.get(f"{RP}/register").mock(
+        return_value=httpx.Response(200, json={"client_id": "dyn-1"})
+    )
+
+    assert drive_rp_register(rp_base_url=RP, issuer=ISSUER) == ("dyn-1", [])
+
+
+def test_plan_entry_that_is_not_an_object_is_rejected(tmp_path):
+    path = tmp_path / "expected_modules.json"
+    path.write_text(json.dumps({"plan": ["m"]}))
+
+    with pytest.raises(ManifestError) as excinfo:
+        load_manifest("plan", path)
+
+    assert str(excinfo.value) == "manifest for plan 'plan' must be an object"

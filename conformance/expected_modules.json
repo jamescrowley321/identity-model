@@ -334,7 +334,8 @@
     "oidcc-client-test-discovery-issuer-mismatch": {
       "expect": "reject",
       "reasons": [
-        "discovery_failed"
+        "discovery_failed",
+        "issuer_mismatch"
       ]
     },
     "oidcc-client-test-idtoken-sig-none": {

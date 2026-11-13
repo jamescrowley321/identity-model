@@ -478,27 +478,28 @@ def drive_rp_register(
     issuer: str,
     test_name: str = "",
     profile: str = "",
-) -> str | None:
+) -> tuple[str | None, list[str]]:
     """Register the RP dynamically (RFC 7591) for a Dynamic RP test module.
 
     The Dynamic RP plan has no pre-configured client, so the RP must register
     itself with each per-test OP before the auth flow. Returns the issued
     client_id (which the runner passes to /authorize; the RP fills the matching
     secret from its remembered registration), or None if registration did not
-    complete.
+    complete, together with the harness crashes seen (see :func:`_rp_crashes`).
     """
     params = {"issuer": issuer, "test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0) as client:
         try:
             response = client.get(f"{rp_base_url}/register", params=params)
-            if response.is_success:
-                client_id = response.json().get("client_id")
-                logger.info("RP registered dynamically: client_id=%s", client_id)
-                return client_id
-            logger.warning("RP register returned status=%d", response.status_code)
         except httpx.HTTPError as exc:
             logger.warning("RP register HTTP error (may be expected): %s", exc)
-    return None
+            return None, _rp_transport_crash(exc, rp_base_url)
+    if response.is_success:
+        client_id = response.json().get("client_id")
+        logger.info("RP registered dynamically: client_id=%s", client_id)
+        return client_id, []
+    logger.warning("RP register returned status=%d", response.status_code)
+    return None, _rp_crashes([response], rp_base_url)
 
 
 class _FormPostParser(HTMLParser):
@@ -789,6 +790,8 @@ class ManifestError(Exception):
 
 def _parse_module_expectation(plan: str, name: str, raw: dict) -> ModuleExpectation:
     where = f"{plan}/{name}"
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{where}: entry must be an object")
     unknown = set(raw) - {"expect", "reasons", "allow"}
     if unknown:
         raise ManifestError(f"{where}: unknown keys {sorted(unknown)}")
@@ -828,6 +831,8 @@ def load_manifest(
     data = json.loads(path.read_text())
     if plan not in data:
         raise ManifestError(f"no expected-module manifest for plan {plan!r}")
+    if not isinstance(data[plan], dict):
+        raise ManifestError(f"manifest for plan {plan!r} must be an object")
     return {
         name: _parse_module_expectation(plan, name, raw)
         for name, raw in data[plan].items()
@@ -1043,8 +1048,9 @@ def run_test_module(
         # from its registration). Discovery/webfinger modules need neither and
         # keep their normal flow.
         register_only = dynamic and test_name in DYNAMIC_REGISTER_ONLY_TESTS
+        crashes: list[str] = []
         if dynamic and (register_only or test_name in DYNAMIC_AUTH_TESTS):
-            registered_id = drive_rp_register(
+            registered_id, crashes = drive_rp_register(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_name=test_name,
@@ -1058,13 +1064,12 @@ def run_test_module(
         # authorize with a signed request object referenced by request_uri.
         use_request_uri = dynamic and test_name in DYNAMIC_AUTH_TESTS
 
-        crashes: list[str] = []
         if register_only:
             # Registration is the whole test — no auth flow to drive.
             pass
         elif test_type == "discovery_only":
             # Discovery-only tests: just fetch discovery, no auth flow
-            crashes = drive_rp_discover(
+            crashes += drive_rp_discover(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_id=module_id,
@@ -1076,7 +1081,7 @@ def run_test_module(
             # The client is registered once (above) and reused across both flows;
             # the OP rotates its signing keys between them.
             logger.info("Driving first auth flow...")
-            crashes = drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -1110,7 +1115,7 @@ def run_test_module(
             )
         else:
             # Standard auth flow (with optional userinfo skip)
-            crashes = drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
