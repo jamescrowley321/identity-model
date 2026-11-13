@@ -4,12 +4,14 @@ The library refuses to sign a request object or client assertion with an RSA
 key under 2048 bits, the floor verification keys meet too.
 """
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
     PrivateFormat,
 )
+from jwt.algorithms import ECAlgorithm
 import pytest
 
 from py_identity_model.core.key_strength import (
@@ -67,6 +69,14 @@ class TestLoadSigningKey:
     def test_unknown_algorithm(self):
         key = ec.generate_private_key(ec.SECP256R1())
         assert load_signing_key(_pem(key), "XX999") is None
+
+    def test_unsupported_key_left_to_signing(self, monkeypatch):
+        def unsupported(_self, _key):
+            raise UnsupportedAlgorithm("curve not supported")
+
+        monkeypatch.setattr(ECAlgorithm, "prepare_key", unsupported)
+        key = ec.generate_private_key(ec.SECP256R1())
+        assert load_signing_key(_pem(key), "ES256") is None
 
     def test_prepares_like_pyjwt(self):
         key = ed25519.Ed25519PrivateKey.generate()

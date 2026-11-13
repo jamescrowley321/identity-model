@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import binascii
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import get_default_algorithms
 from jwt.exceptions import PyJWTError
@@ -102,7 +103,7 @@ def load_signing_key(private_key: object, algorithm: str) -> object | None:
         return None
     try:
         return algorithm_impl.prepare_key(private_key)
-    except (PyJWTError, ValueError, TypeError):
+    except (PyJWTError, ValueError, TypeError, UnsupportedAlgorithm):
         return None
 
 
