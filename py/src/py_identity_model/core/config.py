@@ -13,12 +13,12 @@ returned. An invalid value is never replaced by its default.
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from enum import Enum
 import math
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from .client_auth_method import ClientAuthMethod
 from .http_utils import (
     DEFAULT_HTTP_TIMEOUT,
     DEFAULT_MAX_JWKS_KEYS,
@@ -75,14 +75,6 @@ class ConfigError(ValueError):
             "configuration is invalid:\n"
             + "\n".join(f"  - {issue}" for issue in self.issues)
         )
-
-
-class ClientAuthMethod(Enum):
-    """Client authentication method (RFC 6749 §2.3.1, OpenID Connect Core 1.0 §9)."""
-
-    NONE = "none"
-    CLIENT_SECRET_BASIC = "client_secret_basic"
-    CLIENT_SECRET_POST = "client_secret_post"
 
 
 # --------------------------------------------------------------------------- #

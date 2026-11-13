@@ -162,6 +162,16 @@ async function startProvider() {
           ],
         },
       },
+      {
+        // client_secret_post client (RFC 6749 §2.3.1), used by
+        // src/tests/integration/test_client_secret_post.py.
+        client_id: "test-client-secret-post",
+        client_secret: "test-client-secret-post-secret",
+        grant_types: ["client_credentials"],
+        response_types: [],
+        scope: "api",
+        token_endpoint_auth_method: "client_secret_post",
+      },
     ],
 
     // JWKS

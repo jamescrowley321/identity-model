@@ -18,6 +18,8 @@ from .exceptions import (
     AuthorizeCallbackException,
     AzpRequiresClientIdError,
     CertificateBindingError,
+    ClientAuthMethodError,
+    ClientAuthMethodErrorReason,
     ConfigurationException,
     DiscoveryException,
     DiscoveryHTTPSRequiredError,
@@ -221,6 +223,8 @@ __all__ = [
     "ClaimsValidator",
     # Configuration
     "ClientAuthMethod",
+    "ClientAuthMethodError",
+    "ClientAuthMethodErrorReason",
     "ClientCredentialsTokenRequest",
     "ClientCredentialsTokenResponse",
     # Dynamic Client Registration

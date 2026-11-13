@@ -247,7 +247,7 @@ Python defines them. Go and Rust still differ in places, as that page lists.
 
 ::: py_identity_model.core.config.ConfigIssue
 
-::: py_identity_model.core.config.ClientAuthMethod
+::: py_identity_model.core.client_auth_method.ClientAuthMethod
 
 ::: py_identity_model.config_helpers.config_from_mapping
 

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .authorize_url import build_par_authorization_url
+from .client_auth_method import ClientAuthMethod
 from .jar import create_request_object
 from .models import (
     AuthorizationCodeTokenRequest,
@@ -44,10 +45,17 @@ if TYPE_CHECKING:
 
 # FAPI 2.0 Security Profile §5.4.1: PS256, ES256 or EdDSA (Ed25519).
 FAPI2_ALLOWED_SIGNING_ALGORITHMS = frozenset({"PS256", "ES256", "EdDSA"})
+# FAPI 2.0 Security Profile §5.3.3.1. String values, because discovery
+# metadata (``token_endpoint_auth_methods_supported``) is compared against them.
 FAPI2_ALLOWED_AUTH_METHODS = frozenset(
-    {"private_key_jwt", "tls_client_auth", "self_signed_tls_client_auth"}
+    m.value
+    for m in (
+        ClientAuthMethod.PRIVATE_KEY_JWT,
+        ClientAuthMethod.TLS_CLIENT_AUTH,
+        ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
+    )
 )
-_MTLS_AUTH_METHODS = frozenset({"tls_client_auth", "self_signed_tls_client_auth"})
+_MTLS_AUTH_METHODS = frozenset(m.value for m in ClientAuthMethod if m.is_mtls)
 FAPI2_REQUIRED_PKCE_METHOD = "S256"
 FAPI2_REQUIRED_RESPONSE_TYPE = "code"
 # FAPI 2.0 Security Profile §5.3.3.2: clients should not send longer nonces.
@@ -188,6 +196,7 @@ def validate_fapi_authorization_request(
             private_key_jwt=request.private_key_jwt,
             mtls=request.mtls,
             dpop_key=request.dpop_key,
+            client_auth_method=request.client_auth_method,
         )
     )
 
@@ -199,10 +208,15 @@ def _client_violations(
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
     dpop_key: DPoPKey | None,
+    client_auth_method: ClientAuthMethod | None = None,
 ) -> list[str]:
     """Client authentication and sender constraint (§5.3.3.1, §5.4.1)."""
     return [
-        *_client_authentication_violations(private_key_jwt=private_key_jwt, mtls=mtls),
+        *_client_authentication_violations(
+            private_key_jwt=private_key_jwt,
+            mtls=mtls,
+            client_auth_method=client_auth_method,
+        ),
         *_sender_constraint_request_violations(dpop_key=dpop_key, mtls=mtls),
     ]
 
@@ -211,8 +225,19 @@ def _client_authentication_violations(
     *,
     private_key_jwt: PrivateKeyJwt | None,
     mtls: MtlsClientAuth | None,
+    client_auth_method: ClientAuthMethod | None = None,
 ) -> list[str]:
     violations: list[str] = []
+    # An explicit method is what gets sent, whatever credentials are present.
+    if (
+        client_auth_method is not None
+        and client_auth_method.value not in FAPI2_ALLOWED_AUTH_METHODS
+    ):
+        violations.append(
+            f"client_auth_method '{client_auth_method.value}' is not FAPI 2.0 "
+            f"compliant; use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))} "
+            "(FAPI 2.0 Security Profile §5.3.3.1)"
+        )
     if private_key_jwt is None and mtls is None:
         violations.append(
             "Client authentication is required: private_key_jwt or mTLS "
@@ -221,11 +246,6 @@ def _client_authentication_violations(
     if private_key_jwt is not None:
         violations.extend(
             _algorithm_violation("private_key_jwt", private_key_jwt.algorithm)
-        )
-    if mtls is not None and mtls.auth_method not in FAPI2_ALLOWED_AUTH_METHODS:
-        violations.append(
-            f"mTLS auth method '{mtls.auth_method}' is not FAPI 2.0 compliant; "
-            f"use {', '.join(sorted(FAPI2_ALLOWED_AUTH_METHODS))}"
         )
     return violations
 

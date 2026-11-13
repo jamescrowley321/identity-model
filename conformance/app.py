@@ -35,6 +35,7 @@ from starlette.concurrency import run_in_threadpool
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
     AuthorizeCallbackResponse,
+    ClientAuthMethod,
     ClientRegistrationRequest,
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
@@ -483,7 +484,7 @@ def _fapi2_mtls_auth() -> MtlsClientAuth:
     return MtlsClientAuth(
         certificate=_FAPI2_MTLS_CERT_PATH,
         private_key=_FAPI2_MTLS_KEY_PATH,
-        auth_method="self_signed_tls_client_auth",
+        auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 
 

@@ -7,6 +7,13 @@ that can occur during OAuth 2.0 and OpenID Connect operations.
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from .core.client_auth_method import ClientAuthMethod
+
 
 class PyIdentityModelException(Exception):
     """Base exception for all py-identity-model errors."""
@@ -332,6 +339,56 @@ class AzpRequiresClientIdError(ConfigurationException):
         )
 
 
+class ClientAuthMethodErrorReason(Enum):
+    """Why a client authentication choice is invalid."""
+
+    MISSING_CREDENTIAL = "missing_credential"
+    """The chosen method's credential is not set on the request."""
+
+    MTLS_METHOD_MISMATCH = "mtls_method_mismatch"
+    """The chosen mTLS method differs from the request's ``mtls.auth_method``."""
+
+    NOT_AN_MTLS_METHOD = "not_an_mtls_method"
+    """``MtlsClientAuth.auth_method`` is not an RFC 8705 §2 method."""
+
+
+class ClientAuthMethodError(ConfigurationException):
+    """A client authentication method can't be applied as configured.
+
+    Raised before any request is sent, so a misconfigured client never falls
+    back to a different method than the one it asked for.
+
+    Attributes:
+        reason: Which rule was broken.
+        method: The method involved.
+        credential: The request field that is missing or conflicting
+            (``client_secret``, ``private_key_jwt`` or ``mtls``), if any.
+    """
+
+    def __init__(
+        self,
+        reason: ClientAuthMethodErrorReason,
+        method: ClientAuthMethod,
+        credential: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.method = method
+        self.credential = credential
+        messages = {
+            ClientAuthMethodErrorReason.MISSING_CREDENTIAL: (
+                f"client_auth_method {method.value!r} requires {credential}"
+            ),
+            ClientAuthMethodErrorReason.MTLS_METHOD_MISMATCH: (
+                f"client_auth_method {method.value!r} does not match mtls.auth_method"
+            ),
+            ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD: (
+                f"{method.value!r} is not an mTLS client authentication method "
+                "(use tls_client_auth or self_signed_tls_client_auth)"
+            ),
+        }
+        super().__init__(messages[reason])
+
+
 class FailedResponseAccessError(PyIdentityModelException):
     """Raised when accessing data fields on a failed response."""
 
@@ -362,6 +419,8 @@ __all__ = [
     "AuthorizeCallbackException",
     "AzpRequiresClientIdError",
     "CertificateBindingError",
+    "ClientAuthMethodError",
+    "ClientAuthMethodErrorReason",
     "ConfigurationException",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",

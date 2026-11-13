@@ -11,11 +11,9 @@ import httpx
 
 from ..logging_config import logger
 from ..logging_utils import redact_url
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from .client_auth import apply_client_auth
 from .dpop import create_dpop_proof
 from .models import PushedAuthorizationRequest, PushedAuthorizationResponse
-from .mtls import apply_mtls_client_auth
 
 
 # Authorization parameters; with a request object they are claims of the JWT.
@@ -68,22 +66,9 @@ def prepare_par_request_data(
             request.dpop_key, "POST", request.address, nonce=dpop_nonce
         )
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body (client_id already
-        # present for PAR per RFC 9126), no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret:
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
+    auth = apply_client_auth(
+        params, request, client_secret=request.client_secret or None
+    )
 
     return params, headers, auth
 

@@ -323,12 +323,5 @@ def test_source_and_registry_api_is_gone():
 
 
 def test_client_auth_method_has_no_requires_secret():
-    # Removed in 5.0 (#934); callers compare against ClientAuthMethod.NONE.
-    assert {
-        member.name for member in ClientAuthMethod if hasattr(member, "requires_secret")
-    } == set()
-    assert {member.value for member in ClientAuthMethod} == {
-        "none",
-        "client_secret_basic",
-        "client_secret_post",
-    }
+    # Removed in 5.0 (#934); the replacement is ClientAuthMethod.uses_client_secret.
+    assert not hasattr(ClientAuthMethod.CLIENT_SECRET_BASIC, "requires_secret")
