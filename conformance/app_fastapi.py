@@ -35,6 +35,7 @@ import html
 import logging
 import os
 import secrets
+import threading
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
 # Shared per-test log plumbing from the library harness: the ContextVar-based
@@ -129,7 +130,11 @@ _ROUTER_REASONS = {
     "Authorization request failed": "op_error",
     "Authorization response missing code": "missing_code",
     "Provider did not return an ID token": "missing_id_token",
+    "No active login flow in session": "missing_flow",
+    "Malformed authorization response": "callback_parse",
 }
+# The router's one formatted detail: "Provider discovery is missing '<name>'".
+_ROUTER_MISSING_ENDPOINT_PREFIX = "Provider discovery is missing "
 
 # The router answers an unhandled exception with a bare 500; that is a crash,
 # never a decision, so it gets a class no manifest lists as a rejection reason.
@@ -145,18 +150,24 @@ def _router_rejection(resp: httpx.Response) -> str:
     detail = _error_detail(resp)
     if resp.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
         return f"{ROUTER_CRASH_REASON}: {detail}"
+    if detail.startswith(_ROUTER_MISSING_ENDPOINT_PREFIX):
+        return f"missing_endpoint: {detail}"
     return f"{_ROUTER_REASONS.get(detail, 'router_rejected')}: {detail}"
+
+
+_unattributed_lock = threading.Lock()
 
 
 def _record_unattributed(test_id: str, error: str) -> None:
     """Record a rejection that carries no flow (see app.merge_unattributed_rejection)."""
     if not test_id:
         return
-    record = merge_unattributed_rejection(
-        test_results.get(test_id), test_id, error, after_login=False
-    )
-    if record is not None:
-        test_results[test_id] = record
+    with _unattributed_lock:
+        record = merge_unattributed_rejection(
+            test_results.get(test_id), test_id, error, after_login=False
+        )
+        if record is not None:
+            test_results[test_id] = record
 
 
 def _record_error(test_id: str, error: str) -> None:

@@ -1229,7 +1229,11 @@ algorithm's curve (`ES256` → `P-256`, `ES384` → `P-384`, `ES512` →
 `P-521`, `ES256K` → `secp256k1`). In 4.x the first key with that `kid` was used, so
 an ES256 token whose `kid` was also on an Ed25519 (`OKP`) key failed with
 `Key type 'OKP' is incompatible with algorithm 'ES256'` if the `OKP` key was
-listed first. A `kid` with no key that fits still raises that error.
+listed first. When no same-`kid` key fits, the first one is checked as in 4.x,
+so the error depends on that key: a `kty` mismatch raises
+`TokenValidationException`, a declared `alg` mismatch raises
+`KeyAlgorithmMismatchException`, and a key on another curve fails signature
+verification.
 
 ### An empty `kid` or `use` means absent; `key_ops` is accepted ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
 

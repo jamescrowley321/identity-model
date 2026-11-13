@@ -702,3 +702,61 @@ def test_fastapi_stray_callback_after_success_records_a_conflict(monkeypatch):
         "status": "conflict",
         "error": "state_validation: unknown state (after a recorded success)",
     }
+
+
+def _router_fixed_details() -> list[str]:
+    import re
+
+    router = (
+        Path(__file__).parents[2]
+        / "py/packages/fastapi-identity-model/fastapi_identity_model/rp.py"
+    )
+    return re.findall(r'detail="([^"]+)"', router.read_text())
+
+
+def test_every_fixed_router_detail_has_a_reason_class():
+    import app_fastapi
+
+    assert sorted(_router_fixed_details()) == sorted(app_fastapi._ROUTER_REASONS)
+
+
+def test_router_missing_endpoint_detail_has_a_reason_class():
+    import app_fastapi
+
+    response = httpx.Response(
+        502, json={"detail": "Provider discovery is missing 'token_endpoint'"}
+    )
+
+    assert app_fastapi._router_rejection(response) == (
+        "missing_endpoint: Provider discovery is missing 'token_endpoint'"
+    )
+
+
+def test_conflict_fails_a_module_that_expects_no_harness_verdict():
+    conflict = {"test_id": "m1", "status": "conflict", "error": "x"}
+
+    assert assess_module(
+        "PASSED", ModuleExpectation(expect=Expectation.NONE), RPEvidence(conflict)
+    ) == ("FAILED", "harness recorded conflicting outcomes: 'x'")
+
+
+def test_manifest_that_is_not_json_is_a_manifest_error(tmp_path):
+    path = tmp_path / "expected_modules.json"
+    path.write_text("not json")
+
+    with pytest.raises(ManifestError) as excinfo:
+        load_manifest("plan", path)
+
+    assert str(excinfo.value) == (
+        f"cannot read manifest {path}: Expecting value: line 1 column 1 (char 0)"
+    )
+
+
+def test_manifest_that_is_not_an_object_is_a_manifest_error(tmp_path):
+    path = tmp_path / "expected_modules.json"
+    path.write_text("[]")
+
+    with pytest.raises(ManifestError) as excinfo:
+        load_manifest("plan", path)
+
+    assert str(excinfo.value) == f"manifest {path} must be an object"

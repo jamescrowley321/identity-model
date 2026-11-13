@@ -20,6 +20,7 @@ import re
 import secrets
 import sys
 import tempfile
+import threading
 from urllib.parse import urlencode
 
 from cryptography import x509
@@ -1982,6 +1983,10 @@ def _discovery_failure(disco: DiscoveryDocumentResponse) -> str:
 
 HARNESS_CONFLICT = "conflict"
 
+# Sync endpoints run in a threadpool; the read-merge-write of an unattributed
+# rejection must not interleave with another.
+_unattributed_lock = threading.Lock()
+
 
 def merge_unattributed_rejection(
     existing: dict | None, test_id: str, error: str, *, after_login: bool
@@ -2026,15 +2031,19 @@ def _record_last_flow_rejection(error: str, *, after_login: bool = False) -> Non
     test_id = flow_context.get("test_id", "") if flow_context else ""
     if not test_id:
         return
-    existing = test_results.get(test_id)
-    record = merge_unattributed_rejection(
-        existing.result if existing else None, test_id, error, after_login=after_login
-    )
-    if record is None:
-        return
-    error_session = AuthSession(issuer=flow_context["issuer"], state="", nonce="")
-    error_session.result = record
-    test_results[test_id] = error_session
+    with _unattributed_lock:
+        existing = test_results.get(test_id)
+        record = merge_unattributed_rejection(
+            existing.result if existing else None,
+            test_id,
+            error,
+            after_login=after_login,
+        )
+        if record is None:
+            return
+        error_session = AuthSession(issuer=flow_context["issuer"], state="", nonce="")
+        error_session.result = record
+        test_results[test_id] = error_session
 
 
 def _store_test_result(session: AuthSession) -> None:

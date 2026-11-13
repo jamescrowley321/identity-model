@@ -831,7 +831,12 @@ def load_manifest(
     plan: str, path: Path = MANIFEST_PATH
 ) -> dict[str, ModuleExpectation]:
     """Load the expected modules for ``plan`` from the manifest file."""
-    data = json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ManifestError(f"cannot read manifest {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestError(f"manifest {path} must be an object")
     if plan not in data:
         raise ManifestError(f"no expected-module manifest for plan {plan!r}")
     if not isinstance(data[plan], dict):
@@ -896,17 +901,17 @@ def assess_module(
         )
     if evidence.crashes:
         return "FAILED", "harness crashed: " + "; ".join(evidence.crashes)
-    if expectation.expect is Expectation.NONE:
-        return suite_status, ""
     recorded = evidence.recorded
-    if recorded is None:
-        return "FAILED", "harness recorded no result for this module"
-    outcome = recorded.get("status")
-    if outcome == HARNESS_CONFLICT:
+    if recorded is not None and recorded.get("status") == HARNESS_CONFLICT:
         return (
             "FAILED",
             f"harness recorded conflicting outcomes: {recorded.get('error')!r}",
         )
+    if expectation.expect is Expectation.NONE:
+        return suite_status, ""
+    if recorded is None:
+        return "FAILED", "harness recorded no result for this module"
+    outcome = recorded.get("status")
     if expectation.expect is Expectation.ACCEPT:
         for previous in evidence.earlier:
             if (previous or {}).get("status") != HARNESS_SUCCESS:
