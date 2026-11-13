@@ -47,15 +47,14 @@ NONCE_CHALLENGE = httpx.Response(
 # One original request + exactly one use_dpop_nonce retry (RFC 9449 §8).
 EXPECTED_RETRY_CALLS = 2
 
-DPOP_KEY = generate_dpop_key("ES256")
-
 
 def _refresh(**overrides: Any) -> RefreshTokenRequest:
     fields: dict[str, Any] = {
         "address": TOKEN_URL,
         "client_id": "app1",
         "refresh_token": "rt-1",
-        "dpop_key": DPOP_KEY,
+        # A fresh key per request: a key remembers server nonces (RFC 9449 §8.2).
+        "dpop_key": generate_dpop_key("ES256"),
         **overrides,
     }
     return RefreshTokenRequest(**fields)
@@ -68,7 +67,8 @@ def _auth_code(**overrides: Any) -> AuthorizationCodeTokenRequest:
         "code": "code",
         "redirect_uri": "https://app.example.com/cb",
         "code_verifier": "verifier",
-        "dpop_key": DPOP_KEY,
+        # A fresh key per request: a key remembers server nonces (RFC 9449 §8.2).
+        "dpop_key": generate_dpop_key("ES256"),
         **overrides,
     }
     return AuthorizationCodeTokenRequest(**fields)
