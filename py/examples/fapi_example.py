@@ -87,7 +87,7 @@ def refused_example(profile: FAPI2ClientProfile) -> None:
     except FAPIProfileError as exc:
         print("\n  PAR without a DPoP key refused:")
         for violation in exc.violations:
-            print(f"    - {violation}")
+            print(f"    - {violation.code.value}: {violation}")
 
 
 def main():

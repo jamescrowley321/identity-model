@@ -604,6 +604,26 @@ The request validator now also checks the request's client authentication,
 its DPoP key algorithm and its `nonce` length. The client validator reports
 a `private_key_jwt` whose assertion `aud` would not be the issuer.
 
+### FAPI 2.0: violations are typed ([#1059](https://github.com/jamescrowley321/identity-model/issues/1059))
+
+`FAPIValidationResult.violations` and `FAPIProfileError.violations` were
+`list[str]`. They are now `list[FAPIViolation]`: each has a `code` (a
+`FAPIViolationCode`) and a `message`. Match on the code; the message is for
+people and may change. Both also have `codes`, the codes in order.
+`str(violation)` is the message, and `str(FAPIProfileError)` is unchanged.
+
+```python
+# Before
+except FAPIProfileError as exc:
+    if any(v.startswith("PKCE") for v in exc.violations):
+        ...
+
+# After
+except FAPIProfileError as exc:
+    if FAPIViolationCode.PKCE_METHOD_NOT_S256 in exc.codes:
+        ...
+```
+
 ### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
 
 The document's `issuer` must equal the address you requested it from (OIDC
@@ -743,6 +763,24 @@ check_introspection_binding(  # raises unless active and correctly bound
 
 `introspect_token` does not run the check; see
 [Token Introspection](api/introspection.md#sender-constrained-opaque-tokens).
+
+### Certificate binding errors have a kind; a bad presentation is a `ConfigurationException` ([#1059](https://github.com/jamescrowley321/identity-model/issues/1059))
+
+`CertificateBindingError` now takes a `CertificateBindingErrorKind` and has a
+`kind`: `NOT_BOUND`, `INVALID_THUMBPRINT`, `MISMATCH`, `CERTIFICATE_REQUIRED`
+or `INVALID_CERTIFICATE`. The message is fixed per kind, so match on `kind`,
+not on the text. `CertificateBindingError(message)` no longer works; raise it
+with a kind.
+
+`check_token_binding`, `check_introspection_binding` and `validate_token`
+raised a bare `ValueError` when a DPoP proof had to be checked but
+`presentation.method` or `presentation.url` was missing, or the URL was not an
+absolute http(s) URI. They now raise `ConfigurationException`, as they already
+did for `required_binding` without a presentation. Treat it as a server fault
+in your own handler, not as a bad token: it is a `PyIdentityModelException`, so
+a broad `except PyIdentityModelException` that answers 401 would hide it. The
+FastAPI middleware and WebSocket authenticator build the presentation from the
+request's absolute URL and method, so they never hit this.
 
 ## ID Token validation
 

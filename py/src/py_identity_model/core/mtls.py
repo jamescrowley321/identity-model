@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
-from ..exceptions import CertificateBindingError
+from ..exceptions import CertificateBindingError, CertificateBindingErrorKind
 from ..jwt_claim_types import ConfirmationMethods, JwtClaimTypes
 from ..oidc_constants import TokenRequest
 
@@ -130,17 +130,11 @@ def validate_certificate_binding(claims: dict, cert: str | bytes) -> None:
     """
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     if not isinstance(cnf, dict):
-        raise CertificateBindingError(
-            "Access token is not certificate-bound: missing 'cnf' claim "
-            "(RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.NOT_BOUND)
 
     bound_thumbprint = cnf.get(ConfirmationMethods.X509ThumbprintSha256.value)
     if not bound_thumbprint or not isinstance(bound_thumbprint, str):
-        raise CertificateBindingError(
-            "Access token 'cnf' claim has no 'x5t#S256' certificate "
-            "thumbprint (RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.NOT_BOUND)
 
     # A genuine base64url-no-pad thumbprint is always ASCII. Reject non-ASCII
     # values explicitly so the fail-closed contract holds: without this guard a
@@ -148,17 +142,11 @@ def validate_certificate_binding(claims: dict, cert: str | bytes) -> None:
     # ``hmac.compare_digest`` raise ``TypeError`` instead of the documented
     # ``CertificateBindingError``, escaping callers that catch only the latter.
     if not bound_thumbprint.isascii():
-        raise CertificateBindingError(
-            "Access token 'cnf[x5t#S256]' is not a valid base64url thumbprint "
-            "(non-ASCII characters) (RFC 8705 Section 3.1)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.INVALID_THUMBPRINT)
 
     presented_thumbprint = compute_certificate_thumbprint(cert)
     if not hmac.compare_digest(bound_thumbprint, presented_thumbprint):
-        raise CertificateBindingError(
-            "Certificate binding mismatch: token 'cnf[x5t#S256]' does not "
-            "match the presented client certificate (RFC 8705 Section 3)"
-        )
+        raise CertificateBindingError(CertificateBindingErrorKind.MISMATCH)
 
 
 def apply_mtls_client_auth(params: dict[str, str], *, client_id: str) -> None:
