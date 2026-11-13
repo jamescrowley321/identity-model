@@ -505,6 +505,10 @@ dpop = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())  # at sta
 config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
 ```
 
+A common mistake: building the options (and so the cache) inside the request
+handler. Each request then gets an empty cache, so every replay within the
+proof window is accepted, with no error. Build them once at startup.
+
 - A DPoP-bound access token with a proof and no `dpop` options
   (`TokenValidationConfig.dpop=None`, or `check_introspection_binding` without
   `dpop=`) now raises `ConfigurationException`. It used to be checked against

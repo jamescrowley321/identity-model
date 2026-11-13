@@ -239,7 +239,9 @@ class DPoPReplayCache(Protocol):
     proof before its ``expires_at``.
 
     Use with the sync validators. The async validators accept this or an
-    :class:`AsyncDPoPReplayCache`.
+    :class:`AsyncDPoPReplayCache`. ``isinstance`` cannot tell the two apart
+    (both have one ``check_and_store``): a cache is async when
+    ``check_and_store`` returns an awaitable.
     """
 
     def check_and_store(
@@ -261,13 +263,14 @@ class DPoPReplayCache(Protocol):
         ...
 
 
-@runtime_checkable
 class AsyncDPoPReplayCache(Protocol):
     """An async :class:`DPoPReplayCache`, for a store reached over the network.
 
     The same contract, with an awaitable :meth:`check_and_store`. Use with the
     async validators (``py_identity_model.aio``); the sync validators refuse
     it with a :class:`~py_identity_model.exceptions.ConfigurationException`.
+    Not ``runtime_checkable``: ``isinstance`` could not tell it from a
+    :class:`DPoPReplayCache`.
     """
 
     async def check_and_store(

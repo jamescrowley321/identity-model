@@ -73,17 +73,20 @@ from py_identity_model import (
     validate_token,
 )
 
-config = TokenValidationConfig(
+# Build once at startup, never per request: a new cache remembers no proofs.
+DPOP = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+CONFIG = TokenValidationConfig(
     perform_disco=True,
     audience="urn:my-api",
     required_binding=TokenBinding.DPOP,  # refuse Bearer and unbound tokens
-    dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
+    dpop=DPOP,
 )
 
+# Per request:
 try:
     claims = validate_token(
         access_token,
-        config,
+        CONFIG,
         disco_doc_address,
         presentation=TokenPresentation(
             scheme=AuthorizationScheme.DPOP,       # from the Authorization header
@@ -155,6 +158,7 @@ from py_identity_model import (
     TokenValidationConfig,
 )
 
+# At startup, once: a cache built per request accepts every replay.
 dpop = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
 config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
 ```
