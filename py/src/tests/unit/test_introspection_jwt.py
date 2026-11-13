@@ -13,14 +13,21 @@ import respx
 from py_identity_model import (
     FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     DiscoveryDocumentRequest,
+    DiscoveryPolicy,
     IntrospectionErrorKind,
     JwksResponse,
     SignedIntrospectionOptions,
     TokenIntrospectionRequest,
+    ValidationCache,
     get_discovery_document,
     jwks_from_dict,
 )
+from py_identity_model.aio import AsyncValidationCache
 from py_identity_model.aio.introspection import introspect_token as aintrospect_token
+from py_identity_model.core.introspection_jwt import (
+    SignedIntrospectionRefused,
+    verified_introspection_response,
+)
 from py_identity_model.sync.introspection import introspect_token
 
 
@@ -288,6 +295,32 @@ class TestSignedIntrospectionOptions:
         with pytest.raises(ValueError, match="issuer"):
             SignedIntrospectionOptions(issuer="", jwks=jwks)
 
+    def test_jwks_required_in_manual_mode(self):
+        with pytest.raises(ValueError, match="both issuer and jwks"):
+            SignedIntrospectionOptions(issuer=ISSUER)
+
+    @pytest.mark.parametrize("manual", [{"issuer": ISSUER}, {"jwks": "jwks"}])
+    def test_discovery_and_manual_inputs_conflict(self, jwks, manual):
+        manual = {k: jwks if v == "jwks" else v for k, v in manual.items()}
+
+        with pytest.raises(ValueError, match="not both"):
+            SignedIntrospectionOptions(discovery_address=DISCO_ADDRESS, **manual)
+
+    def test_discovery_policy_needs_discovery_address(self, jwks):
+        with pytest.raises(ValueError, match="discovery_policy requires"):
+            SignedIntrospectionOptions(
+                issuer=ISSUER, jwks=jwks, discovery_policy=DiscoveryPolicy()
+            )
+
+    def test_negative_leeway_rejected(self, jwks):
+        with pytest.raises(ValueError, match="leeway"):
+            SignedIntrospectionOptions(issuer=ISSUER, jwks=jwks, leeway=-1)
+
+    def test_discovery_mode_needs_nothing_else(self):
+        options = SignedIntrospectionOptions(discovery_address=DISCO_ADDRESS)
+
+        assert (options.issuer, options.jwks) == (None, None)
+
 
 DISCO_ADDRESS = "https://auth.example.com/.well-known/openid-configuration"
 DISCO_JSON = {
@@ -314,3 +347,254 @@ class TestDiscoveryIntrospectionSigningAlgorithms:
         result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
 
         assert result.introspection_signing_alg_values_supported == value
+
+
+def _jwk(public_key, kid: str, alg: str) -> dict:
+    to_jwk = ECAlgorithm.to_jwk if alg.startswith("ES") else RSAAlgorithm.to_jwk
+    jwk = json.loads(to_jwk(public_key))
+    jwk.update({"kid": kid, "alg": alg})
+    return jwk
+
+
+def _disco_request(**options) -> TokenIntrospectionRequest:
+    return TokenIntrospectionRequest(
+        address=INTROSPECT_URL,
+        token="the-token",
+        client_id=CLIENT_ID,
+        client_secret="secret",
+        signed_response=SignedIntrospectionOptions(
+            discovery_address=DISCO_ADDRESS, **options
+        ),
+    )
+
+
+def _serve_discovery(advertised=None, **extra) -> None:
+    disco = dict(DISCO_JSON)
+    if advertised is not None:
+        disco["introspection_signing_alg_values_supported"] = advertised
+    respx.get(DISCO_ADDRESS).mock(
+        return_value=httpx.Response(200, json={**disco, **extra})
+    )
+
+
+def _serve_keys(*jwk_sets: list[dict]) -> respx.Route:
+    return respx.get(f"{ISSUER}/jwks").mock(
+        side_effect=[httpx.Response(200, json={"keys": keys}) for keys in jwk_sets]
+    )
+
+
+@pytest.mark.unit
+class TestSignedIntrospectionDiscovery:
+    @respx.mock
+    def test_issuer_and_keys_from_discovery(self, ec_key, sign):
+        _serve_discovery()
+        _serve_keys([_jwk(ec_key.public_key(), "ec-1", "ES256")])
+        _respond(sign())
+
+        response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert _outcome(response) == (True, ACTIVE)
+
+    @respx.mock
+    async def test_async_issuer_and_keys_from_discovery(self, ec_key, sign):
+        _serve_discovery()
+        _serve_keys([_jwk(ec_key.public_key(), "ec-1", "ES256")])
+        _respond(sign())
+
+        response = await aintrospect_token(
+            _disco_request(), cache=AsyncValidationCache()
+        )
+
+        assert _outcome(response) == (True, ACTIVE)
+
+    @respx.mock
+    def test_rotated_key_refreshes_jwks_once(self, ec_key, sign):
+        old_key = ec.generate_private_key(ec.SECP256R1())
+        _serve_discovery()
+        jwks_route = _serve_keys(
+            [_jwk(old_key.public_key(), "ec-0", "ES256")],
+            [_jwk(ec_key.public_key(), "ec-1", "ES256")],
+        )
+        _respond(sign())
+
+        response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert (_outcome(response), jwks_route.call_count) == ((True, ACTIVE), 2)
+
+    @respx.mock
+    async def test_async_rotated_key_refreshes_jwks_once(self, ec_key, sign):
+        old_key = ec.generate_private_key(ec.SECP256R1())
+        _serve_discovery()
+        jwks_route = _serve_keys(
+            [_jwk(old_key.public_key(), "ec-0", "ES256")],
+            [_jwk(ec_key.public_key(), "ec-1", "ES256")],
+        )
+        _respond(sign())
+
+        response = await aintrospect_token(
+            _disco_request(), cache=AsyncValidationCache()
+        )
+
+        assert (_outcome(response), jwks_route.call_count) == ((True, ACTIVE), 2)
+
+    @respx.mock
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_unknown_kid_after_refresh_is_signature(
+        self, ec_key, sign, asynchronous
+    ):
+        _serve_discovery()
+        _serve_keys(
+            [_jwk(ec_key.public_key(), "ec-0", "ES256")],
+            [_jwk(ec_key.public_key(), "ec-0", "ES256")],
+        )
+        _respond(sign(kid="ec-9"))
+
+        if asynchronous:
+            response = await aintrospect_token(
+                _disco_request(), cache=AsyncValidationCache()
+            )
+        else:
+            response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert _outcome(response) == (False, IntrospectionErrorKind.SIGNATURE)
+
+    @respx.mock
+    def test_issuer_from_discovery_is_enforced(self, ec_key, sign):
+        _serve_discovery()
+        _serve_keys([_jwk(ec_key.public_key(), "ec-1", "ES256")])
+        _respond(sign(iss="https://other.example.com"))
+
+        response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert _outcome(response) == (False, IntrospectionErrorKind.CLAIM_VALIDATION)
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        ("advertised", "algorithms", "expected"),
+        [
+            (["PS256"], None, (False, IntrospectionErrorKind.UNSUPPORTED_ALGORITHM)),
+            (["ES256", "HS256"], None, (True, ACTIVE)),
+            ("ES256", None, (False, IntrospectionErrorKind.UNSUPPORTED_ALGORITHM)),
+            (None, None, (True, ACTIVE)),
+            (["PS256"], frozenset({"ES256"}), (True, ACTIVE)),
+        ],
+    )
+    def test_advertised_algorithms_apply_unless_overridden(
+        self, ec_key, sign, advertised, algorithms, expected
+    ):
+        _serve_discovery(advertised)
+        _serve_keys([_jwk(ec_key.public_key(), "ec-1", "ES256")])
+        _respond(sign())
+
+        response = introspect_token(
+            _disco_request(algorithms=algorithms), cache=ValidationCache()
+        )
+
+        assert _outcome(response) == expected
+
+    @respx.mock
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    async def test_discovery_failure_is_not_a_refusal(self, sign, asynchronous):
+        respx.get(DISCO_ADDRESS).mock(return_value=httpx.Response(500))
+        _respond(sign())
+
+        if asynchronous:
+            response = await aintrospect_token(
+                _disco_request(), cache=AsyncValidationCache()
+            )
+        else:
+            response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert (response.is_successful, response.error_kind) == (False, None)
+
+    @respx.mock
+    def test_malformed_body_refused_before_discovery(self):
+        disco_route = respx.get(DISCO_ADDRESS)
+        _respond("not-a-jwt")
+
+        response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert (_outcome(response), disco_route.call_count) == (
+            (False, IntrospectionErrorKind.MALFORMED),
+            0,
+        )
+
+    @respx.mock
+    def test_http_error_skips_verification(self):
+        disco_route = respx.get(DISCO_ADDRESS)
+        respx.post(INTROSPECT_URL).mock(return_value=httpx.Response(401))
+
+        response = introspect_token(_disco_request(), cache=ValidationCache())
+
+        assert (response.is_successful, disco_route.call_count) == (False, 0)
+
+    @respx.mock
+    def test_injected_cache_holds_the_keys(self, ec_key, sign):
+        _serve_discovery()
+        _serve_keys([_jwk(ec_key.public_key(), "ec-1", "ES256")])
+        _respond(sign())
+        cache = ValidationCache()
+
+        introspect_token(_disco_request(), cache=cache)
+
+        assert [uri for _, uri in cache.jwks] == [f"{ISSUER}/jwks"]
+
+
+@pytest.mark.unit
+class TestSignedIntrospectionClaims:
+    @respx.mock
+    def test_verified_jwt_claims_returned_without_token_introspection(self, jwks, sign):
+        issued_at = int(time.time())
+        _respond(sign(iat=issued_at, jti="r-1"))
+
+        response = introspect_token(_request(jwks))
+
+        assert response.jwt_claims == {
+            "iss": ISSUER,
+            "aud": CLIENT_ID,
+            "iat": issued_at,
+            "jti": "r-1",
+        }
+
+    @respx.mock
+    def test_plain_response_has_no_jwt_claims(self):
+        respx.post(INTROSPECT_URL).mock(
+            return_value=httpx.Response(200, json={"active": True})
+        )
+
+        response = introspect_token(
+            TokenIntrospectionRequest(
+                address=INTROSPECT_URL,
+                token="the-token",
+                client_id=CLIENT_ID,
+                client_secret="secret",
+            )
+        )
+
+        assert (response.claims, response.jwt_claims) == ({"active": True}, None)
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        ("leeway", "expected"),
+        [
+            (None, (False, IntrospectionErrorKind.CLAIM_VALIDATION)),
+            (120, (True, ACTIVE)),
+        ],
+    )
+    def test_leeway_tolerates_issuer_clock_ahead(self, jwks, sign, leeway, expected):
+        _respond(sign(iat=int(time.time()) + 60))
+
+        response = introspect_token(_request(jwks, leeway=leeway))
+
+        assert _outcome(response) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("issuer", [None, ""])
+def test_no_expected_issuer_is_refused(jwks, sign, ec_key, issuer):
+    with pytest.raises(SignedIntrospectionRefused) as exc_info:
+        verified_introspection_response(
+            sign(), ec_key.public_key(), "ES256", _request(jwks), issuer
+        )
+
+    assert exc_info.value.kind is IntrospectionErrorKind.CLAIM_VALIDATION

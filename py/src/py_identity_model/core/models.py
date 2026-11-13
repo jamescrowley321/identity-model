@@ -966,27 +966,66 @@ class SignedIntrospectionOptions:
     """Request a JWT introspection response and verify it (RFC 9701).
 
     The client sends ``Accept: application/token-introspection+jwt`` and
-    accepts only a ``token-introspection+jwt`` response signed with one of
-    *algorithms* by a key in *jwks*, issued by *issuer* to the client's
+    accepts only a ``token-introspection+jwt`` response signed by the
+    authorization server with an allowed algorithm and issued to the client's
     ``client_id`` (RFC 9701 §5).
 
+    Give either *discovery_address* or both *issuer* and *jwks*:
+
+    * **Discovery** (*discovery_address*): the issuer, ``jwks_uri`` and
+      ``introspection_signing_alg_values_supported`` come from the discovery
+      document. The keys are fetched through the validation cache, and a
+      ``kid`` the cached keys don't have triggers one refresh, so key rotation
+      is picked up as it is by ``validate_token``.
+    * **Manual** (*issuer* and *jwks*): the keys are fixed, with no refresh.
+
     Attributes:
-        issuer: The authorization server's issuer identifier.
-        jwks: The authorization server's signing keys (``get_jwks``).
-        algorithms: Allowed signing algorithms. ``None`` (default) allows
+        issuer: The authorization server's issuer identifier (manual mode).
+        jwks: The authorization server's signing keys, from ``get_jwks``
+            (manual mode).
+        algorithms: Allowed signing algorithms. ``None`` (default) allows the
+            algorithms the discovery document advertises in
+            ``introspection_signing_alg_values_supported`` that are in
             ``DEFAULT_ALLOWED_ALGORITHMS`` (RS256/384/512, PS256/384/512,
-            ES256/384/512, EdDSA). For FAPI 2.0 (Message Signing §5.5.2) pass
-            ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and ``HS*`` are
-            refused.
+            ES256/384/512, EdDSA), or all of ``DEFAULT_ALLOWED_ALGORITHMS``
+            when nothing is advertised or in manual mode. An advertised value
+            that is not a list allows nothing. For FAPI 2.0 (Message Signing
+            §5.5.2) pass ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and
+            ``HS*`` are refused.
+        discovery_address: The discovery document URL (discovery mode).
+            Keyword-only.
+        discovery_policy: How the discovery document and ``jwks_uri`` are
+            vetted. ``None`` (default) is a strict :class:`DiscoveryPolicy`.
+            Discovery mode only. Keyword-only.
+        leeway: Clock-skew tolerance in seconds for ``iat``, as
+            ``TokenValidationConfig.leeway``. ``None`` (default) means none.
+            Keyword-only.
     """
 
-    issuer: str
-    jwks: JwksResponse
+    issuer: str | None = None
+    jwks: JwksResponse | None = None
     algorithms: frozenset[str] | None = None
+    discovery_address: str | None = field(default=None, kw_only=True)
+    discovery_policy: DiscoveryPolicy | None = field(default=None, kw_only=True)
+    leeway: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        if not self.issuer:
-            raise ValueError("SignedIntrospectionOptions requires an issuer")
+        if self.discovery_address:
+            if self.issuer is not None or self.jwks is not None:
+                raise ValueError(
+                    "SignedIntrospectionOptions takes either discovery_address "
+                    "or issuer and jwks, not both"
+                )
+        else:
+            if not self.issuer or self.jwks is None:
+                raise ValueError(
+                    "SignedIntrospectionOptions requires discovery_address, "
+                    "or both issuer and jwks"
+                )
+            if self.discovery_policy is not None:
+                raise ValueError("discovery_policy requires discovery_address")
+        if self.leeway is not None and self.leeway < 0:
+            raise ValueError("leeway must not be negative")
         if self.algorithms is not None and (
             not self.algorithms
             or any(
@@ -1039,7 +1078,7 @@ class IntrospectionErrorKind(Enum):
     INVALID_TYPE = "invalid_type"
     """The JWT ``typ`` is not ``token-introspection+jwt``."""
     UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
-    """The JWT ``alg`` is not in ``SignedIntrospectionOptions.algorithms``."""
+    """The JWT ``alg`` is not allowed (see ``SignedIntrospectionOptions.algorithms``)."""
     SIGNATURE = "signature"
     """No signing key matches, or the signature does not verify."""
     CLAIM_VALIDATION = "claim_validation"
@@ -1055,12 +1094,19 @@ class TokenIntrospectionResponse(BaseResponse):
     When ``active`` is ``True``, additional claims like ``scope``,
     ``client_id``, ``username``, ``exp``, ``iat``, ``sub``, ``aud``,
     ``iss``, and ``jti`` may be present.
+
+    For a signed response (RFC 9701), ``claims`` is the verified
+    ``token_introspection`` object and ``jwt_claims`` holds the verified
+    claims of the response JWT around it (``iss``, ``aud``, ``iat``, ...),
+    without ``token_introspection``. ``jwt_claims`` is ``None`` for a plain
+    JSON response.
     """
 
-    _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims"})
+    _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "jwt_claims"})
 
     error_kind: IntrospectionErrorKind | None = field(default=None, kw_only=True)
     claims: dict | None = None
+    jwt_claims: dict | None = field(default=None, kw_only=True)
 
 
 # ============================================================================

@@ -827,6 +827,37 @@ a broad `except PyIdentityModelException` that answers 401 would hide it. The
 FastAPI middleware and WebSocket authenticator build the presentation from the
 request's absolute URL and method, so they never hit this.
 
+### Signed introspection gets its keys from discovery ([#1067](https://github.com/jamescrowley321/identity-model/issues/1067))
+
+Signed introspection responses (RFC 9701) are new in 5.0.
+`SignedIntrospectionOptions` takes either `discovery_address` or both `issuer`
+and `jwks`; passing both, or neither, raises `ValueError`.
+
+- **Discovery mode** (`discovery_address=`, recommended): the issuer, keys and
+  algorithms come from the discovery document. The keys go through the
+  validation cache, and an unknown `kid` refreshes them once, so the
+  authorization server can rotate keys. `introspect_token` takes
+  `cache=` (keyword-only) for an injected `ValidationCache` /
+  `AsyncValidationCache`. A discovery document or JWK Set that can't be
+  fetched fails the call with `error_kind=None`.
+- **Manual mode** (`issuer=`, `jwks=`): the keys are fixed and never
+  refreshed.
+- **Algorithms.** With `algorithms=None`, discovery mode allows the
+  `introspection_signing_alg_values_supported` algorithms that are in
+  `DEFAULT_ALLOWED_ALGORITHMS` (all of them if nothing is advertised; none if
+  the value is not a list). An explicit `algorithms` replaces that.
+- **`leeway=`** (seconds, keyword-only) tolerates clock skew in `iat`. The
+  default is none.
+- **`TokenIntrospectionResponse.jwt_claims`** holds the verified claims of the
+  response JWT (`iss`, `aud`, `iat`, ...) without `token_introspection`. It is
+  `None` for a plain JSON response.
+
+```python
+from py_identity_model import SignedIntrospectionOptions
+
+signed = SignedIntrospectionOptions(discovery_address=disco_address)
+```
+
 ## ID Token validation
 
 ### Untrusted additional audiences are rejected ([#881](https://github.com/jamescrowley321/identity-model/pull/881))
@@ -1108,8 +1139,10 @@ verification. The defaults are:
   escaped, so an `except jwt.InvalidKeyError` handler no longer matches.
 - **DPoP proofs and signed introspection (new in 5.0).**
   `DPoPVerificationOptions(algorithms=None)` and
-  `SignedIntrospectionOptions(algorithms=None)` accept the verify set, so a
-  plain RS256 authorization server works for signed introspection, and
+  `SignedIntrospectionOptions(algorithms=None)` accept the verify set (for
+  signed introspection in discovery mode, the part of it the server
+  advertises; see [#1067](#signed-introspection-gets-its-keys-from-discovery-1067)),
+  so a plain RS256 authorization server works for signed introspection, and
   `DPoPVerificationOptions().accepted_algorithms` (the `algs` of a
   `WWW-Authenticate: DPoP` challenge) lists all ten. Neither defaults to the
   FAPI 2.0 set: a FAPI 2.0 deployment passes

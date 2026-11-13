@@ -9,6 +9,8 @@ the authorization server's keys, ``iss``, ``aud`` (the client's ``client_id``)
 and ``iat``.
 """
 
+from collections.abc import Collection
+
 import httpx
 from jwt import (
     ImmatureSignatureError,
@@ -19,17 +21,23 @@ from jwt import (
 )
 
 from ..exceptions import (
+    AmbiguousKeyException,
+    ConfigurationException,
     InvalidAudienceException,
     InvalidIssuerException,
+    KeyAlgorithmMismatchException,
+    KeyNotFoundException,
     TokenExpiredException,
     TokenValidationException,
 )
 from ..jwt_claim_types import JwtTypes
 from .jwt_helpers import decode_and_validate_jwt
-from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS, advertised_verify_algorithms
 from .models import (
     IntrospectionErrorKind,
+    JsonWebKey,
     SignedIntrospectionOptions,
+    TokenIntrospectionRequest,
     TokenIntrospectionResponse,
 )
 from .parsers import find_key_by_kid
@@ -54,10 +62,22 @@ _WRAPPED_CLAIM_ERRORS = (
 )
 
 
-class _Refused(Exception):
+class SignedIntrospectionRefused(Exception):
+    """A signed introspection response failed a check (RFC 9701 §5)."""
+
     def __init__(self, kind: IntrospectionErrorKind, detail: str) -> None:
         super().__init__(detail)
         self.kind = kind
+
+
+# Key-lookup failures: no key for the JWT, more than one, or one that can't
+# verify its alg. Anything else (discovery or JWKS fetch failing) is not a
+# refusal of the response.
+KEY_LOOKUP_ERRORS = (
+    KeyNotFoundException,
+    AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
+)
 
 
 def _typ_matches(typ: object) -> bool:
@@ -68,11 +88,16 @@ def _typ_matches(typ: object) -> bool:
     )
 
 
-def _signed_token(response: httpx.Response) -> tuple[str, dict]:
-    """The response JWT and its unverified header."""
+def read_signed_introspection(response: httpx.Response) -> tuple[str, dict]:
+    """The response JWT and its unverified header.
+
+    Raises:
+        SignedIntrospectionRefused: The response is not a JWT introspection
+            response.
+    """
     media_type = response.headers.get("content-type", "").split(";")[0].strip()
     if media_type.lower() != INTROSPECTION_JWT_MEDIA_TYPE:
-        raise _Refused(
+        raise SignedIntrospectionRefused(
             IntrospectionErrorKind.MALFORMED,
             f"content type is {media_type or 'missing'}, not "
             f"{INTROSPECTION_JWT_MEDIA_TYPE}",
@@ -81,89 +106,166 @@ def _signed_token(response: httpx.Response) -> tuple[str, dict]:
     try:
         return token, get_unverified_header(token)
     except PyJWTError as exc:
-        raise _Refused(IntrospectionErrorKind.MALFORMED, "body is not a JWT") from exc
+        raise SignedIntrospectionRefused(
+            IntrospectionErrorKind.MALFORMED, "body is not a JWT"
+        ) from exc
 
 
-def _algorithm(header: dict, options: SignedIntrospectionOptions) -> str:
+def allowed_introspection_algorithms(
+    options: SignedIntrospectionOptions, advertised: object = None
+) -> Collection[str]:
+    """The algorithms a response may be signed with.
+
+    *advertised* is the discovery document's
+    ``introspection_signing_alg_values_supported``; manual mode passes nothing.
+    """
+    if options.algorithms is not None:
+        return options.algorithms
+    from_discovery = advertised_verify_algorithms(advertised)
+    return DEFAULT_ALLOWED_ALGORITHMS if from_discovery is None else from_discovery
+
+
+def check_signed_introspection_header(header: dict, allowed: Collection[str]) -> str:
+    """Check ``typ`` and ``alg`` and return the ``alg``.
+
+    Raises:
+        SignedIntrospectionRefused: Wrong ``typ`` or an ``alg`` not in *allowed*.
+    """
     if not _typ_matches(header.get("typ")):
-        raise _Refused(IntrospectionErrorKind.INVALID_TYPE, "wrong typ header")
+        raise SignedIntrospectionRefused(
+            IntrospectionErrorKind.INVALID_TYPE, "wrong typ header"
+        )
     alg = header.get("alg")
-    allowed = (
-        DEFAULT_ALLOWED_ALGORITHMS if options.algorithms is None else options.algorithms
-    )
     if not isinstance(alg, str) or alg not in allowed:
-        raise _Refused(
+        raise SignedIntrospectionRefused(
             IntrospectionErrorKind.UNSUPPORTED_ALGORITHM, f"alg {alg!r} not allowed"
         )
     return alg
 
 
-def _verified_claims(
-    token: str, header: dict, client_id: str, options: SignedIntrospectionOptions
-) -> dict:
-    alg = _algorithm(header, options)
+def verified_introspection_response(
+    token: str,
+    key: dict | JsonWebKey,
+    alg: str,
+    request: TokenIntrospectionRequest,
+    issuer: str | None,
+) -> TokenIntrospectionResponse:
+    """Verify the response JWT with *key* and return its introspection result.
+
+    The JWT must be issued by *issuer* to ``request.client_id``, within
+    ``request.signed_response.leeway``.
+
+    Raises:
+        SignedIntrospectionRefused: The signature, a claim or the
+            ``token_introspection`` object is wrong.
+    """
+    if not issuer:
+        # Without an expected issuer the iss check would be skipped.
+        raise SignedIntrospectionRefused(
+            IntrospectionErrorKind.CLAIM_VALIDATION, "no expected issuer"
+        )
+    options = request.signed_response
     try:
-        key, _ = find_key_by_kid(header.get("kid"), options.jwks.keys or [], alg)
         claims = decode_and_validate_jwt(
             token,
             key,
             [alg],
-            audience=client_id,
-            issuer=options.issuer,
+            audience=request.client_id,
+            issuer=issuer,
             options=None,
+            leeway=None if options is None else options.leeway,
         )
     except _CLAIM_ERRORS as exc:
-        raise _Refused(IntrospectionErrorKind.CLAIM_VALIDATION, str(exc)) from exc
+        raise SignedIntrospectionRefused(
+            IntrospectionErrorKind.CLAIM_VALIDATION, str(exc)
+        ) from exc
     except TokenValidationException as exc:
         kind = (
             IntrospectionErrorKind.CLAIM_VALIDATION
             if isinstance(exc.__cause__, _WRAPPED_CLAIM_ERRORS)
             else IntrospectionErrorKind.SIGNATURE
         )
-        raise _Refused(kind, str(exc)) from exc
+        raise SignedIntrospectionRefused(kind, str(exc)) from exc
     missing = [claim for claim in _REQUIRED_CLAIMS if claim not in claims]
     if missing:
-        raise _Refused(
+        raise SignedIntrospectionRefused(
             IntrospectionErrorKind.CLAIM_VALIDATION, f"missing {', '.join(missing)}"
         )
-    return claims
+    introspection = claims.pop(_TOKEN_INTROSPECTION_CLAIM, None)
+    if not isinstance(introspection, dict) or not isinstance(
+        introspection.get("active"), bool
+    ):
+        raise SignedIntrospectionRefused(
+            IntrospectionErrorKind.MALFORMED,
+            "token_introspection is not an object with a boolean active",
+        )
+    return TokenIntrospectionResponse(
+        is_successful=True, claims=introspection, jwt_claims=claims
+    )
+
+
+def refused_introspection_response(
+    refused: SignedIntrospectionRefused,
+) -> TokenIntrospectionResponse:
+    """The failed response for a refused signed introspection response."""
+    return TokenIntrospectionResponse(
+        is_successful=False,
+        error=f"Signed introspection response refused: {refused} (RFC 9701 §5)",
+        error_kind=refused.kind,
+    )
 
 
 def verify_signed_introspection_response(
     response: httpx.Response,
-    client_id: str,
-    options: SignedIntrospectionOptions,
+    request: TokenIntrospectionRequest,
 ) -> TokenIntrospectionResponse:
-    """Verify a successful (2xx) JWT introspection response.
+    """Verify a successful (2xx) JWT introspection response with the fixed
+    keys of manual-mode ``request.signed_response`` (``issuer`` and ``jwks``).
+
+    Discovery mode (``discovery_address``) is handled by ``introspect_token``,
+    which fetches the keys.
 
     Args:
         response: The introspection endpoint's 2xx response.
-        client_id: The introspecting client, the JWT's expected ``aud``.
-        options: Expected issuer, keys and algorithms.
+        request: The introspection request. ``client_id`` is the JWT's
+            expected ``aud``; ``signed_response`` holds the expected issuer,
+            keys and algorithms.
 
     Returns:
         A successful response whose ``claims`` are the verified
         ``token_introspection`` object, or a failed one whose ``error_kind``
         says why it was refused.
     """
-    try:
-        token, header = _signed_token(response)
-        claims = _verified_claims(token, header, client_id, options)
-        introspection = claims.get(_TOKEN_INTROSPECTION_CLAIM)
-        if not isinstance(introspection, dict) or not isinstance(
-            introspection.get("active"), bool
-        ):
-            raise _Refused(
-                IntrospectionErrorKind.MALFORMED,
-                "token_introspection is not an object with a boolean active",
-            )
-    except _Refused as refused:
-        return TokenIntrospectionResponse(
-            is_successful=False,
-            error=f"Signed introspection response refused: {refused} (RFC 9701 §5)",
-            error_kind=refused.kind,
+    options = request.signed_response
+    if options is None or options.issuer is None or options.jwks is None:
+        raise ConfigurationException(
+            "verify_signed_introspection_response needs signed_response "
+            "with issuer and jwks"
         )
-    return TokenIntrospectionResponse(is_successful=True, claims=introspection)
+    try:
+        token, header = read_signed_introspection(response)
+        alg = check_signed_introspection_header(
+            header, allowed_introspection_algorithms(options)
+        )
+        try:
+            key, _ = find_key_by_kid(header.get("kid"), options.jwks.keys or [], alg)
+        except KEY_LOOKUP_ERRORS as exc:
+            raise SignedIntrospectionRefused(
+                IntrospectionErrorKind.SIGNATURE, str(exc)
+            ) from exc
+        return verified_introspection_response(token, key, alg, request, options.issuer)
+    except SignedIntrospectionRefused as refused:
+        return refused_introspection_response(refused)
 
 
-__all__ = ["INTROSPECTION_JWT_MEDIA_TYPE", "verify_signed_introspection_response"]
+__all__ = [
+    "INTROSPECTION_JWT_MEDIA_TYPE",
+    "KEY_LOOKUP_ERRORS",
+    "SignedIntrospectionRefused",
+    "allowed_introspection_algorithms",
+    "check_signed_introspection_header",
+    "read_signed_introspection",
+    "refused_introspection_response",
+    "verified_introspection_response",
+    "verify_signed_introspection_response",
+]
