@@ -221,7 +221,8 @@ def _require_matching_client_id(request_object: str, client_id: str) -> None:
         raise RequestObjectError(RequestObjectErrorKind.ENCRYPTED)
     try:
         claims = pyjwt.decode(request_object, options={"verify_signature": False})
-    except pyjwt.PyJWTError as exc:
+    except (pyjwt.PyJWTError, RecursionError) as exc:
+        # RecursionError: deeply nested JSON in the payload.
         raise RequestObjectError(RequestObjectErrorKind.NOT_A_JWT) from exc
     if claims.get("client_id") != client_id:
         raise RequestObjectError(RequestObjectErrorKind.CLIENT_ID_MISMATCH)

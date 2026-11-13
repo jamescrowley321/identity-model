@@ -38,6 +38,7 @@ from py_identity_model.core.fapi import (
     validate_fapi_authorization_request,
     validate_fapi_client_config,
 )
+from py_identity_model.core.key_strength import MIN_RSA_KEY_BITS
 from py_identity_model.core.models import (
     DiscoveryDocumentResponse,
     JwksResponse,
@@ -109,7 +110,7 @@ def _pem(key: Any) -> bytes:
 
 ED448_PEM = _pem(ed448.Ed448PrivateKey.generate())
 ED25519_PEM = _pem(ed25519.Ed25519PrivateKey.generate())
-WEAK_RSA_BITS = 2047
+WEAK_RSA_BITS = MIN_RSA_KEY_BITS - 1
 RSA_2047_PEM = _pem(
     rsa.generate_private_key(public_exponent=65537, key_size=WEAK_RSA_BITS)
 )
@@ -1639,6 +1640,26 @@ class TestFAPISigningKeys:
 
     def test_unloadable_key_left_to_signing(self):
         assert self._client_violations(b"not a key", "EdDSA") == []
+
+    def test_profile_refuses_weak_private_key_jwt(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(
+                _discovery(token_endpoint_auth_signing_alg_values_supported=["PS256"]),
+                client_auth=_pkj(
+                    private_key=RSA_2047_PEM, algorithm="PS256", issuer=ISSUER
+                ),
+            )
+        assert exc_info.value.codes == [FAPIViolationCode.KEY_NOT_ALLOWED]
+
+    def test_profile_refuses_ed448_private_key_jwt(self):
+        with pytest.raises(FAPIProfileError) as exc_info:
+            _profile_from(
+                _discovery(token_endpoint_auth_signing_alg_values_supported=["EdDSA"]),
+                client_auth=_pkj(
+                    private_key=ED448_PEM, algorithm="EdDSA", issuer=ISSUER
+                ),
+            )
+        assert exc_info.value.codes == [FAPIViolationCode.KEY_NOT_ALLOWED]
 
     @pytest.mark.parametrize(
         ("private_key", "algorithm", "message"),

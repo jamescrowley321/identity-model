@@ -1375,7 +1375,8 @@ doesn't match the `client_id` argument
 ([RFC 9101 §5](https://www.rfc-editor.org/rfc/rfc9101#section-5)). The kinds are
 `CLIENT_ID_MISMATCH` (absent or different), `NOT_A_JWT` and `ENCRYPTED` (a
 compact JWE, whose claims can't be read). Pass the request object that
-`create_request_object` returned for the same `client_id`.
+`create_request_object` returned for the same `client_id`. An encrypted request
+object can't be passed to this helper; build its authorization URL yourself.
 
 ```python
 from py_identity_model import (
@@ -1393,14 +1394,15 @@ except RequestObjectError as exc:
 
 ### RSA signing keys under 2048 bits are refused ([#1124](https://github.com/jamescrowley321/identity-model/pull/1124))
 
-`create_request_object` and `build_client_assertion` (and so every request
-sent with a `PrivateKeyJwt` or `RequestObjectKey`) raise `WeakSigningKeyError`
+`create_request_object` and `build_client_assertion` raise `WeakSigningKeyError`
 before signing with an RSA key under 2048 bits
 ([RFC 7518 §3.3](https://www.rfc-editor.org/rfc/rfc7518#section-3.3),
 [§3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.5)). It is a
 `ConfigurationException` with `kty`, `bits` and `min_bits`. This is the floor
-verification keys meet. Replace the key with one of 2048 bits or more, or use
-an EC or Ed25519 key.
+verification keys meet. A token, PAR, introspection, revocation or device
+request whose `PrivateKeyJwt` has such a key returns an unsuccessful response
+with that error's message, the way those helpers report other request errors.
+Replace the key with one of 2048 bits or more, or use an EC or Ed25519 key.
 
 ## UserInfo
 

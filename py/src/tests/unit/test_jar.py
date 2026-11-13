@@ -1,5 +1,6 @@
 """Unit tests for JWT Secured Authorization Request (JAR, RFC 9101)."""
 
+import base64
 from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
@@ -546,6 +547,13 @@ class TestJARClientIdBinding:
     def test_non_string_rejected(self):
         with pytest.raises(RequestObjectError) as exc_info:
             build_jar_authorization_url(AUTH_ENDPOINT, "c1", cast("str", b"a.b.c"))
+        assert exc_info.value.kind is RequestObjectErrorKind.NOT_A_JWT
+
+    def test_deeply_nested_payload_rejected(self):
+        payload = base64.urlsafe_b64encode(b"[" * 100_000).rstrip(b"=").decode()
+        request_object = f"eyJhbGciOiJub25lIn0.{payload}.sig"
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", request_object)
         assert exc_info.value.kind is RequestObjectErrorKind.NOT_A_JWT
 
     def test_encrypted_request_object_rejected(self):

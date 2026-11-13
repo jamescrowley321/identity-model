@@ -22,7 +22,7 @@ import math
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlparse
 
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import ed448
 import jwt as pyjwt
 
 from ..exceptions import WeakSigningKeyError
@@ -293,7 +293,7 @@ def _algorithm_violation(what: str, algorithm: str) -> list[FAPIViolation]:
 def _signing_key_violations(
     what: str, private_key: str | bytes, algorithm: str
 ) -> list[FAPIViolation]:
-    """§5.4.1: RSA of 2048 bits or more, EdDSA on Ed25519.
+    """§5.4.1: RSA of 2048 bits or more, EdDSA on Ed25519 (Ed448 refused).
 
     ES256 is bound to P-256, so the EC floor of 224 bits always holds. A key
     PyJWT can't prepare for *algorithm* is left to signing to reject.
@@ -312,11 +312,7 @@ def _signing_key_violations(
             )
         ]
     key = load_signing_key(private_key, algorithm)
-    if (
-        algorithm == "EdDSA"
-        and key is not None
-        and not isinstance(key, ed25519.Ed25519PrivateKey)
-    ):
+    if isinstance(key, ed448.Ed448PrivateKey | ed448.Ed448PublicKey):
         return [
             FAPIViolation(
                 FAPIViolationCode.KEY_NOT_ALLOWED,
