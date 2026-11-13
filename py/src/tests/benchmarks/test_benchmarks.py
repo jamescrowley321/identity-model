@@ -25,7 +25,7 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.core.discovery_policy import (
     DiscoveryPolicy,
-    parse_discovery_url,
+    discovery_document_url,
     validate_url_scheme,
 )
 from py_identity_model.core.dpop import (
@@ -175,9 +175,9 @@ def test_bench_validate_fapi_client(benchmark):
 
 
 @pytest.mark.benchmark(group="discovery")
-def test_bench_parse_discovery_url(benchmark):
-    result = benchmark(parse_discovery_url, "https://auth.example.com")
-    assert result is not None
+def test_bench_discovery_document_url(benchmark):
+    result = benchmark(discovery_document_url, "https://auth.example.com")
+    assert result == "https://auth.example.com/.well-known/openid-configuration"
 
 
 @pytest.mark.benchmark(group="discovery")

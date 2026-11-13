@@ -36,7 +36,7 @@ def _check_trusted_audiences(audiences: object) -> list[str]:
     return list(audiences)
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class OIDCSettings:
     """Configuration shared by the RP login router and the resource-server middleware.
 
@@ -49,8 +49,13 @@ class OIDCSettings:
         client_secret: Client secret; omit for public/PKCE clients. Kept out
             of ``repr()``.
         scope: Space-delimited scopes requested at authorization.
-        audience: Expected ``aud`` for the resource-server middleware. Defaults
-            to ``client_id`` when not set.
+        audience_override: The ``aud`` the resource-server middleware expects,
+            when it is not ``client_id``. ``None`` (default) means
+            ``client_id``; an empty or non-string value raises ``ValueError``.
+            Read the audience to check from :attr:`expected_audience`, the only
+            resolved accessor. There is no ``audience`` attribute, so a read
+            written for 4.x raises ``AttributeError`` instead of yielding
+            ``None``.
         post_login_redirect: Where ``/callback`` redirects after a successful login.
         post_logout_redirect: Where ``/logout`` redirects after clearing the session.
         excluded_paths: Paths the resource-server middleware skips (health/docs).
@@ -87,7 +92,7 @@ class OIDCSettings:
     redirect_uri: str = ""
     client_secret: str | None = field(default=None, repr=False)
     scope: str = "openid profile email"
-    audience: str | None = None
+    audience_override: str | None = None
     post_login_redirect: str = "/"
     post_logout_redirect: str = "/"
     excluded_paths: list[str] = field(default_factory=_default_excluded_paths)
@@ -98,8 +103,14 @@ class OIDCSettings:
     validate_azp: bool = False
 
     def __post_init__(self) -> None:
-        self.required_binding = TokenBinding(self.required_binding)
-        self.trusted_audiences = _check_trusted_audiences(self.trusted_audiences)
+        object.__setattr__(
+            self, "required_binding", TokenBinding(self.required_binding)
+        )
+        object.__setattr__(
+            self,
+            "trusted_audiences",
+            _check_trusted_audiences(self.trusted_audiences),
+        )
         if not isinstance(self.validate_azp, bool):
             # A truthy string such as "false" would silently turn the check on.
             raise ValueError(
@@ -114,12 +125,28 @@ class OIDCSettings:
                 f"(token characters only); got {header!r}"
             )
         if self.expected_origin is not None:
-            self.expected_origin = normalize_origin(self.expected_origin)
+            object.__setattr__(
+                self, "expected_origin", normalize_origin(self.expected_origin)
+            )
         # Validate required fields are non-empty.
         for name in ("discovery_url", "client_id"):
             if not getattr(self, name):
                 raise ValueError(f"OIDCSettings requires a non-empty {name}")
-        # The middleware validates the ID/access token audience; default it to
-        # the client_id, which is the audience Descope and most OPs mint.
-        if self.audience is None:
-            self.audience = self.client_id
+        override = self.audience_override
+        if override is not None and (not isinstance(override, str) or not override):
+            # An empty audience would switch off aud enforcement downstream.
+            raise ValueError(
+                "audience_override must be a non-empty string or None; "
+                f"got {override!r}"
+            )
+
+    @property
+    def expected_audience(self) -> str:
+        """``audience_override``, or ``client_id`` when it is ``None``.
+
+        Worked out on read, so a copy made with :func:`dataclasses.replace`
+        and a new ``client_id`` follows it.
+        """
+        if self.audience_override is None:
+            return self.client_id
+        return self.audience_override

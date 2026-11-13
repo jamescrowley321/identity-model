@@ -175,8 +175,8 @@ def build_httpx_cert(mtls: MtlsClientAuth) -> tuple[str, str] | tuple[str, str, 
         is a filesystem path to a PEM file, as required by httpx.
     """
     if mtls.password is not None:
-        return (mtls.certificate, mtls.private_key, mtls.password)
-    return (mtls.certificate, mtls.private_key)
+        return (mtls.certificate_path, mtls.private_key_path, mtls.password)
+    return (mtls.certificate_path, mtls.private_key_path)
 
 
 def build_mtls_ssl_context(mtls: MtlsClientAuth, config: HTTPConfig) -> ssl.SSLContext:
@@ -194,9 +194,11 @@ def build_mtls_ssl_context(mtls: MtlsClientAuth, config: HTTPConfig) -> ssl.SSLC
     else:
         context = ssl.create_default_context()
     if mtls.password is not None:
-        context.load_cert_chain(mtls.certificate, mtls.private_key, mtls.password)
+        context.load_cert_chain(
+            mtls.certificate_path, mtls.private_key_path, mtls.password
+        )
     else:
-        context.load_cert_chain(mtls.certificate, mtls.private_key)
+        context.load_cert_chain(mtls.certificate_path, mtls.private_key_path)
     return context
 
 

@@ -58,7 +58,7 @@ settings = OIDCSettings(
     client_id=os.getenv("CLIENT_ID", "py-identity-model-client"),
     redirect_uri=os.getenv("REDIRECT_URI", "http://localhost:8000/auth/callback"),
     client_secret=os.getenv("CLIENT_SECRET"),
-    audience=os.getenv("AUDIENCE", "py-identity-model"),
+    audience_override=os.getenv("AUDIENCE", "py-identity-model"),
     scope=os.getenv("SCOPE", "openid profile email"),
     post_login_redirect="/me",
     post_logout_redirect="/",
@@ -104,7 +104,7 @@ app.include_router(build_oidc_router(settings, store_tokens=False), prefix="/aut
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
-    audience=settings.audience,
+    audience=settings.expected_audience,
     excluded_paths=settings.excluded_paths,
 )
 
@@ -312,7 +312,7 @@ async def http_exception_handler(_request, exc):
 if __name__ == "__main__":
     print("🚀 Starting fastapi-identity-model example...")
     print(f"📍 Discovery URL: {settings.discovery_url}")
-    print(f"🎯 Expected Audience: {settings.audience}")
+    print(f"🎯 Expected Audience: {settings.expected_audience}")
     print("\n🔐 Browser login (relying party): open http://localhost:8000/auth/login")
     print("   → after login, GET http://localhost:8000/me")
     print("\n💡 For API (Bearer) routes, get a token: python ../generate_token.py")

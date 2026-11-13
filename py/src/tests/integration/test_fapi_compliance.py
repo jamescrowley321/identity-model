@@ -67,7 +67,7 @@ class TestFAPIDiscoveryCompliance:
         issuer = discovery_document.issuer
         build = partial(
             FAPI2ClientProfile,
-            discovery_document,
+            discovery=discovery_document,
             client_id="fapi-client",
             redirect_uri=REDIRECT_URI,
             client_auth=_pkj(issuer=issuer),
@@ -82,8 +82,8 @@ class TestFAPIDiscoveryCompliance:
                 build()
             assert (
                 FAPIViolation(
-                    FAPIViolationCode.ENDPOINT_INVALID,
-                    f"issuer must use https, got {issuer!r}",
+                    code=FAPIViolationCode.ENDPOINT_INVALID,
+                    message=f"issuer must use https, got {issuer!r}",
                 )
                 in exc_info.value.violations
             )
@@ -135,7 +135,9 @@ class TestFAPIClientConfigValidation:
     def test_tls_client_auth_with_mtls(self, discovery_document):
         result = validate_fapi_client_config(
             issuer=discovery_document.issuer,
-            mtls=MtlsClientAuth(certificate="client.pem", private_key="client.key"),
+            mtls=MtlsClientAuth(
+                certificate_path="client.pem", private_key_path="client.key"
+            ),
         )
         assert _messages(result.violations) == []
 

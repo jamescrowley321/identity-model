@@ -77,11 +77,6 @@ class _Disco:
     end_session_endpoint = "https://op.example.com/end-session"
 
 
-class _DiscoEndpoint:
-    url = "https://op.example.com"
-    authority = "https://op.example.com"
-
-
 class _TokenRespOk:
     is_successful = True
     token: ClassVar[dict[str, str]] = {
@@ -131,7 +126,9 @@ class TestIdTokenValidationFailedEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -173,7 +170,9 @@ class TestUserInfoValidationFailedEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -221,7 +220,9 @@ class TestSuccessBodyClaimEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -271,7 +272,9 @@ class TestSuccessBodyClaimEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,

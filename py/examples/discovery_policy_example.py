@@ -9,7 +9,7 @@ from py_identity_model import (
     DiscoveryDocumentRequest,
     DiscoveryPolicy,
     TokenValidationConfig,
-    parse_discovery_url,
+    discovery_document_url,
 )
 
 
@@ -20,7 +20,7 @@ def production_example():
     print("=" * 60)
 
     req = DiscoveryDocumentRequest(
-        address="https://auth.example.com",
+        address=discovery_document_url("https://auth.example.com"),
     )
     print(f"\n  Address: {req.address}")
     print(f"  Policy: {req.policy} (None = strict defaults)")
@@ -38,7 +38,7 @@ def development_example():
         validate_issuer=False,
     )
     req = DiscoveryDocumentRequest(
-        address="http://localhost:8080",
+        address=discovery_document_url("http://localhost:8080"),
         policy=policy,
     )
     print(f"\n  Address: {req.address}")
@@ -58,7 +58,7 @@ def loopback_example():
         allow_http_on_loopback=True,
     )
     req = DiscoveryDocumentRequest(
-        address="http://localhost:5000",
+        address=discovery_document_url("http://localhost:5000"),
         policy=policy,
     )
     print(f"\n  Address: {req.address}")
@@ -93,21 +93,15 @@ def cached_validation_example():
     print("  reused, and cache entries are partitioned by the full policy.")
 
 
-def endpoint_parsing_example():
-    """Parse discovery URLs to extract authority."""
+def discovery_url_example():
+    """Derive the discovery document URL from an issuer (OIDC Discovery §4.1)."""
     print("\n" + "=" * 60)
-    print("Discovery Endpoint Parsing")
+    print("Discovery Document URL")
     print("=" * 60)
 
-    endpoint = parse_discovery_url("https://auth.example.com")
-    print("\n  Input: https://auth.example.com")
-    print(f"  Full URL: {endpoint.url}")
-    print(f"  Authority: {endpoint.authority}")
-
-    endpoint = parse_discovery_url("https://auth.example.com/tenant1")
-    print("\n  Input: https://auth.example.com/tenant1")
-    print(f"  Full URL: {endpoint.url}")
-    print(f"  Authority: {endpoint.authority}")
+    for issuer in ("https://auth.example.com", "https://auth.example.com/tenant1"):
+        print(f"\n  Issuer: {issuer}")
+        print(f"  Discovery URL: {discovery_document_url(issuer)}")
 
 
 def main():
@@ -115,7 +109,7 @@ def main():
     development_example()
     loopback_example()
     cached_validation_example()
-    endpoint_parsing_example()
+    discovery_url_example()
     print("\n" + "=" * 60)
     print("Examples completed!")
     print("=" * 60)

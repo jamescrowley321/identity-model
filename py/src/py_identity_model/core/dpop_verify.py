@@ -503,7 +503,7 @@ async def record_proof_async(record: _ReplayRecord) -> None:
     _replay_result(result)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class DPoPProof:
     """A verified DPoP proof.
 
@@ -614,7 +614,7 @@ def _constant_time_equal(expected: str, presented: object) -> bool:
     return hmac.compare_digest(expected.encode(), presented.encode())
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class DPoPProofRequest:
     """The request a DPoP proof must match (RFC 9449 §4.3 checks 8-12).
 

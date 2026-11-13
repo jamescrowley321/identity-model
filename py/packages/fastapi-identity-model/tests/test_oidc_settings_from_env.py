@@ -70,7 +70,7 @@ def test_every_setting_is_read(clean_env):
         redirect_uri="http://localhost/cb",
         client_secret="secret",
         scope="openid email",
-        audience="api://resource",
+        audience_override="api://resource",
         post_login_redirect="/home",
         post_logout_redirect="/bye",
         excluded_paths=["/a", "/b", "/c"],
@@ -90,7 +90,7 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
 
     assert settings == OIDCSettings(discovery_url="d", client_id="cid")
     assert settings.redirect_uri == ""
-    assert settings.audience == "cid"
+    assert settings.expected_audience == "cid"
     assert settings.excluded_paths == _DEFAULT_EXCLUDED_PATHS
     assert settings.required_binding is TokenBinding.NONE
     assert (settings.client_certificate_header, settings.expected_origin) == (
@@ -188,3 +188,13 @@ def test_validate_azp_rejects_other_values(clean_env, value):
 
     with pytest.raises(ValueError, match="OIDC_VALIDATE_AZP must be 'true' or 'false'"):
         oidc_settings_from_env()
+
+
+def test_empty_audience_variable_means_client_id(clean_env):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_AUDIENCE", "")
+
+    settings = oidc_settings_from_env()
+
+    assert (settings.audience_override, settings.expected_audience) == (None, "cid")

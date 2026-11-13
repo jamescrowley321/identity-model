@@ -68,8 +68,8 @@ class TestPrepareSignedPar:
             _signed(
                 private_key_jwt=None,
                 mtls=MtlsClientAuth(
-                    certificate="client.pem",
-                    private_key="client.key",
+                    certificate_path="client.pem",
+                    private_key_path="client.key",
                     auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
                 ),
             )
@@ -119,7 +119,8 @@ class TestPrepareSignedPar:
     @pytest.mark.parametrize("request_object", ["", None])
     def test_request_blanked_after_construction_refused_at_send(self, request_object):
         request = _signed()
-        request.request = request_object
+        # Frozen models block this; bypass it to cover the send-time guard.
+        object.__setattr__(request, "request", request_object)
         with pytest.raises(ConfigurationException):
             prepare_par_request_data(request)
 
@@ -138,10 +139,16 @@ class TestPrepareSignedPar:
         with pytest.raises(TypeError, match="request"):
             PushedAuthorizationRequest(**fields)
 
-    def test_missing_redirect_uri_without_request_raises(self):
+    def test_redirect_uri_is_a_required_field(self):
+        with pytest.raises(TypeError, match=r"redirect_uri"):
+            PushedAuthorizationRequest(address=PAR_URL, client_id="app1")  # type: ignore[call-arg]
+
+    def test_empty_redirect_uri_raises_at_send(self):
         with pytest.raises(ValueError, match=r"^redirect_uri is required$"):
             prepare_par_request_data(
-                PushedAuthorizationRequest(address=PAR_URL, client_id="app1")
+                PushedAuthorizationRequest(
+                    address=PAR_URL, client_id="app1", redirect_uri=""
+                )
             )
 
 

@@ -25,7 +25,7 @@ class AuthorizeCallbackValidationResult(Enum):
     MISSING_ISSUER = "missing_issuer"
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class StateValidationResult:
     """Result of validating the ``state`` parameter in an authorization callback."""
 

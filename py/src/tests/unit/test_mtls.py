@@ -8,6 +8,7 @@ exercised in isolation.
 """
 
 from base64 import urlsafe_b64encode
+import dataclasses
 from datetime import UTC, datetime
 import ssl
 from urllib.parse import parse_qs
@@ -128,7 +129,7 @@ def cert_files(tmp_path_factory) -> tuple[str, str, bytes]:
 @pytest.fixture
 def mtls(cert_files) -> MtlsClientAuth:
     cert_path, key_path, _ = cert_files
-    return MtlsClientAuth(certificate=cert_path, private_key=key_path)
+    return MtlsClientAuth(certificate_path=cert_path, private_key_path=key_path)
 
 
 @pytest.mark.unit
@@ -308,12 +309,12 @@ class TestApplyMtlsClientAuth:
 @pytest.mark.unit
 class TestBuildHttpxCert:
     def test_two_tuple_without_password(self):
-        cfg = MtlsClientAuth(certificate="/c.pem", private_key="/k.pem")
+        cfg = MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem")
         assert build_httpx_cert(cfg) == ("/c.pem", "/k.pem")
 
     def test_three_tuple_with_password(self):
         cfg = MtlsClientAuth(
-            certificate="/c.pem", private_key="/k.pem", password="hunter2"
+            certificate_path="/c.pem", private_key_path="/k.pem", password="hunter2"
         )
         assert build_httpx_cert(cfg) == ("/c.pem", "/k.pem", "hunter2")
 
@@ -352,8 +353,8 @@ class TestMtlsClientAuthRepr:
 
     def test_repr_suppresses_secrets(self):
         cfg = MtlsClientAuth(
-            certificate="/etc/client.crt",
-            private_key="/etc/super-secret.key",
+            certificate_path="/etc/client.crt",
+            private_key_path="/etc/super-secret.key",
             password="hunter2",
         )
         rendered = repr(cfg)
@@ -368,8 +369,8 @@ class TestMtlsClientAuthRepr:
             address=TOKEN_URL,
             client_id="c",
             mtls=MtlsClientAuth(
-                certificate="/etc/client.crt",
-                private_key="/etc/super-secret.key",
+                certificate_path="/etc/client.crt",
+                private_key_path="/etc/super-secret.key",
                 password="hunter2",
             ),
         )
@@ -465,8 +466,11 @@ class TestPrepareFunctionMtls:
     )
     def test_mtls_puts_client_id_in_body_no_auth(self, label, prepare_fn, request_obj):
         # mTLS only: cert is at the TLS layer, client_id in body, no Basic auth.
-        request_obj.client_secret = None
-        request_obj.mtls = MtlsClientAuth(certificate="/c.pem", private_key="/k.pem")
+        request_obj = dataclasses.replace(request_obj, client_secret=None)
+        request_obj = dataclasses.replace(
+            request_obj,
+            mtls=MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem"),
+        )
         params, _headers, auth = prepare_fn(request_obj)
 
         assert auth is None, label
@@ -483,7 +487,10 @@ class TestPrepareFunctionMtls:
         self, label, prepare_fn, request_obj
     ):
         # Both client_secret and mtls set — mTLS must win (no Basic auth).
-        request_obj.mtls = MtlsClientAuth(certificate="/c.pem", private_key="/k.pem")
+        request_obj = dataclasses.replace(
+            request_obj,
+            mtls=MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem"),
+        )
         params, _headers, auth = prepare_fn(request_obj)
 
         assert auth is None, label
@@ -504,11 +511,17 @@ class TestPrepareFunctionMtls:
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        request_obj.mtls = MtlsClientAuth(certificate="/c.pem", private_key="/k.pem")
-        request_obj.private_key_jwt = PrivateKeyJwt(
-            private_key=private_pem,
-            algorithm="PS256",
-            issuer="https://as.example.com",
+        request_obj = dataclasses.replace(
+            request_obj,
+            mtls=MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem"),
+        )
+        request_obj = dataclasses.replace(
+            request_obj,
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem,
+                algorithm="PS256",
+                issuer="https://as.example.com",
+            ),
         )
         params, _headers, auth = prepare_fn(request_obj)
 

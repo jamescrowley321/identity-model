@@ -25,7 +25,7 @@ _SENSITIVE_FIELDS = frozenset(
 )
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class AuthorizeCallbackResponse(_GuardedResponseMixin):
     """Parsed OAuth 2.0 / OIDC authorization callback response.
 
