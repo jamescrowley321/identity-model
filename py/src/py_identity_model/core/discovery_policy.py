@@ -19,6 +19,7 @@ from ..exceptions import ConfigurationException, DiscoveryHTTPSRequiredError
 
 _WELL_KNOWN_PATH = "/.well-known/openid-configuration"
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_CONTROL_CHARS = frozenset(map(chr, [*range(0x20), 0x7F]))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -129,6 +130,10 @@ def discovery_document_url(issuer: str) -> str:
     if not issuer:
         raise ConfigurationException("Issuer cannot be empty")
 
+    # urlparse silently drops leading whitespace and control characters, and
+    # tab/CR/LF anywhere; refuse them so the returned URL is what was checked.
+    if issuer[0].isspace() or any(c in _CONTROL_CHARS for c in issuer):
+        raise ConfigurationException("Issuer is not a valid URL")
     try:
         parsed = urlparse(issuer)
         hostname = parsed.hostname

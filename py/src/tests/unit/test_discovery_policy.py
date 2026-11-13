@@ -90,6 +90,10 @@ class TestDiscoveryDocumentUrl:
             ("https://:443", r"^Issuer must include a host$"),
             ("https://user@", r"^Issuer must include a host$"),
             ("https://[op.example", r"^Issuer is not a valid URL$"),
+            (" https://auth.example.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com\n", r"^Issuer is not a valid URL$"),
+            ("https://auth.ex\tample.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com/\x00", r"^Issuer is not a valid URL$"),
             (
                 "https://auth.example.com?evil=1",
                 r"^Issuer must not contain query or fragment components$",

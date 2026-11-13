@@ -102,8 +102,18 @@ def test_replace_runs_validation() -> None:
             models.ClientCredentialsTokenResponse(is_successful=False, error="denied"),
             FailedResponseAccessError,
         ),
+        (
+            models.DiscoveryDocumentResponse(
+                is_successful=True, issuer="https://op.example"
+            ),
+            SuccessfulResponseAccessError,
+        ),
+        (
+            models.JwksResponse(is_successful=False, error="unreachable"),
+            FailedResponseAccessError,
+        ),
     ],
-    ids=["successful", "failed"],
+    ids=["successful", "failed", "discovery", "jwks"],
 )
 def test_responses_are_read_only(response, error) -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
