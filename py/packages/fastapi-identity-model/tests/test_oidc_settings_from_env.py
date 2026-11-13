@@ -188,3 +188,13 @@ def test_validate_azp_rejects_other_values(clean_env, value):
 
     with pytest.raises(ValueError, match="OIDC_VALIDATE_AZP must be 'true' or 'false'"):
         oidc_settings_from_env()
+
+
+def test_empty_audience_variable_means_client_id(clean_env):
+    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+    clean_env.setenv("OIDC_AUDIENCE", "")
+
+    settings = oidc_settings_from_env()
+
+    assert (settings.audience_override, settings.expected_audience) == (None, "cid")

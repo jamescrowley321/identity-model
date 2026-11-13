@@ -45,7 +45,9 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
     certificate; ``EXPECTED_ORIGIN`` is the ``scheme://host[:port]`` for the
     DPoP ``htu`` check. ``TRUSTED_AUDIENCES`` is a comma-separated list of
     extra ID Token audiences the login callback accepts; ``VALIDATE_AZP`` is
-    ``true`` or ``false``. Others fall back to the ``OIDCSettings`` defaults.
+    ``true`` or ``false``. ``AUDIENCE`` sets ``audience_override``; empty
+    means unset, so the audience is ``client_id``. Others fall back to the
+    ``OIDCSettings`` defaults.
 
     Raises:
         ValueError: A required variable is unset or empty,
@@ -74,7 +76,7 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
         redirect_uri=os.environ.get(f"{prefix}REDIRECT_URI", ""),
         client_secret=os.environ.get(f"{prefix}CLIENT_SECRET"),
         scope=os.environ.get(f"{prefix}SCOPE", "openid profile email"),
-        audience_override=os.environ.get(f"{prefix}AUDIENCE"),
+        audience_override=os.environ.get(f"{prefix}AUDIENCE") or None,
         post_login_redirect=os.environ.get(f"{prefix}POST_LOGIN_REDIRECT", "/"),
         post_logout_redirect=os.environ.get(f"{prefix}POST_LOGOUT_REDIRECT", "/"),
         required_binding=TokenBinding(
