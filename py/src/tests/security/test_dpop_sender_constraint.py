@@ -160,7 +160,7 @@ def test_required_dpop_refuses_unbound_token(op):
 
 
 def test_resolved_config_keeps_binding_settings():
-    options = DPoPVerificationOptions(max_age=5)
+    options = DPoPVerificationOptions(max_age=5, replay_cache=InMemoryDPoPReplayCache())
     original = TokenValidationConfig(
         perform_disco=True, required_binding=TokenBinding.DPOP, dpop=options
     )

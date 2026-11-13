@@ -4,19 +4,19 @@ Optional dependency injection for HTTP client lifecycle management.
 
 All public I/O functions accept an optional `http_client` parameter. When it is
 omitted, the library default client is used: one process-wide `HTTPClient` /
-`AsyncHTTPClient` built from `Config()`, returned by
+`AsyncHTTPClient` built from `HTTPConfig()`, returned by
 `get_default_http_client()` / `get_default_async_http_client()`. The sync
 default client gives each thread its own `httpx.Client`.
 
 A client only sends requests. It takes its timeout, retries, TLS and JWKS
-size limits from a [`Config`](config.md) and holds no cache: the discovery
+size limits from an [`HTTPConfig`](config.md) and holds no cache: the discovery
 documents, keys and kid-miss cooldown used by token validation live on a
-[validation cache](#validation-cache). A client built per request from a
-`Config` therefore still shares the cached keys and the cooldown.
+[validation cache](#validation-cache). A client built per request from an
+`HTTPConfig` therefore still shares the cached keys and the cooldown.
 
 To use your own httpx client (for a proxy, or `verify=False` in a test), wrap
 it: `HTTPClient(httpx.Client(verify=False), config=config)`. The wrapped client
-keeps its own timeout and TLS settings; the `Config` still sets retries and
+keeps its own timeout and TLS settings; the `HTTPConfig` still sets retries and
 JWKS limits. Documents it fetches are cached apart from every other client's
 (see [Trust scopes](#trust-scopes)), so build the httpx client once and reuse
 it.
@@ -28,9 +28,14 @@ called from any event loop.
 ## Sync Client
 
 ```python
-from py_identity_model import Config, DiscoveryDocumentRequest, HTTPClient, get_discovery_document
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    get_discovery_document,
+    HTTPClient,
+    HTTPConfig,
+)
 
-with HTTPClient(config=Config(http_timeout=10.0)) as client:
+with HTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     disco = get_discovery_document(
         DiscoveryDocumentRequest(address="https://..."),
         http_client=client,
@@ -42,10 +47,10 @@ with HTTPClient(config=Config(http_timeout=10.0)) as client:
 ## Async Client
 
 ```python
-from py_identity_model import Config, DiscoveryDocumentRequest
+from py_identity_model import DiscoveryDocumentRequest, HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient, get_discovery_document
 
-async with AsyncHTTPClient(config=Config(http_timeout=10.0)) as client:
+async with AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     disco = await get_discovery_document(
         DiscoveryDocumentRequest(address="https://..."),
         http_client=client,
@@ -60,24 +65,32 @@ async with AsyncHTTPClient(config=Config(http_timeout=10.0)) as client:
 discovery document, the JWKS and the kid-miss cooldown on a `ValidationCache`
 (async: `AsyncValidationCache`). Without `cache=`, they use the process-wide
 default, `get_default_validation_cache()` /
-`get_default_async_validation_cache()`, built from `Config()`. Pass your own to
+`get_default_async_validation_cache()`, built from `CacheConfig()`. Pass your own to
 set the cache TTLs, size or cooldown, or to keep one provider's keys apart
 from the rest of the process:
 
 ```python
-from py_identity_model import Config, HTTPClient, ValidationCache, validate_token
+from py_identity_model import (
+    CacheConfig,
+    HTTPClient,
+    HTTPConfig,
+    validate_token,
+    ValidationCache,
+)
 
-cache = ValidationCache(config=Config(jwks_cache_ttl=900.0, cache_max_entries=8))
+cache = ValidationCache(config=CacheConfig(jwks_cache_ttl=900.0, cache_max_entries=8))
 
-with HTTPClient(config=Config(http_timeout=10.0)) as client:
+with HTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     claims = validate_token(
         token, validation_config, DISCO_URL, http_client=client, cache=cache
     )
 ```
 
 The cache reads `jwks_cache_ttl`, `discovery_cache_ttl`, `cache_max_entries`
-and `jwks_kid_miss_cooldown` from its `Config`. The client reads the other
-settings. One `Config` can be passed to both.
+and `jwks_kid_miss_cooldown` from its `CacheConfig`; the client reads the
+transport settings from its `HTTPConfig`. Each refuses the other's config with
+a `TypeError`. The cache's state is private: its only public member is
+`config`.
 
 Build a cache once and keep it: a cache built per request starts empty and
 has no cooldown history. The default cache is rebuilt in a forked child; a
@@ -91,8 +104,8 @@ fetched it. A cache is shared by every client that uses it, so each cached
 document is keyed by the fetching client's `trust_scope`, and a client only
 reads documents fetched under its own scope:
 
-- A client built from a `Config` (including the library default client) is
-  scoped by `Config.ca_bundle`. Such clients verify TLS against that bundle
+- A client built from an `HTTPConfig` (including the library default client) is
+  scoped by `HTTPConfig.ca_bundle`. Such clients verify TLS against that bundle
   and never follow redirects, so all of them with the same `ca_bundle` share
   documents.
 - A client that wraps your own httpx client is scoped by that httpx client.

@@ -107,19 +107,19 @@ class TestAsyncClearActuallyClears:
     async def test_clear_jwks_cache_empties_cache_and_cooldown(self, cache):
         # Prime the cache + cooldown sidecar directly so the test doesn't
         # depend on the full refresh pipeline.
-        cache.jwks[JWKS_URL] = JwksCacheEntry(
+        cache._jwks[JWKS_URL] = JwksCacheEntry(
             response=_make_jwk_response("primed"),
             cached_at=0.0,
             ttl=PRIMED_TTL,
         )
-        cache.kid_miss_last_attempt[JWKS_URL] = PRIMED_COOLDOWN_STAMP
-        assert JWKS_URL in cache.jwks
-        assert JWKS_URL in cache.kid_miss_last_attempt
+        cache._kid_miss_last_attempt[JWKS_URL] = PRIMED_COOLDOWN_STAMP
+        assert JWKS_URL in cache._jwks
+        assert JWKS_URL in cache._kid_miss_last_attempt
 
         await async_clear_jwks_cache(cache=cache)
 
-        assert cache.jwks == {}
-        assert cache.kid_miss_last_attempt == {}
+        assert cache._jwks == {}
+        assert cache._kid_miss_last_attempt == {}
 
     @pytest.mark.asyncio
     async def test_clear_discovery_cache_empties_cache(self, cache):
@@ -127,21 +127,21 @@ class TestAsyncClearActuallyClears:
             DISCO_URL,
             DiscoveryPolicy().cache_key(),
         )
-        cache.disco[cache_key] = DiscoCacheEntry(
+        cache._disco[cache_key] = DiscoCacheEntry(
             response=DiscoveryDocumentResponse(is_successful=True),
             cached_at=0.0,
             ttl=PRIMED_TTL,
         )
-        assert cache_key in cache.disco
+        assert cache_key in cache._disco
 
         await async_clear_discovery_cache(cache=cache)
 
-        assert cache.disco == {}
+        assert cache._disco == {}
 
     @pytest.mark.asyncio
     async def test_clear_only_touches_the_given_cache(self, cache):
         """Clearing the default cache leaves an injected cache."""
-        cache.jwks[JWKS_URL] = JwksCacheEntry(
+        cache._jwks[JWKS_URL] = JwksCacheEntry(
             response=_make_jwk_response("primed"),
             cached_at=0.0,
             ttl=PRIMED_TTL,
@@ -149,7 +149,7 @@ class TestAsyncClearActuallyClears:
 
         await async_clear_jwks_cache()
 
-        assert list(cache.jwks) == [JWKS_URL]
+        assert list(cache._jwks) == [JWKS_URL]
 
 
 # ============================================================================
@@ -181,7 +181,7 @@ class TestAsyncClearWaitsForInFlightRefresh:
         apply_jwks_cache_outcome write, leaving an entry in the "cleared"
         cache. Post-fix the lock serializes them."""
         # Prime with one entry so we know it gets cleared.
-        cache.jwks[PRIMED_JWKS_URL] = JwksCacheEntry(
+        cache._jwks[PRIMED_JWKS_URL] = JwksCacheEntry(
             response=_make_jwk_response("primed-kid"),
             cached_at=0.0,
             ttl=PRIMED_TTL,
@@ -229,5 +229,5 @@ class TestAsyncClearWaitsForInFlightRefresh:
         # Net effect: clear ran AFTER refresh's apply_outcome under the
         # same lock, so the cache is fully empty — the refresh's write is
         # not re-introduced after clear.
-        assert cache.jwks == {}
-        assert cache.kid_miss_last_attempt == {}
+        assert cache._jwks == {}
+        assert cache._kid_miss_last_attempt == {}

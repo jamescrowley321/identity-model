@@ -2,7 +2,7 @@
 Managed async HTTP client for dependency injection.
 
 Wraps ``httpx.AsyncClient`` with lifecycle management and context manager
-support, and holds the :class:`~py_identity_model.core.config.Config` the
+support, and holds the :class:`~py_identity_model.core.config.HTTPConfig` the
 library uses for every request made through it.  Pass an
 ``AsyncHTTPClient`` instance to any public async function via the
 ``http_client`` parameter to use it instead of the library default client.
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from ..core.config import Config
+from ..core.config import HTTPConfig, require_config
 from ..core.trust_scope import TrustScope, owned_trust_scope, wrapped_trust_scope
 from ..ssl_config import get_ssl_verify
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
-def build_async_httpx_client(config: Config) -> httpx.AsyncClient:
+def build_async_httpx_client(config: HTTPConfig) -> httpx.AsyncClient:
     """Build an ``httpx.AsyncClient`` from *config* (timeout and TLS)."""
     return httpx.AsyncClient(
         verify=get_ssl_verify(config),
@@ -54,7 +54,7 @@ class AsyncHTTPClient:
         client: Existing ``httpx.AsyncClient`` to wrap.  If ``None``, a new
             client is created from *config*.
         config: The library settings for requests through this client.
-            ``None`` means ``Config()`` defaults; the environment is never
+            ``None`` means ``HTTPConfig()`` defaults; the environment is never
             read.
 
     Raises:
@@ -65,9 +65,9 @@ class AsyncHTTPClient:
         self,
         client: httpx.AsyncClient | None = None,
         *,
-        config: Config | None = None,
+        config: HTTPConfig | None = None,
     ) -> None:
-        self._config = config if config is not None else Config()
+        self._config = require_config(config, HTTPConfig, "AsyncHTTPClient")
         if client is not None:
             self._client = client
             self._owned = False
@@ -79,7 +79,7 @@ class AsyncHTTPClient:
         self._closed = False
 
     @property
-    def config(self) -> Config:
+    def config(self) -> HTTPConfig:
         """The settings used for requests through this client."""
         return self._config
 
@@ -87,7 +87,7 @@ class AsyncHTTPClient:
     def trust_scope(self) -> TrustScope:
         """The scope of the cached documents this client may read.
 
-        Built from ``Config.ca_bundle`` for an owned client, and from the
+        Built from ``HTTPConfig.ca_bundle`` for an owned client, and from the
         identity of the wrapped ``httpx.AsyncClient`` otherwise (see
         :mod:`py_identity_model.core.trust_scope`).
         """

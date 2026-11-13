@@ -4,7 +4,7 @@
 import time
 from unittest.mock import MagicMock
 
-from py_identity_model import Config
+from py_identity_model import CacheConfig
 from py_identity_model.core.jwks_cache import (
     DEFAULT_JWKS_CACHE_TTL_SECONDS,
     MAX_CACHE_TTL_SECONDS,
@@ -21,7 +21,7 @@ from py_identity_model.core.jwks_cache import (
 # A configured fallback TTL distinct from every max-age used below, so a test
 # that expects the header to win would fail if the fallback leaked through.
 CONFIGURED_TTL = 7200.0
-CONFIGURED = Config(jwks_cache_ttl=CONFIGURED_TTL)
+CONFIGURED = CacheConfig(jwks_cache_ttl=CONFIGURED_TTL)
 
 
 class TestParseMaxAge:
@@ -61,7 +61,7 @@ class TestResolveTtl:
         assert ttl == MAX_CACHE_TTL_SECONDS
 
     def test_falls_back_to_config_default(self):
-        ttl = resolve_ttl(None, Config().jwks_cache_ttl)
+        ttl = resolve_ttl(None, CacheConfig().jwks_cache_ttl)
         assert ttl == DEFAULT_JWKS_CACHE_TTL_SECONDS
 
     def test_falls_back_to_configured_ttl(self):

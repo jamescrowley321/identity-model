@@ -50,13 +50,13 @@ which python
 
 # Or verify against a custom CA bundle
 from py_identity_model import (
-    Config,
     DiscoveryDocumentRequest,
-    HTTPClient,
     get_discovery_document,
+    HTTPClient,
+    HTTPConfig,
 )
 
-with HTTPClient(config=Config(ca_bundle="/path/to/ca-bundle.crt")) as client:
+with HTTPClient(config=HTTPConfig(ca_bundle="/path/to/ca-bundle.crt")) as client:
     response = get_discovery_document(
         DiscoveryDocumentRequest(address=disco_url), http_client=client
     )
@@ -92,7 +92,7 @@ or `CURL_CA_BUNDLE` has no effect on it. To disable verification in a test
 
 **Solution**:
 ```python
-from py_identity_model import get_discovery_document, DiscoveryDocumentRequest
+from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
 disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
 

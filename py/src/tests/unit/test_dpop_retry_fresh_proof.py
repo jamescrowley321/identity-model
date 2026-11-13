@@ -16,7 +16,7 @@ import respx
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
     ClientCredentialsTokenRequest,
-    Config,
+    HTTPConfig,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
     RefreshTokenRequest,
@@ -46,7 +46,7 @@ TOKEN_URL = "https://auth.example.com/token"
 PAR_URL = "https://auth.example.com/par"
 DPOP_TOKEN = {"access_token": "at-1", "token_type": "DPoP", "expires_in": 300}
 PAR_RESPONSE = {"request_uri": "urn:example:par", "expires_in": 60}
-NO_SLEEP_ONE_RETRY = Config(http_retry_base_delay=0, http_retry_max_attempts=1)
+NO_SLEEP_ONE_RETRY = HTTPConfig(http_retry_base_delay=0, http_retry_max_attempts=1)
 DPOP_KEY = generate_dpop_key("ES256")
 
 

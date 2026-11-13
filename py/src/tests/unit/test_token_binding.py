@@ -26,6 +26,7 @@ import pytest
 from py_identity_model import (
     AuthorizationScheme,
     DPoPErrorKind,
+    DPoPReplayCheck,
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
@@ -349,6 +350,106 @@ class TestDPoPBoundToken:
         )
 
 
+class _AsyncCache:
+    """An AsyncDPoPReplayCache over an in-memory cache, counting awaits."""
+
+    def __init__(self) -> None:
+        self.inner = InMemoryDPoPReplayCache()
+        self.awaited = 0
+
+    async def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        self.awaited += 1
+        return self.inner.check_and_store(jkt, jti, expires_at, now)
+
+
+@pytest.mark.unit
+class TestReplayCacheOwnership:
+    """1027-B: the replay cache is the caller's, checked last, sync or async."""
+
+    def test_bound_token_without_dpop_options_is_a_config_error(
+        self, validate, signing_key, public_jwk
+    ):
+        key = generate_dpop_key()
+        token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
+        config = replace(_config(public_jwk), dpop=None)
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "A DPoP-bound token needs DPoPVerificationOptions with your "
+                "replay_cache (TokenValidationConfig.dpop or dpop=) to verify "
+                "its proof (RFC 9449 §11.1)"
+            ),
+        ):
+            validate(token, config, presentation=_dpop(token, key))
+
+    def test_async_validator_awaits_an_async_cache(self, signing_key, public_jwk):
+        key = generate_dpop_key()
+        token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
+        cache = _AsyncCache()
+        config = replace(
+            _config(public_jwk), dpop=DPoPVerificationOptions(replay_cache=cache)
+        )
+        presentation = _dpop(token, key)
+
+        asyncio.run(avalidate_token(token, config, presentation=presentation))
+        with pytest.raises(DPoPValidationError) as exc:
+            asyncio.run(avalidate_token(token, config, presentation=presentation))
+
+        assert (exc.value.kind, cache.awaited, len(cache.inner)) == (
+            DPoPErrorKind.REPLAYED_JTI,
+            2,
+            1,
+        )
+
+    def test_sync_validator_refuses_an_async_cache(self, signing_key, public_jwk):
+        key = generate_dpop_key()
+        token = _access_token(signing_key, {"jkt": key.jwk_thumbprint})
+        cache = _AsyncCache()
+        config = replace(
+            _config(public_jwk), dpop=DPoPVerificationOptions(replay_cache=cache)
+        )
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "An AsyncDPoPReplayCache needs the async validators "
+                "(py_identity_model.aio)"
+            ),
+        ):
+            validate_token(token, config, presentation=_dpop(token, key))
+        assert len(cache.inner) == 0
+
+    def test_proof_is_recorded_only_after_the_certificate_check(
+        self, validate, signing_key, public_jwk, client_cert_pem
+    ):
+        # A token bound to both a DPoP key and a certificate: a wrong
+        # certificate rejects it before the proof is recorded, so the same
+        # proof is accepted with the right certificate.
+        key = generate_dpop_key()
+        thumbprint = compute_certificate_thumbprint(client_cert_pem)
+        token = _access_token(
+            signing_key, {"jkt": key.jwk_thumbprint, "x5t#S256": thumbprint}
+        )
+        cache = InMemoryDPoPReplayCache()
+        config = replace(
+            _config(public_jwk), dpop=DPoPVerificationOptions(replay_cache=cache)
+        )
+        proof = _dpop(token, key)
+
+        with pytest.raises(CertificateBindingError):
+            validate(token, config, presentation=proof)
+        assert len(cache) == 0
+        claims = validate(
+            token,
+            config,
+            presentation=replace(proof, client_certificate=client_cert_pem),
+        )
+        assert (claims["cnf"]["jkt"], len(cache)) == (key.jwk_thumbprint, 1)
+
+
 @pytest.mark.unit
 class TestRequiredBinding:
     def test_required_dpop_unbound_without_proof_rejected(
@@ -609,12 +710,36 @@ class TestMtlsBinding:
 
 
 @pytest.mark.unit
+class TestRequiredDPoPNeedsOptions:
+    def test_required_dpop_without_options_fails_at_construction(self):
+        with pytest.raises(ConfigurationException) as exc:
+            TokenValidationConfig(
+                perform_disco=True, required_binding=TokenBinding.DPOP
+            )
+
+        assert str(exc.value) == (
+            "required_binding=DPOP needs dpop=DPoPVerificationOptions("
+            "replay_cache=...); without it every token is refused (RFC 9449 §11.1)"
+        )
+
+    @pytest.mark.parametrize("binding", [TokenBinding.NONE, TokenBinding.MTLS])
+    def test_other_bindings_need_no_options(self, binding):
+        config = TokenValidationConfig(perform_disco=True, required_binding=binding)
+
+        assert (config.required_binding, config.dpop) == (binding, None)
+
+
+@pytest.mark.unit
 class TestCheckTokenBindingWithoutPresentation:
     """``check_token_binding`` called directly, as the middleware packages do."""
 
     @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
     def test_required_binding_is_config_error(self, binding):
-        config = TokenValidationConfig(perform_disco=True, required_binding=binding)
+        config = TokenValidationConfig(
+            perform_disco=True,
+            required_binding=binding,
+            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
+        )
 
         with pytest.raises(ConfigurationException) as exc:
             check_token_binding({"sub": "user"}, "token", config, None)

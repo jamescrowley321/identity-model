@@ -31,8 +31,8 @@ from py_identity_model import (
     AuthorizationScheme,
     CertificateBindingError,
     DPoPErrorKind,
+    DPoPReplayCacheError,
     DPoPValidationError,
-    DPoPVerificationOptions,
     NetworkException,
     PyIdentityModelException,
     TokenBinding,
@@ -234,11 +234,11 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             an OP whose access tokens signal type differently. Ignored when
             ``require_access_token_marker`` is ``False``.
         http_client: Managed HTTP client for discovery and JWKS, built from
-            your ``Config`` (timeout, retries, TLS, JWKS size limits). ``None``
+            your ``HTTPConfig`` (timeout, retries, TLS, JWKS size limits). ``None``
             uses the library default client.
         cache: The :class:`~py_identity_model.aio.AsyncValidationCache` that
             holds this middleware's discovery document, keys and kid-miss
-            cooldown; its ``Config`` sets the cache TTLs, size and cooldown.
+            cooldown; its ``CacheConfig`` sets the cache TTLs, size and cooldown.
             ``None`` uses the library default cache.
         settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
             ``discovery_url``, ``audience`` and ``excluded_paths`` when those
@@ -312,9 +312,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         self.http_client = http_client
         self.cache = cache
         self.options = resolve_auth_options(settings, options)
-        self._dpop_algs = " ".join(
-            (self.options.dpop or DPoPVerificationOptions()).accepted_algorithms
-        )
+        self._dpop_algs = " ".join(self.options.dpop.accepted_algorithms)
         # The scheme a client must use; RFC 9449 §7.1 challenges a DPoP-only
         # resource with ``DPoP``.
         self._challenge = (
@@ -465,7 +463,11 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         if isinstance(e, CertificateBindingError):
             logger.info("Certificate binding rejected: %s", e.kind.value)
             return self._unauthorized(_GENERIC_401_DETAIL, error="invalid_token")
-        if isinstance(e, PyIdentityModelException):
+        # A replay cache that cannot be used is the server's fault, not a bad
+        # token: it falls through to the 500 below.
+        if isinstance(e, PyIdentityModelException) and not isinstance(
+            e, DPoPReplayCacheError
+        ):
             # A provider outage is a transient server fault, not an auth
             # decision: surface 503 so callers retry instead of treating it as a
             # bad token. This covers both a real NetworkException (a

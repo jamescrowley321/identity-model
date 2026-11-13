@@ -445,7 +445,7 @@ def build_oidc_router(
             for providers without a usable UserInfo endpoint, or to avoid
             the extra round-trip per login.
         http_client: Managed HTTP client for every provider call (discovery,
-            token, JWKS, UserInfo), built from your ``Config``. ``None`` uses
+            token, JWKS, UserInfo), built from your ``HTTPConfig``. ``None`` uses
             the library default client.
 
     Returns:

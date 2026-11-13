@@ -14,7 +14,7 @@ from typing import ClassVar
 import httpx
 import pytest
 
-from py_identity_model import Config, ConfigError
+from py_identity_model import ConfigError, HTTPConfig
 from py_identity_model.aio.http_client import (
     _get_default,
     _reset_async_http_client,
@@ -28,7 +28,7 @@ from py_identity_model.core.http_utils import (
 from py_identity_model.core.response_processors import parse_jwks_response
 
 
-DEFAULT_CONFIG = Config()
+DEFAULT_CONFIG = HTTPConfig()
 # ``threading.Lock`` is a factory function, not a type.
 THREAD_LOCK_TYPE = type(threading.Lock())
 SMALL_MAX_JWKS_SIZE = 100
@@ -73,7 +73,7 @@ class TestJwksSizeLimit:
 
     def test_rejects_large_body(self):
         """Body larger than limit is rejected even without Content-Length."""
-        config = Config(jwks_max_size=SMALL_MAX_JWKS_SIZE)
+        config = HTTPConfig(jwks_max_size=SMALL_MAX_JWKS_SIZE)
         big_body = json.dumps(
             {
                 "keys": [
@@ -92,7 +92,7 @@ class TestJwksSizeLimit:
         assert "too large" in result.error
 
     def test_respects_config_max_size(self):
-        config = Config(jwks_max_size=TINY_MAX_JWKS_SIZE)
+        config = HTTPConfig(jwks_max_size=TINY_MAX_JWKS_SIZE)
         response = httpx.Response(
             200,
             content=b'{"keys": [{"kty": "RSA", "n": "long_value", "e": "AQAB"}]}',
@@ -184,7 +184,7 @@ class TestJwksKeyCountLimit:
 
     def test_max_keys_config_override(self):
         """Config.jwks_max_keys overrides the default limit."""
-        config = Config(jwks_max_keys=SMALL_MAX_JWKS_KEYS)
+        config = HTTPConfig(jwks_max_keys=SMALL_MAX_JWKS_KEYS)
         key_count = SMALL_MAX_JWKS_KEYS + 1
         keys = self._make_keys(key_count)
         response = httpx.Response(
@@ -285,7 +285,7 @@ class TestJwksMissingKeysField:
     def test_non_positive_max_keys_is_rejected(self, max_keys):
         """A key limit below 1 (which would reject every JWKS) is an invalid Config."""
         with pytest.raises(ConfigError) as exc_info:
-            Config(jwks_max_keys=max_keys)
+            HTTPConfig(jwks_max_keys=max_keys)
 
         assert [issue.setting for issue in exc_info.value.issues] == ["jwks_max_keys"]
 
@@ -296,7 +296,7 @@ class TestJwksMissingKeysField:
             json={"keys": [{"kty": "RSA", "kid": "k1", "n": "n", "e": "AQAB"}]},
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response, Config(jwks_max_keys=1))
+        result = parse_jwks_response(response, HTTPConfig(jwks_max_keys=1))
         assert result.is_successful is True
 
 

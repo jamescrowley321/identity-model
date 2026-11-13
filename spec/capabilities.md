@@ -75,7 +75,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > transport lands under
 > [identity-model#573](https://github.com/jamescrowley321/identity-model/issues/573).
 >
-> † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `Config`. Go and Rust flip to `implemented` when they have the same settings, defaults, ranges and cache rules, each checked by a unit test against the page ([#757](https://github.com/jamescrowley321/identity-model/issues/757), [#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
+> † **Configuration** is the settings table in [`config.md`](config.md), with no vectors: the library reads no environment, so there is no resolution behavior to vector. Python defines the settings, and a Python unit test checks every default and range on that page against `HTTPConfig` and `CacheConfig`. Go and Rust flip to `implemented` when they have the same settings, defaults, ranges and cache rules, each checked by a unit test against the page ([#757](https://github.com/jamescrowley321/identity-model/issues/757), [#758](https://github.com/jamescrowley321/identity-model/issues/758)). TypeScript is not shown (the `node/` package is an unimplemented placeholder).
 >
 > **Known cross-language divergences.** None remain.
 >

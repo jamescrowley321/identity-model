@@ -38,12 +38,14 @@ from .dpop_verify import (
     DPoPProofRequest,
     DPoPValidationError,
     DPoPVerificationOptions,
-    verify_dpop_proof,
+    _check_dpop_proof,
+    record_proof,
 )
 from .mtls import validate_certificate_binding
 
 
 if TYPE_CHECKING:
+    from .dpop_verify import _ReplayRecord
     from .models import (
         IntrospectionErrorKind,
         TokenIntrospectionResponse,
@@ -54,6 +56,10 @@ if TYPE_CHECKING:
 PRESENTATION_REQUIRED = (
     "needs the request's presentation= (scheme, method, url, DPoP proof or "
     "client certificate)"
+)
+NO_DPOP_OPTIONS_MESSAGE = (
+    "A DPoP-bound token needs DPoPVerificationOptions with your replay_cache "
+    "(TokenValidationConfig.dpop or dpop=) to verify its proof (RFC 9449 §11.1)"
 )
 PROOF_REQUEST_MESSAGE = (
     "presentation.method and presentation.url are needed to verify a DPoP proof"
@@ -185,7 +191,7 @@ def _check_dpop_binding(
     access_token: str,
     presentation: TokenPresentation,
     options: DPoPVerificationOptions | None,
-) -> None:
+) -> _ReplayRecord:
     if presentation.scheme is not AuthorizationScheme.DPOP:
         raise DPoPValidationError(DPoPErrorKind.WRONG_SCHEME)
     if not presentation.dpop_proof:
@@ -196,6 +202,8 @@ def _check_dpop_binding(
         raise DPoPValidationError(DPoPErrorKind.JKT_MISMATCH)
     if presentation.method is None or presentation.url is None:
         raise ConfigurationException(PROOF_REQUEST_MESSAGE)
+    if options is None:
+        raise ConfigurationException(NO_DPOP_OPTIONS_MESSAGE)
     try:
         request = DPoPProofRequest(
             method=presentation.method,
@@ -206,7 +214,8 @@ def _check_dpop_binding(
         )
     except ValueError as exc:
         raise ConfigurationException(f"presentation: {exc}") from exc
-    verify_dpop_proof(presentation.dpop_proof, request, options)
+    _, record = _check_dpop_proof(presentation.dpop_proof, request, options)
+    return record
 
 
 def check_token_binding(
@@ -243,7 +252,8 @@ def check_token_binding(
 
     Raises:
         ConfigurationException: If ``required_binding`` is not ``NONE`` and
-            *presentation* is ``None``.
+            *presentation* is ``None``; or a DPoP proof must be verified and
+            ``config.dpop`` is ``None`` or holds an ``AsyncDPoPReplayCache``.
         DPoPValidationError: If the DPoP binding fails, including a
             ``cnf.jkt`` token with no *presentation*.
         CertificateBindingError: If the certificate binding fails, including
@@ -252,9 +262,11 @@ def check_token_binding(
         ConfigurationException: If a DPoP proof is checked without an
             absolute ``presentation.url`` or a ``presentation.method``.
     """
-    _check_binding(
+    record = _check_binding_before_replay(
         claims, access_token, config.required_binding, config.dpop, presentation
     )
+    if record is not None:
+        record_proof(record)
 
 
 def check_introspection_binding(
@@ -291,12 +303,13 @@ def check_introspection_binding(
         access_token: The access token as received on the request.
         presentation: How the token arrived, or ``None``.
         required_binding: The sender constraint every token must carry.
-        dpop: Options for DPoP proof verification. ``None`` uses the defaults
-            and the process-wide replay cache.
+        dpop: Options for DPoP proof verification, with your replay cache.
+            Needed to accept a DPoP-bound token.
 
     Raises:
         ConfigurationException: If *required_binding* is not ``NONE`` and
-            *presentation* is ``None``.
+            *presentation* is ``None``; or a DPoP proof must be verified and
+            *dpop* is ``None`` or holds an ``AsyncDPoPReplayCache``.
         IntrospectedTokenError: If the introspection failed
             (``INTROSPECTION_FAILED``) or the token is not active
             (``INACTIVE``).
@@ -307,6 +320,24 @@ def check_introspection_binding(
         ConfigurationException: If a DPoP proof is checked without an
             absolute ``presentation.url`` or a ``presentation.method``.
     """
+    record = _introspection_binding_before_replay(
+        response, access_token, presentation, required_binding, dpop
+    )
+    if record is not None:
+        record_proof(record)
+
+
+def _introspection_binding_before_replay(
+    response: TokenIntrospectionResponse,
+    access_token: str,
+    presentation: TokenPresentation | None,
+    required_binding: TokenBinding,
+    dpop: DPoPVerificationOptions | None,
+) -> _ReplayRecord | None:
+    """Every check of :func:`check_introspection_binding` but the replay check.
+
+    A returned record must go to ``record_proof`` before the token is accepted.
+    """
     _require_presentation(required_binding, presentation)
     if not response.is_successful:
         raise IntrospectedTokenError(
@@ -315,16 +346,25 @@ def check_introspection_binding(
     claims = response.claims or {}
     if claims.get("active") is not True:
         raise IntrospectedTokenError(IntrospectedTokenErrorKind.INACTIVE)
-    _check_binding(claims, access_token, required_binding, dpop, presentation)
+    return _check_binding_before_replay(
+        claims, access_token, required_binding, dpop, presentation
+    )
 
 
-def _check_binding(
+def _check_binding_before_replay(
     claims: dict,
     access_token: str,
     binding: TokenBinding,
     dpop: DPoPVerificationOptions | None,
     presentation: TokenPresentation | None,
-) -> None:
+) -> _ReplayRecord | None:
+    """Every binding check but the DPoP replay check, which runs last.
+
+    Returns the DPoP proof's replay record, or ``None`` when no proof was
+    checked. The caller records it, so a token rejected by a later check (the
+    certificate binding) never records its proof. The token is not accepted
+    until ``record_proof`` returns: without it a replay passes.
+    """
     cnf = claims.get(JwtClaimTypes.Confirmation.value)
     cnf = cnf if isinstance(cnf, dict) else {}
     jkt_member = ConfirmationMethods.JwkThumbprint.value
@@ -338,17 +378,18 @@ def _check_binding(
             raise CertificateBindingError(
                 CertificateBindingErrorKind.CERTIFICATE_REQUIRED
             )
-        return
+        return None
 
+    record = None
     if jkt_member in cnf:
-        _check_dpop_binding(cnf[jkt_member], access_token, presentation, dpop)
+        record = _check_dpop_binding(cnf[jkt_member], access_token, presentation, dpop)
     elif (
         binding is TokenBinding.DPOP or presentation.scheme is AuthorizationScheme.DPOP
     ):
         raise DPoPValidationError(DPoPErrorKind.NOT_BOUND)
 
     if binding is not TokenBinding.MTLS and not certificate_bound:
-        return
+        return record
     certificate = presentation.client_certificate
     if certificate is None:
         raise CertificateBindingError(CertificateBindingErrorKind.CERTIFICATE_REQUIRED)
@@ -358,6 +399,7 @@ def _check_binding(
         raise CertificateBindingError(
             CertificateBindingErrorKind.INVALID_CERTIFICATE
         ) from exc
+    return record
 
 
 __all__ = [

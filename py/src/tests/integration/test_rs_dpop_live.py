@@ -14,6 +14,7 @@ import pytest
 
 from py_identity_model import (
     DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
     create_dpop_proof,
     generate_dpop_key,
 )
@@ -30,7 +31,9 @@ pytestmark = pytest.mark.integration
 RS_AUDIENCE = "urn:test:api"
 ROUTE = "/whoami"
 GENERIC_401 = {"detail": "Invalid or unauthorized token"}
-ALGS = " ".join(DPoPVerificationOptions().accepted_algorithms)
+ALGS = " ".join(
+    DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()).accepted_algorithms
+)
 INVALID_TOKEN = f'DPoP error="invalid_token", algs="{ALGS}"'
 INVALID_PROOF = f'DPoP error="invalid_dpop_proof", algs="{ALGS}"'
 

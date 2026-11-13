@@ -21,8 +21,8 @@ from py_identity_model import (
     ClientAuthMethod,
     ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
-    MtlsClientAuth,
     get_discovery_document,
+    MtlsClientAuth,
     request_client_credentials_token,
     resolve_mtls_endpoint,
 )
@@ -54,20 +54,20 @@ the advertised `mtls_endpoint_aliases` (FAPI 2.0 Security Profile §5.2.2.1,
 
 The certificate is presented by a short-lived client built for the request.
 To apply your own settings to it (`ca_bundle` for a private CA, `http_timeout`,
-retries), pass an `http_client` alongside `mtls`: its `Config` configures the
+retries), pass an `http_client` alongside `mtls`: its `HTTPConfig` configures the
 certificate client, while the request itself never goes through that
 client's own connection pool, which cannot be guaranteed to present the
-certificate. Without `http_client`, the library default client's `Config()`
-is used.
+certificate. Without `http_client`, the library default client's
+`HTTPConfig()` is used.
 The `http_client` must be one the library built (`HTTPClient(config=...)`).
 One that wraps your own `httpx.Client` is refused with `ValueError`, because
 that client's TLS settings (a pinned CA, a proxy) can't carry over to the
 certificate client.
 
 ```python
-from py_identity_model import Config, HTTPClient
+from py_identity_model import HTTPClient, HTTPConfig
 
-with HTTPClient(config=Config(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
+with HTTPClient(config=HTTPConfig(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
     response = request_client_credentials_token(request, http_client=http_client)
 ```
 

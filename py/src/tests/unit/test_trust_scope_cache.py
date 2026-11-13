@@ -7,7 +7,7 @@ or JWKS is only as trustworthy as the transport that fetched it, so each entry
 is keyed by the fetching client's ``trust_scope``:
 
 - A client built from a ``Config`` is scoped by ``Config.ca_bundle``; the
-  default client and every ``HTTPClient(config=Config())`` share documents.
+  default client and every ``HTTPClient(config=HTTPConfig())`` share documents.
 - A client wrapping a caller-supplied ``httpx`` client is scoped by that
   ``httpx`` client's identity, since its TLS, proxy and redirect settings
   cannot be read back.
@@ -32,7 +32,7 @@ from py_identity_model.aio.token_validation import (
     validate_token as async_validate_token,
 )
 from py_identity_model.aio.validation_cache import get_default_async_validation_cache
-from py_identity_model.core.config import Config
+from py_identity_model.core.config import CacheConfig, HTTPConfig
 from py_identity_model.core.jwks_cache import JwksCacheEntry, store_jwks_response
 from py_identity_model.core.models import JwksResponse, TokenValidationConfig
 from py_identity_model.core.parsers import jwks_from_dict
@@ -101,9 +101,9 @@ def _clear_default_caches() -> None:
     clear_discovery_cache()
     clear_jwks_cache()
     async_cache = get_default_async_validation_cache()
-    async_cache.disco.clear()
-    async_cache.jwks.clear()
-    async_cache.kid_miss_last_attempt.clear()
+    async_cache._disco.clear()
+    async_cache._jwks.clear()
+    async_cache._kid_miss_last_attempt.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -125,12 +125,12 @@ class TestTrustScope:
         bundle = certifi.where()
         with (
             HTTPClient() as default_bundle,
-            HTTPClient(config=Config(ca_bundle=bundle)) as pinned,
+            HTTPClient(config=HTTPConfig(ca_bundle=bundle)) as pinned,
         ):
             assert default_bundle.trust_scope == DEFAULT_TRUST_SCOPE
             assert pinned.trust_scope == TrustScope(ca_bundle=bundle)
         assert get_default_http_client().trust_scope == DEFAULT_TRUST_SCOPE
-        assert owned_trust_scope(Config(ca_bundle=bundle)) == TrustScope(
+        assert owned_trust_scope(HTTPConfig(ca_bundle=bundle)) == TrustScope(
             ca_bundle=bundle
         )
 
@@ -162,7 +162,7 @@ class TestCooldownPruning:
         strict = DEFAULT_TRUST_SCOPE
         permissive = TrustScope(wrapped_client=-1)
         other = TrustScope(wrapped_client=-2)
-        config = Config(cache_max_entries=TWO_ENTRIES)
+        config = CacheConfig(cache_max_entries=TWO_ENTRIES)
         key_dict, _ = _key()
         response = JwksResponse(is_successful=True, keys=[jwks_from_dict(key_dict)])
         cache: OrderedDict[tuple[TrustScope, str], JwksCacheEntry] = OrderedDict()
@@ -223,7 +223,7 @@ class TestSyncTrustScopes:
         token = sign_jwt(pem, CLAIMS, headers={"kid": KID})
 
         for _ in range(TWO_ENTRIES):
-            with HTTPClient(config=Config()) as per_request:
+            with HTTPClient(config=HTTPConfig()) as per_request:
                 validate_token(
                     token, _validation_config(), DISCO_URL, http_client=per_request
                 )
@@ -239,7 +239,7 @@ class TestSyncTrustScopes:
 
         assert disco.call_count == TWO_ENTRIES
         assert jwks.call_count == TWO_ENTRIES
-        assert set(get_default_validation_cache().jwks) == {
+        assert set(get_default_validation_cache()._jwks) == {
             jwks_cache_key(JWKS_URL),
             jwks_cache_key(JWKS_URL, wrapped_scope),
         }
@@ -252,7 +252,7 @@ class TestSyncTrustScopes:
         token = sign_jwt(pem, CLAIMS, headers={"kid": KID})
 
         validate_token(token, _validation_config(), DISCO_URL)
-        with HTTPClient(config=Config(ca_bundle=certifi.where())) as pinned:
+        with HTTPClient(config=HTTPConfig(ca_bundle=certifi.where())) as pinned:
             validate_token(token, _validation_config(), DISCO_URL, http_client=pinned)
 
         assert disco.call_count == TWO_ENTRIES
@@ -272,7 +272,7 @@ class TestSyncTrustScopes:
                 )
 
         assert jwks.call_count == JWKS_FETCHES_TWO_SCOPES_ONE_COOLDOWN
-        assert set(get_default_validation_cache().kid_miss_last_attempt) == {JWKS_URL}
+        assert set(get_default_validation_cache()._kid_miss_last_attempt) == {JWKS_URL}
 
 
 # ============================================================================
@@ -316,7 +316,7 @@ class TestAsyncTrustScopes:
         token = sign_jwt(pem, CLAIMS, headers={"kid": KID})
 
         for _ in range(TWO_ENTRIES):
-            async with AsyncHTTPClient(config=Config()) as per_request:
+            async with AsyncHTTPClient(config=HTTPConfig()) as per_request:
                 await async_validate_token(
                     token, _validation_config(), DISCO_URL, http_client=per_request
                 )
@@ -343,6 +343,6 @@ class TestAsyncTrustScopes:
                     )
 
         assert jwks.call_count == JWKS_FETCHES_TWO_SCOPES_ONE_COOLDOWN
-        assert set(get_default_async_validation_cache().kid_miss_last_attempt) == {
+        assert set(get_default_async_validation_cache()._kid_miss_last_attempt) == {
             JWKS_URL
         }

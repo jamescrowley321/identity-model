@@ -98,29 +98,29 @@ def _get_disco_response(
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, disco_doc_address, policy.cache_key())
     # Cheap atomic dict read — no lock required for a single .get() in CPython.
-    entry = cache.disco.get(cache_key)
+    entry = cache._disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency — touch_cache_entry self-serializes the reorder
         # against _enforce_size_limit via the process-wide structure lock, so
         # the read hot-path takes no write lock (#397).
-        touch_cache_entry(cache.disco, cache_key)
+        touch_cache_entry(cache._disco, cache_key)
         return entry.response
 
-    with cache.disco_fetch_lock(cache_key):
+    with cache._disco_fetch_lock(cache_key):
         # Re-check under the URI lock — another thread may have populated
         # the entry while we waited.
-        entry = cache.disco.get(cache_key)
+        entry = cache._disco.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
-            touch_cache_entry(cache.disco, cache_key)
+            touch_cache_entry(cache._disco, cache_key)
             return entry.response
 
         response = get_discovery_document(
             DiscoveryDocumentRequest(address=disco_doc_address, policy=policy),
             http_client=client,
         )
-        with cache.disco_write_lock:
+        with cache._disco_write_lock:
             apply_disco_cache_outcome(
-                cache.disco, cache_key, response, time.monotonic(), cache.config
+                cache._disco, cache_key, response, time.monotonic(), cache.config
             )
         return response
 
@@ -128,8 +128,8 @@ def _get_disco_response(
 def clear_discovery_cache(cache: ValidationCache | None = None) -> None:
     """Clear the discovery cache of *cache* (default: the default cache)."""
     cache = _resolve_cache(cache)
-    with cache.disco_write_lock:
-        clear_cache_locked(cache.disco)
+    with cache._disco_write_lock:
+        clear_cache_locked(cache._disco)
 
 
 # ============================================================================
@@ -152,17 +152,17 @@ def _get_cached_jwks(
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, jwks_uri)
-    entry = cache.jwks.get(cache_key)
+    entry = cache._jwks.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
         # Refresh LRU recency (see _get_disco_response) — self-serializing, no
         # write lock on the read hot-path.
-        touch_cache_entry(cache.jwks, cache_key)
+        touch_cache_entry(cache._jwks, cache_key)
         return entry.response
 
-    with cache.jwks_fetch_lock(cache_key):
-        entry = cache.jwks.get(cache_key)
+    with cache._jwks_fetch_lock(cache_key):
+        entry = cache._jwks.get(cache_key)
         if entry is not None and not is_cache_expired(entry):
-            touch_cache_entry(cache.jwks, cache_key)
+            touch_cache_entry(cache._jwks, cache_key)
             return entry.response
 
         # The jwks_uri was already vetted against this policy when the
@@ -171,10 +171,10 @@ def _get_cached_jwks(
         response = get_jwks(
             JwksRequest(address=jwks_uri, policy=policy), http_client=client
         )
-        with cache.jwks_write_lock:
+        with cache._jwks_write_lock:
             store_jwks_response(
-                cache.jwks,
-                cache.kid_miss_last_attempt,
+                cache._jwks,
+                cache._kid_miss_last_attempt,
                 cache_key,
                 response,
                 cache.config,
@@ -218,9 +218,9 @@ def _refresh_jwks(
     if policy is None:
         policy = DiscoveryPolicy()
     cache_key = (client.trust_scope, jwks_uri)
-    with cache.jwks_fetch_lock(cache_key):
+    with cache._jwks_fetch_lock(cache_key):
         request_time = time.monotonic()
-        entry = cache.jwks.get(cache_key)
+        entry = cache._jwks.get(cache_key)
         # A waiter whose stale entry another refresh replaced while it was
         # blocked returns the replacement. The stale entry itself is never
         # returned: only a successful, non-empty fetch replaces an entry.
@@ -234,10 +234,10 @@ def _refresh_jwks(
         response = get_jwks(
             JwksRequest(address=jwks_uri, policy=policy), http_client=client
         )
-        with cache.jwks_write_lock:
+        with cache._jwks_write_lock:
             store_jwks_response(
-                cache.jwks,
-                cache.kid_miss_last_attempt,
+                cache._jwks,
+                cache._kid_miss_last_attempt,
                 cache_key,
                 response,
                 cache.config,
@@ -246,7 +246,7 @@ def _refresh_jwks(
             # empty-successful response. Surface that retained entry so
             # the in-flight validation has usable keys to work with.
             if response.is_successful and not response.keys:
-                retained = cache.jwks.get(cache_key)
+                retained = cache._jwks.get(cache_key)
                 if retained is not None and retained.response.keys:
                     logger.info(
                         "JWKS refresh for %s returned 200 with empty keys; "
@@ -264,9 +264,9 @@ def clear_jwks_cache(cache: ValidationCache | None = None) -> None:
     Clears the default cache's when *cache* is ``None``.
     """
     cache = _resolve_cache(cache)
-    with cache.jwks_write_lock:
-        clear_cache_locked(cache.jwks)
-        cache.kid_miss_last_attempt.clear()
+    with cache._jwks_write_lock:
+        clear_cache_locked(cache._jwks)
+        cache._kid_miss_last_attempt.clear()
 
 
 # ============================================================================
@@ -305,7 +305,7 @@ def _discover_and_resolve_key(
         k.kid == kid and is_signing_key(k) for k in cached_keys
     ):
         if should_attempt_kid_miss_refresh(
-            cache.kid_miss_last_attempt,
+            cache._kid_miss_last_attempt,
             jwks_uri,
             has_cached_keys=bool(cached_keys),
             now=time.monotonic(),
@@ -335,13 +335,13 @@ def _discover_and_resolve_key(
                 # a legitimate prior stamp on what was effectively a
                 # no-op refresh.
                 if not from_retained_cache:
-                    with cache.jwks_write_lock:
+                    with cache._jwks_write_lock:
                         if kid_found:
                             # Refresh produced the missing kid — legitimate
                             # rotation absorbed. Drop the stamp so a
                             # back-to-back second rotation within the
                             # cooldown window can still refresh.
-                            cache.kid_miss_last_attempt.pop(jwks_uri, None)
+                            cache._kid_miss_last_attempt.pop(jwks_uri, None)
                         else:
                             # Refresh completed and produced a response
                             # but the kid is still absent — DoS amplifier
@@ -349,7 +349,7 @@ def _discover_and_resolve_key(
                             # we couldn't turn into a successful
                             # validation). Stamp the cooldown to suppress
                             # repeats in the window.
-                            cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+                            cache._kid_miss_last_attempt[jwks_uri] = time.monotonic()
             else:
                 kid_found = False
             validate_jwks_response(jwks_response)
@@ -393,7 +393,7 @@ def _retry_with_refreshed_jwks(
         token_validation_config.require_https,
     )
     if not should_attempt_kid_miss_refresh(
-        cache.kid_miss_last_attempt,
+        cache._kid_miss_last_attempt,
         jwks_uri,
         has_cached_keys=True,
         now=time.monotonic(),
@@ -425,8 +425,8 @@ def _retry_with_refreshed_jwks(
         # retained-cache fallback (empty upstream response is not
         # attacker-amplifiable).
         if not from_retained_cache:
-            with cache.jwks_write_lock:
-                cache.kid_miss_last_attempt[jwks_uri] = time.monotonic()
+            with cache._jwks_write_lock:
+                cache._kid_miss_last_attempt[jwks_uri] = time.monotonic()
         raise
     # Refreshed keys verified the JWT — real rotation absorbed. Clear the
     # stamp so a subsequent legitimate rotation isn't suppressed. Only do
@@ -434,8 +434,8 @@ def _retry_with_refreshed_jwks(
     # with the cached keys all along and tells us nothing new about
     # rotation state.
     if not from_retained_cache:
-        with cache.jwks_write_lock:
-            cache.kid_miss_last_attempt.pop(jwks_uri, None)
+        with cache._jwks_write_lock:
+            cache._kid_miss_last_attempt.pop(jwks_uri, None)
     return decoded
 
 
@@ -461,10 +461,10 @@ def validate_token(
         disco_doc_address: Discovery document address (required if perform_disco=True)
         http_client: Optional managed HTTP client. When ``None`` (the default),
             the library default client is used. It sends the discovery and
-            JWKS requests; its ``Config`` sets the timeout, retries, TLS and
+            JWKS requests; its ``HTTPConfig`` sets the timeout, retries, TLS and
             JWKS size limits.
         cache: Optional :class:`ValidationCache` holding the discovery
-            document, the JWKS and the kid-miss cooldown. Its ``Config`` sets
+            document, the JWKS and the kid-miss cooldown. Its ``CacheConfig`` sets
             their TTLs, size and cooldown. When ``None`` (the default), the
             process-wide default cache is used, whichever client is passed.
         presentation: How the token arrived on the request

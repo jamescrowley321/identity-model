@@ -25,7 +25,7 @@ marked `use: "enc"` is never used, whether the token's `kid` names it or the
 token has no `kid`.
 
 - A `kid` that names no signing key is a key miss. Validation refreshes the
-  JWK Set once (subject to `Config.jwks_kid_miss_cooldown`) and then raises
+  JWK Set once (subject to `CacheConfig.jwks_kid_miss_cooldown`) and then raises
   `KeyNotFoundException`.
 - A token with no `kid` uses the single signing key left after narrowing by
   `alg` and `kty`. With no signing key in the set it raises

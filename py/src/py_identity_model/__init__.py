@@ -5,10 +5,11 @@ Provides both synchronous and asynchronous APIs for OpenID Connect operations.
 
 from .core.cache_metrics import CacheCounters, get_cache_counters
 from .core.config import (
+    CacheConfig,
     ClientAuthMethod,
-    Config,
     ConfigError,
     ConfigIssue,
+    HTTPConfig,
 )
 from .core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 
@@ -27,6 +28,7 @@ from .exceptions import (
     DiscoveryIssuerMismatchError,
     DiscoveryMissingFieldsError,
     DiscoveryParseError,
+    DPoPReplayCacheError,
     FailedResponseAccessError,
     IdTokenValidationException,
     InvalidAudienceException,
@@ -59,6 +61,7 @@ from .sync import (
     FAPI2_MAX_REQUEST_OBJECT_LIFETIME,
     FAPI2_REQUIRED_PKCE_METHOD,
     FAPI2_REQUIRED_RESPONSE_TYPE,
+    AsyncDPoPReplayCache,
     AuthorizationCodeTokenRequest,
     AuthorizationCodeTokenResponse,
     AuthorizationScheme,
@@ -91,6 +94,7 @@ from .sync import (
     DPoPProof,
     DPoPProofRequest,
     DPoPReplayCache,
+    DPoPReplayCheck,
     DPoPValidationError,
     DPoPVerificationOptions,
     FAPI2ClientProfile,
@@ -155,7 +159,6 @@ from .sync import (
     generate_code_verifier,
     generate_dpop_key,
     generate_pkce_pair,
-    get_default_dpop_replay_cache,
     get_default_validation_cache,
     get_discovery_document,
     get_jwks,
@@ -205,6 +208,7 @@ __all__ = [
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
     "AmbiguousKeyException",
+    "AsyncDPoPReplayCache",
     # Auth Code + PKCE
     "AuthorizationCodeTokenRequest",
     "AuthorizationCodeTokenResponse",
@@ -217,6 +221,7 @@ __all__ = [
     # Base Classes
     "BaseRequest",
     "BaseResponse",
+    "CacheConfig",
     "CacheCounters",
     # mTLS (RFC 8705)
     "CertificateBindingError",
@@ -240,7 +245,6 @@ __all__ = [
     "ClientRegistrationRequest",
     "ClientRegistrationResponse",
     "ClientUpdateRequest",
-    "Config",
     "ConfigError",
     "ConfigIssue",
     "ConfigurationException",
@@ -251,6 +255,8 @@ __all__ = [
     "DPoPProof",
     "DPoPProofRequest",
     "DPoPReplayCache",
+    "DPoPReplayCacheError",
+    "DPoPReplayCheck",
     "DPoPValidationError",
     "DPoPVerificationOptions",
     # Device Authorization Grant
@@ -277,6 +283,7 @@ __all__ = [
     "FailedResponseAccessError",
     # HTTP Client
     "HTTPClient",
+    "HTTPConfig",
     "IdTokenValidationException",
     "InMemoryDPoPReplayCache",
     "IntrospectedTokenError",
@@ -361,7 +368,6 @@ __all__ = [
     "generate_dpop_key",
     "generate_pkce_pair",
     "get_cache_counters",
-    "get_default_dpop_replay_cache",
     # Sync API (default)
     "get_default_validation_cache",
     "get_discovery_document",

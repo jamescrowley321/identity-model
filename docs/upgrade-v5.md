@@ -7,8 +7,9 @@ releases a matching version that requires py-identity-model 5.
 
 Most applications need three edits:
 
-1. Build a `Config` and pass it on an `HTTPClient` / `AsyncHTTPClient`
-   instead of setting `HTTP_TIMEOUT` and the other environment variables.
+1. Build an `HTTPConfig` and pass it on an `HTTPClient` / `AsyncHTTPClient`
+   (and a `CacheConfig` on a `ValidationCache`) instead of setting
+   `HTTP_TIMEOUT` and the other environment variables.
 2. If you use the FastAPI package, replace `OIDCSettings.from_env()` with
    `oidc_settings_from_env()`.
 3. Pass `trusted_audiences=` to `validate_id_token` (or set
@@ -20,12 +21,27 @@ Connect specifications already forbid. A conforming provider is unaffected.
 
 ## Configuration
 
-### `Config` is a plain typed value ([#892](https://github.com/jamescrowley321/identity-model/pull/892))
+### Settings are two plain typed values, `HTTPConfig` and `CacheConfig` ([#892](https://github.com/jamescrowley321/identity-model/pull/892), [#1060](https://github.com/jamescrowley321/identity-model/issues/1060))
 
 `Config.from_env`, `Config.build`, `ConfigSource`, `EnvSource`,
-`MappingSource` and `Secret` are removed. Build a `Config` with keyword
-arguments; each setting has a default, so `Config()` is complete. An invalid
-value raises one `ConfigError` (a `ValueError`) listing every bad setting.
+`MappingSource` and `Secret` are removed, and so is `Config` itself. The
+settings are on two frozen values, each taken only by the object that reads
+it:
+
+- `HTTPConfig` (`http_timeout`, `http_retry_max_attempts`,
+  `http_retry_base_delay`, `ca_bundle`, `jwks_max_size`, `jwks_max_keys`), for
+  `HTTPClient` / `AsyncHTTPClient`.
+- `CacheConfig` (`jwks_cache_ttl`, `jwks_kid_miss_cooldown`,
+  `discovery_cache_ttl`, `cache_max_entries`), for `ValidationCache` /
+  `AsyncValidationCache`.
+
+Build them with keyword arguments; each setting has a default, so
+`HTTPConfig()` and `CacheConfig()` are complete. An invalid value raises one
+`ConfigError` (a `ValueError`) listing every bad setting. A setting of the
+other config (`HTTPConfig(cache_max_entries=8)`), or the other config passed
+to a client or cache (`HTTPClient(config=CacheConfig())`), raises `TypeError`.
+A single `Config` used to be accepted by both and each silently ignored the
+other's settings.
 
 Before:
 
@@ -38,9 +54,10 @@ config = Config.build(overrides={"http.timeout": "10"})
 After:
 
 ```python
-from py_identity_model import Config
+from py_identity_model import CacheConfig, HTTPConfig
 
-config = Config(http_timeout=10.0)
+http_config = HTTPConfig(http_timeout=10.0)
+cache_config = CacheConfig(cache_max_entries=128)
 ```
 
 Also changed:
@@ -48,7 +65,7 @@ Also changed:
 - `jwks_cache_max_entries` and `discovery_cache_max_entries` are replaced by
   one `cache_max_entries` (at least 1), applied to each cache.
 - The client settings (`client_id`, `client_secret`, discovery URL, scope,
-  audience, redirect URIs, excluded paths) are no longer on `Config`. For the
+  audience, redirect URIs, excluded paths) are on neither config. For the
   FastAPI package they live on `OIDCSettings`.
 - `ConfigIssue` carries `setting` and `message` instead of `code` and `keys`.
 
@@ -60,12 +77,12 @@ These variables are now ignored: `HTTP_TIMEOUT`, `HTTP_RETRY_MAX_ATTEMPTS`,
 `HTTP_RETRY_COUNT`, `HTTP_RETRY_BASE_DELAY`, `MAX_JWKS_SIZE`,
 `MAX_JWKS_KEYS`, `JWKS_CACHE_TTL`, `DISCO_CACHE_TTL`,
 `KID_MISS_REFRESH_COOLDOWN`, `JWKS_CACHE_MAX_ENTRIES`, `SSL_CERT_FILE`,
-`CURL_CA_BUNDLE` and `REQUESTS_CA_BUNDLE`. A `Config` takes effect only on a
-client you pass as `http_client=`, or, for the cache settings, on a
+`CURL_CA_BUNDLE` and `REQUESTS_CA_BUNDLE`. An `HTTPConfig` takes effect only on
+a client you pass as `http_client=`, and a `CacheConfig` only on a
 `ValidationCache` you pass as `cache=` (see
 [Caches live on a `ValidationCache`](#caches-live-on-a-validationcache-not-on-the-http-client-953)).
 Without one, an entry point uses the library default client or cache, built
-from `Config()`.
+from `HTTPConfig()` or `CacheConfig()`.
 
 Before:
 
@@ -76,36 +93,41 @@ from py_identity_model import validate_token
 claims = validate_token(token, validation_config, DISCO_URL)
 ```
 
-After, building the `Config` in code:
+After, building the `HTTPConfig` in code:
 
 ```python
-from py_identity_model import Config, HTTPClient, validate_token
+from py_identity_model import HTTPClient, HTTPConfig, validate_token
 
-with HTTPClient(config=Config(http_timeout=10.0, jwks_max_keys=20)) as client:
+with HTTPClient(config=HTTPConfig(http_timeout=10.0, jwks_max_keys=20)) as client:
     claims = validate_token(token, validation_config, DISCO_URL, http_client=client)
 ```
 
 After, keeping the same variables with the optional helper:
 
 ```python
-from py_identity_model import HTTPClient
-from py_identity_model.config_helpers import config_from_env
+from py_identity_model import HTTPClient, ValidationCache
+from py_identity_model.config_helpers import (
+    cache_config_from_env,
+    http_config_from_env,
+)
 
-client = HTTPClient(config=config_from_env())
+client = HTTPClient(config=http_config_from_env())
+cache = ValidationCache(config=cache_config_from_env())
 ```
 
-`config_from_env()` reads the variable names listed above (`JWKS_CACHE_MAX_ENTRIES`
-sets `cache_max_entries`). `config_from_env(prefix="APP_")` reads
-`APP_HTTP_TIMEOUT` and so on, and `config_from_mapping()` takes any mapping,
-such as python-dotenv's `dotenv_values()`.
+`http_config_from_env()` and `cache_config_from_env()` read the variable names
+listed above, each for its own settings (`JWKS_CACHE_MAX_ENTRIES` sets
+`CacheConfig.cache_max_entries`). `prefix="APP_"` reads `APP_HTTP_TIMEOUT` and
+so on, and `http_config_from_mapping()` / `cache_config_from_mapping()` take
+any mapping, such as python-dotenv's `dotenv_values()`.
 
 The async client works the same way:
 
 ```python
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient, validate_token
 
-async with AsyncHTTPClient(config=Config(http_timeout=10.0)) as client:
+async with AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     claims = await validate_token(token, validation_config, DISCO_URL, http_client=client)
 ```
 
@@ -114,21 +136,24 @@ Also changed:
 - `HTTPClient` / `AsyncHTTPClient` no longer take `timeout=` or `verify=`.
   For `verify=False` (in a test) or a proxy, wrap your own httpx client:
   `HTTPClient(httpx.Client(verify=False), config=config)`. The wrapped client
-  keeps its own timeout and TLS settings; the `Config` still sets retries
-  and JWKS limits.
+  keeps its own timeout and TLS settings; the `HTTPConfig` still sets
+  retries and JWKS limits.
 - `get_retry_config`, `get_timeout`, `get_max_jwks_size` and
   `get_max_jwks_keys` in `py_identity_model.core.http_utils` are removed.
-  `py_identity_model.ssl_config.get_ssl_verify(config)` takes a `Config`.
+  `py_identity_model.ssl_config.get_ssl_verify(config)` takes an
+  `HTTPConfig`.
 - `get_max_cache_entries` and `get_kid_miss_cooldown` in
   `py_identity_model.core.jwks_cache` are removed; read
-  `config.cache_max_entries` and `config.jwks_kid_miss_cooldown` instead.
+  `CacheConfig.cache_max_entries` and `CacheConfig.jwks_kid_miss_cooldown`
+  instead.
   `resolve_ttl(cache_control, default_ttl)` and
   `resolve_disco_ttl(cache_control, default_ttl)` take the fallback TTL as a
   required argument.
 - `build_mtls_client(mtls, config)` (sync and async) and
-  `build_mtls_ssl_context(mtls, config)` take a required `Config`.
+  `build_mtls_ssl_context(mtls, config)` take a required `HTTPConfig`.
 - `get_default_http_client()` and `get_default_async_http_client()` return the
-  client that every call without `http_client=` uses, built from `Config()`.
+  client that every call without `http_client=` uses, built from
+  `HTTPConfig()`.
 
 httpx still honours `SSL_CERT_FILE`, `SSL_CERT_DIR` and the proxy variables
 when it builds a client with its default `trust_env=True`. To turn that off,
@@ -137,8 +162,8 @@ wrap an `httpx.Client(trust_env=False)`.
 ### mTLS requests never go through a caller-owned client ([#895](https://github.com/jamescrowley321/identity-model/pull/895))
 
 In 4.x a request with `mtls=` and an `http_client=` raised `ValueError`. In
-5.0 the pair is accepted when `http_client` is built from a `Config`: the request goes through a short-lived client that
-presents the certificate, built from your `http_client`'s `Config`
+5.0 the pair is accepted when `http_client` is built from an `HTTPConfig`: the request goes through a short-lived client that
+presents the certificate, built from your `http_client`'s `HTTPConfig`
 (`ca_bundle`, `http_timeout`, retries). The request never uses your client's
 own httpx connection pool, transport or TLS settings, because a pooled client
 cannot be guaranteed to present the certificate (RFC 8705 §2). A closed
@@ -154,17 +179,17 @@ response = request_client_credentials_token(request)  # request.mtls is set
 After:
 
 ```python
-from py_identity_model import Config, HTTPClient
+from py_identity_model import HTTPClient, HTTPConfig
 
-with HTTPClient(config=Config(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
+with HTTPClient(config=HTTPConfig(ca_bundle="/etc/ssl/private-ca.pem")) as http_client:
     response = request_client_credentials_token(request, http_client=http_client)
 ```
 
-This works only with an `HTTPClient` built from a `Config`. An `HTTPClient`
+This works only with an `HTTPClient` built from an `HTTPConfig`. An `HTTPClient`
 that wraps your own `httpx.Client` still raises `ValueError` when combined
 with `mtls=`, because that client's TLS settings (a pinned CA, a proxy, a
 custom transport) cannot be carried over to the certificate client. Set
-`ca_bundle` on the `Config` instead. See [Mutual TLS](api/mtls.md).
+`ca_bundle` on the `HTTPConfig` instead. See [Mutual TLS](api/mtls.md).
 
 ### Caches live on a `ValidationCache`, not on the HTTP client ([#953](https://github.com/jamescrowley321/identity-model/issues/953))
 
@@ -180,7 +205,7 @@ clients only send requests and hold no cache.
   rate-limited like the default one, and a client built per request still
   shares the kid-miss cooldown.
 - Cached documents are kept per transport trust scope: clients built from a
-  `Config` share them per `Config.ca_bundle`, and a client wrapping your own
+  `HTTPConfig` share them per `HTTPConfig.ca_bundle`, and a client wrapping your own
   httpx client shares them only with other wrappers of that httpx client. A
   JWKS fetched through a `verify=False` or proxied client is never used by a
   client that verifies TLS. The kid-miss cooldown is shared by all of them.
@@ -191,8 +216,14 @@ clients only send requests and hold no cache.
   call `clear_discovery_cache()` and `clear_jwks_cache()`, or build a fresh
   `ValidationCache`.
 - The cache settings (`jwks_cache_ttl`, `discovery_cache_ttl`,
-  `cache_max_entries`, `jwks_kid_miss_cooldown`) are read from the cache's
-  `Config`. On a client's `Config` they have no effect.
+  `cache_max_entries`, `jwks_kid_miss_cooldown`) are on the cache's
+  `CacheConfig`. An `HTTPConfig` has no cache settings.
+- A `ValidationCache`'s state is private
+  ([#1060](https://github.com/jamescrowley321/identity-model/issues/1060)):
+  `disco`, `jwks`, `disco_write_lock`, `jwks_write_lock`,
+  `kid_miss_last_attempt` and the fetch-lock methods are no longer public
+  attributes. Its only public member is `config`; clear it with
+  `clear_discovery_cache(cache=...)` / `clear_jwks_cache(cache=...)`.
 - `clear_discovery_cache()` and `clear_jwks_cache()` take an optional `cache`
   and clear the default cache when it is omitted.
 - The default cache and the library default HTTP clients are rebuilt in a
@@ -212,9 +243,9 @@ claims = validate_token(token, validation_config, DISCO_URL)
 After:
 
 ```python
-from py_identity_model import Config, ValidationCache, validate_token
+from py_identity_model import CacheConfig, validate_token, ValidationCache
 
-cache = ValidationCache(config=Config(jwks_cache_ttl=900.0))  # once, at startup
+cache = ValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))  # once, at startup
 
 claims = validate_token(token, validation_config, DISCO_URL, cache=cache)
 ```
@@ -228,7 +259,7 @@ history. In the FastAPI package, pass it as `cache=` to
 ### The JWKS cache keeps keys for 1 hour, not 24 ([#953](https://github.com/jamescrowley321/identity-model/issues/953))
 
 When the JWKS response has no `Cache-Control: max-age`, the key set is now
-kept for 1 hour (`Config.jwks_cache_ttl` defaults to `3600`, was `86400`). A
+kept for 1 hour (`CacheConfig.jwks_cache_ttl` defaults to `3600`, was `86400`). A
 key the provider pulls stops validating within the hour. A provider's
 `max-age` still wins, clamped to 60 – 86400 seconds as before. A provider
 without `max-age` sees up to one JWKS fetch per hour per process instead of
@@ -237,9 +268,9 @@ one per day.
 To keep the 4.x lifetime:
 
 ```python
-from py_identity_model import Config, ValidationCache
+from py_identity_model import CacheConfig, ValidationCache
 
-cache = ValidationCache(config=Config(jwks_cache_ttl=86400.0))
+cache = ValidationCache(config=CacheConfig(jwks_cache_ttl=86400.0))
 ```
 
 ### One `ClientAuthMethod` enum, chosen per request ([#934](https://github.com/jamescrowley321/identity-model/issues/934), [#1056](https://github.com/jamescrowley321/identity-model/issues/1056))
@@ -345,16 +376,16 @@ settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID,
 settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
 ```
 
-HTTP settings for the FastAPI package come from a py-identity-model `Config`
-on an `AsyncHTTPClient`, passed as `http_client=` to
+HTTP settings for the FastAPI package come from a py-identity-model
+`HTTPConfig` on an `AsyncHTTPClient`, passed as `http_client=` to
 `TokenValidationMiddleware`, `build_oidc_router`, `build_ws_authenticator`
 and `TokenManager`:
 
 ```python
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient
 
-http_client = AsyncHTTPClient(config=Config(http_timeout=10.0))
+http_client = AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0))
 app.include_router(build_oidc_router(settings, http_client=http_client), prefix="/auth")
 ```
 
@@ -456,6 +487,81 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
   the request, so a client that controls the `Host` header your app sees can
   get a proof minted for another origin past the `htu` check. Set it unless a
   trusted proxy pins `Host`.
+
+### DPoP: the replay cache is yours ([#1060](https://github.com/jamescrowley321/identity-model/issues/1060))
+
+`DPoPVerificationOptions` now requires `replay_cache=`, and the process-wide
+default replay cache is gone (`get_default_dpop_replay_cache` is removed). A
+proof is recorded by the replay cache you pass, which the whole resource
+server (or every process behind a load balancer) must share. Build it once:
+
+```python
+from py_identity_model import (
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    TokenValidationConfig,
+)
+
+dpop = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())  # at startup
+config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
+```
+
+A common mistake: building the options (and so the cache) inside the request
+handler. Each request then gets an empty cache, so every replay within the
+proof window is accepted, with no error. Build them once at startup.
+
+- A DPoP-bound access token with a proof and no `dpop` options
+  (`TokenValidationConfig.dpop=None`, or `check_introspection_binding` without
+  `dpop=`) now raises `ConfigurationException`. It used to be checked against
+  the hidden process-wide cache. `TokenValidationConfig` with
+  `required_binding=TokenBinding.DPOP` and no `dpop` raises it when built.
+- A replay cache whose `check_and_store` does not take the four arguments
+  below (a 4.x three-argument cache) is refused by `DPoPVerificationOptions`
+  with `TypeError`.
+- `verify_dpop_proof(proof, request, options)` takes `options` as a required
+  argument, and `DPoPVerificationOptions` is keyword-only.
+- `DPoPReplayCache.check_and_store(jkt, jti, expires_at, now)` takes the proof
+  key's thumbprint, so one client's `jti` can never block another's, and
+  returns a `DPoPReplayCheck` (`RECORDED`, `REPLAYED` or `FULL`). It no longer
+  returns `bool` or raises `REPLAY_CACHE_FULL`; the verifier raises
+  `DPoPValidationError` with `REPLAYED_JTI` or `REPLAY_CACHE_FULL` from the
+  answer. A custom cache must be updated.
+- For a store reached over the network, implement `AsyncDPoPReplayCache`
+  (an `async def check_and_store`) and use the async validators
+  (`py_identity_model.aio.validate_token`,
+  `py_identity_model.aio.check_introspection_binding`,
+  `py_identity_model.aio.verify_dpop_proof`). The sync validators refuse an
+  async cache, or any cache that returns an awaitable, with
+  `DPoPReplayCacheError` (a `ConfigurationException`).
+- A cache answer that is not a `DPoPReplayCheck` raises `DPoPReplayCacheError`.
+  The FastAPI middleware answers it with `500` (WebSocket close `1011`).
+- `py_identity_model.aio.check_introspection_binding` and
+  `py_identity_model.aio.verify_dpop_proof` are coroutines, like every `aio`
+  function, and must be awaited. A call without `await` runs no check and
+  raises nothing, so an inactive, unbound or replayed token is accepted:
+
+  ```python
+  from py_identity_model.aio import check_introspection_binding, verify_dpop_proof
+
+  await check_introspection_binding(response, access_token, presentation, dpop=dpop)
+  proof = await verify_dpop_proof(dpop_header, proof_request, dpop)
+
+  # Wrong: returns an unawaited coroutine; nothing is checked.
+  check_introspection_binding(response, access_token, presentation, dpop=dpop)
+  ```
+
+  Python only logs `RuntimeWarning: coroutine ... was never awaited`. A type
+  checker catches a missing `await`: pyright's `reportUnusedCoroutine` and
+  pyrefly's `unused-coroutine` are on by default; keep them on.
+- The proof is recorded last, after the certificate binding check too, so a
+  token refused for its certificate does not use up its proof.
+- The FastAPI package keeps one default replay cache per process:
+  `AuthOptions.dpop` (and `AuthOptions(dpop=None)`) defaults to options with
+  an `InMemoryDPoPReplayCache` shared by every middleware and WebSocket
+  authenticator built without explicit `dpop` options. Explicit
+  `AuthOptions(dpop=...)` options use the cache you pass.
+- `InMemoryDPoPReplayCache` copies (`copy.deepcopy`, `dataclasses.asdict`)
+  are the same cache; pickling one raises `TypeError`.
 
 ## Discovery
 
@@ -1190,7 +1296,7 @@ verification. The defaults are:
   signed introspection in discovery mode, the part of it the server
   advertises; see [#1067](#signed-introspection-gets-its-keys-from-discovery-1067)),
   so a plain RS256 authorization server works for signed introspection, and
-  `DPoPVerificationOptions().accepted_algorithms` (the `algs` of a
+  `DPoPVerificationOptions(replay_cache=...).accepted_algorithms` (the `algs` of a
   `WWW-Authenticate: DPoP` challenge) lists all ten. Neither defaults to the
   FAPI 2.0 set: a FAPI 2.0 deployment passes
   `algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS`.
@@ -1202,12 +1308,16 @@ verification. The defaults are:
 
 ```python
 from py_identity_model import (
-    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
     DPoPVerificationOptions,
+    FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    InMemoryDPoPReplayCache,
     SignedIntrospectionOptions,
 )
 
-dpop = DPoPVerificationOptions(algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS)
+dpop = DPoPVerificationOptions(
+    algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS,
+    replay_cache=InMemoryDPoPReplayCache(),
+)
 signed = SignedIntrospectionOptions(
     issuer=issuer, jwks=jwks, algorithms=FAPI2_ALLOWED_SIGNING_ALGORITHMS
 )
@@ -1227,7 +1337,7 @@ have no floor. A provider still signing with a 1024-bit RSA key must rotate
 it. Its tokens fail validation until it does.
 
 ```python
-from py_identity_model import WeakKeyException, validate_token
+from py_identity_model import validate_token, WeakKeyException
 
 try:
     claims = validate_token(token, validation_config, DISCOVERY_URL)
@@ -1245,7 +1355,7 @@ non-empty string `sub`, whether or not you pass `expected_sub`. In 4.x this
 was checked only when `expected_sub` was set.
 
 ```python
-from py_identity_model import UserInfoRequest, get_userinfo
+from py_identity_model import get_userinfo, UserInfoRequest
 
 response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token))
 if not response.is_successful:

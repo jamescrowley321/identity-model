@@ -6,7 +6,7 @@ from email.utils import format_datetime
 import httpx
 import pytest
 
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.core.http_utils import (
     MAX_RETRY_DELAY_SECONDS,
     parse_retry_after,
@@ -105,7 +105,7 @@ class TestSyncRetryHonorsRetryAfter:
         def call(_client: httpx.Client) -> httpx.Response:
             return responses.pop(0)
 
-        config = Config(http_retry_max_attempts=1, http_retry_base_delay=0)
+        config = HTTPConfig(http_retry_max_attempts=1, http_retry_base_delay=0)
         with HTTPClient(config=config) as client:
             result = call(client)
 

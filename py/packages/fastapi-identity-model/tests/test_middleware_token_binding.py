@@ -7,11 +7,15 @@ a static key instead of discovery, so the signature, claims and binding checks
 """
 
 from base64 import urlsafe_b64encode
+import copy
+import dataclasses
 from dataclasses import FrozenInstanceError, replace
 import datetime
+import logging
 import time
 from types import SimpleNamespace
 from urllib.parse import quote
+import uuid
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -35,6 +39,9 @@ from fastapi_identity_model import (
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
+    ConfigurationException,
+    DPoPErrorKind,
+    DPoPReplayCheck,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
@@ -43,6 +50,7 @@ from py_identity_model import (
     generate_dpop_key,
 )
 from py_identity_model.aio import validate_token as avalidate_token
+from py_identity_model.core import process_local
 
 
 pytestmark = pytest.mark.unit
@@ -52,7 +60,9 @@ ISSUER = "https://op"
 AUDIENCE = "urn:api"
 URL = "http://testserver/me"
 GENERIC_BODY = {"detail": "Invalid or unauthorized token"}
-ALGS = " ".join(DPoPVerificationOptions().accepted_algorithms)
+ALGS = " ".join(
+    DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()).accepted_algorithms
+)
 INVALID_TOKEN_DPOP = f'DPoP error="invalid_token", algs="{ALGS}"'
 INVALID_PROOF_DPOP = f'DPoP error="invalid_dpop_proof", algs="{ALGS}"'
 
@@ -586,6 +596,97 @@ class TestSettingsWiring:
 
         assert exc.value.code == status.WS_1008_POLICY_VIOLATION
 
+    async def test_proof_from_ws_handshake_is_refused_over_http(
+        self, raw_client, raw_ws_authenticate, oidc_env, token
+    ):
+        # Entry points given the same settings share one replay cache, so a
+        # handshake proof (htm=GET) cannot be replayed on an HTTP GET.
+        oidc_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com")
+        settings = oidc_settings_from_env()
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key, url="https://api.example.com/me")
+
+        ws_claims = await raw_ws_authenticate(
+            list(headers.items()), url="ws://testserver/me", settings=settings
+        )
+        async with raw_client(settings=settings) as c:
+            replayed = await c.get("/me", headers=headers)
+
+        assert (ws_claims["cnf"], _rejected(replayed)) == (
+            {"jkt": key.jwk_thumbprint},
+            (401, INVALID_PROOF_DPOP, GENERIC_BODY),
+        )
+
+    async def test_entry_points_without_options_share_a_replay_cache(
+        self, raw_client, raw_ws_authenticate, token, caplog
+    ):
+        # Built separately with only discovery_url=: a handshake proof
+        # (htm=GET) replayed on an HTTP GET is still refused.
+        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key)
+
+        ws_claims = await raw_ws_authenticate(
+            list(headers.items()), url="ws://testserver/me", **common
+        )
+        with caplog.at_level(logging.INFO, logger=mw.logger.name):
+            async with raw_client(**common) as c:
+                replayed = await c.get("/me", headers=headers)
+
+        assert (ws_claims["cnf"], _rejected(replayed)) == (
+            {"jkt": key.jwk_thumbprint},
+            (401, INVALID_PROOF_DPOP, GENERIC_BODY),
+        )
+        assert (
+            f"DPoP binding rejected: {DPoPErrorKind.REPLAYED_JTI.value}"
+            in caplog.messages
+        )
+
+    async def test_misconfigured_replay_cache_is_a_server_error(
+        self, raw_client, raw_ws_authenticate, token
+    ):
+        # A cache answering True instead of a DPoPReplayCheck is the server's
+        # fault: 500 / 1011, not a 401 that blames the client.
+        class BoolCache:
+            def check_and_store(self, *_args: object) -> bool:
+                return True
+
+        options = AuthOptions(dpop=DPoPVerificationOptions(replay_cache=BoolCache()))
+        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+
+        async with raw_client(options=options, **common) as c:
+            http = await c.get("/me", headers=_dpop_headers(bound, key))
+        with pytest.raises(WebSocketException) as ws_exc:
+            await raw_ws_authenticate(
+                list(_dpop_headers(bound, key).items()),
+                url="ws://testserver/me",
+                options=options,
+                **common,
+            )
+
+        assert (http.status_code, http.json(), ws_exc.value.code) == (
+            500,
+            {"detail": "Internal server error during authentication"},
+            status.WS_1011_INTERNAL_ERROR,
+        )
+
+    async def test_other_configuration_errors_stay_401(self, raw_client, monkeypatch):
+        # Only an unusable replay cache is a 500; a ConfigurationException from
+        # the provider's data keeps the generic 401.
+        async def bad_discovery(*_args: object, **_kwargs: object) -> dict:
+            raise ConfigurationException("Discovery document missing jwks_uri")
+
+        monkeypatch.setattr(mw, "validate_token", bad_discovery)
+
+        async with raw_client(discovery_url=DISCOVERY_URL, audience=AUDIENCE) as c:
+            resp = await c.get("/me", headers={"Authorization": "Bearer t"})
+
+        assert (resp.status_code, resp.json()) == (401, GENERIC_BODY)
+
     async def test_env_mtls_reads_certificate_header(
         self, raw_client, oidc_env, token, client_cert_pem
     ):
@@ -847,6 +948,58 @@ class TestSharedOptions:
             {"jkt": key.jwk_thumbprint},
             status.WS_1008_POLICY_VIOLATION,
         )
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_default_dpop_options_share_one_replay_cache(self):
+        # Every entry point built without dpop= shares this process's cache;
+        # explicit dpop= options keep their own.
+        first, second = AuthOptions(), AuthOptions()
+        from_settings = AuthOptions.from_settings(oidc_settings_from_env())
+        explicit = AuthOptions(
+            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+        )
+        caches = [o.dpop.replay_cache for o in (first, second, from_settings)]
+
+        assert [c is first.dpop.replay_cache for c in caches] == [True] * 3
+        assert explicit.dpop.replay_cache is not first.dpop.replay_cache
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_copies_keep_the_replay_cache(self):
+        settings = oidc_settings_from_env()
+        options = AuthOptions.from_settings(settings)
+        cache = options.dpop.replay_cache
+
+        assert dataclasses.asdict(settings) == dataclasses.asdict(
+            copy.deepcopy(settings)
+        )
+        assert [
+            dataclasses.asdict(options)["dpop"]["replay_cache"] is cache,
+            copy.deepcopy(options).dpop.replay_cache is cache,
+        ] == [True, True]
+
+    def test_options_built_before_a_fork_use_the_childs_cache(self, monkeypatch):
+        # gunicorn --preload builds the WS authenticator in the parent and the
+        # middleware in the worker; both must record into the worker's cache.
+        before_fork = AuthOptions().dpop.replay_cache
+        args = ("jkt", str(uuid.uuid4()), 2_000_000_000.0, 1_000_000_000.0)
+        in_parent = before_fork.check_and_store(*args)
+        monkeypatch.setattr(process_local.os, "getpid", lambda: -1)
+        in_child = [before_fork.check_and_store(*args) for _ in range(2)]
+        built_in_child = AuthOptions().dpop.replay_cache.check_and_store(*args)
+
+        assert [in_parent, *in_child, built_in_child] == [
+            DPoPReplayCheck.RECORDED,
+            DPoPReplayCheck.RECORDED,
+            DPoPReplayCheck.REPLAYED,
+            DPoPReplayCheck.REPLAYED,
+        ]
+
+    def test_dpop_none_means_the_default(self):
+        given = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+        defaulted = AuthOptions(dpop=None)  # type: ignore[arg-type]
+
+        assert defaulted.dpop.replay_cache is AuthOptions().dpop.replay_cache
+        assert AuthOptions(dpop=given).dpop is given
 
     def test_options_are_frozen(self):
         options = AuthOptions()

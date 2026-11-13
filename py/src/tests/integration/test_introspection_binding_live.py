@@ -154,9 +154,11 @@ async def test_async_bound_opaque_token(opaque_client):
     assert response.is_successful, response.error
 
     with pytest.raises(DPoPValidationError) as exc:
-        acheck_introspection_binding(response, token, None, dpop=_options())
+        await acheck_introspection_binding(response, token, None, dpop=_options())
     assert exc.value.kind is DPoPErrorKind.PROOF_REQUIRED
-    acheck_introspection_binding(response, token, _dpop(key, token), dpop=_options())
+    await acheck_introspection_binding(
+        response, token, _dpop(key, token), dpop=_options()
+    )
 
 
 def test_unbound_opaque_token_without_presentation_accepted(opaque_client):

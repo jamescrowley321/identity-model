@@ -27,7 +27,7 @@ def _fetch_jwks(client: httpx.Client, url: str) -> httpx.Response:
     Fetch JWKS with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Retry settings come from the client's Config.
+    exponential backoff. Retry settings come from the client's HTTPConfig.
     """
     return client.get(url)
 

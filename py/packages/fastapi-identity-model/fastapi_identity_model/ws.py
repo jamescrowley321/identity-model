@@ -46,6 +46,7 @@ from jwt import InvalidTokenError
 
 from py_identity_model import (
     AuthorizationScheme,
+    DPoPReplayCacheError,
     NetworkException,
     PyIdentityModelException,
     TokenValidationConfig,
@@ -146,7 +147,7 @@ def build_ws_authenticator(
         access_token_marker_claims: Positive access-token marker claims for
             ``require_access_token_marker``. Defaults to ``("scope", "scp")``.
         http_client: Managed HTTP client for discovery and JWKS, built from
-            your ``Config``. ``None`` uses the library default client.
+            your ``HTTPConfig``. ``None`` uses the library default client.
         cache: The :class:`~py_identity_model.aio.AsyncValidationCache` for
             the discovery document, keys and kid-miss cooldown. ``None`` uses
             the library default cache.
@@ -236,6 +237,13 @@ def build_ws_authenticator(
                     ),
                 ),
             )
+        except DPoPReplayCacheError as e:
+            # A replay cache that cannot be used is the server's fault.
+            logger.exception("Replay cache error during WS token validation")
+            raise WebSocketException(
+                code=_WS_INTERNAL_ERROR,
+                reason="Internal error during authentication",
+            ) from e
         except PyIdentityModelException as e:
             if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):
                 logger.exception("Upstream fetch failure during WS token validation")

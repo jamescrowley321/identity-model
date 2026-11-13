@@ -369,6 +369,14 @@ class DiscoveryHTTPSRequiredError(ConfigurationException):
     """A discovery URL violates the HTTPS requirement."""
 
 
+class DPoPReplayCacheError(ConfigurationException):
+    """A DPoP replay cache cannot be used as configured.
+
+    An async cache on a sync path, or a cache whose ``check_and_store`` does
+    not return a ``DPoPReplayCheck``. A server fault, not a token defect.
+    """
+
+
 class AzpRequiresClientIdError(ConfigurationException):
     """``validate_azp`` was enabled without a ``client_id`` to compare against.
 

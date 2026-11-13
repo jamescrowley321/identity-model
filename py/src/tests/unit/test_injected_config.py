@@ -1,12 +1,12 @@
-"""Clients and caches take an injected ``Config``; the library reads no
+"""Clients and caches take an injected config; the library reads no
 environment (#753, #953).
 
 Covers Story 25.2: ``HTTPClient`` / ``AsyncHTTPClient`` accept ``config=``,
-``None`` means ``Config()`` defaults (not the environment), and the client's
-``Config`` governs transport (timeout, retries, JWKS limits). The discovery
-cache, JWKS cache and kid-miss cooldown live on a ``ValidationCache`` /
-``AsyncValidationCache`` whose own ``Config`` sets their size and cooldown;
-cache settings on a client's ``Config`` are ignored.
+``None`` means ``HTTPConfig()`` defaults (not the environment), and the
+client's ``HTTPConfig`` governs transport (timeout, retries, JWKS limits). The
+discovery cache, JWKS cache and kid-miss cooldown live on a
+``ValidationCache`` / ``AsyncValidationCache`` whose ``CacheConfig`` sets
+their size and cooldown. Each refuses the other's config type.
 """
 
 import time
@@ -15,7 +15,12 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config, ConfigError, PyIdentityModelException
+from py_identity_model import (
+    CacheConfig,
+    ConfigError,
+    HTTPConfig,
+    PyIdentityModelException,
+)
 from py_identity_model.aio.jwks import get_jwks as aio_get_jwks
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
@@ -72,31 +77,31 @@ def _validation_config() -> TokenValidationConfig:
     return TokenValidationConfig(perform_disco=True, audience="api")
 
 
-def _no_sleep_config(retries: int) -> Config:
-    return Config(http_retry_base_delay=0, http_retry_max_attempts=retries)
+def _no_sleep_config(retries: int) -> HTTPConfig:
+    return HTTPConfig(http_retry_base_delay=0, http_retry_max_attempts=retries)
 
 
 @pytest.mark.unit
 class TestClientConfig:
     def test_config_none_means_defaults(self):
         with HTTPClient() as client:
-            assert client.config == Config()
+            assert client.config == HTTPConfig()
 
     def test_config_none_ignores_environment(self, monkeypatch):
         monkeypatch.setenv("HTTP_TIMEOUT", "1")
         monkeypatch.setenv("HTTP_RETRY_MAX_ATTEMPTS", "9")
         monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "2")
         with HTTPClient() as client:
-            assert client.config == Config()
-            assert client.client.timeout.read == Config().http_timeout
+            assert client.config == HTTPConfig()
+            assert client.client.timeout.read == HTTPConfig().http_timeout
 
     def test_config_timeout_applies_to_owned_client(self):
-        with HTTPClient(config=Config(http_timeout=CUSTOM_TIMEOUT)) as client:
+        with HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT)) as client:
             assert client.client.timeout.read == CUSTOM_TIMEOUT
 
     def test_wrapped_client_keeps_config(self):
         raw = httpx.Client()
-        config = Config(http_retry_max_attempts=0)
+        config = HTTPConfig(http_retry_max_attempts=0)
         client = HTTPClient(client=raw, config=config)
         assert client.config is config
         assert client.client is raw
@@ -105,13 +110,13 @@ class TestClientConfig:
     async def test_async_config_none_means_defaults(self, monkeypatch):
         monkeypatch.setenv("HTTP_TIMEOUT", "1")
         async with AsyncHTTPClient() as client:
-            assert client.config == Config()
-            assert client.client.timeout.read == Config().http_timeout
+            assert client.config == HTTPConfig()
+            assert client.client.timeout.read == HTTPConfig().http_timeout
 
     def test_default_client_uses_config_defaults_not_env(self, monkeypatch):
         monkeypatch.setenv("HTTP_RETRY_MAX_ATTEMPTS", "9")
         assert get_default_http_client().config.http_retry_max_attempts == (
-            Config().http_retry_max_attempts
+            HTTPConfig().http_retry_max_attempts
         )
 
 
@@ -138,7 +143,7 @@ class TestRetriesFromConfig:
     def test_negative_retry_count_cannot_reach_the_retry_loop(self):
         """#728: a negative count is rejected before any client exists."""
         with pytest.raises(ConfigError) as excinfo:
-            HTTPClient(config=Config(http_retry_max_attempts=-1))
+            HTTPClient(config=HTTPConfig(http_retry_max_attempts=-1))
         assert [issue.setting for issue in excinfo.value.issues] == [
             "http_retry_max_attempts"
         ]
@@ -156,7 +161,7 @@ class TestJwksLimitsFromConfig:
         respx.get(JWKS_URL).mock(
             return_value=httpx.Response(200, json={"keys": [key, key]})
         )
-        with HTTPClient(config=Config(jwks_max_keys=CUSTOM_MAX_KEYS)) as client:
+        with HTTPClient(config=HTTPConfig(jwks_max_keys=CUSTOM_MAX_KEYS)) as client:
             response = get_jwks(JwksRequest(address=JWKS_URL), http_client=client)
         assert not response.is_successful
         assert "too many keys" in (response.error or "")
@@ -166,7 +171,7 @@ class TestJwksLimitsFromConfig:
         key, _ = generate_rsa_keypair()
         respx.get(JWKS_URL).mock(return_value=httpx.Response(200, json={"keys": [key]}))
         async with AsyncHTTPClient(
-            config=Config(jwks_max_size=CUSTOM_MAX_SIZE)
+            config=HTTPConfig(jwks_max_size=CUSTOM_MAX_SIZE)
         ) as client:
             response = await aio_get_jwks(
                 JwksRequest(address=JWKS_URL), http_client=client
@@ -278,7 +283,7 @@ class TestCachesLiveOnTheValidationCache:
             },
             headers={"kid": "test-key-1"},
         )
-        cache = ValidationCache(config=Config(cache_max_entries=1))
+        cache = ValidationCache(config=CacheConfig(cache_max_entries=1))
         with HTTPClient() as client:
             validate_token(
                 _token(pem), _validation_config(), DISCO_URL, client, cache=cache
@@ -301,7 +306,7 @@ class TestCachesLiveOnTheValidationCache:
         jwks = respx.get(JWKS_URL).mock(
             return_value=httpx.Response(200, json={"keys": [key]})
         )
-        cache = ValidationCache(config=Config(jwks_kid_miss_cooldown=0))
+        cache = ValidationCache(config=CacheConfig(jwks_kid_miss_cooldown=0))
         with HTTPClient() as client:
             for _ in range(KID_MISS_ATTEMPTS):
                 with pytest.raises(PyIdentityModelException):
@@ -315,30 +320,20 @@ class TestCachesLiveOnTheValidationCache:
         # one initial fetch + one forced refresh per unknown-kid token
         assert jwks.call_count == 1 + KID_MISS_ATTEMPTS
 
-    @respx.mock
-    def test_client_cache_settings_are_ignored(self):
-        """Cooldown 0 on the client does not reach the cache: the cache's
-        default cooldown allows one forced refresh, then suppresses the rest."""
-        key, pem = generate_rsa_keypair()
-        respx.get(DISCO_URL).mock(
-            return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
-        )
-        jwks = respx.get(JWKS_URL).mock(
-            return_value=httpx.Response(200, json={"keys": [key]})
-        )
-        cache = ValidationCache()
-        with HTTPClient(config=Config(jwks_kid_miss_cooldown=0)) as client:
-            for _ in range(KID_MISS_ATTEMPTS):
-                with pytest.raises(PyIdentityModelException):
-                    validate_token(
-                        _token(pem, kid="unknown"),
-                        _validation_config(),
-                        DISCO_URL,
-                        client,
-                        cache=cache,
-                    )
-        # one initial fetch + the single refresh the cooldown allows
-        assert jwks.call_count == TWO_FETCHES
+    @pytest.mark.parametrize(
+        ("consumer", "wrong"),
+        [
+            (HTTPClient, CacheConfig()),
+            (AsyncHTTPClient, CacheConfig()),
+            (ValidationCache, HTTPConfig()),
+            (AsyncValidationCache, HTTPConfig()),
+        ],
+    )
+    def test_the_other_config_is_refused(self, consumer, wrong):
+        """969-A: a cache config on a client (or the reverse) is a TypeError,
+        never a value the consumer silently ignores."""
+        with pytest.raises(TypeError, match=type(wrong).__name__):
+            consumer(config=wrong)
 
     @respx.mock
     async def test_async_injected_cache_caches(self):

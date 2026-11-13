@@ -143,9 +143,9 @@ py/src/py_identity_model/
    - Core functions are pure (no I/O) and return result objects or raise exceptions
 
 3. **Caching Strategy**
-   - Discovery documents and JWKS are cached with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `Config.cache_max_entries`, default 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. HTTP clients only send requests and hold no cache. The caches and kid-miss cooldown state live on a `ValidationCache` (`sync/validation_cache.py`) / `AsyncValidationCache` (`aio/validation_cache.py`), built from its own `Config` and passed as `cache=` to the token validators; without one, the process-wide default cache (`get_default_validation_cache()` / `get_default_async_validation_cache()`) is used, whichever `http_client` is passed. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
-   - Cached documents are keyed by the fetching client's `trust_scope` (`core/trust_scope.py`: `Config.ca_bundle` for owned clients, the wrapped httpx client's identity otherwise), so a document fetched over a permissive transport is never served to a stricter client. The kid-miss cooldown is keyed by `jwks_uri` alone and shared across scopes (#945).
-   - Entries expire on a TTL resolved from `Cache-Control: max-age` (clamped to `[60s, 86400s]`) → the cache's `Config` (`discovery_cache_ttl` / `jwks_cache_ttl`). Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
+   - Discovery documents and JWKS are cached with an explicit **TTL + LRU** cache (an `OrderedDict` bounded to `CacheConfig.cache_max_entries`, default 64), **not** `functools.lru_cache`/`async_lru.alru_cache`. HTTP clients only send requests and hold no cache. The caches and kid-miss cooldown state live on a `ValidationCache` (`sync/validation_cache.py`) / `AsyncValidationCache` (`aio/validation_cache.py`), built from its own `CacheConfig` and passed as `cache=` to the token validators (its state is private); without one, the process-wide default cache (`get_default_validation_cache()` / `get_default_async_validation_cache()`) is used, whichever `http_client` is passed. Cache *policy* lives in `core/jwks_cache.py`; the sync/async cache stacks live in `sync/token_validation.py` and `aio/token_validation.py`.
+   - Cached documents are keyed by the fetching client's `trust_scope` (`core/trust_scope.py`: `HTTPConfig.ca_bundle` for owned clients, the wrapped httpx client's identity otherwise), so a document fetched over a permissive transport is never served to a stricter client. The kid-miss cooldown is keyed by `jwks_uri` alone and shared across scopes (#945).
+   - Entries expire on a TTL resolved from `Cache-Control: max-age` (clamped to `[60s, 86400s]`) → the cache's `CacheConfig` (`discovery_cache_ttl` / `jwks_cache_ttl`). Concurrent misses are coalesced into a single upstream fetch via per-URI striped locks.
    - Per-process cache hit/miss/refresh counters are exposed via `core/cache_metrics.py` (`get_cache_counters()`, re-exported at the top level); the async cache paths are instrumented. Clear caches with `clear_discovery_cache(cache=None)` / `clear_jwks_cache(cache=None)` (async variants must be `await`ed).
    - Caches are never shared across processes: the default cache and the default HTTP clients are held in `core/process_local.py` `ProcessLocal` and rebuilt in a forked child (pid check)
 
@@ -261,21 +261,23 @@ Format: `<type>/<short-description>` (e.g., `feat/descope-integration`, `fix/jwk
 
 ### HTTP Configuration
 
-The library reads **no** environment variables. Settings live on a frozen,
-validated `Config` (`core/config.py`: `http_timeout`, `http_retry_max_attempts`,
-`http_retry_base_delay`, `ca_bundle`, `jwks_max_size`, `jwks_max_keys`,
-`jwks_cache_ttl`, `jwks_kid_miss_cooldown`, `discovery_cache_ttl`,
-`cache_max_entries`). `HTTPClient(config=...)` / `AsyncHTTPClient(config=...)`
-hold it (`None` → `Config()` defaults, never the environment), and every entry
+The library reads **no** environment variables. Settings live on two frozen,
+validated values in `core/config.py`: `HTTPConfig` (`http_timeout`,
+`http_retry_max_attempts`, `http_retry_base_delay`, `ca_bundle`,
+`jwks_max_size`, `jwks_max_keys`) and `CacheConfig` (`jwks_cache_ttl`,
+`jwks_kid_miss_cooldown`, `discovery_cache_ttl`, `cache_max_entries`).
+`HTTPClient(config=...)` / `AsyncHTTPClient(config=...)` hold an `HTTPConfig`
+(`None` → `HTTPConfig()` defaults, never the environment), and every entry
 point takes `http_client=`; without one, the library default client
 (`get_default_http_client()` / `get_default_async_http_client()`, built from
-`Config()`) is used. Retry decorators read retries/backoff from the managed
-client's `Config`. The four cache settings (`jwks_cache_ttl`,
-`discovery_cache_ttl`, `cache_max_entries`, `jwks_kid_miss_cooldown`) are read
-from the `ValidationCache`'s `Config`, never from the client's.
+`HTTPConfig()`) is used. Retry decorators read retries/backoff from the managed
+client's `HTTPConfig`. `ValidationCache` / `AsyncValidationCache` hold a
+`CacheConfig`. Each consumer refuses the other config type with `TypeError`
+(`require_config`), so a setting is never silently ignored.
 
 The only modules that read `os.environ` are the optional
-`config_helpers.py` (`config_from_env` / `config_from_mapping`) and the FastAPI
+`config_helpers.py` (`http_config_from_env` / `http_config_from_mapping` /
+`cache_config_from_env` / `cache_config_from_mapping`) and the FastAPI
 package's `config_helpers.py` (`oidc_settings_from_env`), which neither package
 ever imports or calls. Ruff `TID251` bans `os.environ` / `os.getenv`
 outside the helpers, tests, examples and tooling, and
@@ -284,7 +286,7 @@ outside the helpers, tests, examples and tooling, and
 
 ### SSL/TLS Configuration
 
-`Config.ca_bundle` (a readable file, or `None` for httpx's default bundle) is
+`HTTPConfig.ca_bundle` (a readable file, or `None` for httpx's default bundle) is
 resolved by `get_ssl_verify(config)` in `ssl_config.py`; mTLS contexts use it
 via `build_mtls_ssl_context(mtls, config)`. httpx's own `trust_env` handling
 (`SSL_CERT_FILE`, proxies) is left at httpx's default.

@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.http_utils import check_no_redirect
 from py_identity_model.core.response_processors import (
@@ -114,7 +114,7 @@ class TestRedirectBlocking:
             return response
 
         with (
-            HTTPClient(config=Config(http_retry_max_attempts=0)) as client,
+            HTTPClient(config=HTTPConfig(http_retry_max_attempts=0)) as client,
             pytest.raises(NetworkException, match="redirect blocked"),
         ):
             redirecting_request(client)
@@ -257,7 +257,7 @@ class TestJwksContentTypeValidation:
             json=self._VALID_JWKS_JSON,
             headers={"Content-Type": "application/json"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is True
 
     def test_accepts_application_json_with_charset(self):
@@ -266,7 +266,7 @@ class TestJwksContentTypeValidation:
             json=self._VALID_JWKS_JSON,
             headers={"Content-Type": "application/json; charset=utf-8"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is True
 
     def test_accepts_application_jwk_set_json(self):
@@ -275,7 +275,7 @@ class TestJwksContentTypeValidation:
             json=self._VALID_JWKS_JSON,
             headers={"Content-Type": "application/jwk-set+json"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is True
 
     def test_rejects_text_html(self):
@@ -284,7 +284,7 @@ class TestJwksContentTypeValidation:
             content=b'{"keys": []}',
             headers={"Content-Type": "text/html"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is False
         assert result.error is not None
         assert "Content-Type" in result.error
@@ -295,7 +295,7 @@ class TestJwksContentTypeValidation:
             content=b'{"keys": []}',
             headers={"Content-Type": "text/plain"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is False
         assert result.error is not None
         assert "text/plain" in result.error
@@ -306,7 +306,7 @@ class TestJwksContentTypeValidation:
             content=json.dumps(self._VALID_JWKS_JSON).encode(),
             # No Content-Type header
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is False
         assert result.error is not None
         assert "missing Content-Type" in result.error
@@ -317,7 +317,7 @@ class TestJwksContentTypeValidation:
             content=b"<keys/>",
             headers={"Content-Type": "application/xml"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is False
         assert result.error is not None
         assert "application/xml" in result.error
@@ -329,7 +329,7 @@ class TestJwksContentTypeValidation:
             content=b"Server Error",
             headers={"Content-Type": "text/html"},
         )
-        result = parse_jwks_response(response, Config())
+        result = parse_jwks_response(response, HTTPConfig())
         assert result.is_successful is False
         assert result.error is not None
         assert "500" in result.error

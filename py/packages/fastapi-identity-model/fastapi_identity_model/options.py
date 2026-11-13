@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
-from py_identity_model import DPoPVerificationOptions, TokenBinding
+from py_identity_model import (
+    DPoPReplayCheck,
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
+    TokenBinding,
+)
+from py_identity_model.core.process_local import ProcessLocal
 
 
 if TYPE_CHECKING:
@@ -81,6 +87,39 @@ def _certificate_from_header(
     return client_certificate
 
 
+# One replay cache for every entry point built without dpop= options, so a
+# proof accepted on a WebSocket handshake cannot be replayed on an HTTP GET.
+# A forked child builds its own.
+_default_replay_cache: ProcessLocal[InMemoryDPoPReplayCache] = ProcessLocal(
+    lambda _inherited: InMemoryDPoPReplayCache()
+)
+
+
+class _ProcessReplayCache:
+    """Records into this process's default cache, looked up on every check.
+
+    Options built before a fork (``gunicorn --preload``) therefore use the
+    worker's cache, the same one as entry points built in the worker.
+    """
+
+    def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        return _default_replay_cache.get().check_and_store(jkt, jti, expires_at, now)
+
+    def __reduce__(self) -> str:
+        # A module singleton: copy and deepcopy return it.
+        return "_PROCESS_REPLAY_CACHE"
+
+
+_PROCESS_REPLAY_CACHE = _ProcessReplayCache()
+
+
+def default_dpop_options() -> DPoPVerificationOptions:
+    """Library-default DPoP options with this process's shared replay cache."""
+    return DPoPVerificationOptions(replay_cache=_PROCESS_REPLAY_CACHE)
+
+
 @dataclass(frozen=True)
 class AuthOptions:
     """Token-binding and validation options for one resource server.
@@ -98,8 +137,12 @@ class AuthOptions:
             ``MTLS`` refuses tokens without a matching client certificate and
             needs ``client_certificate``.
         dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
-            proofs (algorithms, ``iat`` window, ``jti`` replay cache). ``None``
-            uses the defaults and the process-wide replay cache.
+            proofs (algorithms, ``iat`` window, replay cache). The default is
+            the library defaults with one
+            :class:`~py_identity_model.InMemoryDPoPReplayCache` per process,
+            shared by every HTTP middleware and WebSocket authenticator built
+            without explicit ``dpop`` options. Behind a load balancer, pass a
+            shared cache. ``None`` means the default.
         client_certificate: Returns the connection's mTLS client certificate
             (PEM or DER) for certificate-bound tokens, or ``None``. It receives
             the ``Request`` (HTTP) or ``WebSocket`` (handshake). Without it
@@ -119,7 +162,7 @@ class AuthOptions:
     """
 
     required_binding: TokenBinding = TokenBinding.NONE
-    dpop: DPoPVerificationOptions | None = None
+    dpop: DPoPVerificationOptions = field(default_factory=default_dpop_options)
     client_certificate: Callable[[HTTPConnection], str | bytes | None] | None = None
     expected_origin: str | None = None
 
@@ -127,6 +170,8 @@ class AuthOptions:
         object.__setattr__(
             self, "required_binding", TokenBinding(self.required_binding)
         )
+        if self.dpop is None:
+            object.__setattr__(self, "dpop", default_dpop_options())
         if (
             self.required_binding is TokenBinding.MTLS
             and self.client_certificate is None

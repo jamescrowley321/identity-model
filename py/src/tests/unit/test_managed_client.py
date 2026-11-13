@@ -4,7 +4,7 @@ import certifi
 import httpx
 import pytest
 
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.sync.managed_client import HTTPClient
@@ -82,17 +82,17 @@ class TestHTTPClient:
 
     def test_default_config(self):
         client = HTTPClient()
-        assert client.config == Config()
+        assert client.config == HTTPConfig()
         client.close()
 
     def test_custom_timeout(self):
-        client = HTTPClient(config=Config(http_timeout=CUSTOM_TIMEOUT))
+        client = HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT))
         assert client.client.timeout.connect == CUSTOM_TIMEOUT
         client.close()
 
     def test_custom_ca_bundle(self, recorded_client_kwargs):
         ca_bundle = certifi.where()
-        client = HTTPClient(config=Config(ca_bundle=ca_bundle))
+        client = HTTPClient(config=HTTPConfig(ca_bundle=ca_bundle))
         assert isinstance(client.client, httpx.Client)
         assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [ca_bundle]
         client.close()
@@ -115,7 +115,7 @@ class TestHTTPClient:
 
     def test_wrapped_client_keeps_its_own_timeout(self):
         raw = httpx.Client(timeout=WRAPPED_CLIENT_TIMEOUT)
-        config = Config(http_timeout=CUSTOM_TIMEOUT)
+        config = HTTPConfig(http_timeout=CUSTOM_TIMEOUT)
         client = HTTPClient(client=raw, config=config)
         assert client.client.timeout.connect == WRAPPED_CLIENT_TIMEOUT
         assert client.config is config
@@ -187,15 +187,15 @@ class TestAsyncHTTPClient:
 
     def test_default_config(self):
         client = AsyncHTTPClient()
-        assert client.config == Config()
+        assert client.config == HTTPConfig()
 
     def test_custom_timeout(self):
-        client = AsyncHTTPClient(config=Config(http_timeout=CUSTOM_TIMEOUT))
+        client = AsyncHTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT))
         assert client.client.timeout.connect == CUSTOM_TIMEOUT
 
     def test_custom_ca_bundle(self, recorded_client_kwargs):
         ca_bundle = certifi.where()
-        client = AsyncHTTPClient(config=Config(ca_bundle=ca_bundle))
+        client = AsyncHTTPClient(config=HTTPConfig(ca_bundle=ca_bundle))
         assert isinstance(client.client, httpx.AsyncClient)
         assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [ca_bundle]
 
@@ -218,7 +218,7 @@ class TestAsyncHTTPClient:
 
     def test_wrapped_client_keeps_its_own_timeout(self):
         raw = httpx.AsyncClient(timeout=WRAPPED_CLIENT_TIMEOUT)
-        config = Config(http_timeout=CUSTOM_TIMEOUT)
+        config = HTTPConfig(http_timeout=CUSTOM_TIMEOUT)
         client = AsyncHTTPClient(client=raw, config=config)
         assert client.client.timeout.connect == WRAPPED_CLIENT_TIMEOUT
         assert client.config is config

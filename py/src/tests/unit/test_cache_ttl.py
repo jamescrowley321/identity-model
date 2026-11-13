@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from py_identity_model import Config
+from py_identity_model import CacheConfig
 from py_identity_model.aio.token_validation import (
     _get_disco_response as _get_disco_response_async,
 )
@@ -25,7 +25,7 @@ from py_identity_model.sync.token_validation import _get_disco_response
 # A configured fallback distinct from the max-age values below, so a test that
 # expects the header to win would fail if the fallback leaked through.
 CONFIGURED_DISCO_TTL = 900.0
-CONFIGURED = Config(discovery_cache_ttl=CONFIGURED_DISCO_TTL)
+CONFIGURED = CacheConfig(discovery_cache_ttl=CONFIGURED_DISCO_TTL)
 
 
 class TestDiscoCacheTTL:
@@ -39,7 +39,7 @@ class TestDiscoCacheTTL:
 
     def test_resolve_disco_ttl_default(self):
         """Default is 3600s (1 hour) when no header and a default Config."""
-        ttl = resolve_disco_ttl(None, Config().discovery_cache_ttl)
+        ttl = resolve_disco_ttl(None, CacheConfig().discovery_cache_ttl)
         assert ttl == DEFAULT_DISCO_CACHE_TTL_SECONDS
 
     def test_resolve_disco_ttl_configured(self):

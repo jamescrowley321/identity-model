@@ -24,7 +24,7 @@ Pinned contract (sync and async):
 - No warning is logged for a successful validation through an injected
   client.
 
-``test_injected_config.py`` covers what ``Config`` changes (cooldown 0,
+``test_injected_config.py`` covers what the configs change (cooldown 0,
 ``cache_max_entries``, cache clearing per cache); this file pins the
 default-config behavior of the injected client and cache.
 """
@@ -123,9 +123,9 @@ def _empty_default_caches() -> None:
     clear_discovery_cache()
     clear_jwks_cache()
     async_caches = get_default_async_validation_cache()
-    async_caches.disco.clear()
-    async_caches.jwks.clear()
-    async_caches.kid_miss_last_attempt.clear()
+    async_caches._disco.clear()
+    async_caches._jwks.clear()
+    async_caches._kid_miss_last_attempt.clear()
 
 
 def _warnings(records: list[logging.LogRecord]) -> list[str]:
@@ -154,14 +154,14 @@ class TestSyncInjectedClientCaching:
                     http_client=client,
                     cache=cache,
                 )
-            assert list(cache.jwks) == [jwks_cache_key(JWKS_URL)]
-            assert list(cache.disco) == [cache_key]
+            assert list(cache._jwks) == [jwks_cache_key(JWKS_URL)]
+            assert list(cache._disco) == [cache_key]
 
         assert disco.call_count == 1
         assert jwks.call_count == 1
         default_caches = get_default_validation_cache()
-        assert jwks_cache_key(JWKS_URL) not in default_caches.jwks
-        assert cache_key not in default_caches.disco
+        assert jwks_cache_key(JWKS_URL) not in default_caches._jwks
+        assert cache_key not in default_caches._disco
 
     @respx.mock
     def test_kid_miss_cooldown_applies_to_injected_cache(self):
@@ -179,10 +179,10 @@ class TestSyncInjectedClientCaching:
                         http_client=client,
                         cache=cache,
                     )
-            assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+            assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
-        assert JWKS_URL not in get_default_validation_cache().kid_miss_last_attempt
+        assert JWKS_URL not in get_default_validation_cache()._kid_miss_last_attempt
 
     @respx.mock
     def test_injected_client_without_cache_uses_the_default_cache(self):
@@ -201,9 +201,9 @@ class TestSyncInjectedClientCaching:
                 )
 
         default_cache = get_default_validation_cache()
-        assert list(default_cache.kid_miss_last_attempt) == [JWKS_URL]
-        assert list(default_cache.jwks) == [jwks_cache_key(JWKS_URL)]
-        assert list(default_cache.disco) == [_disco_cache_key()]
+        assert list(default_cache._kid_miss_last_attempt) == [JWKS_URL]
+        assert list(default_cache._jwks) == [jwks_cache_key(JWKS_URL)]
+        assert list(default_cache._disco) == [_disco_cache_key()]
         assert disco.call_count == 1
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
 
@@ -224,7 +224,7 @@ class TestSyncInjectedClientCaching:
                         http_client=client,
                         cache=cache,
                     )
-            assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+            assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
 
@@ -290,14 +290,14 @@ class TestAsyncInjectedClientCaching:
                     http_client=client,
                     cache=cache,
                 )
-            assert list(cache.jwks) == [jwks_cache_key(JWKS_URL)]
-            assert list(cache.disco) == [cache_key]
+            assert list(cache._jwks) == [jwks_cache_key(JWKS_URL)]
+            assert list(cache._disco) == [cache_key]
 
         assert disco.call_count == 1
         assert jwks.call_count == 1
         default_caches = get_default_async_validation_cache()
-        assert jwks_cache_key(JWKS_URL) not in default_caches.jwks
-        assert cache_key not in default_caches.disco
+        assert jwks_cache_key(JWKS_URL) not in default_caches._jwks
+        assert cache_key not in default_caches._disco
 
     @pytest.mark.asyncio
     @respx.mock
@@ -316,11 +316,11 @@ class TestAsyncInjectedClientCaching:
                         http_client=client,
                         cache=cache,
                     )
-            assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+            assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
         default_caches = get_default_async_validation_cache()
-        assert JWKS_URL not in default_caches.kid_miss_last_attempt
+        assert JWKS_URL not in default_caches._kid_miss_last_attempt
 
     @pytest.mark.asyncio
     @respx.mock
@@ -339,9 +339,9 @@ class TestAsyncInjectedClientCaching:
                     )
 
         default_cache = get_default_async_validation_cache()
-        assert list(default_cache.kid_miss_last_attempt) == [JWKS_URL]
-        assert list(default_cache.jwks) == [jwks_cache_key(JWKS_URL)]
-        assert list(default_cache.disco) == [_disco_cache_key()]
+        assert list(default_cache._kid_miss_last_attempt) == [JWKS_URL]
+        assert list(default_cache._jwks) == [jwks_cache_key(JWKS_URL)]
+        assert list(default_cache._disco) == [_disco_cache_key()]
         assert disco.call_count == 1
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
 
@@ -363,7 +363,7 @@ class TestAsyncInjectedClientCaching:
                         http_client=client,
                         cache=cache,
                     )
-            assert list(cache.kid_miss_last_attempt) == [JWKS_URL]
+            assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
 
         assert jwks.call_count == JWKS_FETCHES_WITH_ONE_REFRESH
 

@@ -3,11 +3,11 @@ Synchronous HTTP client with connection pooling and retry logic.
 
 This module provides the library default client and automatic retry logic
 for transient failures like rate limiting. Timeouts, TLS and retry settings
-come from the client's :class:`~py_identity_model.core.config.Config`; the
+come from the client's :class:`~py_identity_model.core.config.HTTPConfig`; the
 library reads no environment variables.
 
 The library default client (:func:`get_default_http_client`) is built from
-``Config()`` and used by every entry point called without ``http_client=``.
+``HTTPConfig()`` and used by every entry point called without ``http_client=``.
 It is one :class:`HTTPClient` per process: each thread gets its own underlying
 ``httpx.Client``, and a forked child gets a new default client rather than the
 parent's connections.
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Concatenate, ParamSpec
 
 import httpx
 
-from ..core.config import Config
+from ..core.config import HTTPConfig
 from ..core.http_utils import (
     calculate_delay,
     check_no_redirect,
@@ -53,7 +53,7 @@ class _DefaultHTTPClient(HTTPClient):
     next use in that thread builds a new one.
     """
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: HTTPConfig) -> None:
         self._config = config
         self._owned = True
         self._trust_scope = owned_trust_scope(config)
@@ -77,13 +77,13 @@ class _DefaultHTTPClient(HTTPClient):
 
 _default_client: ProcessLocal[_DefaultHTTPClient] = ProcessLocal(
     lambda inherited: _DefaultHTTPClient(
-        inherited.config if inherited is not None else Config()
+        inherited.config if inherited is not None else HTTPConfig()
     )
 )
 
 
 def get_default_http_client() -> HTTPClient:
-    """Return the library default client, built from ``Config()``.
+    """Return the library default client, built from ``HTTPConfig()``.
 
     Used by every sync entry point called without ``http_client=``. One
     instance per process, while each thread gets its own ``httpx.Client``
@@ -93,14 +93,14 @@ def get_default_http_client() -> HTTPClient:
     return _default_client.get()
 
 
-def _reset_default_http_client(config: Config | None = None) -> None:
+def _reset_default_http_client(config: HTTPConfig | None = None) -> None:
     """Replace the default client with a fresh one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``).
+    The new default is built from *config* (``HTTPConfig()`` when ``None``).
     Closes the calling thread's connections of the previous default.
     """
     previous = _default_client.replace(
-        _DefaultHTTPClient(config if config is not None else Config())
+        _DefaultHTTPClient(config if config is not None else HTTPConfig())
     )
     if previous is not None:
         previous.close()
@@ -127,9 +127,9 @@ def retry_with_backoff(
 
     Args:
         max_retries: Maximum number of retry attempts (default: the client's
-            ``Config.http_retry_max_attempts``). Must not be negative.
+            ``HTTPConfig.http_retry_max_attempts``). Must not be negative.
         base_delay: Base delay in seconds for exponential backoff (default: the
-            client's ``Config.http_retry_base_delay``). Must not be negative.
+            client's ``HTTPConfig.http_retry_base_delay``). Must not be negative.
 
     Returns:
         Decorated function that retries on 429 and 5xx errors with exponential backoff
@@ -203,7 +203,7 @@ def get_http_client() -> httpx.Client:
     Get the calling thread's ``httpx.Client`` of the library default client.
 
     Returns:
-        httpx.Client: Connection-pooled client built from ``Config()``
+        httpx.Client: Connection-pooled client built from ``HTTPConfig()``
 
     Note:
         - Thread-safe: Each thread gets its own client instance
@@ -215,7 +215,7 @@ def get_http_client() -> httpx.Client:
     return get_default_http_client().client
 
 
-def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.Client:
+def build_mtls_client(mtls: MtlsClientAuth, config: HTTPConfig) -> httpx.Client:
     """Build a short-lived HTTP client presenting a client certificate (mTLS).
 
     Used for RFC 8705 mutual-TLS client authentication: the certificate is
@@ -240,7 +240,7 @@ def build_mtls_client(mtls: MtlsClientAuth, config: Config) -> httpx.Client:
 _WRAPPED_CLIENT_MTLS_ERROR = (
     "mtls cannot be combined with a wrapped httpx client: its own TLS "
     "settings cannot be carried over to the certificate client. Pass "
-    "HTTPClient(config=Config(ca_bundle=...)) instead."
+    "HTTPClient(config=HTTPConfig(ca_bundle=...)) instead."
 )
 
 
@@ -251,7 +251,7 @@ def resolve_http_client(
     """Resolve the HTTP client to use for a client-authenticating request.
 
     When *mtls* is configured, a short-lived cert-configured client is built
-    (RFC 8705) and wrapped with the ``Config`` of *http_client* when one is
+    (RFC 8705) and wrapped with the ``HTTPConfig`` of *http_client* when one is
     given, else of the library default client. The request then goes through
     that cert client, never through *http_client*'s own connection pool,
     which cannot be guaranteed to present the certificate; *http_client*

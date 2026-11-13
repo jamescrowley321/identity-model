@@ -162,7 +162,7 @@ def test_cache_hits_exact_expiry_and_refetch_leave_stdlib_clock_alone(discovery_
     assert state["calls"]["/.well-known/openid-configuration"] == 3  # noqa: PLR2004 -- cold fetch, boundary expiry, second expiry
     assert all(clock is stdlib_clock for clock in state["clocks"])
     assert time.monotonic is stdlib_clock
-    assert not get_default_validation_cache().disco
+    assert not get_default_validation_cache()._disco
 
 
 def test_cache_clock_and_default_cache_restore_after_call_failure(
@@ -187,7 +187,7 @@ def test_cache_clock_and_default_cache_restore_after_call_failure(
     assert state["calls"]["/.well-known/openid-configuration"] == 1
     assert token_validation.time is original_time
     assert jwks_cache.time is original_cache_time
-    assert not get_default_validation_cache().disco
+    assert not get_default_validation_cache()._disco
     # A subsequent call must refetch after failed-vector cleanup.
     result = _discovery_call(base, {"cache_ttl_seconds": 60, "calls_at_seconds": [0]})
     _discovery_expect("REGRESSION", {"outcome": "accept"}, result)

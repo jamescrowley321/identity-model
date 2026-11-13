@@ -537,7 +537,7 @@ class TestSignedIntrospectionDiscovery:
 
         introspect_token(_disco_request(), cache=cache)
 
-        assert [uri for _, uri in cache.jwks] == [f"{ISSUER}/jwks"]
+        assert [uri for _, uri in cache._jwks] == [f"{ISSUER}/jwks"]
 
 
 @pytest.mark.unit

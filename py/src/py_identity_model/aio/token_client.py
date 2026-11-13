@@ -48,7 +48,7 @@ async def _request_token(
     Request token with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Retry settings come from the client's Config.
+    exponential backoff. Retry settings come from the client's HTTPConfig.
     *prepare* runs on every attempt, so each one carries a freshly minted
     DPoP proof and client assertion with a new ``jti`` (RFC 9449 §11.1).
     """

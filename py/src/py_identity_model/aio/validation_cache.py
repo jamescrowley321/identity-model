@@ -16,7 +16,7 @@ import threading
 from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary
 
-from ..core.config import Config
+from ..core.config import CacheConfig, require_config
 from ..core.process_local import ProcessLocal
 
 
@@ -80,40 +80,40 @@ class AsyncValidationCache:
 
     Async mirror of :class:`py_identity_model.sync.validation_cache.ValidationCache`;
     the write and fetch locks are per event loop (see :class:`_LoopLocks`).
-    ``kid_miss_last_attempt`` is guarded by the JWKS write lock.
+    The state is private: the only public member is :attr:`config`. The
+    refresh times are guarded by the JWKS write lock.
 
     Args:
         config: Sets the fallback TTLs (``jwks_cache_ttl``,
             ``discovery_cache_ttl``), the size bound (``cache_max_entries``)
             and the cooldown (``jwks_kid_miss_cooldown``). ``None`` means
-            ``Config()`` defaults. The other settings belong to the HTTP
-            client and are not read here.
+            ``CacheConfig()`` defaults.
     """
 
-    def __init__(self, *, config: Config | None = None) -> None:
-        self._config = config if config is not None else Config()
+    def __init__(self, *, config: CacheConfig | None = None) -> None:
+        self._config = require_config(config, CacheConfig, "AsyncValidationCache")
         creation_lock = threading.Lock()
-        self.disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
+        self._disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
         self._disco_locks = _LoopLocks(creation_lock)
-        self.jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
+        self._jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
         self._jwks_locks = _LoopLocks(creation_lock)
-        self.kid_miss_last_attempt: dict[str, float] = {}
+        self._kid_miss_last_attempt: dict[str, float] = {}
 
     @property
-    def config(self) -> Config:
+    def config(self) -> CacheConfig:
         """The settings for this cache's TTLs, size and cooldown."""
         return self._config
 
-    def disco_write_lock(self) -> asyncio.Lock:
+    def _disco_write_lock(self) -> asyncio.Lock:
         return self._disco_locks.write_lock()
 
-    def disco_fetch_lock(self, cache_key: DiscoCacheKey) -> asyncio.Lock:
+    def _disco_fetch_lock(self, cache_key: DiscoCacheKey) -> asyncio.Lock:
         return self._disco_locks.fetch_lock(cache_key)
 
-    def jwks_write_lock(self) -> asyncio.Lock:
+    def _jwks_write_lock(self) -> asyncio.Lock:
         return self._jwks_locks.write_lock()
 
-    def jwks_fetch_lock(self, cache_key: JwksCacheKey) -> asyncio.Lock:
+    def _jwks_fetch_lock(self, cache_key: JwksCacheKey) -> asyncio.Lock:
         return self._jwks_locks.fetch_lock(cache_key)
 
 
@@ -125,7 +125,7 @@ _default_cache: ProcessLocal[AsyncValidationCache] = ProcessLocal(
 
 
 def get_default_async_validation_cache() -> AsyncValidationCache:
-    """Return the process-wide default async cache, built from ``Config()``.
+    """Return the process-wide default async cache, built from ``CacheConfig()``.
 
     Used by every async validator called without ``cache=``. A forked child
     gets its own.
@@ -133,10 +133,10 @@ def get_default_async_validation_cache() -> AsyncValidationCache:
     return _default_cache.get()
 
 
-def _reset_default_async_validation_cache(config: Config | None = None) -> None:
+def _reset_default_async_validation_cache(config: CacheConfig | None = None) -> None:
     """Replace the default async cache with an empty one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``).
+    The new default is built from *config* (``CacheConfig()`` when ``None``).
     """
     _default_cache.replace(AsyncValidationCache(config=config))
 

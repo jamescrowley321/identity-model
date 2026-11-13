@@ -9,12 +9,16 @@ then they differ as listed in [Go and Rust today](#go-and-rust-today).
 ## The Python library does not read the environment
 
 The Python library reads no environment variables, files or any other source.
-Settings take effect only when the caller passes them in: a `Config` on an
-HTTP client or a validation cache in Python, options in Go, client builder
-methods in Rust.
+Settings take effect only when the caller passes them in: an `HTTPConfig` on an
+HTTP client and a `CacheConfig` on a validation cache in Python, options in Go,
+client builder methods in Rust. Python's two configs split the table below:
+`HTTPConfig` holds `http_timeout`, the retry settings, `ca_bundle`,
+`jwks_max_size` and `jwks_max_keys`; `CacheConfig` holds the two TTLs,
+`jwks_kid_miss_cooldown` and `cache_max_entries`.
 
-Python's `py_identity_model.config_helpers` module (`config_from_env`,
-`config_from_mapping`) converts string settings into a `Config`. It is optional:
+Python's `py_identity_model.config_helpers` module (`http_config_from_env`,
+`http_config_from_mapping`, `cache_config_from_env`,
+`cache_config_from_mapping`) converts string settings into those configs. It is optional:
 the library never imports or calls it, so it runs only when a caller calls it.
 
 ## Settings
@@ -51,7 +55,7 @@ Ranges are inclusive unless written `>`.
 - **Types**: Python takes seconds as `float`; Go takes `time.Duration`; Rust
   takes `std::time::Duration`. Counts and sizes are integers.
 
-An invalid value is rejected when the `Config` (Go: the client; Rust: the
+An invalid value is rejected when the config (Go: the client; Rust: the
 builder's `build()`) is created. It is never replaced by its default. Errors
 name the setting and the rule, never the value.
 
@@ -97,6 +101,9 @@ land, Go and Rust differ from this page:
   environment. `0`, from the environment or the max-cache-entries option,
   means unbounded.
 - The discovery cache TTL and the JWKS cache TTL both default to 24 hours.
+  The cross-language default is the table's 1 hour, so a key the provider
+  pulls stops validating within the hour; Go and Rust move to it with
+  [#996](https://github.com/jamescrowley321/identity-model/issues/996).
 - Values are not range-checked. A zero TTL (Go: zero or negative) falls back
   to its default, as does a negative cooldown in Go; any other value is used
   as given.
@@ -127,11 +134,13 @@ exactly one set of settings.
 
 - **Python:** HTTP clients only send requests and hold no cache. The discovery
   cache, the JWKS cache and the kid-miss cooldown live on a `ValidationCache` /
-  `AsyncValidationCache`, which takes `config=` and reads `jwks_cache_ttl`,
-  `discovery_cache_ttl`, `cache_max_entries` and `jwks_kid_miss_cooldown` from
-  it. The token validators take `cache=`; without one they use the
-  process-wide default cache, built from `Config()`, whichever `http_client`
-  is passed. The default cache and the default HTTP clients are rebuilt in a
+  `AsyncValidationCache`, which takes a `CacheConfig` and reads
+  `jwks_cache_ttl`, `discovery_cache_ttl`, `cache_max_entries` and
+  `jwks_kid_miss_cooldown` from it. Its state is private. The token validators
+  take `cache=`; without one they use the process-wide default cache, built
+  from `CacheConfig()`, whichever `http_client` is passed. The caller decides
+  how far a cache is shared by which cache it passes; the cache is never
+  inside the HTTP client. The default cache and the default HTTP clients are rebuilt in a
   forked child.
 - **Go:** the `discovery` and `jwks` packages each have a client that holds its
   options and owns its cache. Package-level functions use a default client

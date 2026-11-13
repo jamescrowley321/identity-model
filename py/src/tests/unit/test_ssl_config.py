@@ -8,7 +8,7 @@ import textwrap
 
 import pytest
 
-from py_identity_model import Config, ConfigError
+from py_identity_model import ConfigError, HTTPConfig
 from py_identity_model.ssl_config import get_ssl_verify
 
 
@@ -30,16 +30,16 @@ class TestGetSSLVerify:
 
     def test_get_ssl_verify_returns_config_ca_bundle(self, ca_bundle):
         """Test that get_ssl_verify returns Config.ca_bundle when set."""
-        assert get_ssl_verify(Config(ca_bundle=ca_bundle)) == ca_bundle
+        assert get_ssl_verify(HTTPConfig(ca_bundle=ca_bundle)) == ca_bundle
 
     def test_get_ssl_verify_default_true(self):
         """Test that get_ssl_verify returns True when no CA bundle is configured."""
-        assert get_ssl_verify(Config()) is True
+        assert get_ssl_verify(HTTPConfig()) is True
 
     def test_empty_ca_bundle_is_rejected(self):
         """Test that an empty CA bundle path is an invalid Config, not 'unset'."""
         with pytest.raises(ConfigError) as exc_info:
-            Config(ca_bundle="")
+            HTTPConfig(ca_bundle="")
 
         assert [issue.setting for issue in exc_info.value.issues] == ["ca_bundle"]
 
@@ -52,7 +52,7 @@ class TestGetSSLVerify:
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv(env_var, ca_bundle)
 
-        assert get_ssl_verify(Config()) is True
+        assert get_ssl_verify(HTTPConfig()) is True
 
     def test_get_ssl_verify_prefers_config_over_env_vars(
         self, monkeypatch, ca_bundle, tmp_path
@@ -63,7 +63,7 @@ class TestGetSSLVerify:
         for name in LEGACY_CA_BUNDLE_ENV_VARS:
             monkeypatch.setenv(name, str(env_bundle))
 
-        assert get_ssl_verify(Config(ca_bundle=ca_bundle)) == ca_bundle
+        assert get_ssl_verify(HTTPConfig(ca_bundle=ca_bundle)) == ca_bundle
 
 
 class TestImportHasNoEnvironmentSideEffect:

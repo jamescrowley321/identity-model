@@ -22,7 +22,7 @@ from collections import OrderedDict
 import threading
 from typing import TYPE_CHECKING
 
-from ..core.config import Config
+from ..core.config import CacheConfig, require_config
 from ..core.process_local import ProcessLocal
 
 
@@ -44,6 +44,9 @@ _LOCK_STRIPES = 32
 class ValidationCache:
     """Discovery cache, JWKS cache and kid-miss cooldown state.
 
+    The state is private: the only public member is :attr:`config`. Build one,
+    pass it as ``cache=``, and let the validators read and write it.
+
     The discovery cache is keyed by ``(trust scope, address,
     policy.cache_key())``, so a response admitted under a lax policy is never
     served to a caller running a stricter one. The JWKS cache is keyed by
@@ -51,43 +54,41 @@ class ValidationCache:
     :attr:`~py_identity_model.sync.managed_client.HTTPClient.trust_scope`, so
     a client never reads a document fetched over a transport it does not
     trust (for example a wrapped ``httpx.Client(verify=False)``).
-    ``kid_miss_last_attempt`` (the last forced JWKS refresh) is keyed by
+    The time of the last forced JWKS refresh is keyed by
     ``jwks_uri`` alone and shared by every client (#945). Both caches are
     ``OrderedDict``s so read hits can refresh LRU recency; eviction targets the
     least recently *used* entry (#397).
 
-    ``disco_write_lock`` / ``jwks_write_lock`` guard only the brief cache write
-    and eviction and never span an upstream fetch; the striped fetch locks
-    give per-URI single-flight. ``kid_miss_last_attempt`` is guarded by
-    ``jwks_write_lock``.
+    The write locks guard only the brief cache write and eviction and never
+    span an upstream fetch; the striped fetch locks give per-URI single-flight.
+    The refresh times are guarded by the JWKS write lock.
 
     Args:
         config: Sets the fallback TTLs (``jwks_cache_ttl``,
             ``discovery_cache_ttl``), the size bound (``cache_max_entries``)
             and the cooldown (``jwks_kid_miss_cooldown``). ``None`` means
-            ``Config()`` defaults. The other settings belong to the HTTP
-            client and are not read here.
+            ``CacheConfig()`` defaults.
     """
 
-    def __init__(self, *, config: Config | None = None) -> None:
-        self._config = config if config is not None else Config()
-        self.disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
-        self.disco_write_lock = threading.Lock()
+    def __init__(self, *, config: CacheConfig | None = None) -> None:
+        self._config = require_config(config, CacheConfig, "ValidationCache")
+        self._disco: OrderedDict[DiscoCacheKey, DiscoCacheEntry] = OrderedDict()
+        self._disco_write_lock = threading.Lock()
         self._disco_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
-        self.jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
-        self.jwks_write_lock = threading.Lock()
+        self._jwks: OrderedDict[JwksCacheKey, JwksCacheEntry] = OrderedDict()
+        self._jwks_write_lock = threading.Lock()
         self._jwks_fetch_locks = [threading.Lock() for _ in range(_LOCK_STRIPES)]
-        self.kid_miss_last_attempt: dict[str, float] = {}
+        self._kid_miss_last_attempt: dict[str, float] = {}
 
     @property
-    def config(self) -> Config:
+    def config(self) -> CacheConfig:
         """The settings for this cache's TTLs, size and cooldown."""
         return self._config
 
-    def disco_fetch_lock(self, cache_key: DiscoCacheKey) -> threading.Lock:
+    def _disco_fetch_lock(self, cache_key: DiscoCacheKey) -> threading.Lock:
         return self._disco_fetch_locks[hash(cache_key) % _LOCK_STRIPES]
 
-    def jwks_fetch_lock(self, cache_key: JwksCacheKey) -> threading.Lock:
+    def _jwks_fetch_lock(self, cache_key: JwksCacheKey) -> threading.Lock:
         return self._jwks_fetch_locks[hash(cache_key) % _LOCK_STRIPES]
 
 
@@ -99,7 +100,7 @@ _default_cache: ProcessLocal[ValidationCache] = ProcessLocal(
 
 
 def get_default_validation_cache() -> ValidationCache:
-    """Return the process-wide default cache, built from ``Config()``.
+    """Return the process-wide default cache, built from ``CacheConfig()``.
 
     Used by every sync validator called without ``cache=``. A forked child
     gets its own.
@@ -107,10 +108,10 @@ def get_default_validation_cache() -> ValidationCache:
     return _default_cache.get()
 
 
-def _reset_default_validation_cache(config: Config | None = None) -> None:
+def _reset_default_validation_cache(config: CacheConfig | None = None) -> None:
     """Replace the default cache with an empty one (testing only).
 
-    The new default is built from *config* (``Config()`` when ``None``).
+    The new default is built from *config* (``CacheConfig()`` when ``None``).
     """
     _default_cache.replace(ValidationCache(config=config))
 

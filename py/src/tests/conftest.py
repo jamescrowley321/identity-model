@@ -1,6 +1,6 @@
 import pytest
 
-from py_identity_model import Config
+from py_identity_model import HTTPConfig
 from py_identity_model.aio.http_client import (
     _reset_async_http_client,
     _reset_default_async_http_client,
@@ -18,7 +18,7 @@ from py_identity_model.sync.http_client import _reset_default_http_client
 # seconds between attempts; with defaults (3 attempts, 1.0s base) every test
 # that exercises an httpx RequestError path serially waits ~7s (1+2+4) before
 # raising. Tests that cover retry timing pass their own client and Config.
-TEST_DEFAULT_CONFIG = Config(http_retry_base_delay=0)
+TEST_DEFAULT_CONFIG = HTTPConfig(http_retry_base_delay=0)
 _reset_default_http_client(TEST_DEFAULT_CONFIG)
 _reset_default_async_http_client(TEST_DEFAULT_CONFIG)
 

@@ -96,7 +96,10 @@ response = await get_discovery_document(DiscoveryDocumentRequest(address=url))
 ### Client Credentials
 
 ```python
-from py_identity_model import ClientCredentialsTokenRequest, request_client_credentials_token
+from py_identity_model import (
+    ClientCredentialsTokenRequest,
+    request_client_credentials_token,
+)
 
 token = request_client_credentials_token(ClientCredentialsTokenRequest(
     client_id="my-client", client_secret="secret",
@@ -167,21 +170,22 @@ async def admin() -> dict:
 
 ## Configuration
 
-Settings are passed in; the library reads no environment variables. Build a
-`Config` and pass it on an HTTP client, then pass the client to any entry
-point:
+Settings are passed in; the library reads no environment variables. Build an
+`HTTPConfig` and pass it on an HTTP client, then pass the client to any entry
+point (cache settings go on a `CacheConfig`, passed on a `ValidationCache`):
 
 ```python
-from py_identity_model import Config, HTTPClient, validate_token
+from py_identity_model import HTTPClient, HTTPConfig, validate_token
 
-client = HTTPClient(config=Config(http_timeout=10.0, ca_bundle="/path/to/ca.crt"))
+client = HTTPClient(config=HTTPConfig(http_timeout=10.0, ca_bundle="/path/to/ca.crt"))
 claims = validate_token(token, validation_config, disco_url, http_client=client)
 ```
 
-Without `http_client=`, the library default client (built from `Config()`) is
-used. To read the settings from environment variables (`HTTP_TIMEOUT`,
-`HTTP_RETRY_COUNT`, `SSL_CERT_FILE`, ...), call the optional helper
-`py_identity_model.config_helpers.config_from_env()`. Every setting and its
+Without `http_client=`, the library default client (built from `HTTPConfig()`)
+is used. To read the settings from environment variables (`HTTP_TIMEOUT`,
+`HTTP_RETRY_COUNT`, `SSL_CERT_FILE`, ...), call the optional helpers
+`py_identity_model.config_helpers.http_config_from_env()` and
+`cache_config_from_env()`. Every setting and its
 default is listed in the [Configuration reference](https://jamescrowley321.github.io/identity-model/api/config/).
 
 ## Documentation

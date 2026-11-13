@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from base64 import urlsafe_b64encode
+import inspect
 import json
 import re
 import threading
@@ -13,6 +15,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 import jwt as pyjwt
 import pytest
 
+import py_identity_model
+from py_identity_model.aio import verify_dpop_proof as averify_dpop_proof
+from py_identity_model.core import dpop_verify
 from py_identity_model.core.dpop import (
     DPoPKey,
     compute_ath,
@@ -26,14 +31,17 @@ from py_identity_model.core.dpop_verify import (
     DPoPErrorKind,
     DPoPProof,
     DPoPProofRequest,
+    DPoPReplayCheck,
     DPoPValidationError,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     _normalize_http_uri,
-    get_default_dpop_replay_cache,
     verify_dpop_proof,
 )
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    ConfigurationException,
+    TokenValidationException,
+)
 
 
 URL = "https://rs.example.com/api/resource"
@@ -44,15 +52,56 @@ REPLAY_CACHE_BOUND = 2
 ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2ln"
 
 
+JKT = "thumbprint-a"
+OTHER_JKT = "thumbprint-b"
+RECORDED = DPoPReplayCheck.RECORDED
+REPLAYED = DPoPReplayCheck.REPLAYED
+FULL = DPoPReplayCheck.FULL
+
+
 class RecordingCache:
-    """A replay cache that admits every jti and records each call."""
+    """A replay cache that records every proof and each call."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, float, float]] = []
+        self.calls: list[tuple[str, str, float, float]] = []
 
-    def check_and_store(self, jti: str, expires_at: float, now: float) -> bool:
-        self.calls.append((jti, expires_at, now))
+    def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        self.calls.append((jkt, jti, expires_at, now))
+        return DPoPReplayCheck.RECORDED
+
+
+class AsyncRecordingCache:
+    """An async replay cache: the sync verifier must refuse it."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.coroutines: list = []
+
+    async def _record(self) -> DPoPReplayCheck:
+        self.calls += 1
+        return DPoPReplayCheck.RECORDED
+
+    def check_and_store(self, *_args: object):
+        # What an ``async def check_and_store`` returns: a coroutine, kept
+        # here so a test can see what the verifier did with it.
+        coroutine = self._record()
+        self.coroutines.append(coroutine)
+        return coroutine
+
+
+class LegacyReplayCache:
+    """A 4.x replay cache: ``check_and_store(jti, expires_at, now)``."""
+
+    def check_and_store(self, _jti: str, _expires_at: float, _now: float) -> bool:
         return True
+
+
+class OpaqueReplayCache:
+    """A cache whose method has no introspectable signature, like a C one."""
+
+    check_and_store = staticmethod(max)
 
 
 def _exactly(message: str) -> str:
@@ -381,7 +430,7 @@ class TestKeyChecks:
 
     def test_algorithms_outside_supported_set_is_config_error(self):
         with pytest.raises(ValueError, match="HS256"):
-            DPoPVerificationOptions(algorithms=frozenset({"HS256"}))
+            _options(algorithms=frozenset({"HS256"}))
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -389,7 +438,7 @@ class TestKeyChecks:
     )
     def test_invalid_window_is_config_error(self, field, value):
         with pytest.raises(ValueError, match=field):
-            DPoPVerificationOptions(**{field: value})
+            _options(**{field: value})
 
     @pytest.mark.parametrize(
         ("algorithms", "expected"),
@@ -413,9 +462,44 @@ class TestKeyChecks:
         ],
     )
     def test_accepted_algorithms_sorted(self, algorithms, expected):
-        options = DPoPVerificationOptions(algorithms=algorithms)
+        options = _options(algorithms=algorithms)
 
         assert options.accepted_algorithms == expected
+
+    def test_replay_cache_is_required(self):
+        # 1027-B: no process-wide default; the caller owns the cache.
+        with pytest.raises(TypeError, match="replay_cache"):
+            DPoPVerificationOptions()  # type: ignore[call-arg]
+
+    # The class itself has a check_and_store but is not a cache; a 4.x cache
+    # fails here, not as a TypeError on every request.
+    @pytest.mark.parametrize(
+        "cache",
+        [None, object(), "cache", InMemoryDPoPReplayCache, LegacyReplayCache()],
+    )
+    def test_replay_cache_must_be_a_cache(self, cache):
+        with pytest.raises(
+            TypeError,
+            match=_exactly(
+                "replay_cache must be a DPoPReplayCache or an "
+                "AsyncDPoPReplayCache (RFC 9449 §11.1)"
+            ),
+        ):
+            DPoPVerificationOptions(replay_cache=cache)
+
+    @pytest.mark.parametrize("cache", [OpaqueReplayCache()])
+    def test_uninspectable_cache_method_is_accepted(self, cache):
+        assert DPoPVerificationOptions(replay_cache=cache).replay_cache is cache
+
+    def test_options_are_keyword_only(self):
+        with pytest.raises(TypeError):
+            DPoPVerificationOptions(InMemoryDPoPReplayCache())  # type: ignore[misc]
+
+    def test_verifier_needs_options(self):
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        with pytest.raises(TypeError, match="options"):
+            verify_dpop_proof(_sign(generate_dpop_key()), request)  # type: ignore[call-arg]
 
 
 @pytest.mark.unit
@@ -561,59 +645,65 @@ class TestReplayCache:
     def test_check_and_store(self):
         cache = InMemoryDPoPReplayCache()
 
-        assert [cache.check_and_store(j, 160.0, 100.0) for j in ("a", "a", "b")] == [
-            True,
-            False,
-            True,
-        ]
+        assert [
+            cache.check_and_store(JKT, j, 160.0, 100.0) for j in ("a", "a", "b")
+        ] == [RECORDED, REPLAYED, RECORDED]
+
+    def test_proofs_are_keyed_by_key_and_jti(self):
+        # 1027-B: one client's jti can't block another client's proof.
+        cache = InMemoryDPoPReplayCache()
+
+        assert [
+            cache.check_and_store(JKT, "same", 160.0, 100.0),
+            cache.check_and_store(OTHER_JKT, "same", 160.0, 100.0),
+            cache.check_and_store(JKT, "same", 160.0, 100.0),
+        ] == [RECORDED, RECORDED, REPLAYED]
 
     def test_expired_entry_is_forgotten(self):
         cache = InMemoryDPoPReplayCache()
-        cache.check_and_store("a", 99.0, 50.0)
+        cache.check_and_store(JKT, "a", 99.0, 50.0)
 
-        assert cache.check_and_store("a", 160.0, 100.0) is True
+        assert cache.check_and_store(JKT, "a", 160.0, 100.0) is RECORDED
 
     def test_entry_is_live_through_its_expiry(self):
         # The verifier accepts iat == now - max_age - leeway, so the jti must
         # still be held at now == expires_at (RFC 9449 §11.1).
         cache = InMemoryDPoPReplayCache()
-        cache.check_and_store("a", 100.0, 50.0)
+        cache.check_and_store(JKT, "a", 100.0, 50.0)
 
         assert [
-            cache.check_and_store("a", 200.0, 100.0),
-            cache.check_and_store("a", 200.0, 100.5),
-        ] == [False, True]
+            cache.check_and_store(JKT, "a", 200.0, 100.0),
+            cache.check_and_store(JKT, "a", 200.0, 100.5),
+        ] == [REPLAYED, RECORDED]
 
     def test_purge_keeps_entries_at_their_expiry(self):
         cache = InMemoryDPoPReplayCache()
-        cache.check_and_store("old", 100.0, 50.0)
-        cache.check_and_store("new", 300.0, 100.0)
+        cache.check_and_store(JKT, "old", 100.0, 50.0)
+        cache.check_and_store(JKT, "new", 300.0, 100.0)
         at_expiry = len(cache)
-        cache.check_and_store("newer", 300.0, 100.5)
+        cache.check_and_store(JKT, "newer", 300.0, 100.5)
 
         assert (at_expiry, len(cache)) == (2, 2)
 
-    def test_full_cache_refuses_new_jti(self):
+    def test_full_cache_refuses_new_proof(self):
         # Evicting a live jti would let it replay (RFC 9449 §11.1): fail closed.
+        # One signalling path: FULL is returned, never raised.
         cache = InMemoryDPoPReplayCache(max_entries=REPLAY_CACHE_BOUND)
         for jti in ("a", "b"):
-            cache.check_and_store(jti, 160.0, 100.0)
+            cache.check_and_store(JKT, jti, 160.0, 100.0)
 
-        with pytest.raises(DPoPValidationError) as exc:
-            cache.check_and_store("c", 160.0, 100.0)
-
-        assert exc.value.kind is DPoPErrorKind.REPLAY_CACHE_FULL
-        assert [cache.check_and_store(j, 160.0, 101.0) for j in ("a", "b")] == [
-            False,
-            False,
+        assert cache.check_and_store(JKT, "c", 160.0, 100.0) is FULL
+        assert [cache.check_and_store(JKT, j, 160.0, 101.0) for j in ("a", "b")] == [
+            REPLAYED,
+            REPLAYED,
         ]
         assert len(cache) == REPLAY_CACHE_BOUND
 
     def test_full_cache_admits_after_expiry(self):
         cache = InMemoryDPoPReplayCache(max_entries=1)
-        cache.check_and_store("a", 160.0, 100.0)
+        cache.check_and_store(JKT, "a", 160.0, 100.0)
 
-        assert cache.check_and_store("b", 220.0, 161.0) is True
+        assert cache.check_and_store(JKT, "b", 220.0, 161.0) is RECORDED
         assert len(cache) == 1
 
     @pytest.mark.parametrize("max_entries", [0, True, "10"])
@@ -626,9 +716,9 @@ class TestReplayCache:
     def test_single_entry_cache(self):
         cache = InMemoryDPoPReplayCache(max_entries=1)
 
-        assert [cache.check_and_store(j, 160.0, 100.0) for j in ("a", "a")] == [
-            True,
-            False,
+        assert [cache.check_and_store(JKT, j, 160.0, 100.0) for j in ("a", "a")] == [
+            RECORDED,
+            REPLAYED,
         ]
 
     def test_full_cache_rejects_proof(self):
@@ -637,6 +727,54 @@ class TestReplayCache:
         _verify(_sign(key), options=options)
 
         assert _kind(_sign(key), options=options) is DPoPErrorKind.REPLAY_CACHE_FULL
+
+    @pytest.mark.parametrize(
+        ("result", "kind"),
+        [
+            (DPoPReplayCheck.REPLAYED, DPoPErrorKind.REPLAYED_JTI),
+            (DPoPReplayCheck.FULL, DPoPErrorKind.REPLAY_CACHE_FULL),
+        ],
+    )
+    def test_cache_answer_maps_to_one_error(self, result, kind):
+        class Answering:
+            def check_and_store(self, *_args: object):
+                return result
+
+        options = _options(replay_cache=Answering())
+
+        assert _kind(_sign(generate_dpop_key()), options=options) is kind
+
+    @pytest.mark.parametrize("result", [True, False, None, "recorded"])
+    def test_cache_answer_must_be_a_replay_check(self, result):
+        class Answering:
+            def check_and_store(self, *_args: object):
+                return result
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "replay_cache.check_and_store must return a DPoPReplayCheck"
+            ),
+        ):
+            _verify(
+                _sign(generate_dpop_key()), options=_options(replay_cache=Answering())
+            )
+
+    async def test_async_cache_answer_must_be_a_replay_check(self):
+        class Answering:
+            async def check_and_store(self, *_args: object):
+                return True
+
+        options = _options(replay_cache=Answering())
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "replay_cache.check_and_store must return a DPoPReplayCheck"
+            ),
+        ):
+            await averify_dpop_proof(_sign(generate_dpop_key()), request, options)
 
     def test_replay_refused_at_window_edge(self):
         # Retention must outlive acceptance: at now == iat + max_age + leeway
@@ -662,7 +800,7 @@ class TestReplayCache:
             key.jwk_thumbprint
         ] * 2
 
-    def test_records_jti_until_the_window_closes(self):
+    def test_records_the_proof_until_the_window_closes(self):
         recorder = RecordingCache()
         key = generate_dpop_key()
         now = int(time.time())
@@ -671,15 +809,15 @@ class TestReplayCache:
 
         _verify(proof, options=options, now=now)
 
-        assert recorder.calls == [("rec-1", now + 40 + 7, now)]
+        assert recorder.calls == [(key.jwk_thumbprint, "rec-1", now + 40 + 7, now)]
 
     def test_concurrent_replay_admits_one(self):
         cache = InMemoryDPoPReplayCache()
-        results: list[bool] = []
+        results: list[DPoPReplayCheck] = []
         lock = threading.Lock()
 
         def worker() -> None:
-            outcome = cache.check_and_store("same", 160.0, 100.0)
+            outcome = cache.check_and_store(JKT, "same", 160.0, 100.0)
             with lock:
                 results.append(outcome)
 
@@ -689,28 +827,105 @@ class TestReplayCache:
         for thread in threads:
             thread.join()
 
-        assert sorted(results) == [False] * 15 + [True]
+        assert (
+            sorted(r.value for r in results) == [RECORDED.value] + [REPLAYED.value] * 15
+        )
 
-    def test_default_cache_used_when_options_omitted(self):
-        key = generate_dpop_key()
-        proof = _sign(key)
-        request = DPoPProofRequest(method=METHOD, url=URL, access_token=ACCESS_TOKEN)
-        verify_dpop_proof(proof, request)
-
-        with pytest.raises(DPoPValidationError) as exc:
-            verify_dpop_proof(proof, request)
-        assert exc.value.kind is DPoPErrorKind.REPLAYED_JTI
-
-    def test_empty_custom_cache_is_used(self):
+    def test_the_callers_cache_is_the_one_used(self):
         # An empty cache is falsy (it has __len__); it must still be the one used.
         cache = InMemoryDPoPReplayCache()
-        default_size = len(get_default_dpop_replay_cache())
         _verify(_sign(generate_dpop_key()), options=_options(replay_cache=cache))
 
-        assert (len(cache), len(get_default_dpop_replay_cache())) == (1, default_size)
+        assert len(cache) == 1
 
-    def test_default_cache_is_singleton_in_process(self):
-        assert get_default_dpop_replay_cache() is get_default_dpop_replay_cache()
+    def test_the_process_default_cache_is_gone(self):
+        # 1027-B: no process-wide replay cache to share by accident.
+        assert not hasattr(dpop_verify, "get_default_dpop_replay_cache")
+        assert "get_default_dpop_replay_cache" not in py_identity_model.__all__
+
+    async def test_async_verifier_passes_the_proof_to_an_async_cache(self):
+        calls: list[tuple[str, str, float, float]] = []
+
+        class AsyncRecorder:
+            async def check_and_store(
+                self, jkt: str, jti: str, expires_at: float, now: float
+            ) -> DPoPReplayCheck:
+                calls.append((jkt, jti, expires_at, now))
+                return DPoPReplayCheck.RECORDED
+
+        key = generate_dpop_key()
+        now = int(time.time())
+        proof = _sign(key, payload={"jti": "async-1", "iat": now})
+        options = _options(max_age=40, iat_leeway=7, replay_cache=AsyncRecorder())
+        request = DPoPProofRequest(method=METHOD, url=URL)
+
+        await averify_dpop_proof(proof, request, options, now=now)
+
+        assert calls == [(key.jwk_thumbprint, "async-1", now + 40 + 7, now)]
+
+    def test_sync_verifier_refuses_an_async_cache(self):
+        cache = AsyncRecordingCache()
+        options = _options(replay_cache=cache)
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "An AsyncDPoPReplayCache needs the async validators "
+                "(py_identity_model.aio)"
+            ),
+        ):
+            _verify(_sign(generate_dpop_key()), options=options)
+        # The coroutine is closed unrun: nothing was recorded, nothing leaks.
+        assert cache.calls == 0
+        assert [inspect.getcoroutinestate(c) for c in cache.coroutines] == [
+            inspect.CORO_CLOSED
+        ]
+
+    def test_sync_verifier_cancels_a_future_from_the_cache(self):
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.create_future()
+
+            class FutureCache:
+                def check_and_store(self, *_args: object):
+                    return future
+
+            with pytest.raises(
+                ConfigurationException,
+                match=_exactly(
+                    "An AsyncDPoPReplayCache needs the async validators "
+                    "(py_identity_model.aio)"
+                ),
+            ):
+                _verify(
+                    _sign(generate_dpop_key()),
+                    options=_options(replay_cache=FutureCache()),
+                )
+            assert future.cancelled()
+        finally:
+            loop.close()
+
+    def test_sync_verifier_refuses_any_awaitable(self):
+        class Pending:
+            def __await__(self):
+                yield
+                return DPoPReplayCheck.RECORDED
+
+        class AwaitableCache:
+            def check_and_store(self, *_args: object):
+                return Pending()
+
+        with pytest.raises(
+            ConfigurationException,
+            match=_exactly(
+                "An AsyncDPoPReplayCache needs the async validators "
+                "(py_identity_model.aio)"
+            ),
+        ):
+            _verify(
+                _sign(generate_dpop_key()),
+                options=_options(replay_cache=AwaitableCache()),
+            )
 
 
 @pytest.mark.unit

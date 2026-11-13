@@ -18,7 +18,7 @@ from .response_processors import parse_jwks_response
 if TYPE_CHECKING:
     import httpx
 
-    from .config import Config
+    from .config import HTTPConfig
     from .models import JwksRequest, JwksResponse
 
 
@@ -41,7 +41,7 @@ def log_jwks_success(jwks_response: JwksResponse) -> None:
         )
 
 
-def process_jwks_response(response: httpx.Response, config: Config) -> JwksResponse:
+def process_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksResponse:
     """
     Process JWKS response.
 

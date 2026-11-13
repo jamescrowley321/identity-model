@@ -29,8 +29,8 @@ py-identity-model v1.2.0 introduced full async/await support while maintaining 1
 from py_identity_model import (
     get_discovery_document,
     get_jwks,
-    validate_token,
     request_client_credentials_token,
+    validate_token,
 )
 ```
 
@@ -38,9 +38,9 @@ from py_identity_model import (
 ```python
 # Models are still imported from the root package
 from py_identity_model import (
+    ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
     TokenValidationConfig,
-    ClientCredentialsTokenRequest,
 )
 
 # Functions are imported from the aio module
@@ -241,8 +241,8 @@ async def validate_request_token(token: str):
 **Before (Sync):**
 ```python
 from py_identity_model import (
-    DiscoveryDocumentRequest,
     ClientCredentialsTokenRequest,
+    DiscoveryDocumentRequest,
     get_discovery_document,
     request_client_credentials_token,
 )
@@ -273,10 +273,7 @@ def get_access_token():
 
 **After (Async):**
 ```python
-from py_identity_model import (
-    DiscoveryDocumentRequest,
-    ClientCredentialsTokenRequest,
-)
+from py_identity_model import ClientCredentialsTokenRequest, DiscoveryDocumentRequest
 from py_identity_model.aio import (
     get_discovery_document,
     request_client_credentials_token,
@@ -315,7 +312,7 @@ FastAPI is async by default, so migration is straightforward:
 **Before (Sync - works but not optimal):**
 ```python
 from fastapi import FastAPI, Depends, HTTPException
-from py_identity_model import validate_token, TokenValidationConfig
+from py_identity_model import TokenValidationConfig, validate_token
 
 app = FastAPI()
 
@@ -375,7 +372,7 @@ For Flask and Django, continue using the synchronous API:
 ```python
 # Flask example - keep using sync API
 from flask import Flask, request, jsonify
-from py_identity_model import validate_token, TokenValidationConfig
+from py_identity_model import TokenValidationConfig, validate_token
 
 app = Flask(__name__)
 
@@ -557,14 +554,14 @@ my_obj = await MyClass.create()
 ### SSL Certificate Configuration
 
 The library reads no environment variables (py-identity-model 5.0). To verify
-TLS against a custom CA bundle, set `ca_bundle` on a `Config` and pass it on
+TLS against a custom CA bundle, set `ca_bundle` on an `HTTPConfig` and pass it on
 the client:
 
 ```python
-from py_identity_model import Config, DiscoveryDocumentRequest
+from py_identity_model import DiscoveryDocumentRequest, HTTPConfig
 from py_identity_model.aio import AsyncHTTPClient, get_discovery_document
 
-config = Config(ca_bundle="/path/to/ca-bundle.crt")
+config = HTTPConfig(ca_bundle="/path/to/ca-bundle.crt")
 
 async def main():
     async with AsyncHTTPClient(config=config) as client:
@@ -576,12 +573,12 @@ async def main():
 
 Earlier versions read `SSL_CERT_FILE`, `CURL_CA_BUNDLE` and
 `REQUESTS_CA_BUNDLE` themselves. To keep using those variables, build the
-`Config` with the helper, which reads them in that order:
+`HTTPConfig` with the helper, which reads them in that order:
 
 ```python
-from py_identity_model.config_helpers import config_from_env
+from py_identity_model.config_helpers import http_config_from_env
 
-config = config_from_env()
+config = http_config_from_env()
 ```
 
 Importing the library does not read or modify your process environment.
@@ -592,7 +589,7 @@ httpx's behavior, not the library's.
 #### Docker Configuration
 
 When running in Docker, pass the CA bundle path to your application and put
-it on the `Config` (or read it with `config_from_env()`):
+it on the `HTTPConfig` (or read it with `http_config_from_env()`):
 
 ```yaml
 # docker-compose.yml

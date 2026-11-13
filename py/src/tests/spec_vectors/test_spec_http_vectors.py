@@ -25,10 +25,11 @@ import jwt
 import pytest
 
 from py_identity_model import (
+    CacheConfig,
     ClientAuthMethod,
-    Config,
     DiscoveryDocumentRequest,
     DiscoveryErrorKind,
+    HTTPConfig,
     IntrospectionErrorKind,
     JwksResponse,
     SignedIntrospectionOptions,
@@ -338,9 +339,11 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
     responses = []
     # A dedicated cache carries the vector's TTL, so nothing is left in the
     # library default cache afterwards; a dedicated client skips retry delays.
-    cache = ValidationCache(config=Config(discovery_cache_ttl=inp["cache_ttl_seconds"]))
+    cache = ValidationCache(
+        config=CacheConfig(discovery_cache_ttl=inp["cache_ttl_seconds"])
+    )
     with (
-        HTTPClient(config=Config(http_retry_base_delay=0)) as client,
+        HTTPClient(config=HTTPConfig(http_retry_base_delay=0)) as client,
         pytest.MonkeyPatch.context() as mp,
     ):
         now = [0.0]
@@ -607,7 +610,7 @@ def _jwks_step(
 def _jwks_call(base: str, inp: dict) -> list[dict] | TokenValidationException:
     # A fresh cache per vector: empty discovery/JWKS caches and no kid-miss
     # cooldown carried over from another vector.
-    with HTTPClient(config=Config(http_retry_base_delay=0)) as client:
+    with HTTPClient(config=HTTPConfig(http_retry_base_delay=0)) as client:
         stack = _JwksStack(client, ValidationCache())
         # Each resolve takes the next of input.kids when given, else input.kid.
         kids = iter(inp.get("kids", []))

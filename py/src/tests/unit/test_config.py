@@ -1,8 +1,9 @@
-"""Unit tests for the plain typed ``Config``.
+"""Unit tests for the plain typed ``HTTPConfig`` and ``CacheConfig``.
 
-``Config`` is a frozen, keyword-only value with the library's defaults. It is
+Each is a frozen, keyword-only value with the library's defaults. It is
 validated on creation, and one ``ConfigError`` names every invalid setting.
-It has no loaders and parses no strings.
+Neither has loaders or parses strings. The transport settings and the cache
+settings are on different types, so neither can be passed where it is ignored.
 """
 
 import dataclasses
@@ -13,7 +14,13 @@ from pathlib import Path
 import pytest
 
 import py_identity_model
-from py_identity_model import ClientAuthMethod, Config, ConfigError, ConfigIssue
+from py_identity_model import (
+    CacheConfig,
+    ClientAuthMethod,
+    ConfigError,
+    ConfigIssue,
+    HTTPConfig,
+)
 from py_identity_model.core import config as config_module
 from py_identity_model.core.http_utils import (
     DEFAULT_HTTP_TIMEOUT,
@@ -33,18 +40,25 @@ from py_identity_model.core.jwks_cache import (
 pytestmark = pytest.mark.unit
 
 
-EXPECTED_DEFAULTS = {
+EXPECTED_HTTP_DEFAULTS = {
     "http_timeout": 30.0,
     "http_retry_max_attempts": 3,
     "http_retry_base_delay": 1.0,
     "ca_bundle": None,
     "jwks_max_size": 524288,
     "jwks_max_keys": 100,
+}
+EXPECTED_CACHE_DEFAULTS = {
     "jwks_cache_ttl": 3600.0,
     "jwks_kid_miss_cooldown": 5.0,
     "discovery_cache_ttl": 3600.0,
     "cache_max_entries": 64,
 }
+CACHE_SETTINGS = frozenset(EXPECTED_CACHE_DEFAULTS)
+
+
+def _config_for(setting: str) -> type[HTTPConfig] | type[CacheConfig]:
+    return CacheConfig if setting in CACHE_SETTINGS else HTTPConfig
 
 
 def _issues(exc: ConfigError) -> dict[str, ConfigIssue]:
@@ -57,18 +71,21 @@ def _issues(exc: ConfigError) -> dict[str, ConfigIssue]:
 
 
 def test_defaults_match_the_settings_table():
-    assert dataclasses.asdict(Config()) == EXPECTED_DEFAULTS
+    assert dataclasses.asdict(HTTPConfig()) == EXPECTED_HTTP_DEFAULTS
+    assert dataclasses.asdict(CacheConfig()) == EXPECTED_CACHE_DEFAULTS
 
 
 def test_defaults_match_the_current_readers():
-    # The defaults the env readers fall back to today; Config must not drift.
-    assert dataclasses.asdict(Config()) == {
+    # The defaults the library's readers fall back to; the configs must not drift.
+    assert dataclasses.asdict(HTTPConfig()) == {
         "http_timeout": DEFAULT_HTTP_TIMEOUT,
         "http_retry_max_attempts": DEFAULT_RETRY_MAX_ATTEMPTS,
         "http_retry_base_delay": DEFAULT_RETRY_BASE_DELAY,
         "ca_bundle": None,
         "jwks_max_size": DEFAULT_MAX_JWKS_SIZE,
         "jwks_max_keys": DEFAULT_MAX_JWKS_KEYS,
+    }
+    assert dataclasses.asdict(CacheConfig()) == {
         "jwks_cache_ttl": DEFAULT_JWKS_CACHE_TTL_SECONDS,
         "jwks_kid_miss_cooldown": DEFAULT_KID_MISS_REFRESH_COOLDOWN_SECONDS,
         "discovery_cache_ttl": DEFAULT_DISCO_CACHE_TTL_SECONDS,
@@ -79,25 +96,29 @@ def test_defaults_match_the_current_readers():
 def test_typed_values_override_defaults(tmp_path: Path):
     bundle = tmp_path / "ca.pem"
     bundle.write_text("-----BEGIN CERTIFICATE-----\n")
-    cfg = Config(
+    http = HTTPConfig(
         http_timeout=5,
         http_retry_max_attempts=0,
         http_retry_base_delay=0.5,
         ca_bundle=str(bundle),
         jwks_max_size=1,
         jwks_max_keys=1,
+    )
+    cache = CacheConfig(
         jwks_cache_ttl=60,
         jwks_kid_miss_cooldown=0,
         discovery_cache_ttl=86400,
         cache_max_entries=1,
     )
-    assert dataclasses.asdict(cfg) == {
+    assert dataclasses.asdict(http) == {
         "http_timeout": 5,
         "http_retry_max_attempts": 0,
         "http_retry_base_delay": 0.5,
         "ca_bundle": str(bundle),
         "jwks_max_size": 1,
         "jwks_max_keys": 1,
+    }
+    assert dataclasses.asdict(cache) == {
         "jwks_cache_ttl": 60,
         "jwks_kid_miss_cooldown": 0,
         "discovery_cache_ttl": 86400,
@@ -105,14 +126,30 @@ def test_typed_values_override_defaults(tmp_path: Path):
     }
 
 
+@pytest.mark.parametrize(
+    ("config", "setting"),
+    [
+        (HTTPConfig, "jwks_cache_ttl"),
+        (HTTPConfig, "cache_max_entries"),
+        (CacheConfig, "http_timeout"),
+        (CacheConfig, "ca_bundle"),
+    ],
+)
+def test_a_setting_is_refused_by_the_config_that_does_not_read_it(config, setting):
+    # 969-A: a cache setting on the HTTP config (or the reverse) is a
+    # TypeError, not a value the consumer silently ignores.
+    with pytest.raises(TypeError, match=setting):
+        config(**{setting: 1})
+
+
 def test_upper_bounds_are_inclusive():
-    cfg = Config(
+    cfg = CacheConfig(
         jwks_cache_ttl=86400.0,
         discovery_cache_ttl=86400.0,
         jwks_kid_miss_cooldown=3600.0,
     )
     assert dataclasses.asdict(cfg) == {
-        **EXPECTED_DEFAULTS,
+        **EXPECTED_CACHE_DEFAULTS,
         "jwks_cache_ttl": 86400.0,
         "discovery_cache_ttl": 86400.0,
         "jwks_kid_miss_cooldown": 3600.0,
@@ -145,7 +182,7 @@ def test_upper_bounds_are_inclusive():
 )
 def test_out_of_range_value_is_rejected(setting, value, message):
     with pytest.raises(ConfigError) as ei:
-        Config(**{setting: value})
+        _config_for(setting)(**{setting: value})
     assert ei.value.issues == (ConfigIssue(setting, message),)
 
 
@@ -169,7 +206,7 @@ def test_out_of_range_value_is_rejected(setting, value, message):
 )
 def test_wrong_type_is_rejected(setting, value, message):
     with pytest.raises(ConfigError) as ei:
-        Config(**{setting: value})
+        _config_for(setting)(**{setting: value})
     assert ei.value.issues == (ConfigIssue(setting, message),)
 
 
@@ -177,47 +214,50 @@ def test_every_invalid_setting_is_reported_in_one_error_in_field_order(
     tmp_path: Path,
 ):
     with pytest.raises(ConfigError) as ei:
-        Config(
-            cache_max_entries=0,
+        HTTPConfig(
+            jwks_max_keys=0,
             http_timeout=0,
             http_retry_max_attempts=-1,
             ca_bundle=str(tmp_path / "missing.pem"),
-            jwks_cache_ttl=1,
         )
     assert ei.value.issues == (
         ConfigIssue("http_timeout", "must be greater than 0"),
         ConfigIssue("http_retry_max_attempts", "must be at least 0"),
         ConfigIssue("ca_bundle", "must be a path to a readable file"),
-        ConfigIssue("jwks_cache_ttl", "must be at least 60"),
-        ConfigIssue("cache_max_entries", "must be at least 1"),
+        ConfigIssue("jwks_max_keys", "must be at least 1"),
     )
     assert str(ei.value) == (
         "configuration is invalid:\n"
         "  - http_timeout: must be greater than 0\n"
         "  - http_retry_max_attempts: must be at least 0\n"
         "  - ca_bundle: must be a path to a readable file\n"
-        "  - jwks_cache_ttl: must be at least 60\n"
-        "  - cache_max_entries: must be at least 1"
+        "  - jwks_max_keys: must be at least 1"
+    )
+    with pytest.raises(ConfigError) as ei:
+        CacheConfig(cache_max_entries=0, jwks_cache_ttl=1)
+    assert ei.value.issues == (
+        ConfigIssue("jwks_cache_ttl", "must be at least 60"),
+        ConfigIssue("cache_max_entries", "must be at least 1"),
     )
 
 
 def test_invalid_value_is_never_replaced_by_its_default():
     with pytest.raises(ConfigError) as ei:
-        Config(cache_max_entries=0)
+        CacheConfig(cache_max_entries=0)
     assert set(_issues(ei.value)) == {"cache_max_entries"}
 
 
 def test_error_message_does_not_echo_the_value(tmp_path: Path):
     path = str(tmp_path / "secret-name.pem")
     with pytest.raises(ConfigError) as ei:
-        Config(ca_bundle=path, http_timeout=-12345.5)
+        HTTPConfig(ca_bundle=path, http_timeout=-12345.5)
     assert path not in str(ei.value)
     assert "12345" not in str(ei.value)
 
 
 def test_ca_bundle_directory_is_rejected(tmp_path: Path):
     with pytest.raises(ConfigError) as ei:
-        Config(ca_bundle=str(tmp_path))
+        HTTPConfig(ca_bundle=str(tmp_path))
     assert ei.value.issues == (
         ConfigIssue("ca_bundle", "must be a path to a readable file"),
     )
@@ -232,7 +272,7 @@ def test_ca_bundle_unreadable_file_is_rejected(tmp_path: Path):
     bundle.chmod(0)
     try:
         with pytest.raises(ConfigError) as ei:
-            Config(ca_bundle=str(bundle))
+            HTTPConfig(ca_bundle=str(bundle))
     finally:
         bundle.chmod(0o600)
     assert ei.value.issues == (
@@ -242,7 +282,7 @@ def test_ca_bundle_unreadable_file_is_rejected(tmp_path: Path):
 
 def test_ca_bundle_empty_string_is_rejected():
     with pytest.raises(ConfigError) as ei:
-        Config(ca_bundle="")
+        HTTPConfig(ca_bundle="")
     assert ei.value.issues == (
         ConfigIssue("ca_bundle", "must be a path to a readable file"),
     )
@@ -256,10 +296,10 @@ OVERSIZED_NAME = "x" * 300
 
 def test_int_too_large_for_a_float_is_reported_with_the_other_issues():
     with pytest.raises(ConfigError) as ei:
-        Config(http_timeout=HUGE_INT, cache_max_entries=0)
+        HTTPConfig(http_timeout=HUGE_INT, jwks_max_keys=0)
     assert ei.value.issues == (
         ConfigIssue("http_timeout", "must be a finite number"),
-        ConfigIssue("cache_max_entries", "must be at least 1"),
+        ConfigIssue("jwks_max_keys", "must be at least 1"),
     )
 
 
@@ -270,17 +310,17 @@ def test_ca_bundle_path_the_os_cannot_stat_is_reported_with_the_other_issues(
     name: str,
 ):
     with pytest.raises(ConfigError) as ei:
-        Config(ca_bundle=name, cache_max_entries=0)
+        HTTPConfig(ca_bundle=name, jwks_max_keys=0)
     assert ei.value.issues == (
         ConfigIssue("ca_bundle", "must be a path to a readable file"),
-        ConfigIssue("cache_max_entries", "must be at least 1"),
+        ConfigIssue("jwks_max_keys", "must be at least 1"),
     )
 
 
 def test_config_error_is_a_value_error():
     # Callers catching ValueError around construction still catch it.
     with pytest.raises(ValueError, match="http_timeout"):
-        Config(http_timeout=0)
+        HTTPConfig(http_timeout=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -289,23 +329,36 @@ def test_config_error_is_a_value_error():
 
 
 def test_config_is_frozen():
-    cfg = Config()
+    http = HTTPConfig()
+    cache = CacheConfig()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cfg.http_timeout = 1.0  # type: ignore[misc]
+        http.http_timeout = 1.0  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cache.jwks_cache_ttl = 60.0  # type: ignore[misc]
 
 
-def test_config_is_keyword_only():
+@pytest.mark.parametrize("config", [HTTPConfig, CacheConfig])
+def test_config_is_keyword_only(config):
     with pytest.raises(TypeError):
-        Config(10.0)  # type: ignore[misc]
+        config(10.0)  # type: ignore[misc]
 
 
-def test_config_has_no_loaders():
-    assert {name for name in ("from_env", "build") if hasattr(Config, name)} == set()
+@pytest.mark.parametrize("config", [HTTPConfig, CacheConfig])
+def test_config_has_no_loaders(config):
+    assert {name for name in ("from_env", "build") if hasattr(config, name)} == set()
 
 
 def test_config_equality_is_by_value():
-    assert Config(http_timeout=5.0) == Config(http_timeout=5.0)
-    assert Config(http_timeout=5.0) != Config()
+    assert HTTPConfig(http_timeout=5.0) == HTTPConfig(http_timeout=5.0)
+    assert HTTPConfig(http_timeout=5.0) != HTTPConfig()
+    assert CacheConfig(cache_max_entries=2) == CacheConfig(cache_max_entries=2)
+    assert CacheConfig(cache_max_entries=2) != CacheConfig()
+
+
+def test_the_combined_config_is_gone():
+    # 969-A: one Config held both kinds of setting; it was split.
+    assert not hasattr(py_identity_model, "Config")
+    assert not hasattr(config_module, "Config")
 
 
 def test_source_and_registry_api_is_gone():

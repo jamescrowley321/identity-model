@@ -115,7 +115,22 @@ check_introspection_binding(  # raises unless active and correctly bound
 - An unbound token passes. `required_binding=TokenBinding.DPOP` or `MTLS`
   refuses it, and without a presentation raises `ConfigurationException`.
 - `dpop=DPoPVerificationOptions(...)` sets the proof algorithms, `iat` window
-  and replay cache.
+  and your replay cache. A DPoP-bound token with no `dpop` raises
+  `ConfigurationException`.
+
+`py_identity_model.aio.check_introspection_binding` is the async counterpart,
+which also accepts an `AsyncDPoPReplayCache`. It is a coroutine and must be
+awaited: a call without `await` runs no check and raises nothing, so every
+token passes.
+
+```python
+from py_identity_model.aio import check_introspection_binding, introspect_token
+
+response = await introspect_token(introspection_request)
+await check_introspection_binding(  # raises unless active and correctly bound
+    response, access_token, presentation, dpop=dpop
+)
+```
 
 It fails closed: it returns normally only for an active token whose binding
 is satisfied. A response whose `active` is not `true` means the token "is not
