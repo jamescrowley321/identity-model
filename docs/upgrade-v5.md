@@ -558,8 +558,9 @@ headers = {"Authorization": f"{tm.token_type.value} {await tm.get_access_token()
   `REFRESH_FAILED` (`details["error"]` holds the token endpoint's error),
   `MISSING_ACCESS_TOKEN`, `UNSUPPORTED_TOKEN_TYPE`. Match on `kind`, not the
   message.
-- In the login callback, a discovery or JWKS fetch failure during ID Token
-  validation answers `502` "Identity provider unavailable", and a
+- In the login callback, a transport failure (connection error or timeout)
+  fetching discovery or JWKS during ID Token validation answers `502`
+  "Identity provider unavailable", and a
   `ConfigurationException` propagates (a `500`). Both were a `401` "ID token
   validation failed".
 
