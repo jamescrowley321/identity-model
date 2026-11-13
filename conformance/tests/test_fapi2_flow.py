@@ -291,7 +291,7 @@ def _fapi2_session() -> harness_app.AuthSession:
             DiscoveryDocumentResponse(is_successful=True, **DISCO),
             client_id="conformance-rp",
             redirect_uri="https://rp.example.com/callback",
-            client_auth=harness_app._fapi2_private_key_jwt(),
+            client_auth=harness_app._fapi2_private_key_jwt(ISSUER),
         ),
         dpop_key=generate_dpop_key("ES256"),
     )
