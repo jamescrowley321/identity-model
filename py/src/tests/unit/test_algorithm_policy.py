@@ -33,7 +33,11 @@ from py_identity_model.core.dpop_verify import (
     InMemoryDPoPReplayCache,
     verify_dpop_proof,
 )
-from py_identity_model.core.introspection_jwt import _algorithm, _Refused
+from py_identity_model.core.introspection_jwt import (
+    SignedIntrospectionRefused,
+    allowed_introspection_algorithms,
+    check_signed_introspection_header,
+)
 from py_identity_model.core.jarm import select_jarm_algorithm
 from py_identity_model.exceptions import (
     JarmValidationException,
@@ -233,13 +237,18 @@ class TestIntrospectionNoneIsVerifyDefault:
     def test_every_verify_alg_allowed(self, alg):
         header = {"typ": INTROSPECTION_TYP, "alg": alg}
 
-        assert _algorithm(header, _introspection_options()) == alg
+        allowed = allowed_introspection_algorithms(_introspection_options())
+
+        assert check_signed_introspection_header(header, allowed) == alg
 
     def test_fapi_set_refuses_rs256(self):
         options = _introspection_options(FAPI2_ALLOWED_SIGNING_ALGORITHMS)
 
-        with pytest.raises(_Refused) as exc_info:
-            _algorithm({"typ": INTROSPECTION_TYP, "alg": "RS256"}, options)
+        with pytest.raises(SignedIntrospectionRefused) as exc_info:
+            check_signed_introspection_header(
+                {"typ": INTROSPECTION_TYP, "alg": "RS256"},
+                allowed_introspection_algorithms(options),
+            )
 
         assert exc_info.value.kind is IntrospectionErrorKind.UNSUPPORTED_ALGORITHM
 

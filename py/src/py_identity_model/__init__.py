@@ -88,6 +88,7 @@ from .sync import (
     DiscoveryEndpoint,
     DiscoveryErrorKind,
     DiscoveryPolicy,
+    DPoPAlgorithm,
     DPoPErrorKind,
     DPoPKey,
     DPoPProof,
@@ -247,8 +248,9 @@ __all__ = [
     "ConfigError",
     "ConfigIssue",
     "ConfigurationException",
-    "DPoPErrorKind",
     # DPoP
+    "DPoPAlgorithm",
+    "DPoPErrorKind",
     "DPoPKey",
     "DPoPProof",
     "DPoPProofRequest",

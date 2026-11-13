@@ -1043,9 +1043,11 @@ class FAPI2ClientProfile:
     ``response_type=code``, PKCE ``S256``) and raise on anything that would
     weaken them, including a DPoP key whose algorithm the server does not
     advertise (RFC 9449 §5.1).  A DPoP-bound token request (authorization code
-    or refresh) sets ``require_dpop_token_type``, so a response that comes
-    back with ``token_type`` other than ``DPoP`` fails instead of handing the
-    client a Bearer token.  The profile is immutable.
+    or refresh) sets ``require_dpop_token_type``: FAPI 2.0 requires
+    sender-constrained access tokens (Security Profile §5.3.2.1), so the
+    protection is important and RFC 9449 §5's "MUST discard" applies.  A
+    response with ``token_type`` other than ``DPoP`` fails instead of handing
+    the client a Bearer token.  The profile is immutable.
 
     For an mTLS client the PAR and token endpoints (refresh included) are the
     server's ``mtls_endpoint_aliases`` when it advertises them (RFC 8705 §5,

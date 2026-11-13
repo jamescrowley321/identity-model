@@ -27,6 +27,10 @@ def log_par_request(
     logger.debug(f"Client ID: {request.client_id}")
 
 
+RequestParts = tuple[dict, dict, tuple[str, str] | None]
+"""Form data, headers and optional HTTP Basic auth for one request attempt."""
+
+
 def prepare_par_request_data(
     request: PushedAuthorizationRequest | SignedPushedAuthorizationRequest,
     dpop_nonce: str | None = None,

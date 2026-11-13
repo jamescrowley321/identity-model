@@ -819,6 +819,53 @@ disco = process_discovery_response(
 )
 ```
 
+## DPoP client
+
+### A refused Bearer answer keeps its tokens; the opt-in needs a key ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
+
+`require_dpop_token_type` stays opt-in and off by default. RFC 9449 §5 leaves
+the choice to the application: when the response carries a `token_type` other
+than `DPoP`, the client "MUST discard the response in this case if this
+protection is deemed important for the security of the application;
+otherwise, the client may continue as in a regular OAuth interaction."
+`FAPI2ClientProfile` sets it on every DPoP-bound token request, because FAPI
+2.0 requires sender-constrained access tokens (Security Profile §5.3.2.1).
+
+Two things change:
+
+- A response refused with `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH` keeps the
+  tokens the server issued on the new `rejected_token` field, so a rotated
+  refresh token is not lost and the Bearer tokens can still be revoked.
+  `token` stays guarded on a failed response, and `repr` redacts
+  `rejected_token`.
+- `require_dpop_token_type=True` without a `dpop_key` raises `ValueError`
+  when the request is built. In 4.x it failed every response.
+
+```python
+response = refresh_token(
+    RefreshTokenRequest(..., dpop_key=key, require_dpop_token_type=True)
+)
+if response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH:
+    revoke_or_store(response.rejected_token)
+```
+
+### Load a stored DPoP key; algorithms are a `DPoPAlgorithm` ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
+
+`DPoPKey.from_pem(pem, algorithm)` and `DPoPKey.from_jwk(jwk, algorithm=None)`
+load an existing private key, so tokens bound to it stay usable across
+restarts. Both refuse a key the algorithm cannot sign with.
+
+`DPoPKey.algorithm` now returns a `DPoPAlgorithm`. It is a `StrEnum`, so it
+still compares equal to `"ES256"` and the other strings, and
+`generate_dpop_key("ES256")` keeps working.
+
+### Each retry attempt mints a fresh DPoP proof ([#1019](https://github.com/jamescrowley321/identity-model/issues/1019))
+
+The authorization code, refresh, client credentials and PAR calls now build
+the request, including the DPoP proof and any `private_key_jwt` assertion,
+on every `429`/`5xx` backoff attempt. A server that remembers `jti` values
+(RFC 9449 §11.1) no longer rejects the retry as a replay. No API change.
+
 ## Access token validation
 
 ### A bound access token without a presentation is rejected ([#1062](https://github.com/jamescrowley321/identity-model/issues/1062))
@@ -932,6 +979,37 @@ in your own handler, not as a bad token: it is a `PyIdentityModelException`, so
 a broad `except PyIdentityModelException` that answers 401 would hide it. The
 FastAPI middleware and WebSocket authenticator build the presentation from the
 request's absolute URL and method, so they never hit this.
+
+### Signed introspection gets its keys from discovery ([#1067](https://github.com/jamescrowley321/identity-model/issues/1067))
+
+Signed introspection responses (RFC 9701) are new in 5.0.
+`SignedIntrospectionOptions` takes either `discovery_address` or both `issuer`
+and `jwks`; passing both, or neither, raises `ValueError`.
+
+- **Discovery mode** (`discovery_address=`, recommended): the issuer, keys and
+  algorithms come from the discovery document. The keys go through the
+  validation cache, and an unknown `kid` refreshes them once, so the
+  authorization server can rotate keys. `introspect_token` takes
+  `cache=` (keyword-only) for an injected `ValidationCache` /
+  `AsyncValidationCache`. A discovery document or JWK Set that can't be
+  fetched fails the call with `error_kind=None`.
+- **Manual mode** (`issuer=`, `jwks=`): the keys are fixed and never
+  refreshed.
+- **Algorithms.** With `algorithms=None`, discovery mode allows the
+  `introspection_signing_alg_values_supported` algorithms that are in
+  `DEFAULT_ALLOWED_ALGORITHMS` (all of them if nothing is advertised; none if
+  the value is not a list). An explicit `algorithms` replaces that.
+- **`leeway=`** (seconds, keyword-only) tolerates clock skew in `iat`. The
+  default is none.
+- **`TokenIntrospectionResponse.jwt_claims`** holds the verified claims of the
+  response JWT (`iss`, `aud`, `iat`, ...) without `token_introspection`. It is
+  `None` for a plain JSON response.
+
+```python
+from py_identity_model import SignedIntrospectionOptions
+
+signed = SignedIntrospectionOptions(discovery_address=disco_address)
+```
 
 ## ID Token validation
 
@@ -1214,8 +1292,10 @@ verification. The defaults are:
   escaped, so an `except jwt.InvalidKeyError` handler no longer matches.
 - **DPoP proofs and signed introspection (new in 5.0).**
   `DPoPVerificationOptions(algorithms=None)` and
-  `SignedIntrospectionOptions(algorithms=None)` accept the verify set, so a
-  plain RS256 authorization server works for signed introspection, and
+  `SignedIntrospectionOptions(algorithms=None)` accept the verify set (for
+  signed introspection in discovery mode, the part of it the server
+  advertises; see [#1067](#signed-introspection-gets-its-keys-from-discovery-1067)),
+  so a plain RS256 authorization server works for signed introspection, and
   `DPoPVerificationOptions(replay_cache=...).accepted_algorithms` (the `algs` of a
   `WWW-Authenticate: DPoP` challenge) lists all ten. Neither defaults to the
   FAPI 2.0 set: a FAPI 2.0 deployment passes

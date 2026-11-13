@@ -15,7 +15,11 @@ from .introspection_jwt import (
     INTROSPECTION_JWT_MEDIA_TYPE,
     verify_signed_introspection_response,
 )
-from .models import TokenIntrospectionRequest, TokenIntrospectionResponse
+from .models import (
+    SignedIntrospectionOptions,
+    TokenIntrospectionRequest,
+    TokenIntrospectionResponse,
+)
 from .response_processors import parse_introspection_response
 
 
@@ -49,6 +53,14 @@ def prepare_introspection_request_data(
     return params, headers, auth
 
 
+def discovery_signed_response(
+    request: TokenIntrospectionRequest,
+) -> SignedIntrospectionOptions | None:
+    """``request.signed_response`` when it gets its keys from discovery."""
+    signed = request.signed_response
+    return signed if signed is not None and signed.discovery_address else None
+
+
 def log_introspection_status(status_code: int) -> None:
     """Log introspection response status code."""
     logger.debug(f"Introspection response status: {status_code}")
@@ -57,23 +69,25 @@ def log_introspection_status(status_code: int) -> None:
 def process_introspection_response(
     response: httpx.Response,
     request: TokenIntrospectionRequest | None = None,
+    verified: TokenIntrospectionResponse | None = None,
 ) -> TokenIntrospectionResponse:
     """Process token introspection HTTP response.
 
     With ``request.signed_response`` set, a 2xx response must be a verified
-    JWT introspection response (RFC 9701 §5).
+    JWT introspection response (RFC 9701 §5). In discovery mode the caller
+    verifies it (it needs the keys) and passes the result as *verified*.
     """
     log_introspection_status(response.status_code)
 
     try:
-        if (
+        if verified is not None:
+            result = verified
+        elif (
             request is not None
             and request.signed_response is not None
             and response.is_success
         ):
-            result = verify_signed_introspection_response(
-                response, request.client_id, request.signed_response
-            )
+            result = verify_signed_introspection_response(response, request)
         else:
             result = parse_introspection_response(response)
         if result.is_successful and result.claims is not None:
@@ -85,6 +99,7 @@ def process_introspection_response(
 
 
 __all__ = [
+    "discovery_signed_response",
     "log_introspection_request",
     "prepare_introspection_request_data",
     "process_introspection_response",

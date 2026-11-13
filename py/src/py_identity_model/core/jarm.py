@@ -33,7 +33,7 @@ from .authorize_response import (
     _map_params_to_fields,
 )
 from .jwt_helpers import decode_and_validate_jwt
-from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS, advertised_verify_algorithms
 from .parsers import extract_jwt_header_fields
 
 
@@ -141,15 +141,7 @@ def advertised_jarm_algorithms(advertised: list[str] | None) -> list[str] | None
     :func:`select_jarm_algorithm` reads as ``DEFAULT_ALLOWED_ALGORITHMS``.
     A value that is not a list allows nothing.
     """
-    if advertised is None:
-        return None
-    if not isinstance(advertised, list):
-        return []
-    return [
-        alg
-        for alg in advertised
-        if isinstance(alg, str) and alg in DEFAULT_ALLOWED_ALGORITHMS
-    ]
+    return advertised_verify_algorithms(advertised)
 
 
 def select_jarm_algorithm(
