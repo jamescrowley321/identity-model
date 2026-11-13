@@ -51,6 +51,8 @@ from ..core.fapi import (
     FAPI2ClientProfile,
     FAPIProfileError,
     FAPIValidationResult,
+    FAPIViolation,
+    FAPIViolationCode,
     validate_fapi_authorization_request,
     validate_fapi_client_config,
     validate_fapi_discovery,
@@ -234,6 +236,8 @@ __all__ = [
     "FAPI2ClientProfile",
     "FAPIProfileError",
     "FAPIValidationResult",
+    "FAPIViolation",
+    "FAPIViolationCode",
     # HTTP Client
     "HTTPClient",
     "InMemoryDPoPReplayCache",

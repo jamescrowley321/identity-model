@@ -91,13 +91,14 @@ claims = validate_token(token, TokenValidationConfig(perform_disco=True, audienc
 
 try:
     validate_certificate_binding(claims, presented_cert_pem)
-except CertificateBindingError:
-    ...  # token is bound to a different certificate — reject the request
+except CertificateBindingError as exc:
+    ...  # reject the request; exc.kind says why (e.g. MISMATCH, NOT_BOUND)
 ```
 
 [`CertificateBindingError`](../api/exceptions.md) subclasses
 `TokenValidationException`, so existing `except TokenValidationException`
-handlers fail closed on a binding mismatch.
+handlers fail closed on a binding mismatch. Its `kind` is a
+`CertificateBindingErrorKind`.
 
 ## API
 
@@ -118,3 +119,5 @@ handlers fail closed on a binding mismatch.
 ### Exceptions
 
 ::: py_identity_model.exceptions.CertificateBindingError
+
+::: py_identity_model.exceptions.CertificateBindingErrorKind

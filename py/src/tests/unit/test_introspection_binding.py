@@ -37,6 +37,7 @@ from py_identity_model import (
 from py_identity_model.core.token_binding import check_token_binding
 from py_identity_model.exceptions import (
     CertificateBindingError,
+    CertificateBindingErrorKind,
     ConfigurationException,
     TokenValidationException,
 )
@@ -48,9 +49,9 @@ OPAQUE_TOKEN = "opaque-access-token-value"
 OTHER_TOKEN = "another-opaque-access-token"
 # Shaped like a base64url SHA-256 thumbprint; matches no key or certificate.
 UNMATCHED_THUMBPRINT = "A" * 43
-BOUND_WITHOUT_CERTIFICATE = (
-    "Certificate-bound access token was presented without a client certificate "
-    "(RFC 8705 §3)"
+CERTIFICATE_REQUIRED = (
+    "No client certificate was presented for a certificate-bound access token "
+    "or required_binding=mtls (RFC 8705 §3)"
 )
 
 
@@ -188,9 +189,10 @@ class TestCertificateBoundIntrospection:
         )
 
         with pytest.raises(
-            CertificateBindingError, match=f"^{re.escape(BOUND_WITHOUT_CERTIFICATE)}$"
-        ):
+            CertificateBindingError, match=f"^{re.escape(CERTIFICATE_REQUIRED)}$"
+        ) as exc:
             _check(response, None)
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
 
     def test_matching_certificate_accepted(self, client_cert_pem):
         response = _response(
@@ -213,9 +215,10 @@ class TestCertificateBoundIntrospection:
         )
 
         with pytest.raises(
-            CertificateBindingError, match=f"^{re.escape(BOUND_WITHOUT_CERTIFICATE)}$"
-        ):
+            CertificateBindingError, match=f"^{re.escape(CERTIFICATE_REQUIRED)}$"
+        ) as exc:
             _check(response, _mtls(None))
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
 
 
 @pytest.mark.unit
@@ -247,13 +250,11 @@ class TestUnboundIntrospection:
         assert kind is DPoPErrorKind.NOT_BOUND
 
     def test_required_mtls_without_certificate_rejected(self):
-        message = (
-            "required_binding=mtls but no client certificate was presented "
-            "(RFC 8705 §3)"
-        )
-
-        with pytest.raises(CertificateBindingError, match=f"^{re.escape(message)}$"):
+        with pytest.raises(
+            CertificateBindingError, match=f"^{re.escape(CERTIFICATE_REQUIRED)}$"
+        ) as exc:
             _check(_response(), _mtls(None), required_binding=TokenBinding.MTLS)
+        assert exc.value.kind is CertificateBindingErrorKind.CERTIFICATE_REQUIRED
 
     @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
     def test_required_binding_without_presentation_is_config_error(self, binding):

@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from fastapi_identity_model import OIDCSettings, TokenManager
@@ -67,3 +69,34 @@ def test_token_manager_repr_omits_secrets():
     )
     manager.set_tokens(access_token="at-s3cr3t", refresh_token="rt-s3cr3t")
     assert "s3cr3t" not in repr(manager)
+
+
+def test_trusted_audiences_default_to_none_trusted():
+    s = OIDCSettings(discovery_url="d", client_id="cid")
+    assert (s.trusted_audiences, s.validate_azp) == ([], False)
+
+
+def test_trusted_audiences_tuple_is_stored_as_list():
+    audiences: Any = ("urn:a",)
+    s = OIDCSettings(discovery_url="d", client_id="cid", trusted_audiences=audiences)
+    assert s.trusted_audiences == ["urn:a"]
+
+
+@pytest.mark.parametrize("audiences", ["urn:api", None, {"urn:api"}])
+def test_trusted_audiences_must_be_a_list(audiences):
+    with pytest.raises(ValueError, match="trusted_audiences must be a list of strings"):
+        OIDCSettings(discovery_url="d", client_id="cid", trusted_audiences=audiences)
+
+
+@pytest.mark.parametrize("entry", ["", 7, None])
+def test_trusted_audiences_entries_must_be_non_empty_strings(entry):
+    with pytest.raises(ValueError, match="trusted_audiences entries"):
+        OIDCSettings(
+            discovery_url="d", client_id="cid", trusted_audiences=["urn:a", entry]
+        )
+
+
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_validate_azp_must_be_a_bool(value):
+    with pytest.raises(ValueError, match="validate_azp must be a bool"):
+        OIDCSettings(discovery_url="d", client_id="cid", validate_azp=value)

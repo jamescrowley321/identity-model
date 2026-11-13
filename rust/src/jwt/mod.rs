@@ -711,6 +711,73 @@ mod tests {
         }
     }
 
+    // JWT-014: a weak key resolved through a JWKS client is a typed WeakKey,
+    // not a kid miss: the set is fetched once and not refreshed.
+    #[tokio::test]
+    async fn validate_with_jwks_rejects_weak_key_without_refresh() {
+        let set: Value = serde_json::from_slice(&read_fixture("jwks.json")).expect("jwks fixture");
+        let keys = set["keys"].as_array().expect("keys array").clone();
+        for (fixture, kid, kty) in [
+            ("weak-rsa-1024-token.txt", "weak-rsa-1024", "RSA"),
+            ("weak-ec-p192-token.txt", "weak-ec-p192", "EC"),
+        ] {
+            let (server, uri) = serve_jwks(keys.clone()).await;
+            let client = JwksClient::builder().allow_http(true).build();
+            let token = String::from_utf8(read_fixture(fixture)).expect("utf8 token");
+
+            let err = validate_token_with_jwks(&token, &client, &uri, &ValidationOptions::new())
+                .await
+                .expect_err("weak key rejected");
+
+            assert!(
+                matches!(&err, IdentityError::WeakKey { kid: k, kty: t, .. } if k == kid && t == kty),
+                "{fixture}: expected WeakKey, got {err:?}"
+            );
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                1,
+                "{fixture}: a weak key is not a kid miss"
+            );
+        }
+    }
+
+    // A padded spelling of a weak modulus never verifies: the floor and key
+    // conversion share one strict base64url decoding (CWE-326).
+    #[test]
+    fn padded_weak_modulus_never_verifies() {
+        let mut key = fixture_key("weak-rsa-1024");
+        key.n.push('=');
+        let token = String::from_utf8(read_fixture("weak-rsa-1024-token.txt")).expect("utf8 token");
+
+        let err = validate_token(token.trim(), &key, &ValidationOptions::new())
+            .expect_err("padded weak modulus rejected");
+
+        assert!(
+            matches!(
+                err,
+                IdentityError::Validation(_) | IdentityError::WeakKey { .. }
+            ),
+            "{err:?}"
+        );
+    }
+
+    // Empty key material isn't a weak key: it is left to key conversion, as in
+    // Python and Go.
+    #[test]
+    fn empty_key_material_is_not_a_weak_key() {
+        let token = String::from_utf8(read_fixture("weak-rsa-1024-token.txt")).expect("utf8 token");
+        let mut key = fixture_key("weak-rsa-1024");
+        key.n.clear();
+        assert!(check_key_strength(&key).is_ok());
+        let err = validate_token(token.trim(), &key, &ValidationOptions::new())
+            .expect_err("empty modulus rejected");
+        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+
+        let mut key = fixture_key("weak-ec-p192");
+        key.x.clear();
+        assert!(check_key_strength(&key).is_ok());
+    }
+
     #[test]
     fn minimum_key_bits_match_the_specs() {
         assert_eq!((MIN_RSA_KEY_BITS, MIN_EC_KEY_BITS), (2048, 224));

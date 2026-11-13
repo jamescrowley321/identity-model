@@ -11,8 +11,9 @@ JWT-014).
 
 from __future__ import annotations
 
-from base64 import urlsafe_b64decode
 import binascii
+
+from jwt.utils import base64url_decode
 
 from ..exceptions import WeakKeyException
 
@@ -24,21 +25,18 @@ MIN_EC_KEY_BITS = 224
 def _decode_member(value: object) -> bytes | None:
     """Decode a base64url JWK member, or ``None`` when it doesn't decode.
 
-    A member that doesn't decode is left for key conversion to reject.
+    Decodes with PyJWT's own decoder, so the floor measures exactly the octets
+    key conversion turns into the verification key. A member that doesn't
+    decode, or decodes to nothing, is left for key conversion to reject.
     """
     # PyJWT accepts bytes members as well as str, so both are measured.
-    if isinstance(value, str):
-        if not value.isascii():
-            return None
-        value = value.encode()
-    if not isinstance(value, bytes) or not value:
+    if not isinstance(value, (str, bytes)):
         return None
     try:
-        # Decoding ignores padding beyond what the input needs, so "==" pads
-        # any unpadded base64url member (RFC 7515 §2).
-        return urlsafe_b64decode(value + b"==")
+        decoded = base64url_decode(value)
     except (binascii.Error, ValueError):
         return None
+    return decoded or None
 
 
 def _key_bits(jwk: dict) -> tuple[int, int] | None:
