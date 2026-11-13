@@ -488,7 +488,7 @@ ws_auth = build_ws_authenticator(settings=settings, options=options)
   get a proof minted for another origin past the `htu` check. Set it unless a
   trusted proxy pins `Host`.
 
-### FastAPI: `WWW-Authenticate` challenges carry the RFC 6750 parameters
+### FastAPI: `WWW-Authenticate` challenges carry the RFC 6750 parameters ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
 
 RFC 6750 §3 requires every `Bearer` challenge to carry at least one
 auth-param; 4.x sent a bare `WWW-Authenticate: Bearer`.
@@ -510,7 +510,7 @@ auth-param; 4.x sent a bare `WWW-Authenticate: Bearer`.
 - `require_scope(scope)` raises `ConfigurationException` when `scope` is not a
   single RFC 6749 §3.3 scope-token (empty, contains a space, `"` or `\`).
 
-### FastAPI: the login callback checks the RFC 9207 `iss` parameter
+### FastAPI: the login callback checks the RFC 9207 `iss` parameter ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
 
 `build_oidc_router`'s callback now validates the authorization response `iss`
 parameter against the discovery `issuer` (simple string comparison, RFC 9207
@@ -523,7 +523,7 @@ parameter against the discovery `issuer` (simple string comparison, RFC 9207
   a callback without `iss` is rejected the same way.
 - When it does not, a callback without `iss` is accepted as before.
 
-### FastAPI: the RP and `TokenManager` check `token_type`
+### FastAPI: the RP and `TokenManager` check `token_type` ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
 
 RFC 6749 §7.1: a client MUST NOT use an access token whose type it does not
 understand.
@@ -550,7 +550,7 @@ tm.set_tokens(access_token=at, refresh_token=rt, expires_in=3600, token_type="Be
 headers = {"Authorization": f"{tm.token_type.value} {await tm.get_access_token()}"}
 ```
 
-### FastAPI: `TokenManager` errors are typed; ID Token outages are `502`
+### FastAPI: `TokenManager` errors are typed; ID Token outages are `502` ([#1136](https://github.com/jamescrowley321/identity-model/pull/1136))
 
 - `TokenManager` raises `TokenManagerError` (a `PyIdentityModelException`)
   with `kind: TokenManagerErrorKind`: `NO_REFRESH_TOKEN`, `DISCOVERY_FAILED`,
