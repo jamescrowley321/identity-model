@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 
-from py_identity_model import DPoPVerificationOptions, TokenBinding
+from py_identity_model import TokenBinding
 
-from .options import default_dpop_options, normalize_origin
+from .options import normalize_origin
 
 
 def _default_excluded_paths() -> list[str]:
@@ -54,11 +54,6 @@ class OIDCSettings:
             for the DPoP ``htu`` check. ``None`` takes the origin from the
             request's ``Host`` header; see
             :class:`~fastapi_identity_model.AuthOptions`.
-
-    The default DPoP options, with their replay cache, belong to this value:
-    every ``AuthOptions`` built from it without ``dpop=`` shares them, so the
-    middleware and WebSocket routes given the same settings refuse a proof
-    replayed from one to the other.
     """
 
     discovery_url: str
@@ -73,9 +68,6 @@ class OIDCSettings:
     required_binding: TokenBinding = TokenBinding.NONE
     client_certificate_header: str | None = None
     expected_origin: str | None = None
-    _dpop: DPoPVerificationOptions = field(
-        default_factory=default_dpop_options, init=False, repr=False, compare=False
-    )
 
     def __post_init__(self) -> None:
         self.required_binding = TokenBinding(self.required_binding)

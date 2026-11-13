@@ -7,8 +7,11 @@ a static key instead of discovery, so the signature, claims and binding checks
 """
 
 from base64 import urlsafe_b64encode
+import copy
+import dataclasses
 from dataclasses import FrozenInstanceError, replace
 import datetime
+import logging
 import time
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -35,6 +38,7 @@ from fastapi_identity_model import (
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
+    DPoPErrorKind,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
@@ -610,6 +614,32 @@ class TestSettingsWiring:
             (401, INVALID_PROOF_DPOP, GENERIC_BODY),
         )
 
+    async def test_entry_points_without_options_share_a_replay_cache(
+        self, raw_client, raw_ws_authenticate, token, caplog
+    ):
+        # Built separately with only discovery_url=: a handshake proof
+        # (htm=GET) replayed on an HTTP GET is still refused.
+        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key)
+
+        ws_claims = await raw_ws_authenticate(
+            list(headers.items()), url="ws://testserver/me", **common
+        )
+        with caplog.at_level(logging.INFO, logger=mw.logger.name):
+            async with raw_client(**common) as c:
+                replayed = await c.get("/me", headers=headers)
+
+        assert (ws_claims["cnf"], _rejected(replayed)) == (
+            {"jkt": key.jwk_thumbprint},
+            (401, INVALID_PROOF_DPOP, GENERIC_BODY),
+        )
+        assert (
+            f"DPoP binding rejected: {DPoPErrorKind.REPLAYED_JTI.value}"
+            in caplog.messages
+        )
+
     async def test_env_mtls_reads_certificate_header(
         self, raw_client, oidc_env, token, client_cert_pem
     ):
@@ -873,16 +903,33 @@ class TestSharedOptions:
         )
 
     @pytest.mark.usefixtures("oidc_env")
-    def test_default_dpop_options_own_a_replay_cache(self):
-        # 1027-B: no process-wide cache; each AuthOptions owns its own, which
-        # the HTTP middleware and WebSocket routes given it share.
+    def test_default_dpop_options_share_one_replay_cache(self):
+        # Every entry point built without dpop= shares this process's cache;
+        # explicit dpop= options keep their own.
         first, second = AuthOptions(), AuthOptions()
         from_settings = AuthOptions.from_settings(oidc_settings_from_env())
+        explicit = AuthOptions(
+            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+        )
+        caches = [o.dpop.replay_cache for o in (first, second, from_settings)]
 
         assert isinstance(first.dpop.replay_cache, InMemoryDPoPReplayCache)
-        assert (
-            len({id(o.dpop.replay_cache) for o in (first, second, from_settings)}) == 3
+        assert [c is first.dpop.replay_cache for c in caches] == [True] * 3
+        assert explicit.dpop.replay_cache is not first.dpop.replay_cache
+
+    @pytest.mark.usefixtures("oidc_env")
+    def test_copies_keep_the_replay_cache(self):
+        settings = oidc_settings_from_env()
+        options = AuthOptions.from_settings(settings)
+        cache = options.dpop.replay_cache
+
+        assert dataclasses.asdict(settings) == dataclasses.asdict(
+            copy.deepcopy(settings)
         )
+        assert [
+            dataclasses.asdict(options)["dpop"]["replay_cache"] is cache,
+            copy.deepcopy(options).dpop.replay_cache is cache,
+        ] == [True, True]
 
     def test_dpop_none_means_the_default(self):
         given = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())

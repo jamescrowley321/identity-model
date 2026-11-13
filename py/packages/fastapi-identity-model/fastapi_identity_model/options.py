@@ -12,6 +12,7 @@ from py_identity_model import (
     InMemoryDPoPReplayCache,
     TokenBinding,
 )
+from py_identity_model.core.process_local import ProcessLocal
 
 
 if TYPE_CHECKING:
@@ -85,9 +86,17 @@ def _certificate_from_header(
     return client_certificate
 
 
+# One replay cache for every entry point built without dpop= options, so a
+# proof accepted on a WebSocket handshake cannot be replayed on an HTTP GET.
+# A forked child builds its own.
+_default_replay_cache: ProcessLocal[InMemoryDPoPReplayCache] = ProcessLocal(
+    lambda _inherited: InMemoryDPoPReplayCache()
+)
+
+
 def default_dpop_options() -> DPoPVerificationOptions:
-    """Library-default DPoP options with a new in-memory replay cache."""
-    return DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
+    """Library-default DPoP options with this process's shared replay cache."""
+    return DPoPVerificationOptions(replay_cache=_default_replay_cache.get())
 
 
 @dataclass(frozen=True)
@@ -108,12 +117,11 @@ class AuthOptions:
             needs ``client_certificate``.
         dpop: :class:`~py_identity_model.DPoPVerificationOptions` for DPoP
             proofs (algorithms, ``iat`` window, replay cache). The default is
-            the library defaults with an
-            :class:`~py_identity_model.InMemoryDPoPReplayCache` owned by this
-            options value, so the HTTP middleware and WebSocket routes given
-            the same ``AuthOptions`` share one cache (as do those given the
-            same ``OIDCSettings``, see :meth:`from_settings`). Behind a load
-            balancer, pass a shared cache. ``None`` means the default.
+            the library defaults with one
+            :class:`~py_identity_model.InMemoryDPoPReplayCache` per process,
+            shared by every HTTP middleware and WebSocket authenticator built
+            without explicit ``dpop`` options. Behind a load balancer, pass a
+            shared cache. ``None`` means the default.
         client_certificate: Returns the connection's mTLS client certificate
             (PEM or DER) for certificate-bound tokens, or ``None``. It receives
             the ``Request`` (HTTP) or ``WebSocket`` (handshake). Without it
@@ -167,10 +175,7 @@ class AuthOptions:
     ) -> AuthOptions:
         """Options from *settings*, plus the parts settings cannot hold.
 
-        ``required_binding`` and ``expected_origin`` come from *settings*.
-        Without *dpop*, the options use the DPoP options *settings* holds, so
-        every ``AuthOptions`` built from one settings value shares its replay
-        cache. The
+        ``required_binding`` and ``expected_origin`` come from *settings*. The
         client certificate is *client_certificate* when given, else read from
         ``settings.client_certificate_header`` (URL-decoded), else ``None``.
         """
@@ -180,7 +185,7 @@ class AuthOptions:
             )
         return cls(
             required_binding=settings.required_binding,
-            dpop=dpop if dpop is not None else settings._dpop,
+            dpop=dpop,
             client_certificate=client_certificate,
             expected_origin=settings.expected_origin,
         )
