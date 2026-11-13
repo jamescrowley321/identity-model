@@ -53,6 +53,7 @@ from py_identity_model.aio import validate_token
 from .middleware import (
     _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
     _classify_validation_failure,
+    _log_rejection,
     _ValidationFailure,
     evaluate_token_type,
     parse_authorization,
@@ -245,7 +246,7 @@ def build_ws_authenticator(
                     reason="Authentication temporarily unavailable",
                 ) from e
             if failure is _ValidationFailure.REJECTED:
-                logger.info("WS token rejected during validation: %s", e)
+                _log_rejection("WS token rejected during validation: %s", e)
                 raise WebSocketException(
                     code=_WS_POLICY_VIOLATION, reason=_GENERIC_REJECT_REASON
                 ) from e

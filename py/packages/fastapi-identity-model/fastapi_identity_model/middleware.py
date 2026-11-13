@@ -31,6 +31,7 @@ from starlette.responses import (  # type: ignore[attr-defined]
 from py_identity_model import (
     AuthorizationScheme,
     CertificateBindingError,
+    ConfigurationException,
     DPoPErrorKind,
     DPoPReplayCacheError,
     DPoPValidationError,
@@ -115,6 +116,17 @@ def _classify_validation_failure(exc: Exception) -> _ValidationFailure:
     if isinstance(exc, (PyIdentityModelException, InvalidTokenError)):
         return _ValidationFailure.REJECTED
     return _ValidationFailure.SERVER_ERROR
+
+
+def _log_rejection(message: str, exc: Exception) -> None:
+    """Log a rejected token. A ``ConfigurationException`` may be this
+    server's own setup (an HTTPS-policy failure on its discovery URL, an empty
+    algorithm list), so it is logged at warning level with its traceback for
+    alerting; any other rejection is a bad token, logged at info level."""
+    if isinstance(exc, ConfigurationException):
+        logger.warning(message, exc, exc_info=exc)
+    else:
+        logger.info(message, exc)
 
 
 def parse_authorization(header: str) -> tuple[AuthorizationScheme, str] | None:
@@ -489,7 +501,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             # Uniform 401 body — do NOT echo the stage-specific cause
             # (signature/audience/expiry/malformed), which would form a CWE-209
             # oracle (F-18). Log the real cause server-side for operators.
-            logger.info("Token rejected during validation: %s", e)
+            _log_rejection("Token rejected during validation: %s", e)
             return self._unauthorized(_GENERIC_401_DETAIL)
         # An unusable replay cache or a non-library failure is a server fault,
         # not an auth decision. Surface a 500 without leaking internals.

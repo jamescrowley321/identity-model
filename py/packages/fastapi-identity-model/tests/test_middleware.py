@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import AsyncMock
 
 from fastapi import Depends, FastAPI
@@ -8,6 +9,7 @@ import pytest
 from fastapi_identity_model import TokenValidationMiddleware, get_claims
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
+    ConfigurationException,
     DiscoveryException,
     DiscoveryIssuerMismatchError,
     JwksException,
@@ -142,6 +144,27 @@ async def test_validation_failures_return_401(monkeypatch, exc):
         401,
         {"detail": mw._GENERIC_401_DETAIL},
     )
+
+
+async def test_configuration_error_is_401_logged_as_warning(monkeypatch, caplog):
+    # A ConfigurationException may be this server's own setup: still a uniform
+    # 401 (it may also be the provider's document), but logged at warning
+    # level so an outage of the server's own config raises an alert.
+    error = ConfigurationException("HTTPS is required by discovery policy")
+    validate = AsyncMock(side_effect=error)
+    with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+        async with _client(_app(monkeypatch, validate)) as client:
+            resp = await client.get("/me", headers={"Authorization": "Bearer x"})
+    assert (resp.status_code, resp.json()) == (
+        401,
+        {"detail": mw._GENERIC_401_DETAIL},
+    )
+    records = [
+        (r.levelno, r.exc_info[1] if r.exc_info else None)
+        for r in caplog.records
+        if r.name == "fastapi_identity_model"
+    ]
+    assert records == [(logging.WARNING, error)]
 
 
 async def test_generic_validation_failure_still_returns_401(monkeypatch):
