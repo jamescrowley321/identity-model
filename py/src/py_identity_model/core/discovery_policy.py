@@ -109,9 +109,10 @@ def discovery_document_url(issuer: str) -> str:
     ``https://example.com/issuer1/.well-known/openid-configuration``.
 
     Use it to build ``DiscoveryDocumentRequest.address`` (or a
-    ``disco_doc_address``) from an issuer identifier. For an authorization
-    server that publishes its metadata elsewhere, such as an RFC 8414 §3.1
-    location, pass that URL directly instead.
+    ``disco_doc_address``) from an issuer identifier. Discovery requires the
+    document's ``issuer`` to equal the requested URL without
+    ``/.well-known/openid-configuration`` (§4.3), so only OpenID Connect
+    discovery locations are supported.
 
     Args:
         issuer: The issuer identifier: an ``http``/``https`` URL with a host
@@ -130,11 +131,9 @@ def discovery_document_url(issuer: str) -> str:
 
     parsed = urlparse(issuer)
     if parsed.scheme not in ("http", "https"):
-        raise ConfigurationException(
-            f"Issuer must be an HTTP or HTTPS URL, got: {issuer}"
-        )
+        raise ConfigurationException("Issuer must be an HTTP or HTTPS URL")
     if not parsed.netloc:
-        raise ConfigurationException(f"Issuer must include a host: {issuer}")
+        raise ConfigurationException("Issuer must include a host")
     if parsed.query or parsed.fragment:
         raise ConfigurationException(
             "Issuer must not contain query or fragment components"
@@ -142,9 +141,7 @@ def discovery_document_url(issuer: str) -> str:
 
     base = issuer.rstrip("/")
     if base.endswith(_WELL_KNOWN_PATH):
-        raise ConfigurationException(
-            f"Expected an issuer, got a discovery document URL: {issuer}"
-        )
+        raise ConfigurationException("Expected an issuer, got a discovery document URL")
     return base + _WELL_KNOWN_PATH
 
 

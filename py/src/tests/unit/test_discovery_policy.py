@@ -84,15 +84,9 @@ class TestDiscoveryDocumentUrl:
         ("issuer", "message"),
         [
             ("", r"^Issuer cannot be empty$"),
-            (
-                "auth.example.com",
-                r"^Issuer must be an HTTP or HTTPS URL, got: auth\.example\.com$",
-            ),
-            (
-                "ftp://evil.com",
-                r"^Issuer must be an HTTP or HTTPS URL, got: ftp://evil\.com$",
-            ),
-            ("https://", r"^Issuer must include a host: https://$"),
+            ("auth.example.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("ftp://user:secret@evil.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("https://", r"^Issuer must include a host$"),
             (
                 "https://auth.example.com?evil=1",
                 r"^Issuer must not contain query or fragment components$",
@@ -103,8 +97,7 @@ class TestDiscoveryDocumentUrl:
             ),
             (
                 "https://auth.example.com/.well-known/openid-configuration",
-                r"^Expected an issuer, got a discovery document URL: "
-                r"https://auth\.example\.com/\.well-known/openid-configuration$",
+                r"^Expected an issuer, got a discovery document URL$",
             ),
         ],
     )

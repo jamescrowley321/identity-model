@@ -16,6 +16,10 @@ from py_identity_model.core import (
     token_binding,
     trust_scope,
 )
+from py_identity_model.exceptions import (
+    FailedResponseAccessError,
+    SuccessfulResponseAccessError,
+)
 
 
 _NAMED = [
@@ -82,3 +86,27 @@ def test_replace_runs_validation() -> None:
     assert dataclasses.replace(cfg, leeway=30) == models.TokenValidationConfig(
         perform_disco=True, leeway=30
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (
+            models.ClientCredentialsTokenResponse(
+                is_successful=True, token={"access_token": "at"}
+            ),
+            SuccessfulResponseAccessError,
+        ),
+        (
+            models.ClientCredentialsTokenResponse(is_successful=False, error="denied"),
+            FailedResponseAccessError,
+        ),
+    ],
+    ids=["successful", "failed"],
+)
+def test_responses_are_read_only(response, error) -> None:
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        response.is_successful = False  # type: ignore[misc]
+    with pytest.raises(error):
+        dataclasses.replace(response)

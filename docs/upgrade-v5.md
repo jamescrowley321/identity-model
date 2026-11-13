@@ -593,9 +593,12 @@ configuration and value types are now `@dataclass(frozen=True, kw_only=True)`:
 
 Pass every field by name. A positional argument raises `TypeError`, so a field
 added in a later release can never shift your arguments onto the wrong field.
-Assigning a field raises `dataclasses.FrozenInstanceError`; use
-`dataclasses.replace`, which runs the type's validation again on the copy.
-Before, assigning a field skipped that validation.
+Assigning a field raises `dataclasses.FrozenInstanceError`. For a request,
+configuration or value type, use `dataclasses.replace`, which runs the type's
+validation again on the copy; before, assigning a field skipped that
+validation. Responses and other results are read-only: `dataclasses.replace`
+raises on them, because reading a field that does not apply to the outcome
+(`error` on a success, data fields on a failure) raises.
 
 ```python
 # Before
@@ -671,8 +674,7 @@ OpenID Connect Discovery 1.0 §4.1 specifies: a terminating `/` is removed and
 `/.well-known/openid-configuration` is appended. It raises
 `ConfigurationException` for an empty value, a non-HTTP(S) URL, a URL without
 a host, a query or fragment, or a value that already ends with the well-known
-path. For a server that publishes metadata elsewhere, such as an RFC 8414 §3.1
-location, pass that URL as `address` directly.
+path.
 
 `parse_discovery_url` and `DiscoveryEndpoint` are removed. `parse_discovery_url`
 appended the path only when it was missing and returned the authority as well;
