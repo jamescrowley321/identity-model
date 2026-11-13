@@ -400,3 +400,17 @@ class TestRememberDpopNonce:
             "HTTPS://AUTH.EXAMPLE.COM/token", "n-1", resource_server=False
         )
         assert key.nonce_for(TOKEN_URL, resource_server=False) == "n-1"
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            pytest.param("http://auth.example.com/token", id="scheme"),
+            pytest.param("https://other.example.com/token", id="host"),
+            pytest.param("https://auth.example.com:8443/token", id="port"),
+        ],
+    )
+    def test_other_origin_has_no_nonce(self, other):
+        key = generate_dpop_key()
+        key.remember_nonce(TOKEN_URL, "n-1", resource_server=False)
+        assert key.nonce_for(other, resource_server=False) is None
+        assert key.nonce_for(TOKEN_URL, resource_server=False) == "n-1"

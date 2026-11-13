@@ -129,7 +129,7 @@ class DPoPKey:
 
     _algorithm: DPoPAlgorithm
     _private_key: _PrivateKey
-    _nonces: dict[tuple[bool, str], str]
+    _nonces: dict[tuple[bool, str, str | None, int | None], str]
     _nonce_lock: threading.Lock
 
     def __init__(self, algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256) -> None:
@@ -478,9 +478,17 @@ def build_dpop_headers(
     return headers
 
 
-def _nonce_key(uri: str, resource_server: bool) -> tuple[bool, str]:
+# The response header that carries a server nonce (RFC 9449 §8.1). HTTP header
+# names are case-insensitive.
+_DPOP_NONCE_HEADER = "DPoP-Nonce"
+
+
+def _nonce_key(
+    uri: str, resource_server: bool
+) -> tuple[bool, str, str | None, int | None]:
+    # urlsplit lowercases the scheme, and hostname is lowercased.
     parts = urlsplit(uri)
-    return resource_server, f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+    return resource_server, parts.scheme, parts.hostname, parts.port
 
 
 def remember_dpop_nonce(
@@ -491,7 +499,7 @@ def remember_dpop_nonce(
     Any status counts: a server may supply the next nonce on a ``200``
     response (RFC 9449 §8.2) or with a ``use_dpop_nonce`` error (§8, §9).
     """
-    nonce = response.headers.get("DPoP-Nonce")
+    nonce = response.headers.get(_DPOP_NONCE_HEADER)
     if nonce:
         key.remember_nonce(uri, nonce, resource_server=resource_server)
 
