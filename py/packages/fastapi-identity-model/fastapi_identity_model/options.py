@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 from py_identity_model import (
+    ConfigurationException,
     DPoPReplayCheck,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
@@ -28,6 +29,9 @@ __all__ = ["AuthOptions"]
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _HOST = re.compile(r"[a-z0-9._-]+")
+# An auth-param quoted-string value with nothing to escape (RFC 9110 §5.6.4):
+# printable ASCII except '"' and '\\'.
+_REALM = re.compile(r"[\x20\x21\x23-\x5b\x5d-\x7e]+")
 
 
 def normalize_origin(origin: str) -> str:
@@ -154,17 +158,25 @@ class AuthOptions:
             client that can choose the ``Host`` header the app sees can make a
             proof minted for another origin pass the ``htu`` check. Set it
             unless a trusted proxy pins ``Host``.
+        realm: The ``realm`` auth-param of every ``WWW-Authenticate``
+            challenge (RFC 6750 §3, RFC 9449 §7.1). When ``None`` (default),
+            challenges carry no ``realm``, except a ``Bearer`` challenge with
+            no other parameter, which carries ``realm="api"`` because the
+            ``Bearer`` scheme needs at least one.
 
     Raises:
         ValueError: ``required_binding`` is ``MTLS`` without
             ``client_certificate`` (every token would be refused), or
             ``expected_origin`` is not an ``http``/``https`` origin.
+        ConfigurationException: ``realm`` is empty or has a character other
+            than printable ASCII, or a ``"`` or ``\\``.
     """
 
     required_binding: TokenBinding = TokenBinding.NONE
     dpop: DPoPVerificationOptions = field(default_factory=default_dpop_options)
     client_certificate: Callable[[HTTPConnection], str | bytes | None] | None = None
     expected_origin: str | None = None
+    realm: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -183,6 +195,11 @@ class AuthOptions:
         if self.expected_origin is not None:
             object.__setattr__(
                 self, "expected_origin", normalize_origin(self.expected_origin)
+            )
+        if self.realm is not None and not _REALM.fullmatch(self.realm):
+            raise ConfigurationException(
+                "realm must be non-empty printable ASCII without '\"' or '\\\\'; "
+                f"got {self.realm!r}"
             )
 
     @classmethod

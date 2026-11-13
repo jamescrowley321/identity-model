@@ -34,6 +34,7 @@ from fastapi_identity_model import (
     TokenValidationMiddleware,
     build_ws_authenticator,
     get_claims,
+    require_scope,
     ws,
 )
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
@@ -158,6 +159,10 @@ def client(monkeypatch, public_jwk):
         @app.get("/me")
         async def me(claims: dict = Depends(get_claims)):
             return {"sub": claims["sub"]}
+
+        @app.get("/scoped", dependencies=[Depends(require_scope("files.read"))])
+        async def scoped():
+            return {}
 
         @app.get("/files/{name}", dependencies=[Depends(get_claims)])
         async def files(name: str):
@@ -318,7 +323,121 @@ class TestUnboundToken:
         async with client() as c:
             resp = await c.get("/me", headers={"Authorization": f"Basic {token()}"})
 
-        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (401, "Bearer")
+        # RFC 6750 §3.1: an unsupported scheme gets no error code, but §3
+        # still needs an auth-param.
+        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (
+            401,
+            'Bearer realm="api"',
+        )
+
+
+class TestChallenge:
+    """RFC 6750 §3 / §3.1 and RFC 9449 §7.1 ``WWW-Authenticate`` challenges."""
+
+    async def test_missing_header_has_a_realm_and_no_error(self, client):
+        async with client() as c:
+            resp = await c.get("/me")
+
+        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (
+            401,
+            'Bearer realm="api"',
+        )
+
+    async def test_configured_realm(self, client, token):
+        async with client(realm="files") as c:
+            missing = await c.get("/me")
+            invalid = await c.get("/me", headers={"Authorization": "Bearer x.y.z"})
+            dpop = await c.get(
+                "/me", headers=_dpop_headers(token(), generate_dpop_key())
+            )
+
+        assert [r.headers["WWW-Authenticate"] for r in (missing, invalid, dpop)] == [
+            'Bearer realm="files"',
+            'Bearer realm="files", error="invalid_token"',
+            f'DPoP realm="files", error="invalid_token", algs="{ALGS}"',
+        ]
+
+    @pytest.mark.parametrize(
+        ("authorization", "challenge"),
+        [
+            ("Bearer", 'Bearer error="invalid_request"'),
+            ("Bearer a b", 'Bearer error="invalid_request"'),
+            ("dpop a b", f'DPoP error="invalid_request", algs="{ALGS}"'),
+        ],
+    )
+    async def test_malformed_credentials_are_invalid_request(
+        self, client, authorization, challenge
+    ):
+        async with client() as c:
+            resp = await c.get("/me", headers={"Authorization": authorization})
+
+        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (
+            400,
+            challenge,
+        )
+
+    async def test_invalid_bearer_token_is_invalid_token(self, client):
+        async with client() as c:
+            resp = await c.get("/me", headers={"Authorization": "Bearer x.y.z"})
+
+        assert _rejected(resp) == (
+            401,
+            'Bearer error="invalid_token"',
+            GENERIC_BODY,
+        )
+
+    async def test_invalid_dpop_scheme_token_gets_a_dpop_challenge(self, client):
+        async with client() as c:
+            resp = await c.get("/me", headers={"Authorization": "DPoP x.y.z"})
+
+        assert _rejected(resp) == (401, INVALID_TOKEN_DPOP, GENERIC_BODY)
+
+    async def test_id_token_is_invalid_token(self, client, signing_key):
+        pem = signing_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        id_token = pyjwt.encode(
+            {
+                "iss": ISSUER,
+                "aud": AUDIENCE,
+                "sub": "user",
+                "nonce": "n",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 300,
+            },
+            pem,
+            algorithm="RS256",
+        )
+        async with client() as c:
+            resp = await c.get("/me", headers={"Authorization": f"Bearer {id_token}"})
+
+        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (
+            401,
+            'Bearer error="invalid_token"',
+        )
+
+    async def test_insufficient_scope_uses_the_request_scheme(self, client, token):
+        key = generate_dpop_key()
+        access_token = token({"jkt": key.jwk_thumbprint})
+        async with client() as c:
+            resp = await c.get(
+                "/scoped",
+                headers=_dpop_headers(
+                    access_token, key, url="http://testserver/scoped"
+                ),
+            )
+
+        assert (resp.status_code, resp.headers["WWW-Authenticate"]) == (
+            403,
+            f'DPoP error="insufficient_scope", scope="files.read", algs="{ALGS}"',
+        )
+
+    @pytest.mark.parametrize("realm", ["", 'a"b', "a\\b", "caf\u00e9", "a\r\nb"])
+    def test_realm_must_need_no_escaping(self, realm):
+        with pytest.raises(ConfigurationException):
+            AuthOptions(realm=realm)
 
 
 class TestCertificateBoundToken:

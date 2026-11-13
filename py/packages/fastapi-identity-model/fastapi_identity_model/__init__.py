@@ -25,7 +25,7 @@ from .dependencies import (
 from .middleware import TokenValidationMiddleware
 from .options import AuthOptions
 from .rp import build_oidc_router, oidc_public_paths
-from .token_manager import TokenManager
+from .token_manager import TokenManager, TokenManagerError, TokenManagerErrorKind
 from .ws import build_ws_authenticator
 
 
@@ -40,6 +40,8 @@ __all__ = [
     "CurrentUser",
     "OIDCSettings",
     "TokenManager",
+    "TokenManagerError",
+    "TokenManagerErrorKind",
     "TokenValidationMiddleware",
     "build_oidc_router",
     "build_ws_authenticator",

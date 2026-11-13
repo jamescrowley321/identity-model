@@ -164,13 +164,14 @@ def _patch_rp(monkeypatch) -> dict[str, AsyncMock]:
                 token_endpoint="https://op/token",
                 userinfo_endpoint="https://op/userinfo",
                 issuer="https://op",
+                authorization_response_iss_parameter_supported=None,
             )
         ),
         "request_authorization_code_token": AsyncMock(
             return_value=SimpleNamespace(
                 is_successful=True,
                 error=None,
-                token={"id_token": "idt", "access_token": "at"},
+                token={"id_token": "idt", "access_token": "at", "token_type": "Bearer"},
             )
         ),
         "validate_id_token": AsyncMock(),
@@ -240,7 +241,11 @@ async def _refresh_through_manager(monkeypatch, **kwargs) -> dict[str, AsyncMock
         "refresh_token": AsyncMock(
             return_value=SimpleNamespace(
                 is_successful=True,
-                token={"access_token": "fresh", "expires_in": 3600},
+                token={
+                    "access_token": "fresh",
+                    "expires_in": 3600,
+                    "token_type": "Bearer",
+                },
                 error=None,
             )
         ),
@@ -248,7 +253,9 @@ async def _refresh_through_manager(monkeypatch, **kwargs) -> dict[str, AsyncMock
     for name, mock in mocks.items():
         monkeypatch.setattr(tm_mod, name, mock)
     manager = TokenManager(DISCOVERY_URL, "cid", **kwargs)
-    manager.set_tokens(access_token="stale", refresh_token="r", expires_in=-10)
+    manager.set_tokens(
+        access_token="stale", refresh_token="r", expires_in=-10, token_type="Bearer"
+    )
     assert await manager.get_access_token() == "fresh"
     return mocks
 
