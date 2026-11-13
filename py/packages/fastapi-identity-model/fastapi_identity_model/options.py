@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 from py_identity_model import (
+    DPoPReplayCheck,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
@@ -94,9 +95,29 @@ _default_replay_cache: ProcessLocal[InMemoryDPoPReplayCache] = ProcessLocal(
 )
 
 
+class _ProcessReplayCache:
+    """Records into this process's default cache, looked up on every check.
+
+    Options built before a fork (``gunicorn --preload``) therefore use the
+    worker's cache, the same one as entry points built in the worker.
+    """
+
+    def check_and_store(
+        self, jkt: str, jti: str, expires_at: float, now: float
+    ) -> DPoPReplayCheck:
+        return _default_replay_cache.get().check_and_store(jkt, jti, expires_at, now)
+
+    def __reduce__(self) -> str:
+        # A module singleton: copy and deepcopy return it.
+        return "_PROCESS_REPLAY_CACHE"
+
+
+_PROCESS_REPLAY_CACHE = _ProcessReplayCache()
+
+
 def default_dpop_options() -> DPoPVerificationOptions:
     """Library-default DPoP options with this process's shared replay cache."""
-    return DPoPVerificationOptions(replay_cache=_default_replay_cache.get())
+    return DPoPVerificationOptions(replay_cache=_PROCESS_REPLAY_CACHE)
 
 
 @dataclass(frozen=True)

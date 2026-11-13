@@ -15,6 +15,7 @@ import logging
 import time
 from types import SimpleNamespace
 from urllib.parse import quote
+import uuid
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -39,6 +40,7 @@ from fastapi_identity_model.config_helpers import oidc_settings_from_env
 import fastapi_identity_model.middleware as mw
 from py_identity_model import (
     DPoPErrorKind,
+    DPoPReplayCheck,
     DPoPVerificationOptions,
     InMemoryDPoPReplayCache,
     TokenBinding,
@@ -47,6 +49,7 @@ from py_identity_model import (
     generate_dpop_key,
 )
 from py_identity_model.aio import validate_token as avalidate_token
+from py_identity_model.core import process_local
 
 
 pytestmark = pytest.mark.unit
@@ -913,7 +916,6 @@ class TestSharedOptions:
         )
         caches = [o.dpop.replay_cache for o in (first, second, from_settings)]
 
-        assert isinstance(first.dpop.replay_cache, InMemoryDPoPReplayCache)
         assert [c is first.dpop.replay_cache for c in caches] == [True] * 3
         assert explicit.dpop.replay_cache is not first.dpop.replay_cache
 
@@ -931,11 +933,28 @@ class TestSharedOptions:
             copy.deepcopy(options).dpop.replay_cache is cache,
         ] == [True, True]
 
+    def test_options_built_before_a_fork_use_the_childs_cache(self, monkeypatch):
+        # gunicorn --preload builds the WS authenticator in the parent and the
+        # middleware in the worker; both must record into the worker's cache.
+        before_fork = AuthOptions().dpop.replay_cache
+        args = ("jkt", str(uuid.uuid4()), 2_000_000_000.0, 1_000_000_000.0)
+        in_parent = before_fork.check_and_store(*args)
+        monkeypatch.setattr(process_local.os, "getpid", lambda: -1)
+        in_child = [before_fork.check_and_store(*args) for _ in range(2)]
+        built_in_child = AuthOptions().dpop.replay_cache.check_and_store(*args)
+
+        assert [in_parent, *in_child, built_in_child] == [
+            DPoPReplayCheck.RECORDED,
+            DPoPReplayCheck.RECORDED,
+            DPoPReplayCheck.REPLAYED,
+            DPoPReplayCheck.REPLAYED,
+        ]
+
     def test_dpop_none_means_the_default(self):
         given = DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
         defaulted = AuthOptions(dpop=None)  # type: ignore[arg-type]
 
-        assert isinstance(defaulted.dpop.replay_cache, InMemoryDPoPReplayCache)
+        assert defaulted.dpop.replay_cache is AuthOptions().dpop.replay_cache
         assert AuthOptions(dpop=given).dpop is given
 
     def test_options_are_frozen(self):
