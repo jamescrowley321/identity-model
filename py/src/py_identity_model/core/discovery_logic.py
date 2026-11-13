@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..exceptions import DiscoveryValidationError, PyIdentityModelException
+from ..exceptions import DiscoveryValidationError
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from .error_handlers import handle_discovery_error
@@ -113,12 +113,12 @@ def process_discovery_response(
         return process_successful_response(
             response, policy, requested_address=requested_address
         )
-    except PyIdentityModelException as e:
-        return handle_discovery_error(e)
-    except Exception as e:
+    except (TypeError, AttributeError) as e:
         # A check crashed on a wrongly typed member of a 2xx document (e.g.
         # "subject_types_supported": 5): the document is invalid, not the
-        # provider unavailable.
+        # provider unavailable. Anything else stays UNEXPECTED_ERROR.
         return handle_discovery_error(
             DiscoveryValidationError(f"Invalid discovery document: {e!s}")
         )
+    except Exception as e:
+        return handle_discovery_error(e)

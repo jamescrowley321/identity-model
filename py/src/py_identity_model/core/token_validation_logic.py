@@ -36,6 +36,7 @@ from ..exceptions import (
     JwksValidationError,
     KeyAlgorithmMismatchException,
     PyIdentityModelException,
+    SignatureVerificationException,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -175,6 +176,23 @@ def validate_jwks_response(jwks_response: JwksResponse) -> None:
         error_msg = "No keys available in JWKS response"
         logger.error(error_msg)
         raise JwksValidationError(error_msg)
+
+
+def keep_signature_verdict_on_failed_refresh(jwks_response: JwksResponse) -> None:
+    """Raise the signature failure if the retry's JWKS refresh failed.
+
+    The token already failed verification with the cached keys, so an
+    unavailable JWKS endpoint does not change the verdict: it stays a
+    :class:`SignatureVerificationException`, with the fetch failure as its
+    cause, rather than becoming a provider outage.
+    """
+    if not jwks_response.is_successful:
+        logger.warning(
+            f"JWKS refresh failed after a signature failure: {jwks_response.error}"
+        )
+        raise SignatureVerificationException(
+            "Signature verification failed; JWKS refresh failed"
+        ) from jwks_failure(jwks_response)
 
 
 _EMPTY_ALGORITHMS_MESSAGE = (
@@ -533,6 +551,7 @@ __all__ = [
     "decode_with_config",
     "discovery_failure",
     "jwks_failure",
+    "keep_signature_verdict_on_failed_refresh",
     "log_validation_start",
     "log_validation_success",
     "resolve_algorithms",

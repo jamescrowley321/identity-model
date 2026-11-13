@@ -551,7 +551,6 @@ def _introspection_expect(case_id: str, expect: dict, response: Any) -> None:
 
 _JWK_MEMBERS = ("kty", "kid", "use", "alg", "n", "e", "crv", "x", "y")
 
-#: Message each canonical reject code is surfaced with.
 #: Canonical reject codes surfaced as their own exception type.
 _JWKS_TYPED_ERRORS: dict[str, type[ValidationException]] = {
     "key_not_found": KeyNotFoundException,

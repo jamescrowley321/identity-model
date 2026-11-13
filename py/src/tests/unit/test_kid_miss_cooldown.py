@@ -54,7 +54,6 @@ from py_identity_model.core.models import (
     TokenValidationConfig,
 )
 from py_identity_model.exceptions import (
-    JwksException,
     KeyNotFoundException,
     SignatureVerificationException,
     TokenValidationException,
@@ -772,10 +771,9 @@ class TestCooldownNotWedgedByTransientError:
             perform_disco=True, audience=None, issuer="https://example.com"
         )
 
-        # Trigger a kid-miss; refresh fails mid-flight. get_jwks wraps the
-        # httpx error into a failed JwksResponse, and validate_jwks_response
-        # raises JwksException from the unsuccessful response.
-        with pytest.raises(JwksException):
+        # Trigger a kid-miss; refresh fails mid-flight. The token is judged
+        # on the cached keys: a key miss, not a provider outage.
+        with pytest.raises(KeyNotFoundException):
             validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
@@ -811,7 +809,7 @@ class TestCooldownNotWedgedByTransientError:
             perform_disco=True, audience=None, issuer="https://example.com"
         )
 
-        with pytest.raises(JwksException):
+        with pytest.raises(KeyNotFoundException):
             await async_validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,

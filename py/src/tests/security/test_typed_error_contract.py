@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.serialization import (
 import httpx
 import pytest
 
+from py_identity_model.core import discovery_logic
 from py_identity_model.core.discovery_logic import process_discovery_response
 from py_identity_model.core.dpop import (
     DPoPAlgorithm,
@@ -37,6 +38,7 @@ from py_identity_model.core.models import (
 from py_identity_model.core.token_validation_logic import (
     discovery_failure,
     jwks_failure,
+    keep_signature_verdict_on_failed_refresh,
     validate_disco_response,
     validate_jwks_response,
     validate_jwks_uri,
@@ -51,6 +53,7 @@ from py_identity_model.exceptions import (
     InvalidArgumentKind,
     JwksException,
     JwksValidationError,
+    SignatureVerificationException,
 )
 
 
@@ -301,6 +304,40 @@ class TestDiscoveryFailure:
             f"Invalid discovery document: {cause}",
         )
 
+    @pytest.mark.parametrize(
+        ("crash", "kind", "error"),
+        [
+            (
+                TypeError("t"),
+                DiscoveryErrorKind.INVALID_DOCUMENT,
+                "Invalid discovery document: t",
+            ),
+            (
+                AttributeError("a"),
+                DiscoveryErrorKind.INVALID_DOCUMENT,
+                "Invalid discovery document: a",
+            ),
+            (
+                RuntimeError("r"),
+                DiscoveryErrorKind.UNEXPECTED_ERROR,
+                "Unexpected error during discovery document request: r",
+            ),
+        ],
+        ids=["type-error", "attribute-error", "library-bug"],
+    )
+    def test_only_type_crashes_are_invalid_documents(
+        self, monkeypatch, crash, kind, error
+    ):
+        def _crash(*_args, **_kwargs):
+            raise crash
+
+        monkeypatch.setattr(discovery_logic, "process_successful_response", _crash)
+        response = httpx.Response(
+            200, json={}, request=httpx.Request("GET", DISCO_ADDR)
+        )
+        result = process_discovery_response(response, requested_address=DISCO_ADDR)
+        assert (result.error_kind, result.error) == (kind, error)
+
 
 class TestJwksFailure:
     def test_default_message(self):
@@ -344,3 +381,46 @@ class TestJwksFailure:
     def test_key_set_passes(self):
         key = JsonWebKey(kty="RSA", kid="k", n="n", e="AQAB")
         validate_jwks_response(JwksResponse(is_successful=True, keys=[key]))
+
+
+class TestSignatureRetryRefresh:
+    """A failed refresh after a signature failure keeps the signature verdict."""
+
+    def test_failed_refresh_keeps_signature_failure(self, caplog):
+        failed = JwksResponse(
+            is_successful=False,
+            error="boom",
+            error_kind=JwksErrorKind.UNEXPECTED_STATUS,
+            status_code=503,
+        )
+        with (
+            caplog.at_level(logging.WARNING, logger="py_identity_model"),
+            pytest.raises(SignatureVerificationException) as excinfo,
+        ):
+            keep_signature_verdict_on_failed_refresh(failed)
+        cause = excinfo.value.__cause__
+        assert isinstance(cause, JwksException)
+        assert (
+            str(excinfo.value),
+            excinfo.value.token_part,
+            type(cause),
+            str(cause),
+            cause.status_code,
+        ) == (
+            "Signature verification failed; JWKS refresh failed",
+            "signature",
+            JwksException,
+            "boom",
+            503,
+        )
+        assert [r.getMessage() for r in caplog.records] == [
+            "JWKS refresh failed after a signature failure: boom"
+        ]
+
+    def test_successful_refresh_passes(self, caplog):
+        key = JsonWebKey(kty="RSA", kid="k", n="n", e="AQAB")
+        with caplog.at_level(logging.WARNING, logger="py_identity_model"):
+            keep_signature_verdict_on_failed_refresh(
+                JwksResponse(is_successful=True, keys=[key])
+            )
+        assert caplog.records == []

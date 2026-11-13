@@ -13,6 +13,7 @@ middleware tests use. Driving a real handshake via ``starlette.testclient`` is
 avoided on purpose: it pulls in the deprecated httpx TestClient path.
 """
 
+import logging
 from types import SimpleNamespace
 
 from fastapi import WebSocketException, status
@@ -22,6 +23,7 @@ from starlette.datastructures import URL, Headers
 
 from fastapi_identity_model import build_ws_authenticator, ws
 from py_identity_model import (
+    ConfigurationException,
     DiscoveryException,
     NetworkException,
     TokenValidationException,
@@ -148,6 +150,27 @@ async def test_outage_like_message_is_still_a_rejection(monkeypatch):
     with pytest.raises(WebSocketException) as exc:
         await auth(_FakeWebSocket(query_params={"access_token": "good"}))
     assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+
+
+async def test_configuration_error_closes_policy_violation_logged_as_warning(
+    monkeypatch, caplog
+):
+    # As in the HTTP middleware: a 1008 rejection, logged at warning level
+    # with its traceback because it may be this server's own setup.
+    error = ConfigurationException("HTTPS is required by discovery policy")
+    auth = _authenticator(monkeypatch, raises=error)
+    with (
+        caplog.at_level(logging.INFO, logger="fastapi_identity_model"),
+        pytest.raises(WebSocketException) as exc,
+    ):
+        await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+    assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+    records = [
+        (r.levelno, r.exc_info[1] if r.exc_info else None)
+        for r in caplog.records
+        if r.name == "fastapi_identity_model"
+    ]
+    assert records == [(logging.WARNING, error)]
 
 
 async def test_unexpected_error_closes_internal_error(monkeypatch):

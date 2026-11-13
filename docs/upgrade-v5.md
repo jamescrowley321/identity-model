@@ -1505,7 +1505,9 @@ introspection, revocation, registration and UserInfo functions. Examples:
   `algorithm`, or an empty `kid`: `InvalidArgumentError`.
 
 Transport failures and error responses from the server are still returned as
-failed responses.
+failed responses. So are the argument checks that still raise `ValueError`
+in the token-exchange, PAR and request-object (JAR) builders, apart from the
+signing-algorithm check.
 
 ### Argument errors are typed, not `ValueError`
 
