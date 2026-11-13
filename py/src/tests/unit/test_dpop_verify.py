@@ -98,6 +98,12 @@ class LegacyReplayCache:
         return True
 
 
+class OpaqueReplayCache:
+    """A cache whose method has no introspectable signature, like a C one."""
+
+    check_and_store = staticmethod(max)
+
+
 def _exactly(message: str) -> str:
     """A ``pytest.raises`` pattern matching *message* and nothing else."""
     return f"^{re.escape(message)}$"
@@ -480,6 +486,10 @@ class TestKeyChecks:
             ),
         ):
             DPoPVerificationOptions(replay_cache=cache)
+
+    @pytest.mark.parametrize("cache", [OpaqueReplayCache()])
+    def test_uninspectable_cache_method_is_accepted(self, cache):
+        assert DPoPVerificationOptions(replay_cache=cache).replay_cache is cache
 
     def test_options_are_keyword_only(self):
         with pytest.raises(TypeError):

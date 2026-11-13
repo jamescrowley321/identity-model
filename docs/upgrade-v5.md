@@ -556,7 +556,9 @@ config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
   `AuthOptions(dpop=None)` means that default. `AuthOptions.from_settings`
   without `dpop=` uses default options held by the `OIDCSettings`, so the
   middleware and WebSocket authenticator given the same settings share one
-  replay cache.
+  replay cache. Entry points given different `AuthOptions` or settings, or
+  neither, no longer share the process-wide cache: a proof accepted on one
+  can be replayed once on the other. Pass both the same `AuthOptions`.
 
 ## Discovery
 

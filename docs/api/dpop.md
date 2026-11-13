@@ -207,7 +207,16 @@ case-insensitive).
 
 Both take their binding configuration from one frozen `AuthOptions`, passed as
 `options=`. Pass the same instance to both entry points so HTTP and WebSocket
-routes enforce the same rules:
+routes enforce the same rules and share one replay cache:
+
+!!! warning "Entry points built separately do not share a replay cache"
+    Each `AuthOptions` built without `dpop=` has its own replay cache. A
+    middleware and a WebSocket authenticator given different `AuthOptions`,
+    different `OIDCSettings` values, or neither (only `discovery_url=`) each
+    record proofs separately. A WebSocket handshake proof is a `GET`, so one
+    accepted there can then be replayed once to an HTTP `GET` on the same path
+    within its `iat` window. Pass the same `AuthOptions` (or the same
+    `OIDCSettings`) to both, or give both a shared `dpop=`.
 
 ```python
 from fastapi_identity_model import (

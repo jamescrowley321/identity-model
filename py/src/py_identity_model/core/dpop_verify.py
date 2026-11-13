@@ -348,11 +348,16 @@ def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
 
 
 def _takes_replay_arguments(check: Callable[..., object]) -> bool:
-    """Whether *check* takes ``(jkt, jti, expires_at, now)`` (not the 4.x three)."""
+    """Whether *check* takes ``(jkt, jti, expires_at, now)`` (not the 4.x three).
+
+    A method with no introspectable signature (a C extension) is accepted.
+    """
     try:
         inspect.signature(check).bind("jkt", "jti", 0.0, 0.0)
     except TypeError:
         return False
+    except ValueError:
+        return True
     return True
 
 
