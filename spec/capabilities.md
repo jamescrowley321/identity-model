@@ -16,7 +16,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Tier | Capability | Spec | Conformance | Python | Go | Rust |
 |------|-----------|------|-------------|--------|----|----|
 | Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json`¶ | implemented | implemented | implemented |
-| Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | in-progress¶ | implemented | implemented |
+| Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | implemented¶ | implemented | implemented |
 | Core | JWT Validation | RFC 7519, RFC 7515 | `validation.json`¶ | implemented | implemented | implemented |
 | Core | ID Token Validation | OIDC Core 1.0 §3.1.3.7, §3.3.2.11 | `id-token.json`¶ | implemented | implemented | implemented |
 | Core | Client Credentials | RFC 6749 §4.4 | `client-credentials.json`¶ | in-progress | implemented | implemented |
@@ -49,7 +49,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 > - **JWT Validation** and **ID Token Validation** — no known gaps.
 > - **Token Revocation** — Python: `REV-005` (its discovery response has no `revocation_endpoint`, [#766](https://github.com/jamescrowley321/identity-model/issues/766)), `REV-003` and `REV-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
 > - **UserInfo** — Python: `UI-001`, `UI-007` (its `UserInfoResponse` has no typed standard claims, [#768](https://github.com/jamescrowley321/identity-model/issues/768)) and `UI-004`…`UI-006` (it drops the `WWW-Authenticate` challenge, [#769](https://github.com/jamescrowley321/identity-model/issues/769)), so Python is `in-progress`.
-> - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — Python: `JWKS-007 malformed-json` (a non-JSON body is not reported as a parse error, [#770](https://github.com/jamescrowley321/identity-model/issues/770)), so Python is `in-progress`.
+> - **JWKS** (including the cache-hit, forced-refresh, kid-miss refresh and refresh-cooldown cases) — no known gaps.
 > - **Token Introspection** — Python: `INTR-001` (its `TokenIntrospectionResponse` has no typed §2.2 members, [#772](https://github.com/jamescrowley321/identity-model/issues/772)), `INTR-001 missing-active` and `active-not-boolean` (it accepts a response whose REQUIRED `active` is missing or not a boolean, [#782](https://github.com/jamescrowley321/identity-model/issues/782)) and `INTR-005` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)).
 > - **Token Exchange** (including the exact request form each exchange sends) — Python: `EXCH-001 impersonation` and `client-secret-post`, `EXCH-002` and `EXCH-005` (its `TokenExchangeResponse` has no typed token members, [#783](https://github.com/jamescrowley321/identity-model/issues/783)) and `EXCH-006` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791); `invalid-request` also drops the OAuth `error_uri`, [#777](https://github.com/jamescrowley321/identity-model/issues/777)).
 > - **Client Credentials** — Python: `CC-004` (the OAuth error is not parsed into a typed error, [#791](https://github.com/jamescrowley321/identity-model/issues/791)) and `CC-006 extra-params` (no extra form parameters, [#778](https://github.com/jamescrowley321/identity-model/issues/778)).
