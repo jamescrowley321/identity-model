@@ -65,6 +65,8 @@ key in its `cnf.jkt` (RFC 9449 §7.1, §6.1). Pass `validate_token` a
 from py_identity_model import (
     AuthorizationScheme,
     DPoPValidationError,
+    DPoPVerificationOptions,
+    InMemoryDPoPReplayCache,
     TokenBinding,
     TokenPresentation,
     TokenValidationConfig,
@@ -75,6 +77,7 @@ config = TokenValidationConfig(
     perform_disco=True,
     audience="urn:my-api",
     required_binding=TokenBinding.DPOP,  # refuse Bearer and unbound tokens
+    dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
 )
 
 try:
@@ -141,7 +144,9 @@ Proof algorithms, the `iat` window and the replay cache are set with
 `TokenValidationConfig(dpop=DPoPVerificationOptions(...))`. The replay cache
 is yours and required: there is no process-wide default, so build one
 `DPoPVerificationOptions` at startup and reuse it. A DPoP-bound token with no
-`dpop` options raises `ConfigurationException`.
+`dpop` options raises `ConfigurationException`, and
+`TokenValidationConfig(required_binding=TokenBinding.DPOP)` with no `dpop`
+raises it when the config is built.
 
 ```python
 from py_identity_model import (
@@ -243,7 +248,7 @@ ws_auth = build_ws_authenticator(
 | Field | Default | Meaning |
 |---|---|---|
 | `required_binding` | `TokenBinding.NONE` | The sender constraint every token must carry. |
-| `dpop` | defaults, with an `InMemoryDPoPReplayCache` owned by this `AuthOptions` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). Pass the same `AuthOptions` to the middleware and the WebSocket authenticator to share the cache; behind a load balancer, pass a shared one. |
+| `dpop` | defaults, with an `InMemoryDPoPReplayCache` owned by this `AuthOptions` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). Pass the same `AuthOptions` to the middleware and the WebSocket authenticator to share the cache. Given only `settings=`, both use options held by that `OIDCSettings`, so they share its cache too. Behind a load balancer, pass a shared one. |
 | `client_certificate` | `None` | Callable returning the connection's client certificate (PEM or DER), or `None`. Receives the `Request` or `WebSocket`. |
 | `expected_origin` | `None` | `scheme://host[:port]` the proof's `htu` is checked against. `None` takes the origin from the request. |
 

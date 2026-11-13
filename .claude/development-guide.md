@@ -239,8 +239,8 @@ git commit -m "test: add thread safety tests"
 **Maintain 100% backward compatibility** unless it's a major version bump.
 
 **SSL Certificate Support:**
-- The CA bundle is `Config.ca_bundle`; the library reads no environment variables
-- `config_helpers.config_from_env()` maps `SSL_CERT_FILE` > `CURL_CA_BUNDLE` > `REQUESTS_CA_BUNDLE` onto it for callers who want that
+- The CA bundle is `HTTPConfig.ca_bundle`; the library reads no environment variables
+- `config_helpers.http_config_from_env()` maps `SSL_CERT_FILE` > `CURL_CA_BUNDLE` > `REQUESTS_CA_BUNDLE` onto it for callers who want that
 
 ### Code Style
 

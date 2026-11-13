@@ -31,6 +31,12 @@ if TYPE_CHECKING:
     from .dpop_verify import DPoPVerificationOptions
 
 
+REQUIRED_DPOP_WITHOUT_OPTIONS_MESSAGE = (
+    "required_binding=DPOP needs dpop=DPoPVerificationOptions(replay_cache=...); "
+    "without it every token is refused (RFC 9449 §11.1)"
+)
+
+
 # ============================================================================
 # Guarded Response Mixin
 # ============================================================================
@@ -1642,8 +1648,9 @@ class TokenValidationConfig:
             else ``ConfigurationException``. ``validate_id_token`` and
             ``validate_logout_token`` ignore it.
         dpop: :class:`DPoPVerificationOptions` for DPoP proofs (allowed
-            algorithms, ``iat`` window, ``jti`` replay cache). ``None`` uses
-            the defaults and the process-wide replay cache.
+            algorithms, ``iat`` window, your ``jti`` replay cache). ``None``
+            means a DPoP-bound token raises ``ConfigurationException``, so
+            ``required_binding=DPOP`` with no ``dpop`` raises it here.
 
     Examples:
         >>> # Multi-tenant with clock skew tolerance
@@ -1682,6 +1689,10 @@ class TokenValidationConfig:
     discovery_policy: DiscoveryPolicy | None = None
     required_binding: TokenBinding = TokenBinding.NONE
     dpop: DPoPVerificationOptions | None = None
+
+    def __post_init__(self) -> None:
+        if self.required_binding is TokenBinding.DPOP and self.dpop is None:
+            raise ConfigurationException(REQUIRED_DPOP_WITHOUT_OPTIONS_MESSAGE)
 
 
 __all__ = [

@@ -25,7 +25,7 @@ import math
 import threading
 import time
 import types
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
@@ -39,6 +39,10 @@ from ..exceptions import (
 from .dpop import compute_ath, compute_jwk_thumbprint
 from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from .key_strength import enforce_key_strength
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 DPOP_PROOF_TYPE = "dpop+jwt"
@@ -343,6 +347,15 @@ def _sorted_algorithms(algorithms: frozenset[str] | None) -> tuple[str, ...]:
     )
 
 
+def _takes_replay_arguments(check: Callable[..., object]) -> bool:
+    """Whether *check* takes ``(jkt, jti, expires_at, now)`` (not the 4.x three)."""
+    try:
+        inspect.signature(check).bind("jkt", "jti", 0.0, 0.0)
+    except TypeError:
+        return False
+    return True
+
+
 @dataclass(frozen=True, kw_only=True)
 class DPoPVerificationOptions:
     """Resource-server settings for :func:`verify_dpop_proof`.
@@ -370,8 +383,11 @@ class DPoPVerificationOptions:
     iat_leeway: float = DEFAULT_DPOP_IAT_LEEWAY
 
     def __post_init__(self) -> None:
-        if isinstance(self.replay_cache, type) or not callable(
-            getattr(self.replay_cache, "check_and_store", None)
+        check = getattr(self.replay_cache, "check_and_store", None)
+        if (
+            isinstance(self.replay_cache, type)
+            or not callable(check)
+            or not _takes_replay_arguments(check)
         ):
             raise TypeError(_REPLAY_CACHE_MESSAGE)
         if self.algorithms is not None:

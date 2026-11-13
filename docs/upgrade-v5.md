@@ -508,7 +508,11 @@ config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
 - A DPoP-bound access token with a proof and no `dpop` options
   (`TokenValidationConfig.dpop=None`, or `check_introspection_binding` without
   `dpop=`) now raises `ConfigurationException`. It used to be checked against
-  the hidden process-wide cache.
+  the hidden process-wide cache. `TokenValidationConfig` with
+  `required_binding=TokenBinding.DPOP` and no `dpop` raises it when built.
+- A replay cache whose `check_and_store` does not take the four arguments
+  below (a 4.x three-argument cache) is refused by `DPoPVerificationOptions`
+  with `TypeError`.
 - `verify_dpop_proof(proof, request, options)` takes `options` as a required
   argument, and `DPoPVerificationOptions` is keyword-only.
 - `DPoPReplayCache.check_and_store(jkt, jti, expires_at, now)` takes the proof
@@ -549,7 +553,10 @@ config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
 - In the FastAPI package, `AuthOptions.dpop` defaults to options with an
   `InMemoryDPoPReplayCache` owned by that `AuthOptions`; pass the same
   `AuthOptions` to the middleware and the WebSocket authenticator to share it.
-  `AuthOptions(dpop=None)` means that default.
+  `AuthOptions(dpop=None)` means that default. `AuthOptions.from_settings`
+  without `dpop=` uses default options held by the `OIDCSettings`, so the
+  middleware and WebSocket authenticator given the same settings share one
+  replay cache.
 
 ## Discovery
 

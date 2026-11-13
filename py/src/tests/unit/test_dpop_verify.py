@@ -91,6 +91,13 @@ class AsyncRecordingCache:
         return coroutine
 
 
+class LegacyReplayCache:
+    """A 4.x replay cache: ``check_and_store(jti, expires_at, now)``."""
+
+    def check_and_store(self, _jti: str, _expires_at: float, _now: float) -> bool:
+        return True
+
+
 def _exactly(message: str) -> str:
     """A ``pytest.raises`` pattern matching *message* and nothing else."""
     return f"^{re.escape(message)}$"
@@ -458,9 +465,11 @@ class TestKeyChecks:
         with pytest.raises(TypeError, match="replay_cache"):
             DPoPVerificationOptions()  # type: ignore[call-arg]
 
-    # The class itself has a check_and_store but is not a cache.
+    # The class itself has a check_and_store but is not a cache; a 4.x cache
+    # fails here, not as a TypeError on every request.
     @pytest.mark.parametrize(
-        "cache", [None, object(), "cache", InMemoryDPoPReplayCache]
+        "cache",
+        [None, object(), "cache", InMemoryDPoPReplayCache, LegacyReplayCache()],
     )
     def test_replay_cache_must_be_a_cache(self, cache):
         with pytest.raises(

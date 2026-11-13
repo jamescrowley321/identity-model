@@ -686,12 +686,36 @@ class TestMtlsBinding:
 
 
 @pytest.mark.unit
+class TestRequiredDPoPNeedsOptions:
+    def test_required_dpop_without_options_fails_at_construction(self):
+        with pytest.raises(ConfigurationException) as exc:
+            TokenValidationConfig(
+                perform_disco=True, required_binding=TokenBinding.DPOP
+            )
+
+        assert str(exc.value) == (
+            "required_binding=DPOP needs dpop=DPoPVerificationOptions("
+            "replay_cache=...); without it every token is refused (RFC 9449 §11.1)"
+        )
+
+    @pytest.mark.parametrize("binding", [TokenBinding.NONE, TokenBinding.MTLS])
+    def test_other_bindings_need_no_options(self, binding):
+        config = TokenValidationConfig(perform_disco=True, required_binding=binding)
+
+        assert (config.required_binding, config.dpop) == (binding, None)
+
+
+@pytest.mark.unit
 class TestCheckTokenBindingWithoutPresentation:
     """``check_token_binding`` called directly, as the middleware packages do."""
 
     @pytest.mark.parametrize("binding", [TokenBinding.DPOP, TokenBinding.MTLS])
     def test_required_binding_is_config_error(self, binding):
-        config = TokenValidationConfig(perform_disco=True, required_binding=binding)
+        config = TokenValidationConfig(
+            perform_disco=True,
+            required_binding=binding,
+            dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
+        )
 
         with pytest.raises(ConfigurationException) as exc:
             check_token_binding({"sub": "user"}, "token", config, None)

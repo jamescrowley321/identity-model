@@ -4,7 +4,7 @@ SSL certificate configuration utilities.
 Resolves the TLS verification setting for this library's own HTTPS requests
 from an injected :class:`~py_identity_model.core.config.HTTPConfig`. The library
 reads no environment variables; build the ``HTTPConfig`` (for example with
-:func:`py_identity_model.config_helpers.config_from_env`) and pass it in.
+:func:`py_identity_model.config_helpers.http_config_from_env`) and pass it in.
 """
 
 from __future__ import annotations
