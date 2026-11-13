@@ -57,6 +57,50 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 | `fastapi-basic-rp` | `configs/fastapi-basic-rp.json` | Basic RP regression for the fastapi-identity-model router (`--rp-url http://localhost:8889`) |
 | `fastapi-config-rp` | `configs/fastapi-config-rp.json` | Config RP regression for the fastapi-identity-model router |
 | `fastapi-form-post-basic-rp` | `configs/fastapi-form-post-basic-rp.json` | Form Post Basic RP regression for the fastapi-identity-model router |
+| `dynamic-rp` | `configs/dynamic-rp.json` | Dynamic RP (RFC 7591 registration, WebFinger, `request_uri` request objects). Not run in CI |
+| `rpinitiated-logout-rp` | `configs/rpinitiated-logout-rp.json` | RP-Initiated Logout RP. Not run in CI |
+| `backchannel-logout-rp` | `configs/backchannel-logout-rp.json` | Back-Channel Logout RP. Not run in CI |
+
+CI runs the basic, config and form-post plans (`conformance` job), the three
+FAPI 2.0 plans (`conformance-fapi2` job) and the three `fastapi-*` plans
+(`conformance-fastapi` job). The dynamic and logout plans run only when invoked
+by hand (`python conformance/run_tests.py --plan <plan>` against `make
+conformance-up`), so their committed results are not current evidence.
+
+## How a module passes
+
+The suite judges the RP from the OP side: for a negative module it only sees
+that the RP stopped. A harness crash looks the same, so `run_tests.py` combines
+the suite's verdict with what the harness recorded for the module.
+
+`expected_modules.json` lists, for every plan, each module the plan must contain
+and what the RP has to do in it:
+
+- `"expect": "accept"` — the harness completed the flow (`/results/{test_id}`
+  reports `status: success`).
+- `"expect": "reject"` with `"reasons"` — the harness refused the flow
+  (`status: error`), and the reason class (the text before the first `:` of
+  `error`, such as `id_token_validation` or `state_validation`) is one of the
+  listed reasons.
+- `"expect": "none"` — the module records no harness verdict (the declared
+  unsupported `request-uri-signed-none`, or `dynamic-registration`, which is
+  satisfied by registration alone).
+- `"allow"` — the SKIPPED or WARNING statuses the module may end in, each with
+  the reason it is acceptable.
+
+A module is FAILED when:
+
+- the suite reports FAILED, REVIEW, INTERRUPTED or a timeout, or reports
+  FINISHED with no result;
+- the suite reports SKIPPED or WARNING and the module does not allowlist it;
+- the harness answered with an HTTP 5xx other than its deliberate 502, or could
+  not be reached;
+- the harness recorded nothing, or recorded an outcome other than the expected
+  one.
+
+The plan fails before running anything when its modules differ from the
+manifest (a module missing, unexpected or listed twice). After a suite upgrade,
+review the new module list and update the manifest deliberately.
 
 The `fastapi-*` plans run the identical suite plans against the package harness
 (`make conformance-test-fastapi`). They are a CI regression shield for the
@@ -114,13 +158,16 @@ The conformance workflow runs all three FAPI 2.0 plans (`fapi2-rp`,
 `fapi2-mtls-rp`, `fapi2-message-signing-rp`) in full on every pull request, in
 the `conformance-fapi2` job.
 
-> **Variant confirmation:** `configs/fapi2-rp.json` pins the plan name and variant
-> (`client_auth_type=private_key_jwt`, `sender_constrain=dpop`,
-> `fapi_client_type=oidc`, `fapi_request_method=unsigned`,
-> `fapi_response_mode=plain_response`). The exact variant keys and plan name must
-> be reconciled against the live suite's plan metadata on the first evidence run —
-> the suite is the source of truth. mTLS (`sender_constrain=mtls`, #215) is a
-> separate future path; this profile certifies on DPoP.
+Variants, as pinned in `configs/`:
+
+| Plan | Suite plan | Variant |
+|---|---|---|
+| `fapi2-rp` | `fapi2-security-profile-final-client-test-plan` | `client_auth_type=private_key_jwt`, `sender_constrain=dpop`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi` |
+| `fapi2-mtls-rp` | `fapi2-security-profile-final-client-test-plan` | `client_auth_type=mtls`, `sender_constrain=mtls`, `authorization_request_type=simple`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi` |
+| `fapi2-message-signing-rp` | `fapi2-message-signing-final-client-test-plan` | `client_auth_type=private_key_jwt`, `sender_constrain=dpop`, `authorization_request_type=simple`, `fapi_request_method=signed_non_repudiation`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi`, `fapi_response_mode=jarm` |
+
+The FAPI 2.0 plans are regression tests; the library holds no FAPI 2.0
+certification.
 
 ## Profile Test Counts
 

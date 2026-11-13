@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import app as harness_app
 from fastapi.testclient import TestClient
+from py_identity_model import DiscoveryErrorKind
 
 from py_identity_model import JwksResponse, UserInfoResponse
 
@@ -103,6 +104,7 @@ class TestDiscoveryFailedEscaping:
         class _FailedDisco:
             is_successful = False
             error = XSS_PAYLOAD
+            error_kind = DiscoveryErrorKind.NETWORK_ERROR
 
         with patch.object(
             harness_app, "get_discovery_document", return_value=_FailedDisco()

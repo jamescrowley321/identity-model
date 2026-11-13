@@ -46,7 +46,7 @@ to `shipped` and links its proving test as it lands.
 | Enforce `verify_aud` / `verify_iss` / `require exp` | `core/jwt_helpers.py`, `core/token_validation_logic.py` | RFC 7519 §4.1, RFC 8725 §3.x | Audience/issuer/expiry checks silently disabled (R.3) | _pending SC4_ | pending |
 | Require `sub` claim on ID tokens | `core/token_validation_logic.py` | OIDC Core §2 | ID token accepted without a subject (R.10) | _pending SC5_ | pending |
 | Reject / try-all on duplicate `kid` | `core/jwks_logic.py`, `core/jwt_helpers.py` | RFC 7517 §4.5 | Colliding-`kid` silent first-match key confusion (R.11) | _pending SC6_ | pending |
-| Conformance evidence integrity (gated profiles, honest pass statuses) | `conformance/` | OIDF RP conformance | Inflated conformance claims from ungated/skipped profiles (R.7) | _pending SC7_ | pending |
+| Conformance evidence integrity (gated profiles, honest pass statuses) | `conformance/` | OIDF RP conformance | Inflated conformance claims from ungated/skipped profiles (R.7) | `conformance/tests/test_module_verdict.py` | shipped |
 | mTLS endpoint-alias routing + fail-closed cert presentation | `core/mtls.py` | RFC 8705 §5 | Requests bypass mTLS aliases; cert never actually presented (R.6) | _pending SC8_ | pending |
 | DPoP proofs on refresh-token & client-credentials grants | `core/dpop.py`, token clients | RFC 9449 §5 | Refresh/CC tokens issued unbound to the DPoP key (R.4) | _pending SC9_ | pending |
 

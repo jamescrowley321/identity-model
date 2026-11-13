@@ -1,0 +1,854 @@
+{
+  "basic-rp": {
+    "oidcc-client-test": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-sub": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-iat": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-kid-absent-single-jwks": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-kid-absent-multiple-jwks": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-rs256": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-invalid-sig-rs256": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-userinfo-invalid-sub": {
+      "expect": "reject",
+      "reasons": [
+        "userinfo_validation"
+      ]
+    },
+    "oidcc-client-test-nonce-invalid": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "oidcc-client-test-scope-userinfo-claims": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-client-secret-basic": {
+      "expect": "accept"
+    }
+  },
+  "form-post-basic-rp": {
+    "oidcc-client-test": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-sub": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-iat": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-kid-absent-single-jwks": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-kid-absent-multiple-jwks": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-rs256": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-invalid-sig-rs256": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-userinfo-invalid-sub": {
+      "expect": "reject",
+      "reasons": [
+        "userinfo_validation"
+      ]
+    },
+    "oidcc-client-test-nonce-invalid": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "oidcc-client-test-scope-userinfo-claims": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-client-secret-basic": {
+      "expect": "accept"
+    }
+  },
+  "config-rp": {
+    "oidcc-client-test-discovery-openid-config": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-jwks-uri-keys": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "issuer_mismatch"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-signing-key-rotation-just-before-signing": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-signing-key-rotation": {
+      "expect": "accept"
+    }
+  },
+  "fastapi-basic-rp": {
+    "oidcc-client-test": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-sub": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-iat": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-kid-absent-single-jwks": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-kid-absent-multiple-jwks": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-rs256": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-invalid-sig-rs256": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-userinfo-invalid-sub": {
+      "expect": "reject",
+      "reasons": [
+        "userinfo_validation"
+      ]
+    },
+    "oidcc-client-test-nonce-invalid": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "oidcc-client-test-scope-userinfo-claims": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-client-secret-basic": {
+      "expect": "accept"
+    }
+  },
+  "fastapi-form-post-basic-rp": {
+    "oidcc-client-test": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-sub": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-missing-iat": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-kid-absent-single-jwks": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-kid-absent-multiple-jwks": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-rs256": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-invalid-sig-rs256": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "oidcc-client-test-userinfo-invalid-sub": {
+      "expect": "reject",
+      "reasons": [
+        "userinfo_validation"
+      ]
+    },
+    "oidcc-client-test-nonce-invalid": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "oidcc-client-test-scope-userinfo-claims": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-client-secret-basic": {
+      "expect": "accept"
+    }
+  },
+  "fastapi-config-rp": {
+    "oidcc-client-test-discovery-openid-config": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-jwks-uri-keys": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "discovery_failed"
+      ]
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-signing-key-rotation-just-before-signing": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-signing-key-rotation": {
+      "expect": "accept"
+    }
+  },
+  "fapi2-rp": {
+    "fapi2-security-profile-final-client-test-happy-path": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "issuer_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-null-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-expired-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-valid-aud-as-array": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-invalid-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-token-type-case-insensitivity": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-invalid-authorization-response-iss": {
+      "expect": "reject",
+      "reasons": [
+        "iss_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-remove-authorization-response-iss": {
+      "expect": "reject",
+      "reasons": [
+        "iss_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-rs-dpop-auth-scheme-case-insensitivity": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-happy-path-no-dpop-nonce": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-happy-path-no-mtls-endpoint-aliases": {
+      "expect": "accept"
+    }
+  },
+  "fapi2-mtls-rp": {
+    "fapi2-security-profile-final-client-test-happy-path": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "issuer_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-null-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-expired-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-valid-aud-as-array": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-invalid-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-token-type-case-insensitivity": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-invalid-authorization-response-iss": {
+      "expect": "reject",
+      "reasons": [
+        "iss_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-remove-authorization-response-iss": {
+      "expect": "reject",
+      "reasons": [
+        "iss_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-happy-path-no-mtls-endpoint-aliases": {
+      "expect": "accept"
+    }
+  },
+  "fapi2-message-signing-rp": {
+    "fapi2-security-profile-final-client-test-happy-path": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "issuer_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-null-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-expired-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-exp": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-aud": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-iss": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-valid-aud-as-array": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-invalid-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "nonce_mismatch"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-missing-state-fails": {
+      "expect": "reject",
+      "reasons": [
+        "state_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-token-endpoint-response-without-expires_in": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-token-type-case-insensitivity": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-rs-dpop-auth-scheme-case-insensitivity": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-happy-path-no-dpop-nonce": {
+      "expect": "accept"
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-without-iss-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-with-invalid-iss-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-without-aud-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-with-invalid-aud-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-without-exp-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-with-expired-exp-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-with-invalid-sig-fails": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-ensure-jarm-signature-is-not-none": {
+      "expect": "reject",
+      "reasons": [
+        "jarm_validation"
+      ]
+    },
+    "fapi2-security-profile-final-client-test-happy-path-no-mtls-endpoint-aliases": {
+      "expect": "accept"
+    }
+  },
+  "dynamic-rp": {
+    "oidcc-client-test-discovery-webfinger-acct": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-webfinger-url": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-openid-config": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-jwks-uri-keys": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-discovery-issuer-mismatch": {
+      "expect": "reject",
+      "reasons": [
+        "issuer_mismatch"
+      ]
+    },
+    "oidcc-client-test-dynamic-registration": {
+      "expect": "none"
+    },
+    "oidcc-client-test-request-uri-signed-rs256": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-request-uri-signed-none": {
+      "expect": "none",
+      "allow": {
+        "SKIPPED": "Declared unsupported: py-identity-model does not create unsigned (alg=none) request objects; the runner records SKIPPED without driving the module."
+      }
+    },
+    "oidcc-client-test-idtoken-sig-none": {
+      "expect": "reject",
+      "reasons": [
+        "id_token_validation"
+      ],
+      "allow": {
+        "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
+      }
+    },
+    "oidcc-client-test-signing-key-rotation-just-before-signing": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-signing-key-rotation": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-userinfo-signed": {
+      "expect": "accept"
+    }
+  },
+  "rpinitiated-logout-rp": {
+    "oidcc-client-test-rp-init-logout": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-rp-init-logout-other-state": {
+      "expect": "reject",
+      "reasons": [
+        "logout_state_validation"
+      ]
+    },
+    "oidcc-client-test-rp-init-logout-no-state": {
+      "expect": "accept"
+    }
+  },
+  "backchannel-logout-rp": {
+    "oidcc-client-test-rp-backchannel-rpinitlogout": {
+      "expect": "accept"
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-alg-none": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-no-event": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-with-nonce": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-alg": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-aud": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-event": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    },
+    "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-iss": {
+      "expect": "reject",
+      "reasons": [
+        "logout_token_validation"
+      ]
+    }
+  }
+}

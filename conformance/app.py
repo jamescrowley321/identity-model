@@ -11,6 +11,7 @@ import contextvars
 from dataclasses import dataclass, field
 import datetime
 import html
+from http import HTTPStatus
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ from py_identity_model import (
     ClientRegistrationRequest,
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
     DiscoveryPolicy,
     DPoPKey,
     FAPI2ClientProfile,
@@ -217,6 +219,11 @@ _install_rp_log_router()
 
 SUITE_BASE_URL = os.environ.get(
     "CONFORMANCE_SUITE_BASE_URL", "https://localhost.emobix.co.uk:8443"
+)
+# The suite's mTLS origin (its BASE_MTLS_URL), where it serves the endpoints an
+# mTLS client calls.
+SUITE_MTLS_BASE_URL = os.environ.get(
+    "CONFORMANCE_SUITE_MTLS_BASE_URL", "https://localhost.emobix.co.uk:8444"
 )
 # Browser-facing base URL: used for redirect_uri / post_logout_redirect_uri,
 # which the user agent (the runner, on the host) follows.
@@ -581,7 +588,7 @@ def discover(
             error_session.result = {
                 "test_id": test_id,
                 "status": "error",
-                "error": f"discovery_failed: {disco.error}",
+                "error": _discovery_failure(disco),
             }
             test_results[test_id] = error_session
         return JSONResponse(
@@ -787,7 +794,7 @@ def authorize(
             status_code=400,
             content={"error": "invalid_issuer", "detail": "Invalid issuer URL"},
         )
-    policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
+    policy = _discovery_policy(mtls=mtls.lower() == "true")
     disco = get_discovery_document(
         DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
         http_client=http_client,
@@ -801,7 +808,7 @@ def authorize(
             error_session.result = {
                 "test_id": test_id,
                 "status": "error",
-                "error": f"discovery_failed: {disco.error}",
+                "error": _discovery_failure(disco),
             }
             test_results[test_id] = error_session
         return JSONResponse(
@@ -959,6 +966,7 @@ def authorize(
         "issuer": issuer,
         "client_id": client_id,
         "disco_address": disco_endpoint.url,
+        "test_id": test_id,
     }
     _last_fapi_profile = None
 
@@ -1086,6 +1094,7 @@ def _authorize_fapi2(
         "issuer": issuer,
         "client_id": client_id,
         "disco_address": disco_address,
+        "test_id": test_id,
     }
     _last_fapi_profile = profile
 
@@ -1116,7 +1125,7 @@ def _fetch_and_validate_discovery(
             content="<h1>Invalid Issuer</h1><p>Discovery URL is invalid</p>",
             status_code=400,
         )
-    policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
+    policy = _discovery_policy(mtls=session.mtls)
     disco = get_discovery_document(
         DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
         http_client=http_client,
@@ -1125,7 +1134,7 @@ def _fetch_and_validate_discovery(
     if not disco.is_successful:
         logger.error("REJECTED: discovery fetch failed in callback: %s", disco.error)
         session.result["status"] = "error"
-        session.result["error"] = f"discovery_failed: {disco.error}"
+        session.result["error"] = _discovery_failure(disco)
         _store_test_result(session)
         return HTMLResponse(
             content=f"<h1>Discovery Failed</h1><p>{html.escape(str(disco.error))}</p>",
@@ -1339,7 +1348,14 @@ def _id_token_validation_config(
     OIDC-Core defaults.
     """
     if session.fapi_profile is not None:
-        return session.fapi_profile.id_token_validation_config()
+        config = session.fapi_profile.id_token_validation_config()
+        if session.mtls:
+            # The discovery the library runs for the ID Token must admit the
+            # suite's mTLS origin too (see _discovery_policy).
+            config.discovery_policy = DiscoveryPolicy(
+                additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+            )
+        return config
     return TokenValidationConfig(
         perform_disco=True,
         audience=session.client_id,
@@ -1436,6 +1452,7 @@ def _parse_callback(
         # MUST be rejected (the negative message-signing modules). There is no
         # verified state yet, so respond 400 without completing the flow.
         logger.error("REJECTED: JARM response validation failed: %s", exc.message)
+        _record_last_flow_rejection(f"jarm_validation: {exc.message}")
         return HTMLResponse(
             content=(
                 f"<h1>JARM Validation Failed</h1><p>{html.escape(str(exc.message))}</p>"
@@ -1443,7 +1460,8 @@ def _parse_callback(
             status_code=400,
         )
     except PyIdentityModelException as exc:
-        logger.error("Callback parse error: %s", exc)
+        logger.error("REJECTED: callback parse error: %s", exc)
+        _record_last_flow_rejection(f"callback_parse: {exc}")
         return HTMLResponse(
             content="<h1>Callback Error</h1><p>Failed to parse callback</p>",
             status_code=400,
@@ -1461,7 +1479,8 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # Look up session by state
     state_value = cb_response.state
     if state_value is None or state_value not in sessions:
-        logger.error("Unknown state: %s", state_value)
+        logger.error("REJECTED: unknown or missing state: %s", state_value)
+        _record_last_flow_rejection(f"state_validation: unknown state {state_value!r}")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,
@@ -1805,6 +1824,11 @@ async def backchannel_logout(request: Request) -> JSONResponse:
     if not isinstance(logout_token, str):
         logout_token = None
     response = await run_in_threadpool(_receive_backchannel_logout, logout_token)
+    if response.status_code == HTTPStatus.BAD_REQUEST:
+        rejection = json.loads(response.body)
+        _record_last_flow_rejection(
+            f"logout_token_validation: {rejection['error']}: {rejection['detail']}"
+        )
     # Back-Channel Logout 1.0 §2.8: the RP's response SHOULD carry no-store cache
     # headers so a logout is never served from cache. Set on every response
     # (success and error) since the OP posts to this fixed URI.
@@ -1880,6 +1904,7 @@ def post_logout_callback(state: str | None = Query(default=None)) -> HTMLRespons
         validate_post_logout_state(_expected_logout_state, state)
     except LogoutStateValidationException as exc:
         logger.error("REJECTED: post-logout state validation failed: %s", exc.message)
+        _record_last_flow_rejection(f"logout_state_validation: {exc.message}")
         return HTMLResponse(
             content=(
                 "<h1>Logout State Validation Failed</h1>"
@@ -1902,6 +1927,52 @@ def get_result(test_id: str) -> JSONResponse:
         session = test_results[test_id]
         return JSONResponse(content=session.result)
     return JSONResponse(status_code=404, content={"error": "not_found"})
+
+
+def _discovery_policy(*, mtls: bool) -> DiscoveryPolicy:
+    """Discovery policy for a flow.
+
+    The suite serves its mTLS endpoints from a second origin
+    (``SUITE_MTLS_BASE_URL``). Without ``mtls_endpoint_aliases`` it advertises
+    them as the plain endpoints, so an mTLS flow allows that origin as an
+    endpoint authority (RFC 8705 §5).
+    """
+    return DiscoveryPolicy(
+        require_https=False,
+        validate_issuer=True,
+        additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL] if mtls else [],
+    )
+
+
+def _discovery_failure(disco: DiscoveryDocumentResponse) -> str:
+    """``<reason class>: <detail>`` for a failed discovery fetch.
+
+    An issuer mismatch gets its own class so the issuer-mismatch modules can
+    require it rather than any discovery failure.
+    """
+    reason = (
+        "issuer_mismatch"
+        if disco.error_kind is DiscoveryErrorKind.ISSUER_MISMATCH
+        else "discovery_failed"
+    )
+    return f"{reason}: {disco.error}"
+
+
+def _record_last_flow_rejection(error: str) -> None:
+    """Record a rejection the RP made before it could identify the flow's session.
+
+    A callback with an unknown state, a JARM response that fails validation, a
+    Back-Channel Logout Token or a post-logout state carries no usable session
+    key, so the rejection is filed under the most recent flow's test (the runner
+    drives one module at a time). The runner reads it from ``/results``.
+    """
+    flow_context = _last_flow_context
+    test_id = flow_context.get("test_id", "") if flow_context else ""
+    if not test_id:
+        return
+    error_session = AuthSession(issuer=flow_context["issuer"], state="", nonce="")
+    error_session.result = {"test_id": test_id, "status": "error", "error": error}
+    test_results[test_id] = error_session
 
 
 def _store_test_result(session: AuthSession) -> None:
