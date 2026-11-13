@@ -49,9 +49,13 @@ class OIDCSettings:
         client_secret: Client secret; omit for public/PKCE clients. Kept out
             of ``repr()``.
         scope: Space-delimited scopes requested at authorization.
-        audience: Expected ``aud`` for the resource-server middleware.
-            ``None`` (default) means ``client_id``; read the resolved value
-            from :attr:`expected_audience`.
+        audience_override: The ``aud`` the resource-server middleware expects,
+            when it is not ``client_id``. ``None`` (default) means
+            ``client_id``; an empty or non-string value raises ``ValueError``.
+            Read the audience to check from :attr:`expected_audience`, the only
+            resolved accessor. There is no ``audience`` attribute, so a read
+            written for 4.x raises ``AttributeError`` instead of yielding
+            ``None``.
         post_login_redirect: Where ``/callback`` redirects after a successful login.
         post_logout_redirect: Where ``/logout`` redirects after clearing the session.
         excluded_paths: Paths the resource-server middleware skips (health/docs).
@@ -88,7 +92,7 @@ class OIDCSettings:
     redirect_uri: str = ""
     client_secret: str | None = field(default=None, repr=False)
     scope: str = "openid profile email"
-    audience: str | None = None
+    audience_override: str | None = None
     post_login_redirect: str = "/"
     post_logout_redirect: str = "/"
     excluded_paths: list[str] = field(default_factory=_default_excluded_paths)
@@ -128,12 +132,21 @@ class OIDCSettings:
         for name in ("discovery_url", "client_id"):
             if not getattr(self, name):
                 raise ValueError(f"OIDCSettings requires a non-empty {name}")
+        override = self.audience_override
+        if override is not None and (not isinstance(override, str) or not override):
+            # An empty audience would switch off aud enforcement downstream.
+            raise ValueError(
+                "audience_override must be a non-empty string or None; "
+                f"got {override!r}"
+            )
 
     @property
     def expected_audience(self) -> str:
-        """``audience``, or ``client_id`` when ``audience`` is ``None``.
+        """``audience_override``, or ``client_id`` when it is ``None``.
 
         Worked out on read, so a copy made with :func:`dataclasses.replace`
         and a new ``client_id`` follows it.
         """
-        return self.client_id if self.audience is None else self.audience
+        if self.audience_override is None:
+            return self.client_id
+        return self.audience_override

@@ -601,10 +601,19 @@ read-only: `dataclasses.replace` raises on them, because reading a field that
 does not apply to the outcome (`error` on a success, data fields on a failure)
 raises.
 
-`OIDCSettings.audience` is no longer filled in from `client_id`: it stays
-`None` when you leave it out. Read `OIDCSettings.expected_audience` for the
-audience the middleware checks (`audience`, or `client_id` when `audience` is
-`None`). It is worked out on read, so a copy with a new `client_id` follows it.
+`OIDCSettings.audience` is renamed `audience_override`, and
+`OIDCSettings.expected_audience` is the only way to read the audience the
+middleware checks: `audience_override`, or `client_id` when it is `None`. It
+is worked out on read, so a copy with a new `client_id` follows it.
+
+!!! warning "Security: update every `settings.audience` read"
+    There is no `audience` attribute any more, so `settings.audience` raises
+    `AttributeError` and `OIDCSettings(audience=...)` raises `TypeError`. This
+    is deliberate: an unset audience would otherwise read as `None`, and
+    passing `TokenValidationConfig(audience=None)` turns off `aud` enforcement
+    for tokens that omit the claim. Replace each read with
+    `settings.expected_audience`. An empty or non-string `audience_override`
+    raises `ValueError`.
 
 ```python
 # Before
@@ -623,7 +632,7 @@ config = dataclasses.replace(config, leeway=30)
 settings = OIDCSettings(
     discovery_url="https://op.example.com/.well-known/openid-configuration",
     client_id="app",
-    audience="my-api",
+    audience_override="my-api",
 )
 ```
 

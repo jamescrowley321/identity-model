@@ -70,7 +70,7 @@ def test_every_setting_is_read(clean_env):
         redirect_uri="http://localhost/cb",
         client_secret="secret",
         scope="openid email",
-        audience="api://resource",
+        audience_override="api://resource",
         post_login_redirect="/home",
         post_logout_redirect="/bye",
         excluded_paths=["/a", "/b", "/c"],

@@ -17,7 +17,7 @@ def test_audience_defaults_to_client_id():
         client_id="cid",
         redirect_uri="http://localhost/cb",
     )
-    assert (s.audience, s.expected_audience) == (None, "cid")
+    assert (s.audience_override, s.expected_audience) == (None, "cid")
     assert s.scope == "openid profile email"
     assert s.excluded_paths == [
         "/docs",
@@ -32,9 +32,9 @@ def test_explicit_audience_preserved():
         discovery_url="d",
         client_id="cid",
         redirect_uri="r",
-        audience="api://resource",
+        audience_override="api://resource",
     )
-    assert s.audience == "api://resource"
+    assert s.expected_audience == "api://resource"
 
 
 @pytest.mark.parametrize(("discovery_url", "client_id"), [("", "cid"), ("d", "")])
@@ -120,7 +120,7 @@ def test_settings_replace_revalidates():
         discovery_url="https://op/.well-known/openid-configuration", client_id="cid"
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        s.audience = "api"  # type: ignore[misc]
+        s.audience_override = "api"  # type: ignore[misc]
     with pytest.raises(
         ValueError, match=r"^OIDCSettings requires a non-empty client_id$"
     ):
@@ -146,8 +146,35 @@ def test_explicit_audience_survives_replace():
     s = OIDCSettings(
         discovery_url="https://op/.well-known/openid-configuration",
         client_id="app-a",
-        audience="api://resource",
+        audience_override="api://resource",
     )
     assert dataclasses.replace(s, client_id="app-b").expected_audience == (
         "api://resource"
     )
+
+
+def test_no_audience_attribute_so_4x_reads_fail_loudly():
+    s = OIDCSettings(
+        discovery_url="https://op/.well-known/openid-configuration", client_id="cid"
+    )
+    with pytest.raises(AttributeError, match=r"'audience'"):
+        _ = s.audience  # type: ignore[attr-defined]
+    with pytest.raises(TypeError, match=r"'audience'"):
+        OIDCSettings(  # type: ignore[call-arg]
+            discovery_url="https://op/.well-known/openid-configuration",
+            client_id="cid",
+            audience="api",
+        )
+
+
+@pytest.mark.parametrize("override", ["", 123])
+def test_empty_or_non_string_audience_override_rejected(override):
+    with pytest.raises(
+        ValueError,
+        match=r"^audience_override must be a non-empty string or None; got ",
+    ):
+        OIDCSettings(
+            discovery_url="https://op/.well-known/openid-configuration",
+            client_id="cid",
+            audience_override=override,
+        )
