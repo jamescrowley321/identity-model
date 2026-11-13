@@ -1,8 +1,10 @@
+import dataclasses
+import inspect
 from typing import Any
 
 import pytest
 
-from fastapi_identity_model import OIDCSettings, TokenManager
+from fastapi_identity_model import AuthOptions, OIDCSettings, TokenManager
 from py_identity_model import TokenBinding
 
 
@@ -100,3 +102,34 @@ def test_trusted_audiences_entries_must_be_non_empty_strings(entry):
 def test_validate_azp_must_be_a_bool(value):
     with pytest.raises(ValueError, match="validate_azp must be a bool"):
         OIDCSettings(discovery_url="d", client_id="cid", validate_azp=value)
+
+
+@pytest.mark.parametrize("cls", [OIDCSettings, AuthOptions], ids=lambda c: c.__name__)
+def test_settings_types_are_frozen_and_keyword_only(cls):
+    assert cls.__dataclass_params__.frozen is True
+    positional = [
+        name
+        for name, param in inspect.signature(cls).parameters.items()
+        if param.kind is not inspect.Parameter.KEYWORD_ONLY
+    ]
+    assert positional == []
+
+
+def test_settings_replace_revalidates():
+    s = OIDCSettings(
+        discovery_url="https://op/.well-known/openid-configuration", client_id="cid"
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        s.audience = "api"  # type: ignore[misc]
+    with pytest.raises(
+        ValueError, match=r"^OIDCSettings requires a non-empty client_id$"
+    ):
+        dataclasses.replace(s, client_id="")
+
+
+def test_auth_options_replace_keeps_shared_replay_cache():
+    opts = AuthOptions()
+    assert (
+        dataclasses.replace(opts, expected_origin="https://api.example.com").dpop
+        is opts.dpop
+    )

@@ -36,7 +36,7 @@ def _check_trusted_audiences(audiences: object) -> list[str]:
     return list(audiences)
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class OIDCSettings:
     """Configuration shared by the RP login router and the resource-server middleware.
 
@@ -98,8 +98,14 @@ class OIDCSettings:
     validate_azp: bool = False
 
     def __post_init__(self) -> None:
-        self.required_binding = TokenBinding(self.required_binding)
-        self.trusted_audiences = _check_trusted_audiences(self.trusted_audiences)
+        object.__setattr__(
+            self, "required_binding", TokenBinding(self.required_binding)
+        )
+        object.__setattr__(
+            self,
+            "trusted_audiences",
+            _check_trusted_audiences(self.trusted_audiences),
+        )
         if not isinstance(self.validate_azp, bool):
             # A truthy string such as "false" would silently turn the check on.
             raise ValueError(
@@ -114,7 +120,9 @@ class OIDCSettings:
                 f"(token characters only); got {header!r}"
             )
         if self.expected_origin is not None:
-            self.expected_origin = normalize_origin(self.expected_origin)
+            object.__setattr__(
+                self, "expected_origin", normalize_origin(self.expected_origin)
+            )
         # Validate required fields are non-empty.
         for name in ("discovery_url", "client_id"):
             if not getattr(self, name):
@@ -122,4 +130,4 @@ class OIDCSettings:
         # The middleware validates the ID/access token audience; default it to
         # the client_id, which is the audience Descope and most OPs mint.
         if self.audience is None:
-            self.audience = self.client_id
+            object.__setattr__(self, "audience", self.client_id)

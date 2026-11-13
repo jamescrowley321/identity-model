@@ -120,7 +120,7 @@ def default_dpop_options() -> DPoPVerificationOptions:
     return DPoPVerificationOptions(replay_cache=_PROCESS_REPLAY_CACHE)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AuthOptions:
     """Token-binding and validation options for one resource server.
 
