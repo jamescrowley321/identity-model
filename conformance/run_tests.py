@@ -132,6 +132,9 @@ class RPEvidence:
 
     recorded: dict | None
     crashes: tuple[str, ...] = ()
+    # What the harness recorded after each earlier flow of a multi-flow
+    # module (key rotation), before the last flow overwrote it.
+    earlier: tuple[dict | None, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -885,6 +888,13 @@ def assess_module(
         return "FAILED", "harness recorded no result for this module"
     outcome = recorded.get("status")
     if expectation.expect is Expectation.ACCEPT:
+        for previous in evidence.earlier:
+            if (previous or {}).get("status") != HARNESS_SUCCESS:
+                return (
+                    "FAILED",
+                    "expected the RP to accept every flow; an earlier flow recorded "
+                    f"{(previous or {}).get('error')!r}",
+                )
         if outcome != HARNESS_SUCCESS:
             return (
                 "FAILED",
@@ -912,7 +922,11 @@ def _fetch_rp_result(rp_base_url: str, module_id: str) -> dict | None:
         return None
     if response.status_code != httpx.codes.OK:
         return None
-    body = response.json()
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("RP result for %s is not JSON", module_id)
+        return None
     return body if isinstance(body, dict) else None
 
 
@@ -997,6 +1011,7 @@ def run_test_module(
 
     # Drive the RP based on the test type
     test_type = _get_test_type(test_name)
+    earlier: list[dict | None] = []
     logger.info("Test type: %s", test_type)
 
     if profile in LOGOUT_PROFILES:
@@ -1068,6 +1083,7 @@ def run_test_module(
                 mtls=mtls,
                 signed_request=signed_request,
             )
+            earlier.append(_fetch_rp_result(rp_base_url, module_id))
             # Wait briefly for the suite to rotate keys
             time.sleep(1)
             logger.info("Driving second auth flow...")
@@ -1107,7 +1123,9 @@ def run_test_module(
     logger.info("Polling test status...")
     result_info = suite.poll_until_done(module_id)
     suite_status = _suite_status(result_info)
-    evidence = RPEvidence(_fetch_rp_result(rp_base_url, module_id), tuple(crashes))
+    evidence = RPEvidence(
+        _fetch_rp_result(rp_base_url, module_id), tuple(crashes), tuple(earlier)
+    )
     recorded = evidence.recorded or {}
     logger.info(
         "RP evidence: status=%s error=%s crashes=%s",

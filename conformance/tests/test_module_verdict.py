@@ -340,3 +340,197 @@ def test_fastapi_harness_classifies_router_rejections(status_code, detail, recor
     response = httpx.Response(status_code, json={"detail": detail})
 
     assert app_fastapi._router_rejection(response) == recorded
+
+
+def test_earlier_rejected_flow_fails_accept_module():
+    evidence = RPEvidence(ACCEPTED, earlier=(REJECTED_ID_TOKEN,))
+
+    assert assess_module("PASSED", ACCEPT, evidence) == (
+        "FAILED",
+        "expected the RP to accept every flow; an earlier flow recorded "
+        "'id_token_validation: Invalid issuer'",
+    )
+
+
+def test_earlier_unrecorded_flow_fails_accept_module():
+    evidence = RPEvidence(ACCEPTED, earlier=(None,))
+
+    assert assess_module("PASSED", ACCEPT, evidence) == (
+        "FAILED",
+        "expected the RP to accept every flow; an earlier flow recorded None",
+    )
+
+
+def test_every_flow_accepted_passes():
+    evidence = RPEvidence(ACCEPTED, earlier=(ACCEPTED,))
+
+    assert assess_module("PASSED", ACCEPT, evidence) == ("PASSED", "")
+
+
+@pytest.fixture
+def harness(monkeypatch):
+    """The core harness with an active flow for test ``m9``."""
+    import app as harness_app
+
+    monkeypatch.setattr(
+        harness_app,
+        "_last_flow_context",
+        {"issuer": ISSUER, "client_id": "c", "disco_address": "", "test_id": "m9"},
+    )
+    monkeypatch.setattr(harness_app, "test_results", {})
+    return harness_app
+
+
+def _recorded(harness_app) -> dict:
+    from fastapi.testclient import TestClient
+
+    return TestClient(harness_app.app).get("/results/m9").json()
+
+
+def test_harness_records_jarm_rejection(harness, monkeypatch):
+    from fastapi.testclient import TestClient
+    from py_identity_model.exceptions import JarmValidationException
+
+    def reject(*_args, **_kwargs):
+        raise JarmValidationException("Invalid signature")
+
+    monkeypatch.setattr(harness, "is_jarm_response", lambda _url: True)
+    monkeypatch.setattr(harness, "process_jarm_response", reject)
+
+    TestClient(harness.app).get("/callback", params={"response": "jwt"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "jarm_validation: Invalid signature",
+    }
+
+
+def test_harness_records_callback_parse_rejection(harness, monkeypatch):
+    from fastapi.testclient import TestClient
+    from py_identity_model.exceptions import PyIdentityModelException
+
+    def reject(_url):
+        raise PyIdentityModelException("bad callback")
+
+    monkeypatch.setattr(harness, "parse_authorize_callback_response", reject)
+
+    TestClient(harness.app).get("/callback", params={"code": "x"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "callback_parse: bad callback",
+    }
+
+
+def test_harness_records_logout_token_rejection(harness, monkeypatch):
+    from fastapi.testclient import TestClient
+    from py_identity_model.exceptions import LogoutTokenValidationException
+
+    def reject(*_args, **_kwargs):
+        raise LogoutTokenValidationException("missing events claim")
+
+    monkeypatch.setattr(harness, "validate_logout_token", reject)
+
+    TestClient(harness.app).post("/backchannel-logout", data={"logout_token": "t"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "logout_token_validation: missing events claim",
+    }
+
+
+def test_harness_records_missing_logout_token_as_invalid_request(harness):
+    from fastapi.testclient import TestClient
+
+    TestClient(harness.app).post("/backchannel-logout", data={})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "invalid_request: missing logout_token",
+    }
+
+
+def test_harness_records_post_logout_state_rejection(harness, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(harness, "_expected_logout_state", "sent")
+
+    TestClient(harness.app).get("/post-logout-callback", params={"state": "other"})
+
+    assert _recorded(harness) == {
+        "test_id": "m9",
+        "status": "error",
+        "error": "logout_state_validation: "
+        "State parameter does not match expected value",
+    }
+
+
+def test_issuer_mismatch_discovery_failure_has_its_own_class(harness):
+    from py_identity_model import DiscoveryDocumentResponse, DiscoveryErrorKind
+
+    disco = DiscoveryDocumentResponse(
+        is_successful=False,
+        error="issuer differs",
+        error_kind=DiscoveryErrorKind.ISSUER_MISMATCH,
+    )
+
+    assert harness._discovery_failure(disco) == "issuer_mismatch: issuer differs"
+
+
+def test_other_discovery_failure_is_discovery_failed(harness):
+    from py_identity_model import DiscoveryDocumentResponse, DiscoveryErrorKind
+
+    disco = DiscoveryDocumentResponse(
+        is_successful=False,
+        error="timeout",
+        error_kind=DiscoveryErrorKind.NETWORK_ERROR,
+    )
+
+    assert harness._discovery_failure(disco) == "discovery_failed: timeout"
+
+
+def test_alg_none_id_token_rejection_has_its_own_class(harness):
+    from py_identity_model.exceptions import TokenValidationException
+
+    exc = TokenValidationException("no", token_part="header", details={"alg": "none"})
+
+    assert harness._id_token_rejection_class(exc) == "alg_none"
+
+
+def test_other_id_token_rejection_is_id_token_validation(harness):
+    from py_identity_model.exceptions import TokenValidationException
+
+    exc = TokenValidationException("Invalid issuer")
+
+    assert harness._id_token_rejection_class(exc) == "id_token_validation"
+
+
+@pytest.mark.parametrize(
+    ("mtls", "extra"), [(True, ["https://localhost.emobix.co.uk:8444"]), (False, [])]
+)
+def test_discovery_policy_admits_mtls_origin_only_for_mtls(harness, mtls, extra):
+    assert harness._discovery_policy(mtls=mtls).additional_endpoint_base_addresses == (
+        extra
+    )
+
+
+def test_fastapi_harness_records_unknown_state(monkeypatch):
+    import app_fastapi
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(app_fastapi, "_last_test_id", "m7")
+    monkeypatch.setattr(app_fastapi, "test_results", {})
+    client = TestClient(app_fastapi.app)
+
+    callback = client.get("/callback", params={"state": "nope", "code": "x"})
+
+    assert callback.status_code == httpx.codes.BAD_REQUEST
+    assert client.get("/results/m7").json() == {
+        "test_id": "m7",
+        "status": "error",
+        "error": "state_validation: unknown state",
+    }

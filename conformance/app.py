@@ -1615,7 +1615,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             )
         except TokenValidationException as exc:
             session.result["status"] = "error"
-            session.result["error"] = f"id_token_validation: {exc.message}"
+            session.result["error"] = f"{_id_token_rejection_class(exc)}: {exc.message}"
             logger.error("REJECTED: id_token validation failed: %s", exc.message)
             _store_test_result(session)
             return HTMLResponse(
@@ -1826,9 +1826,12 @@ async def backchannel_logout(request: Request) -> JSONResponse:
     response = await run_in_threadpool(_receive_backchannel_logout, logout_token)
     if response.status_code == HTTPStatus.BAD_REQUEST:
         rejection = json.loads(response.body)
-        _record_last_flow_rejection(
-            f"logout_token_validation: {rejection['error']}: {rejection['detail']}"
+        reason = (
+            "logout_token_validation"
+            if rejection["error"] == "invalid_logout_token"
+            else rejection["error"]
         )
+        _record_last_flow_rejection(f"{reason}: {rejection['detail']}")
     # Back-Channel Logout 1.0 §2.8: the RP's response SHOULD carry no-store cache
     # headers so a logout is never served from cache. Set on every response
     # (success and error) since the OP posts to this fixed URI.
@@ -1927,6 +1930,18 @@ def get_result(test_id: str) -> JSONResponse:
         session = test_results[test_id]
         return JSONResponse(content=session.result)
     return JSONResponse(status_code=404, content={"error": "not_found"})
+
+
+def _id_token_rejection_class(exc: TokenValidationException) -> str:
+    """Reason class for a rejected ID Token.
+
+    A token refused for ``alg=none`` gets its own class, so the
+    ``idtoken-sig-none`` modules can require that exact refusal.
+    """
+    alg = (exc.details or {}).get("alg")
+    if isinstance(alg, str) and alg.lower() == "none":
+        return "alg_none"
+    return "id_token_validation"
 
 
 def _discovery_policy(*, mtls: bool) -> DiscoveryPolicy:

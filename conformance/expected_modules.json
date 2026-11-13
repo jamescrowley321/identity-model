@@ -42,7 +42,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -116,7 +116,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -163,7 +163,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -384,7 +384,7 @@
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
@@ -503,7 +503,7 @@
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
@@ -616,7 +616,7 @@
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
@@ -774,7 +774,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
