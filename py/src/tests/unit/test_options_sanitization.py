@@ -77,8 +77,12 @@ class TestSanitizeOptions:
         ["verify_signature", "verify_exp", "verify_nbf", "verify_iat"],
     )
     def test_blocked_option_false_raises(self, blocked_key):
-        with pytest.raises(ConfigurationException, match=blocked_key):
+        with pytest.raises(ConfigurationException) as exc_info:
             _sanitize_options({blocked_key: False}, None, None)
+        assert exc_info.value.message == (
+            f"Security option '{blocked_key}' cannot be disabled; "
+            "it is always enforced."
+        )
 
     @pytest.mark.parametrize(
         "blocked_key",
@@ -140,6 +144,14 @@ class TestSanitizeOptions:
     def test_unconfigured_check_may_be_disabled(self, option):
         """With nothing configured there is no pinned value to override."""
         assert _sanitize_options({option: False}, None, None) == {option: False}
+
+    @pytest.mark.parametrize(
+        "required", [["exp"], ("exp",), {"exp"}, frozenset({"exp"})]
+    )
+    def test_require_collections_accepted(self, required):
+        assert _sanitize_options({"require": required}, None, None) == {
+            "require": required
+        }
 
     @pytest.mark.parametrize("required", [None, "exp", ["exp", 1]])
     def test_malformed_require_raises(self, required):

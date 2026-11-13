@@ -333,16 +333,6 @@ async def test_callback_provider_error_detail_is_generic(monkeypatch, caplog):
     assert secret not in caplog.text
 
 
-async def test_callback_nonce_mismatch(monkeypatch):
-    _patch(monkeypatch)
-    async with _client(_app()) as client:
-        state, _ = await _login(client)
-        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": "attacker-nonce"}
-        resp = await client.get(f"/auth/callback?code=abc&state={state}")
-    assert resp.status_code == 401
-    assert "Nonce mismatch" in resp.json()["detail"]
-
-
 async def test_callback_userinfo_failure_is_tolerated(monkeypatch):
     # An unavailable/failed UserInfo fetch is tolerated: identity comes from
     # the validated ID token, so login still completes with empty userinfo.
@@ -550,14 +540,16 @@ def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> 
     return pyjwt.encode(claims, key, algorithm="RS256")
 
 
-async def _callback(settings: OIDCSettings, key, **token_claims) -> httpx.Response:
+async def _callback(
+    settings: OIDCSettings, key, token_nonce: str | None = None, **token_claims
+) -> httpx.Response:
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
     app.include_router(build_oidc_router(settings), prefix="/auth")
     async with _client(app) as client:
         state, nonce = await _login(client)
         rp.request_authorization_code_token.return_value.token = {
-            "id_token": _id_token(key, nonce, **token_claims),
+            "id_token": _id_token(key, token_nonce or nonce, **token_claims),
             "access_token": "at",
         }
         return await client.get(f"/auth/callback?code=abc&state={state}")
@@ -576,6 +568,16 @@ class TestLoginCallbackAudiences:
         settings = replace(SETTINGS, trusted_audiences=["urn:api"])
         resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
         assert (resp.status_code, resp.headers["location"]) == (302, "/")
+
+    async def test_nonce_mismatch_fails_login(self, id_token_key):
+        # validate_id_token binds the nonce sent on /auth/login (§3.1.3.7 step 11).
+        resp = await _callback(
+            SETTINGS, id_token_key, token_nonce="attacker-nonce", aud="cid"
+        )
+        assert (resp.status_code, resp.json()) == (
+            401,
+            {"detail": "ID token validation failed"},
+        )
 
     async def test_single_audience_logs_in(self, id_token_key):
         resp = await _callback(SETTINGS, id_token_key, aud="cid")

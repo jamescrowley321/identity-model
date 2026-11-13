@@ -7,6 +7,7 @@ This module contains JWT-related operations used by both sync and async implemen
 from jwt import PyJWK, decode, get_unverified_header
 from jwt.exceptions import (
     ExpiredSignatureError,
+    InvalidAlgorithmError,
     InvalidAudienceError,
     InvalidIssuerError,
     InvalidKeyError,
@@ -44,7 +45,7 @@ _ENFORCED_VERIFICATION_OPTIONS: frozenset[str] = frozenset(
 def _reject_disabled(options: dict, key: str, reason: str) -> None:
     if key in options and not options[key]:
         raise ConfigurationException(
-            f"Security option '{key}' cannot be disabled {reason}."
+            f"Security option '{key}' cannot be disabled{reason}."
         )
 
 
@@ -84,9 +85,9 @@ def _sanitize_options(
     for key in _ENFORCED_VERIFICATION_OPTIONS:
         _reject_disabled(options, key, "; it is always enforced")
     if audience is not None:
-        _reject_disabled(options, "verify_aud", "while an audience is configured")
+        _reject_disabled(options, "verify_aud", " while an audience is configured")
     if issuer is not None:
-        _reject_disabled(options, "verify_iss", "while an issuer is configured")
+        _reject_disabled(options, "verify_iss", " while an issuer is configured")
 
     if "require" in options:
         required = options["require"]
@@ -157,18 +158,18 @@ def _select_key_algorithm(jwt: str, key_data: dict, algorithms: list[str]) -> st
     that is in *algorithms*, so every algorithm in the set is usable; a key
     that declares ``alg`` must declare that one (RFC 7517 §4.4), and the key
     type must fit it, which key conversion checks. A header ``alg`` outside
-    the set is left for decoding to reject.
+    the set is rejected.
 
     Raises:
         KeyAlgorithmMismatchException: If the key declares an ``alg`` other
             than the token's.
+        InvalidAlgorithmError: If the header ``alg`` is not in *algorithms*.
         InvalidTokenError: If the JOSE header cannot be read.
     """
     header_alg = get_unverified_header(jwt).get("alg")
     key_alg = key_data.get("alg")
     if not isinstance(header_alg, str) or header_alg not in algorithms:
-        # Decoding rejects the unlisted alg; the binding does not matter.
-        return key_alg or algorithms[0]
+        raise InvalidAlgorithmError("The specified alg value is not allowed")
     if key_alg and key_alg != header_alg:
         raise KeyAlgorithmMismatchException(
             f"Key algorithm '{key_alg}' does not match JWT algorithm '{header_alg}'",

@@ -286,13 +286,6 @@ async def _validate_id_token(
             detail="ID token validation failed",
         ) from exc
 
-    # validate_id_token already rejects a nonce mismatch; this second check
-    # guards against a substituted validator.
-    if claims.get("nonce") != expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Nonce mismatch",
-        )
     return claims
 
 

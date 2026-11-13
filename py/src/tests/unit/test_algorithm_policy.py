@@ -316,17 +316,21 @@ class TestManualKeyDeclaredAlg:
     def test_explicit_algorithms_do_not_override_key_alg(self, keys):
         # RFC 8725 §3.1: a key is used with exactly one algorithm, so listing
         # another algorithm does not rebind a key that declares its own.
-        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256"}
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256", "kid": "k1"}
         config = _manual_config(jwk, algorithms=["PS256"])
 
         with pytest.raises(KeyAlgorithmMismatchException) as exc_info:
             validate_token(_token(keys["PS256"], "PS256"), config)
 
-        assert exc_info.value.details == {
-            "kid": None,
-            "key_alg": "RS256",
-            "jwt_alg": "PS256",
-        }
+        assert (
+            exc_info.value.message,
+            exc_info.value.token_part,
+            exc_info.value.details,
+        ) == (
+            "Key algorithm 'RS256' does not match JWT algorithm 'PS256'",
+            "header",
+            {"kid": "k1", "key_alg": "RS256", "jwt_alg": "PS256"},
+        )
 
 
 @pytest.mark.unit

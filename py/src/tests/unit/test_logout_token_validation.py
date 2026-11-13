@@ -24,6 +24,7 @@ from py_identity_model.exceptions import (
     ConfigurationException,
     LogoutTokenValidationException,
     TokenExpiredException,
+    TokenValidationException,
 )
 from py_identity_model.sync.logout import validate_logout_token
 from py_identity_model.sync.token_validation import (
@@ -229,6 +230,38 @@ class TestLogoutAudience:
         with pytest.raises(LogoutTokenValidationException) as exc_info:
             await aio_validate_logout_token(token, config)
         assert exc_info.value.details == {"untrusted_audiences": ["evil"]}
+
+    async def test_async_wrapper_forwards_trusted_audiences(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_logout_claims(aud=[_AUDIENCE, "partner"]))
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=_ISSUER
+        )
+        claims = await aio_validate_logout_token(
+            token, config, trusted_audiences=["partner"]
+        )
+        assert claims["aud"] == [_AUDIENCE, "partner"]
+
+    def test_sync_wrapper_rejects_empty_audience(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_logout_claims(aud=[""]))
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=_ISSUER
+        )
+        with pytest.raises(TokenValidationException) as exc_info:
+            validate_logout_token(token, config)
+        # The client_id is not among the audiences, so the base aud check fails.
+        assert exc_info.value.message == "Invalid audience"
+
+    async def test_async_wrapper_rejects_empty_audience(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_logout_claims(aud=[""]))
+        config = TokenValidationConfig(
+            perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=_ISSUER
+        )
+        with pytest.raises(TokenValidationException) as exc_info:
+            await aio_validate_logout_token(token, config)
+        assert exc_info.value.message == "Invalid audience"
 
 
 class TestLogoutManualModeRequiresIssuer:
