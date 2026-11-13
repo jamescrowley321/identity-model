@@ -1,8 +1,8 @@
 """Live DPoP binding across the code exchange and the refresh grant.
 
 RFC 9449 §5 / FAPI 2.0 Security Profile §5.3.3.1: the refresh request carries
-a DPoP proof so the new access token stays bound, and a DPoP-bound request
-refuses a response that comes back as a Bearer token.  Keys cover the FAPI 2.0
+a DPoP proof so the new access token stays bound; ``require_dpop_token_type``
+opts in to refusing a response that comes back as a Bearer token (RFC 9449 §5).  Keys cover the FAPI 2.0
 §5.4.1 algorithms the provider advertises (ES256, PS256, EdDSA).
 """
 
@@ -71,6 +71,7 @@ def test_refresh_keeps_dpop_binding(
             client_secret=dpop_auth_code_client["client_secret"],
             refresh_token=tokens["refresh_token"],
             dpop_key=key,
+            require_dpop_token_type=True,
         )
     )
     assert response.is_successful, response.error
@@ -83,7 +84,7 @@ def test_refresh_without_proof_gets_a_bearer_token(
     discovery_document, dpop_auth_code_client
 ):
     """Without a ``dpop_key`` the refresh is not DPoP-bound, so the provider's
-    Bearer answer is accepted: only a DPoP-bound request checks ``token_type``."""
+    Bearer answer continues as a regular OAuth interaction."""
     key = generate_dpop_key("ES256")
     tokens = _dpop_bound_tokens(discovery_document, dpop_auth_code_client, key)
 

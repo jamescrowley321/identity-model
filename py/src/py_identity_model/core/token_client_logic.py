@@ -188,7 +188,7 @@ def process_auth_code_token_response(
 ) -> AuthorizationCodeTokenResponse:
     """Process authorization code token exchange response.
 
-    With *require_dpop_token_type* (set for DPoP-bound requests), a
+    With *require_dpop_token_type* (the request's opt-in, RFC 9449 §5), a
     successful response whose ``token_type`` is not ``DPoP`` fails with
     :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
     tokens on ``rejected_token``.
@@ -264,7 +264,7 @@ def process_refresh_token_response(
 ) -> RefreshTokenResponse:
     """Process refresh token grant response.
 
-    With *require_dpop_token_type* (set for DPoP-bound requests), a
+    With *require_dpop_token_type* (the request's opt-in, RFC 9449 §5), a
     successful response whose ``token_type`` is not ``DPoP`` fails with
     :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, keeping the issued
     tokens on ``rejected_token``.

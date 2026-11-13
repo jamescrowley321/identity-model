@@ -57,16 +57,23 @@ response = refresh_token(
         client_id="my-client",
         refresh_token=tokens["refresh_token"],
         dpop_key=dpop_key,
+        require_dpop_token_type=True,
     )
 )
 ```
 
-A server that ignores the proof can still answer with a Bearer token. A
-request with a `dpop_key` refuses such a response: `is_successful` is `False`,
-`error_kind` is `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the
-server issued, including any rotated refresh token, are on `rejected_token`
-so they can still be used or revoked. `token_type` is compared
-case-insensitively (RFC 6749 §7.1).
+A server that ignores the proof can still answer with a Bearer token. RFC 9449
+§5 leaves the response to the application: the client "MUST discard the
+response in this case if this protection is deemed important for the security
+of the application; otherwise, the client may continue as in a regular OAuth
+interaction." Set `require_dpop_token_type=True` when the protection matters:
+such a response then fails with `is_successful` `False` and `error_kind`
+`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the server issued,
+including any rotated refresh token, are on `rejected_token` so they can
+still be revoked. `token_type` is compared case-insensitively (RFC 6749 §7.1).
+The flag is off by default and needs a `dpop_key`; `FAPI2ClientProfile` sets
+it on every DPoP-bound token request, because FAPI 2.0 requires
+sender-constrained access tokens (Security Profile §5.3.2.1).
 
 Each HTTP attempt mints a fresh proof, including the backoff retries on `429`
 and `5xx`, so a server that remembers `jti` values never sees one twice

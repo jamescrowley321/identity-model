@@ -131,7 +131,7 @@ def request_authorization_code_token(
                     ),
                 )
         return process_auth_code_token_response(
-            response, require_dpop_token_type=request.dpop_key is not None
+            response, require_dpop_token_type=request.require_dpop_token_type
         )
     except Exception as e:
         return handle_auth_code_token_error(e)
@@ -178,7 +178,7 @@ def refresh_token(
                     ),
                 )
         return process_refresh_token_response(
-            response, require_dpop_token_type=request.dpop_key is not None
+            response, require_dpop_token_type=request.require_dpop_token_type
         )
     except Exception as e:
         return handle_refresh_token_error(e)

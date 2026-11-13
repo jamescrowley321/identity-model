@@ -840,11 +840,16 @@ class AuthorizationCodeTokenRequest(BaseRequest):
         dpop_key: When set, the token request is DPoP-bound (RFC 9449): a DPoP
             proof for the token endpoint is attached and the ``use_dpop_nonce``
             challenge is honored with a single retry.  FAPI 2.0 sender
-            constraining.  A successful response whose ``token_type`` is not
-            ``DPoP`` (RFC 9449 §5) then fails with
-            :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, so a server that
-            ignores the proof cannot hand back a Bearer token unnoticed; the
-            tokens it issued are kept on the response's ``rejected_token``.
+            constraining.
+        require_dpop_token_type: Discard a successful response whose
+            ``token_type`` is not ``DPoP``: it fails with
+            :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the
+            server issued are kept on the response's ``rejected_token``.  RFC
+            9449 §5 leaves this to the application: the client "MUST discard
+            the response in this case if this protection is deemed important
+            for the security of the application; otherwise, the client may
+            continue as in a regular OAuth interaction."  Off by default;
+            ``FAPI2ClientProfile`` sets it.  Requires ``dpop_key``.
         client_auth_method: How to authenticate the client. ``None`` (default)
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
@@ -864,15 +869,20 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    require_dpop_token_type: bool = False
+
+    def __post_init__(self) -> None:
+        if self.require_dpop_token_type and self.dpop_key is None:
+            raise ValueError("require_dpop_token_type needs a dpop_key")
 
 
 class TokenErrorKind(Enum):
     """Why a token response failed, set on the response's ``error_kind``."""
 
     DPOP_TOKEN_TYPE_MISMATCH = "dpop_token_type_mismatch"
-    """A DPoP-bound request (one with a ``dpop_key``) got a ``token_type``
-    other than ``DPoP`` (RFC 9449 §5). The issued tokens are on the
-    response's ``rejected_token``."""
+    """A request with ``require_dpop_token_type`` got a ``token_type`` other
+    than ``DPoP`` (RFC 9449 §5). The issued tokens are on the response's
+    ``rejected_token``."""
 
 
 @dataclass(repr=False, eq=False)
@@ -915,11 +925,17 @@ class RefreshTokenRequest(BaseRequest):
             DPoP proof for the token endpoint is attached, so the refreshed
             access token stays bound to the key (FAPI 2.0 Security Profile
             §5.3.3.1), and the ``use_dpop_nonce`` challenge is honored with a
-            single retry.  A successful response whose ``token_type`` is not
-            ``DPoP`` (RFC 9449 §5) then fails with
-            :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`; the tokens it
-            issued, including any rotated refresh token, are kept on the
-            response's ``rejected_token``.
+            single retry.
+        require_dpop_token_type: Discard a successful response whose
+            ``token_type`` is not ``DPoP``: it fails with
+            :attr:`TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the
+            server issued, including any rotated refresh token, are kept on
+            the response's ``rejected_token``.  RFC 9449 §5 leaves this to the
+            application: the client "MUST discard the response in this case if
+            this protection is deemed important for the security of the
+            application; otherwise, the client may continue as in a regular
+            OAuth interaction."  Off by default; ``FAPI2ClientProfile`` sets
+            it.  Requires ``dpop_key``.
         client_auth_method: How to authenticate the client. ``None`` (default)
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
@@ -937,6 +953,11 @@ class RefreshTokenRequest(BaseRequest):
     mtls: MtlsClientAuth | None = None
     client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
     dpop_key: DPoPKey | None = None
+    require_dpop_token_type: bool = False
+
+    def __post_init__(self) -> None:
+        if self.require_dpop_token_type and self.dpop_key is None:
+            raise ValueError("require_dpop_token_type needs a dpop_key")
 
 
 @dataclass(repr=False, eq=False)

@@ -649,31 +649,33 @@ disco = process_discovery_response(
 
 ## DPoP client
 
-### A DPoP-bound token request refuses a Bearer answer ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
+### A refused Bearer answer keeps its tokens; the opt-in needs a key ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
 
-`require_dpop_token_type` is gone from `AuthorizationCodeTokenRequest` and
-`RefreshTokenRequest`. A request with a `dpop_key` now always checks the
-response: a successful answer whose `token_type` is not `DPoP` (RFC 9449 §5)
-fails with `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`. A request without a
-`dpop_key` accepts any `token_type`, as before.
+`require_dpop_token_type` stays opt-in and off by default. RFC 9449 §5 leaves
+the choice to the application: when the response carries a `token_type` other
+than `DPoP`, the client "MUST discard the response in this case if this
+protection is deemed important for the security of the application;
+otherwise, the client may continue as in a regular OAuth interaction."
+`FAPI2ClientProfile` sets it on every DPoP-bound token request, because FAPI
+2.0 requires sender-constrained access tokens (Security Profile §5.3.2.1).
 
-The refused response keeps the tokens the server issued on the new
-`rejected_token` field, so a rotated refresh token is not lost and the Bearer
-tokens can still be revoked or, if you choose, used. `token` stays guarded on
-a failed response, and `repr` redacts `rejected_token`.
+Two things change:
+
+- A response refused with `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH` keeps the
+  tokens the server issued on the new `rejected_token` field, so a rotated
+  refresh token is not lost and the Bearer tokens can still be revoked.
+  `token` stays guarded on a failed response, and `repr` redacts
+  `rejected_token`.
+- `require_dpop_token_type=True` without a `dpop_key` raises `ValueError`
+  when the request is built. In 4.x it failed every response.
 
 ```python
-# 4.x
-RefreshTokenRequest(..., dpop_key=key, require_dpop_token_type=True)
-
-# 5.0
-response = refresh_token(RefreshTokenRequest(..., dpop_key=key))
+response = refresh_token(
+    RefreshTokenRequest(..., dpop_key=key, require_dpop_token_type=True)
+)
 if response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH:
     revoke_or_store(response.rejected_token)
 ```
-
-To accept a Bearer token from a server that may ignore DPoP, send the request
-without a `dpop_key`.
 
 ### Load a stored DPoP key; algorithms are a `DPoPAlgorithm` ([#1063](https://github.com/jamescrowley321/identity-model/issues/1063))
 
