@@ -87,6 +87,9 @@ class TestDiscoveryDocumentUrl:
             ("auth.example.com", r"^Issuer must be an HTTP or HTTPS URL$"),
             ("ftp://user:secret@evil.com", r"^Issuer must be an HTTP or HTTPS URL$"),
             ("https://", r"^Issuer must include a host$"),
+            ("https://:443", r"^Issuer must include a host$"),
+            ("https://user@", r"^Issuer must include a host$"),
+            ("https://[op.example", r"^Issuer is not a valid URL$"),
             (
                 "https://auth.example.com?evil=1",
                 r"^Issuer must not contain query or fragment components$",

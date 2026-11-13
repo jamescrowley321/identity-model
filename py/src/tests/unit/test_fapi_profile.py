@@ -856,7 +856,8 @@ class TestFAPI2ClientProfileImmutability:
         [
             (_pkj(), "issuer"),
             (_pkj(), "algorithm"),
-            (_mtls(), "certificate"),
+            (_mtls(), "certificate_path"),
+            (_mtls(), "private_key_path"),
             (_mtls(), "auth_method"),
             (RequestObjectKey(private_key="pem"), "lifetime"),
             (RequestObjectKey(private_key="pem"), "algorithm"),

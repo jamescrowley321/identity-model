@@ -596,9 +596,15 @@ added in a later release can never shift your arguments onto the wrong field.
 Assigning a field raises `dataclasses.FrozenInstanceError`. For a request,
 configuration or value type, use `dataclasses.replace`, which runs the type's
 validation again on the copy; before, assigning a field skipped that
-validation. Responses and other results are read-only: `dataclasses.replace`
-raises on them, because reading a field that does not apply to the outcome
-(`error` on a success, data fields on a failure) raises.
+validation. Responses (`*Response` and `AuthorizeCallbackResponse`) are
+read-only: `dataclasses.replace` raises on them, because reading a field that
+does not apply to the outcome (`error` on a success, data fields on a failure)
+raises.
+
+`OIDCSettings.audience` is no longer filled in from `client_id`: it stays
+`None` when you leave it out. Read `OIDCSettings.expected_audience` for the
+audience the middleware checks (`audience`, or `client_id` when `audience` is
+`None`). It is worked out on read, so a copy with a new `client_id` follows it.
 
 ```python
 # Before
@@ -673,8 +679,8 @@ itself, which fails.
 OpenID Connect Discovery 1.0 §4.1 specifies: a terminating `/` is removed and
 `/.well-known/openid-configuration` is appended. It raises
 `ConfigurationException` for an empty value, a non-HTTP(S) URL, a URL without
-a host, a query or fragment, or a value that already ends with the well-known
-path.
+a host, a query or fragment, a value that is not a valid URL, or a value that
+already ends with the well-known path.
 
 `parse_discovery_url` and `DiscoveryEndpoint` are removed. `parse_discovery_url`
 appended the path only when it was missing and returned the authority as well;

@@ -122,17 +122,21 @@ def discovery_document_url(issuer: str) -> str:
         The discovery document URL.
 
     Raises:
-        ConfigurationException: If *issuer* is empty, is not an
+        ConfigurationException: If *issuer* is empty, is not a valid
             ``http``/``https`` URL with a host, has a query or fragment, or
             already ends with the well-known path.
     """
     if not issuer:
         raise ConfigurationException("Issuer cannot be empty")
 
-    parsed = urlparse(issuer)
+    try:
+        parsed = urlparse(issuer)
+        hostname = parsed.hostname
+    except ValueError:
+        raise ConfigurationException("Issuer is not a valid URL") from None
     if parsed.scheme not in ("http", "https"):
         raise ConfigurationException("Issuer must be an HTTP or HTTPS URL")
-    if not parsed.netloc:
+    if not hostname:
         raise ConfigurationException("Issuer must include a host")
     if parsed.query or parsed.fragment:
         raise ConfigurationException(
