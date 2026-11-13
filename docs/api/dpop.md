@@ -70,7 +70,8 @@ interaction." Set `require_dpop_token_type=True` when the protection matters:
 such a response then fails with `is_successful` `False` and `error_kind`
 `TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH`, and the tokens the server issued,
 including any rotated refresh token, are on `rejected_token` so they can
-still be revoked. `token_type` is compared case-insensitively (RFC 6749 §7.1).
+still be revoked. `repr` redacts `rejected_token`, but `vars(response)` does
+not: it holds live tokens, so never log a refused response's `vars()`. `token_type` is compared case-insensitively (RFC 6749 §7.1).
 The flag is off by default and needs a `dpop_key`; `FAPI2ClientProfile` sets
 it on every DPoP-bound token request, because FAPI 2.0 requires
 sender-constrained access tokens (Security Profile §5.3.2.1).

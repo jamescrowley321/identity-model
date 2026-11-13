@@ -21,6 +21,7 @@ import respx
 
 from py_identity_model import (
     AuthorizationCodeTokenRequest,
+    FailedResponseAccessError,
     RefreshTokenRequest,
     TokenErrorKind,
     generate_dpop_key,
@@ -281,6 +282,14 @@ class TestRejectedTokenRedacted:
         response = call(build(require_dpop_token_type=True))
         assert "rejected_token='[REDACTED]'" in repr(response)
         assert BEARER_TOKEN["access_token"] not in repr(response)
+
+    @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
+    @respx.mock
+    def test_token_stays_guarded_on_refused_response(self, call: SyncCall, build):
+        respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=BEARER_TOKEN))
+        response = call(build(require_dpop_token_type=True))
+        with pytest.raises(FailedResponseAccessError):
+            _ = response.token
 
 
 @pytest.mark.unit

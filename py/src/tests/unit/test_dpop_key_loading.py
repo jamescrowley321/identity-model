@@ -8,6 +8,7 @@ import json
 import re
 from unittest import mock
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
     BestAvailableEncryption,
@@ -94,6 +95,20 @@ class TestFromPem:
         with pytest.raises(ValueError, match="Cannot load the DPoP private key"):
             DPoPKey.from_pem(pem, DPoPAlgorithm.ES256, password=b"other")
 
+    def test_unsupported_algorithm_wrapped(self, monkeypatch):
+        cause = UnsupportedAlgorithm("legacy PEM cipher")
+
+        def _raise(*_args, **_kwargs):
+            raise cause
+
+        monkeypatch.setattr(dpop_module, "load_pem_private_key", _raise)
+        with pytest.raises(
+            ValueError,
+            match=r"^Cannot load the DPoP private key: legacy PEM cipher$",
+        ) as exc_info:
+            DPoPKey.from_pem(b"pem", "ES256")
+        assert exc_info.value.__cause__ is cause
+
     def test_garbage_refused(self):
         with pytest.raises(ValueError, match="Cannot load the DPoP private key"):
             DPoPKey.from_pem(b"not a pem", DPoPAlgorithm.ES256)
@@ -162,6 +177,16 @@ class TestFromJwk:
         key = generate_dpop_key("ES256")
         with pytest.raises(ValueError, match="Key is not a private key ES256"):
             DPoPKey.from_jwk(key.public_jwk, "ES256")
+
+    def test_non_dict_jwk_refused(self):
+        with pytest.raises(ValueError, match=r"^A DPoP JWK must be a dict$"):
+            DPoPKey.from_jwk(["kty", "EC"], "ES256")  # type: ignore[arg-type]
+
+    def test_non_str_kty_refused(self):
+        with pytest.raises(
+            ValueError, match=re.escape("Unsupported JWK kty for DPoP: ['EC']")
+        ):
+            DPoPKey.from_jwk({"kty": ["EC"]}, "ES256")
 
     def test_unsupported_kty_refused(self):
         with pytest.raises(ValueError, match="Unsupported JWK kty for DPoP: 'oct'"):

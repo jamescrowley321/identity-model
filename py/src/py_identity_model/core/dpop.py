@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
 
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -167,7 +168,7 @@ class DPoPKey:
         data = pem.encode() if isinstance(pem, str) else pem
         try:
             private_key = load_pem_private_key(data, password=password)
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, UnsupportedAlgorithm) as e:
             raise ValueError(f"Cannot load the DPoP private key: {e}") from e
         return cls._wrap(parsed, private_key)
 
@@ -184,16 +185,20 @@ class DPoPKey:
                 JWK's ``alg`` member; one of the two is required.
 
         Raises:
-            ValueError: If no algorithm is given, it is unsupported, the JWK
-                is not a private key, or the key does not fit the algorithm.
+            ValueError: If *jwk* is not a dict, no algorithm is given, it is
+                unsupported, the JWK is not a private key, or the key does
+                not fit the algorithm.
         """
+        if not isinstance(jwk, dict):
+            raise ValueError("A DPoP JWK must be a dict")
         alg = algorithm if algorithm is not None else jwk.get("alg")
         if not isinstance(alg, str):
             raise ValueError("A DPoP JWK needs an algorithm: pass one or set 'alg'")
         parsed = _parse_algorithm(alg)
-        parser = _JWK_PARSERS.get(jwk.get("kty"))  # type: ignore[arg-type]
+        kty = jwk.get("kty")
+        parser = _JWK_PARSERS.get(kty) if isinstance(kty, str) else None
         if parser is None:
-            raise ValueError(f"Unsupported JWK kty for DPoP: {jwk.get('kty')!r}")
+            raise ValueError(f"Unsupported JWK kty for DPoP: {kty!r}")
         try:
             private_key = parser.from_jwk(json.dumps(jwk))
         except (pyjwt.InvalidKeyError, ValueError, TypeError) as e:
