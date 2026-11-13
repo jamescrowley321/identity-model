@@ -588,6 +588,28 @@ class TestSettingsWiring:
 
         assert exc.value.code == status.WS_1008_POLICY_VIOLATION
 
+    async def test_proof_from_ws_handshake_is_refused_over_http(
+        self, raw_client, raw_ws_authenticate, oidc_env, token
+    ):
+        # Entry points given the same settings share one replay cache, so a
+        # handshake proof (htm=GET) cannot be replayed on an HTTP GET.
+        oidc_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com")
+        settings = oidc_settings_from_env()
+        key = generate_dpop_key()
+        bound = token({"jkt": key.jwk_thumbprint})
+        headers = _dpop_headers(bound, key, url="https://api.example.com/me")
+
+        ws_claims = await raw_ws_authenticate(
+            list(headers.items()), url="ws://testserver/me", settings=settings
+        )
+        async with raw_client(settings=settings) as c:
+            replayed = await c.get("/me", headers=headers)
+
+        assert (ws_claims["cnf"], _rejected(replayed)) == (
+            {"jkt": key.jwk_thumbprint},
+            (401, INVALID_PROOF_DPOP, GENERIC_BODY),
+        )
+
     async def test_env_mtls_reads_certificate_header(
         self, raw_client, oidc_env, token, client_cert_pem
     ):

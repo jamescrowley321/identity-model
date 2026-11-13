@@ -85,7 +85,8 @@ def _certificate_from_header(
     return client_certificate
 
 
-def _default_dpop_options() -> DPoPVerificationOptions:
+def default_dpop_options() -> DPoPVerificationOptions:
+    """Library-default DPoP options with a new in-memory replay cache."""
     return DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache())
 
 
@@ -110,8 +111,9 @@ class AuthOptions:
             the library defaults with an
             :class:`~py_identity_model.InMemoryDPoPReplayCache` owned by this
             options value, so the HTTP middleware and WebSocket routes given
-            the same ``AuthOptions`` share one cache. Behind a load balancer,
-            pass a shared cache. ``None`` means the default.
+            the same ``AuthOptions`` share one cache (as do those given the
+            same ``OIDCSettings``, see :meth:`from_settings`). Behind a load
+            balancer, pass a shared cache. ``None`` means the default.
         client_certificate: Returns the connection's mTLS client certificate
             (PEM or DER) for certificate-bound tokens, or ``None``. It receives
             the ``Request`` (HTTP) or ``WebSocket`` (handshake). Without it
@@ -131,7 +133,7 @@ class AuthOptions:
     """
 
     required_binding: TokenBinding = TokenBinding.NONE
-    dpop: DPoPVerificationOptions = field(default_factory=_default_dpop_options)
+    dpop: DPoPVerificationOptions = field(default_factory=default_dpop_options)
     client_certificate: Callable[[HTTPConnection], str | bytes | None] | None = None
     expected_origin: str | None = None
 
@@ -140,7 +142,7 @@ class AuthOptions:
             self, "required_binding", TokenBinding(self.required_binding)
         )
         if self.dpop is None:
-            object.__setattr__(self, "dpop", _default_dpop_options())
+            object.__setattr__(self, "dpop", default_dpop_options())
         if (
             self.required_binding is TokenBinding.MTLS
             and self.client_certificate is None
@@ -165,7 +167,10 @@ class AuthOptions:
     ) -> AuthOptions:
         """Options from *settings*, plus the parts settings cannot hold.
 
-        ``required_binding`` and ``expected_origin`` come from *settings*. The
+        ``required_binding`` and ``expected_origin`` come from *settings*.
+        Without *dpop*, the options use the DPoP options *settings* holds, so
+        every ``AuthOptions`` built from one settings value shares its replay
+        cache. The
         client certificate is *client_certificate* when given, else read from
         ``settings.client_certificate_header`` (URL-decoded), else ``None``.
         """
@@ -175,7 +180,7 @@ class AuthOptions:
             )
         return cls(
             required_binding=settings.required_binding,
-            dpop=dpop,
+            dpop=dpop if dpop is not None else settings._dpop,
             client_certificate=client_certificate,
             expected_origin=settings.expected_origin,
         )
