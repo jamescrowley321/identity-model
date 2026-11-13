@@ -207,16 +207,15 @@ case-insensitive).
 
 Both take their binding configuration from one frozen `AuthOptions`, passed as
 `options=`. Pass the same instance to both entry points so HTTP and WebSocket
-routes enforce the same rules and share one replay cache:
+routes enforce the same rules:
 
-!!! warning "Entry points built separately do not share a replay cache"
-    Each `AuthOptions` built without `dpop=` has its own replay cache. A
-    middleware and a WebSocket authenticator given different `AuthOptions`,
-    different `OIDCSettings` values, or neither (only `discovery_url=`) each
-    record proofs separately. A WebSocket handshake proof is a `GET`, so one
-    accepted there can then be replayed once to an HTTP `GET` on the same path
-    within its `iat` window. Pass the same `AuthOptions` (or the same
-    `OIDCSettings`) to both, or give both a shared `dpop=`.
+!!! note "One replay cache per process by default"
+    Every middleware and WebSocket authenticator built without explicit `dpop`
+    options shares one `InMemoryDPoPReplayCache` per process (a forked child
+    builds its own), so a WebSocket handshake proof, which is a `GET`, cannot
+    be replayed on an HTTP `GET` to the same path. Explicit
+    `AuthOptions(dpop=...)` options use their own cache: give both entry points
+    the same one.
 
 ```python
 from fastapi_identity_model import (
@@ -257,7 +256,7 @@ ws_auth = build_ws_authenticator(
 | Field | Default | Meaning |
 |---|---|---|
 | `required_binding` | `TokenBinding.NONE` | The sender constraint every token must carry. |
-| `dpop` | defaults, with an `InMemoryDPoPReplayCache` owned by this `AuthOptions` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). Pass the same `AuthOptions` to the middleware and the WebSocket authenticator to share the cache. Given only `settings=`, both use options held by that `OIDCSettings`, so they share its cache too. Behind a load balancer, pass a shared one. |
+| `dpop` | defaults, with this process's shared `InMemoryDPoPReplayCache` | `DPoPVerificationOptions` (algorithms, `iat` window, replay cache). Every entry point built without `dpop` shares the default cache. Behind a load balancer, pass a shared store. |
 | `client_certificate` | `None` | Callable returning the connection's client certificate (PEM or DER), or `None`. Receives the `Request` or `WebSocket`. |
 | `expected_origin` | `None` | `scheme://host[:port]` the proof's `htu` is checked against. `None` takes the origin from the request. |
 

@@ -25,7 +25,7 @@ import math
 import threading
 import time
 import types
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
@@ -58,6 +58,10 @@ _REPLAY_CACHE_MESSAGE = (
 )
 ASYNC_REPLAY_CACHE_MESSAGE = (
     "An AsyncDPoPReplayCache needs the async validators (py_identity_model.aio)"
+)
+_PICKLE_MESSAGE = (
+    "InMemoryDPoPReplayCache cannot be pickled: it is one process's replay "
+    "records; give each process its own, or use a shared store"
 )
 REPLAY_ANSWER_MESSAGE = "replay_cache.check_and_store must return a DPoPReplayCheck"
 
@@ -284,6 +288,8 @@ class InMemoryDPoPReplayCache:
 
     Build one per resource server and keep it for the life of the process;
     a cache built per request records nothing that outlives the request.
+    ``copy.copy`` and ``copy.deepcopy`` return the same cache; pickling it
+    raises ``TypeError``.
 
     Args:
         max_entries: The most proofs held at once.
@@ -306,6 +312,17 @@ class InMemoryDPoPReplayCache:
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)
+
+    # The cache is shared state: a copy is the same cache, so a copied options
+    # value (dataclasses.asdict, copy.deepcopy) still refuses the same replays.
+    def __copy__(self) -> InMemoryDPoPReplayCache:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> InMemoryDPoPReplayCache:
+        return self
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError(_PICKLE_MESSAGE)
 
     def check_and_store(
         self, jkt: str, jti: str, expires_at: float, now: float

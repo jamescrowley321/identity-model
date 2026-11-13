@@ -550,15 +550,13 @@ config = TokenValidationConfig(perform_disco=True, audience="api", dpop=dpop)
   pyrefly's `unused-coroutine` are on by default; keep them on.
 - The proof is recorded last, after the certificate binding check too, so a
   token refused for its certificate does not use up its proof.
-- In the FastAPI package, `AuthOptions.dpop` defaults to options with an
-  `InMemoryDPoPReplayCache` owned by that `AuthOptions`; pass the same
-  `AuthOptions` to the middleware and the WebSocket authenticator to share it.
-  `AuthOptions(dpop=None)` means that default. `AuthOptions.from_settings`
-  without `dpop=` uses default options held by the `OIDCSettings`, so the
-  middleware and WebSocket authenticator given the same settings share one
-  replay cache. Entry points given different `AuthOptions` or settings, or
-  neither, no longer share the process-wide cache: a proof accepted on one
-  can be replayed once on the other. Pass both the same `AuthOptions`.
+- The FastAPI package keeps one default replay cache per process:
+  `AuthOptions.dpop` (and `AuthOptions(dpop=None)`) defaults to options with
+  an `InMemoryDPoPReplayCache` shared by every middleware and WebSocket
+  authenticator built without explicit `dpop` options. Explicit
+  `AuthOptions(dpop=...)` options use the cache you pass.
+- `InMemoryDPoPReplayCache` copies (`copy.deepcopy`, `dataclasses.asdict`)
+  are the same cache; pickling one raises `TypeError`.
 
 ## Discovery
 
