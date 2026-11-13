@@ -1161,15 +1161,20 @@ Pass your real `client_id`.
 ### `nonce` is a required argument ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
 `validate_id_token` (sync and async) and `validate_id_token_claims` take a
-required keyword `nonce: str | None`. Pass the `nonce` you sent on the
-authorization request, or `None` when you sent none. In 4.x leaving it out
+required keyword `nonce: str | RefreshNonce | None`. In 4.x leaving it out
 skipped the check, so a token carrying a `nonce` was accepted unchecked.
 
-- A string: the token's `nonce` MUST be present and equal it (OIDC Core
-  §3.1.3.7 step 11, §3.2.2.11 step 2). For an ID Token from a refresh, pass
-  the original nonce (§12.2).
-- `None`: a token that carries a `nonce` raises `IdTokenValidationException`,
-  because §2 requires a present `nonce` to equal the value sent, and none was.
+- A string, the `nonce` you sent on the authorization request: the token's
+  `nonce` MUST be present and equal it (OIDC Core §3.1.3.7 step 11, §3.2.2.11
+  step 2).
+- `None`, when you sent none: a token that carries a `nonce` raises
+  `IdTokenValidationException`, because §2 requires a present `nonce` to equal
+  the value sent, and none was.
+- `RefreshNonce(original)`, for an ID Token returned by a token refresh: the
+  `nonce` may be absent, and if present MUST equal `original`, the nonce of the
+  ID Token from the original authentication (§12.2). Passing the original
+  nonce as a plain string would reject a refreshed token that omits it, as
+  §12.2 recommends.
 
 Before:
 
@@ -1182,6 +1187,19 @@ After:
 ```python
 claims = validate_id_token(
     id_token, validation_config, disco_doc_address=DISCOVERY_URL, nonce=expected_nonce
+)
+```
+
+For an ID Token from a refresh:
+
+```python
+from py_identity_model import RefreshNonce
+
+refreshed = validate_id_token(
+    refresh_response.id_token,
+    validation_config,
+    disco_doc_address=DISCOVERY_URL,
+    nonce=RefreshNonce(original_claims["nonce"]),
 )
 ```
 

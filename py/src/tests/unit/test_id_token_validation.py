@@ -25,7 +25,10 @@ from py_identity_model.aio.token_validation import (
 from py_identity_model.aio.token_validation import (
     clear_jwks_cache as aio_clear_jwks_cache,
 )
-from py_identity_model.core.id_token_logic import validate_id_token_claims
+from py_identity_model.core.id_token_logic import (
+    RefreshNonce,
+    validate_id_token_claims,
+)
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
@@ -1660,3 +1663,112 @@ class TestManualModeRequiresIssuer:
         )
         claims = validate_id_token(token, config, nonce=None)
         assert claims["iss"] == _ISSUER
+
+
+_ORIGINAL_NONCE = "original-nonce-1"
+_NONCE_MISMATCH = "ID token 'nonce' claim does not match the expected value"
+
+
+def _manual_config(key_dict: dict) -> TokenValidationConfig:
+    return TokenValidationConfig(
+        perform_disco=False, key=key_dict, audience=_AUDIENCE, issuer=_ISSUER
+    )
+
+
+class TestRefreshNonce:
+    """OIDC Core §12.2: a refresh-issued ID Token SHOULD NOT carry ``nonce``;
+    if present it MUST equal the original authentication's nonce."""
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [{}, {"nonce": _ORIGINAL_NONCE}],
+        ids=["absent", "equal"],
+    )
+    def test_pure_accepts_absent_or_equal(self, overrides):
+        validate_id_token_claims(
+            _valid_id_claims(**overrides),
+            "RS256",
+            client_id=_AUDIENCE,
+            now=_NOW,
+            nonce=RefreshNonce(_ORIGINAL_NONCE),
+        )
+
+    @pytest.mark.parametrize("token_nonce", ["other-nonce", None, 7])
+    def test_pure_rejects_present_and_different(self, token_nonce):
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token_claims(
+                _valid_id_claims(nonce=token_nonce),
+                "RS256",
+                client_id=_AUDIENCE,
+                now=_NOW,
+                nonce=RefreshNonce(_ORIGINAL_NONCE),
+            )
+        assert (exc_info.value.message, exc_info.value.token_part) == (
+            _NONCE_MISMATCH,
+            "payload",
+        )
+
+    def test_plain_original_nonce_still_requires_presence(self):
+        # Passing the original nonce as a string is the authentication-time
+        # rule: the claim MUST be present. Refresh callers use RefreshNonce.
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token_claims(
+                _valid_id_claims(),
+                "RS256",
+                client_id=_AUDIENCE,
+                now=_NOW,
+                nonce=_ORIGINAL_NONCE,
+            )
+        assert exc_info.value.message == _NONCE_MISMATCH
+
+    @pytest.mark.parametrize("original", ["", None, 7])
+    def test_original_must_be_a_non_empty_string(self, original):
+        with pytest.raises(ConfigurationException) as exc_info:
+            RefreshNonce(original)
+        assert exc_info.value.message == (
+            "RefreshNonce.original must be the non-empty nonce of the original ID Token"
+        )
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [{}, {"nonce": _ORIGINAL_NONCE}],
+        ids=["absent", "equal"],
+    )
+    def test_sync_accepts_absent_or_equal(self, rsa_keypair, overrides):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(**overrides))
+        claims = validate_id_token(
+            token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
+        )
+        assert claims.get("nonce") == overrides.get("nonce")
+
+    def test_sync_rejects_different(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(nonce="other-nonce"))
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token(
+                token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
+            )
+        assert exc_info.value.message == _NONCE_MISMATCH
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [{}, {"nonce": _ORIGINAL_NONCE}],
+        ids=["absent", "equal"],
+    )
+    async def test_async_accepts_absent_or_equal(self, rsa_keypair, overrides):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(**overrides))
+        claims = await aio_validate_id_token(
+            token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
+        )
+        assert claims.get("nonce") == overrides.get("nonce")
+
+    async def test_async_rejects_different(self, rsa_keypair):
+        key_dict, pem = rsa_keypair
+        token = sign_jwt(pem, _valid_id_claims(nonce="other-nonce"))
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            await aio_validate_id_token(
+                token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
+            )
+        assert exc_info.value.message == _NONCE_MISMATCH

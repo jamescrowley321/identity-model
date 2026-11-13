@@ -17,7 +17,9 @@ rules that make an ID Token an ID Token:
 * ``nonce`` binding against the ``nonce`` the caller sent on the
   authorization request (§2, §3.1.3.7 step 11, §3.2.2.11 step 2). The caller
   always states it; ``None`` means none was sent, and a token carrying a
-  ``nonce`` is then rejected.
+  ``nonce`` is then rejected. ``RefreshNonce(original)`` marks an ID Token
+  from a refresh, whose ``nonce`` may be absent but, if present, must equal
+  the original (§12.2).
 * ``auth_time`` freshness against ``max_age`` (§3.1.3.7 step 12).
 * ``at_hash`` / ``c_hash`` token/code binding for the hybrid and
   authorization-code flows (§3.3.2.11).
@@ -331,12 +333,43 @@ def _validate_hash_binding(
         )
 
 
-def _check_nonce(claims: dict, nonce: str | None) -> None:
-    """Bind the token's ``nonce`` to the one sent (§2, §3.1.3.7 step 11).
+@dataclasses.dataclass(frozen=True)
+class RefreshNonce:
+    """The expected ``nonce`` of an ID Token returned by a token refresh.
+
+    OIDC Core §12.2: a refresh-issued ID Token SHOULD NOT have a ``nonce``
+    claim, but if it is present its value MUST be the same as in the ID Token
+    issued at the original authentication. Pass ``nonce=RefreshNonce(original)``
+    to accept an absent ``nonce`` and require a present one to equal
+    ``original``. Use ``nonce=None`` if the original authentication sent no
+    nonce.
+
+    Attributes:
+        original: The ``nonce`` of the ID Token from the original
+            authentication. Must be a non-empty string.
+
+    Raises:
+        ConfigurationException: If ``original`` is not a non-empty string.
+    """
+
+    original: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.original, str) or not self.original:
+            raise ConfigurationException(
+                "RefreshNonce.original must be the non-empty nonce of the "
+                "original ID Token"
+            )
+
+
+def _check_nonce(claims: dict, nonce: str | RefreshNonce | None) -> None:
+    """Bind the token's ``nonce`` to the one sent (§2, §3.1.3.7 step 11, §12.2).
 
     ``None`` means no nonce was sent, so a token carrying one is rejected: §2
     requires a present ``nonce`` to equal the value sent. A sent nonce MUST be
-    present in the token and equal it (compared in constant time).
+    present in the token and equal it (compared in constant time). A
+    :class:`RefreshNonce` allows an absent ``nonce``; a present one MUST equal
+    the original (§12.2).
     """
     if nonce is None:
         if "nonce" in claims:
@@ -345,9 +378,15 @@ def _check_nonce(claims: dict, nonce: str | None) -> None:
                 token_part="payload",
             )
         return
+    if isinstance(nonce, RefreshNonce):
+        if "nonce" not in claims:
+            return
+        expected = nonce.original
+    else:
+        expected = nonce
     token_nonce = claims.get("nonce")
     if not isinstance(token_nonce, str) or not _hashes_equal(
-        token_nonce, nonce, "'nonce'"
+        token_nonce, expected, "'nonce'"
     ):
         raise IdTokenValidationException(
             "ID token 'nonce' claim does not match the expected value",
@@ -362,7 +401,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     client_id: str | None = None,
     trusted_audiences: Iterable[str] | None = None,
     validate_azp: bool = False,
-    nonce: str | None,
+    nonce: str | RefreshNonce | None,
     access_token: str | None = None,
     code: str | None = None,
     access_token_issued_with_id_token: bool = True,
@@ -402,11 +441,13 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
             SHOULD that errata set 2 removed. Requires ``client_id``. Defaults
             to ``False``: ``azp`` is ignored, as §2 advises relying parties
             that use no extensions.
-        nonce: The ``nonce`` sent on the authorization request, or ``None``
-            when none was sent. Required. A string means the token's ``nonce``
-            MUST be present and equal it (§3.1.3.7 step 11). ``None`` means
-            a token carrying a ``nonce`` is rejected: §2 requires a present
-            ``nonce`` to equal the value sent, and none was.
+        nonce: Required. The ``nonce`` sent on the authorization request:
+            the token's ``nonce`` MUST be present and equal it (§3.1.3.7 step
+            11). ``None`` when none was sent: a token carrying a ``nonce`` is
+            rejected, since §2 requires a present ``nonce`` to equal the value
+            sent. :class:`RefreshNonce` for an ID Token from a refresh: an
+            absent ``nonce`` is accepted and a present one MUST equal the
+            original (§12.2).
         access_token: When provided, the token's ``at_hash`` MUST match the
             left-half hash of this access token (§3.3.2.11). It MUST also be
             present unless ``access_token_issued_with_id_token`` is ``False``.
@@ -507,6 +548,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
 
 
 __all__ = [
+    "RefreshNonce",
     "check_azp_config",
     "find_untrusted_audiences",
     "require_issuer_without_discovery",

@@ -11,6 +11,7 @@ from .core.config import (
     ConfigIssue,
     HTTPConfig,
 )
+from .core.id_token_logic import RefreshNonce
 from .core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 
 # Backward compatible sync exports (default)
@@ -316,6 +317,7 @@ __all__ = [
     # Exceptions
     "PyIdentityModelException",
     # Refresh Token
+    "RefreshNonce",
     "RefreshTokenRequest",
     "RefreshTokenResponse",
     "RequestObjectKey",

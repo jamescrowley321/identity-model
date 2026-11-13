@@ -35,7 +35,10 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   authorization request, or `None` when you sent none. A string means the
   claim must be present and equal (compared in constant time; §3.1.3.7 step
   11, §3.2.2.11 step 2). `None` means a token carrying a `nonce` is rejected,
-  since §2 requires a present `nonce` to equal the value sent.
+  since §2 requires a present `nonce` to equal the value sent. For an ID Token
+  returned by a token refresh, pass `RefreshNonce(original)`: the `nonce` may
+  be absent, and if present must equal the original authentication's nonce
+  (§12.2).
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
   present and recent enough (`now - auth_time <= max_age + leeway`).
 - **`at_hash` / `c_hash`** — when you pass `access_token=` / `code=`, the
@@ -97,6 +100,8 @@ For callers that verify the JWT themselves, the profile checks are available
 as a pure function over an already-validated claim set:
 
 ::: py_identity_model.core.id_token_logic.validate_id_token_claims
+
+::: py_identity_model.core.id_token_logic.RefreshNonce
 
 ## Exceptions
 

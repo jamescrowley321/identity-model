@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING
 
 from ..core.id_token_logic import (
+    RefreshNonce,
     check_azp_config,
     require_issuer_without_discovery,
     unset_empty_client_id,
@@ -37,7 +38,7 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
     disco_doc_address: str | None = None,
     http_client: AsyncHTTPClient | None = None,
     *,
-    nonce: str | None,
+    nonce: str | RefreshNonce | None,
     cache: AsyncValidationCache | None = None,
     trusted_audiences: Iterable[str] | None = None,
     validate_azp: bool = False,
@@ -81,13 +82,17 @@ async def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§
             Core 1.0 errata set 2 (§3.1.3.7 steps 4-5), so the default is
             ``False`` and ``azp`` is ignored (§2). Requires
             ``token_validation_config.audience``.
-        nonce: The ``nonce`` the RP sent on the authorization request, or
-            ``None`` when it sent none. Required, so the choice is explicit.
-            A string means the token's ``nonce`` MUST be present and match it
-            (§3.1.3.7 step 11, §3.2.2.11 step 2); a refresh-issued ID Token
-            takes the original nonce (§12.2). ``None`` means a token that
-            carries a ``nonce`` is rejected (§2: a present ``nonce`` MUST equal
-            the value sent).
+        nonce: Required, so the choice is explicit. One of:
+
+            - the ``nonce`` the RP sent on the authorization request: the
+              token's ``nonce`` MUST be present and match it (§3.1.3.7 step
+              11, §3.2.2.11 step 2);
+            - ``None`` when the RP sent none: a token that carries a ``nonce``
+              is rejected (§2: a present ``nonce`` MUST equal the value sent);
+            - ``RefreshNonce(original)`` for an ID Token returned by a token
+              refresh: an absent ``nonce`` is accepted, and a present one MUST
+              equal ``original``, the nonce of the ID Token from the original
+              authentication (§12.2).
         access_token: The access token that came with the ID Token. When
             provided, the token's ``at_hash`` MUST match it (§3.3.2.11), and
             MUST be present unless ``access_token_issued_with_id_token`` is
