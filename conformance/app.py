@@ -1627,6 +1627,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
                 id_token_jwt,
                 token_validation_config=_id_token_validation_config(session, disco),
                 disco_doc_address=disco_url,
+                nonce=session.nonce or None,
             )
         except TokenValidationException as exc:
             session.result["status"] = "error"

@@ -322,7 +322,6 @@ def flask_pattern_example():
             config = TokenValidationConfig(
                 perform_disco=True,
                 audience="api",
-                options={"verify_aud": False},
             )
 
             claims = validate_token(

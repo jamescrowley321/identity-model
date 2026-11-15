@@ -70,7 +70,7 @@ class TestChokepointRejectsUnapprovedIssuer:
         # InvalidIssuerException pinning would raise. If pinning were not opt-in,
         # InvalidIssuerException would be raised first and this would fail.
         with pytest.raises(TokenValidationException) as exc_info:
-            decode_with_config("a.b.c", cfg, issuer=_ATTACKER)
+            decode_with_config("eyJhbGciOiJSUzI1NiJ9.e30.c2ln", cfg, issuer=_ATTACKER)
         assert not isinstance(exc_info.value, InvalidIssuerException)
         assert isinstance(exc_info.value.__cause__, pyjwt.InvalidKeyError)
 

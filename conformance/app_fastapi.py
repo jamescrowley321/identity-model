@@ -123,7 +123,6 @@ _ROUTER_REASONS = {
     "Identity provider configuration error": "issuer_mismatch",
     "Authorization code exchange failed": "token_exchange",
     "ID token validation failed": "id_token_validation",
-    "Nonce mismatch": "nonce_mismatch",
     "UserInfo response has no subject": "userinfo_validation",
     "UserInfo subject does not match ID token subject": "userinfo_validation",
     "State mismatch (possible CSRF)": "state_validation",

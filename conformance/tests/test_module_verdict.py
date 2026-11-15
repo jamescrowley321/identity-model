@@ -334,7 +334,6 @@ def test_harness_records_unknown_state_against_last_flow(monkeypatch):
 @pytest.mark.parametrize(
     ("status_code", "detail", "recorded"),
     [
-        (401, "Nonce mismatch", "nonce_mismatch: Nonce mismatch"),
         (
             502,
             "Identity provider discovery failed",

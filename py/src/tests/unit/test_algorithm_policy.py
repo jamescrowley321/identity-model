@@ -313,13 +313,65 @@ class TestManualKeyDeclaredAlg:
 
         assert claims["sub"] == "user-1"
 
-    def test_explicit_algorithms_unchanged(self, keys):
-        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256"}
+    def test_explicit_algorithms_do_not_override_key_alg(self, keys):
+        # RFC 8725 §3.1: a key is used with exactly one algorithm, so listing
+        # another algorithm does not rebind a key that declares its own.
+        jwk = {**_public_jwk(keys["PS256"]), "alg": "RS256", "kid": "k1"}
         config = _manual_config(jwk, algorithms=["PS256"])
 
-        claims = validate_token(_token(keys["PS256"], "PS256"), config)
+        with pytest.raises(KeyAlgorithmMismatchException) as exc_info:
+            validate_token(_token(keys["PS256"], "PS256"), config)
+
+        assert (
+            exc_info.value.message,
+            exc_info.value.token_part,
+            exc_info.value.details,
+        ) == (
+            "Key algorithm 'RS256' does not match JWT algorithm 'PS256'",
+            "header",
+            {"kid": "k1", "key_alg": "RS256", "jwt_alg": "PS256"},
+        )
+
+
+@pytest.mark.unit
+class TestExplicitAlgorithmSet:
+    """RFC 8725 §3.1: every algorithm in an explicit list is usable."""
+
+    @pytest.mark.parametrize(
+        ("algorithms", "alg"),
+        [
+            (["RS256", "PS256"], "PS256"),
+            (["ES256", "EdDSA", "PS256"], "EdDSA"),
+            (["ES256", "EdDSA", "PS256"], "PS256"),
+        ],
+    )
+    def test_alg_less_key_verifies_any_listed_alg(self, keys, algorithms, alg):
+        config = _manual_config(_public_jwk(keys[alg]), algorithms=algorithms)
+
+        claims = validate_token(_token(keys[alg], alg), config)
 
         assert claims["sub"] == "user-1"
+
+    async def test_alg_less_key_verifies_any_listed_alg_async(self, keys):
+        config = _manual_config(
+            _public_jwk(keys["PS256"]), algorithms=["RS256", "PS256"]
+        )
+
+        claims = await avalidate_token(_token(keys["PS256"], "PS256"), config)
+
+        assert claims["sub"] == "user-1"
+
+    def test_unlisted_alg_still_rejected(self, keys):
+        config = _manual_config(
+            _public_jwk(keys["PS256"]), algorithms=["RS256", "RS384"]
+        )
+
+        with pytest.raises(TokenValidationException) as exc_info:
+            validate_token(_token(keys["PS256"], "PS256"), config)
+
+        assert exc_info.value.message == (
+            "Invalid token: The specified alg value is not allowed"
+        )
 
 
 @pytest.mark.unit

@@ -844,7 +844,7 @@ class TestBindingCheckIsAccessTokenOnly:
         cnf = binding_cnfs[required.value]
         token = _access_token(signing_key, cnf, ID_TOKEN_CLAIMS)
 
-        claims = _run(validator)(token, _config(public_jwk, required))
+        claims = _run(validator)(token, _config(public_jwk, required), nonce="n-1")
 
         assert claims["cnf"] == cnf
 
