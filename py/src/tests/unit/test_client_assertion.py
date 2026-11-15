@@ -1,6 +1,7 @@
 """Unit tests for private_key_jwt client authentication (RFC 7523)."""
 
 import time
+from typing import Any
 from urllib.parse import parse_qs
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -53,6 +54,7 @@ from py_identity_model.core.token_client_logic import (
 from py_identity_model.core.token_exchange_logic import (
     prepare_token_exchange_request_data,
 )
+from py_identity_model.exceptions import ConfigurationException
 
 
 UUID_STRING_LENGTH = 36
@@ -280,7 +282,9 @@ class TestPrivateKeyJwtRepr:
 
     def test_repr_does_not_leak_private_key(self):
         private_pem, _ = _ec_keypair()
-        config = PrivateKeyJwt(private_key=private_pem, algorithm="ES256", kid="k1")
+        config = PrivateKeyJwt(
+            private_key=private_pem, algorithm="ES256", kid="k1", issuer=ISSUER
+        )
         rendered = repr(config)
         assert "BEGIN" not in rendered
         assert "PRIVATE KEY" not in rendered
@@ -295,118 +299,84 @@ class TestPrivateKeyJwtRepr:
         request = ClientCredentialsTokenRequest(
             address="https://as.example.com/token",
             client_id="my-client",
-            private_key_jwt=PrivateKeyJwt(private_key=private_pem, algorithm="ES256"),
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem, algorithm="ES256", issuer=ISSUER
+            ),
         )
         assert "BEGIN" not in repr(request)
 
 
 @pytest.mark.unit
 class TestApplyPrivateKeyJwt:
-    def test_injects_assertion_params(self):
+    def test_assertion_aud_is_the_issuer(self):
+        # RFC 10070 §4: the client-auth aud is the issuer identifier as the
+        # sole value, never the token endpoint URL.
         private_pem, _ = _ec_keypair()
         params: dict[str, str] = {"grant_type": "client_credentials"}
         apply_private_key_jwt(
             params,
-            PrivateKeyJwt(private_key=private_pem, algorithm="ES256"),
-            client_id="my-client",
-            default_audience="https://as.example.com/token",
-        )
-        assert params["client_id"] == "my-client"
-        assert params["client_assertion_type"] == JWT_BEARER_ASSERTION_TYPE
-        decoded = pyjwt.decode(
-            params["client_assertion"], options={"verify_signature": False}
-        )
-        assert decoded["iss"] == "my-client"
-
-    def test_audience_defaults_to_address(self):
-        private_pem, _ = _ec_keypair()
-        params: dict[str, str] = {}
-        apply_private_key_jwt(
-            params,
-            PrivateKeyJwt(private_key=private_pem, algorithm="ES256"),
-            client_id="my-client",
-            default_audience="https://as.example.com/token",
-        )
-        decoded = pyjwt.decode(
-            params["client_assertion"], options={"verify_signature": False}
-        )
-        assert decoded["aud"] == "https://as.example.com/token"
-
-    def test_audience_override(self):
-        private_pem, _ = _ec_keypair()
-        params: dict[str, str] = {}
-        apply_private_key_jwt(
-            params,
-            PrivateKeyJwt(
-                private_key=private_pem,
-                algorithm="ES256",
-                audience="https://issuer.example.com",
-            ),
-            client_id="my-client",
-            default_audience="https://as.example.com/token",
-        )
-        decoded = pyjwt.decode(
-            params["client_assertion"], options={"verify_signature": False}
-        )
-        assert decoded["aud"] == "https://issuer.example.com"
-
-    def test_audience_defaults_to_issuer_when_known(self):
-        # FAPI 2.0 Security Profile §5.3.3.1: the client sends the issuer
-        # identifier as aud, so a known issuer beats the endpoint URL.
-        private_pem, _ = _ec_keypair()
-        params: dict[str, str] = {}
-        apply_private_key_jwt(
-            params,
             PrivateKeyJwt(private_key=private_pem, algorithm="ES256", issuer=ISSUER),
             client_id="my-client",
-            default_audience="https://as.example.com/token",
         )
         decoded = pyjwt.decode(
-            params["client_assertion"], options={"verify_signature": False}
+            params.pop("client_assertion"), options={"verify_signature": False}
         )
-        assert decoded["aud"] == ISSUER
+        assert params == {
+            "grant_type": "client_credentials",
+            "client_id": "my-client",
+            "client_assertion_type": JWT_BEARER_ASSERTION_TYPE,
+        }
+        assert {k: decoded[k] for k in ("iss", "sub", "aud")} == {
+            "iss": "my-client",
+            "sub": "my-client",
+            "aud": ISSUER,
+        }
 
-    def test_explicit_audience_beats_issuer(self):
+
+@pytest.mark.unit
+class TestPrivateKeyJwtIssuer:
+    def test_issuer_is_required(self):
         private_pem, _ = _ec_keypair()
-        params: dict[str, str] = {}
-        apply_private_key_jwt(
-            params,
-            PrivateKeyJwt(
-                private_key=private_pem,
-                algorithm="ES256",
-                audience="https://override.example.com",
-                issuer=ISSUER,
-            ),
-            client_id="my-client",
-            default_audience="https://as.example.com/token",
-        )
-        decoded = pyjwt.decode(
-            params["client_assertion"], options={"verify_signature": False}
-        )
-        assert decoded["aud"] == "https://override.example.com"
+        # No default: a caller cannot silently fall back to the endpoint URL.
+        without_issuer: dict[str, Any] = {
+            "private_key": private_pem,
+            "algorithm": "ES256",
+        }
+        with pytest.raises(TypeError, match="'issuer'"):
+            PrivateKeyJwt(**without_issuer)
 
-    @pytest.mark.parametrize("field", ["audience", "issuer"])
     @pytest.mark.parametrize(
         "value",
-        [[ISSUER], (ISSUER,), b"https://as.example.com"],
-        ids=["list", "tuple", "bytes"],
+        [
+            None,
+            "",
+            "   ",
+            f" {ISSUER}",
+            f"{ISSUER}\n",
+            [ISSUER],
+            (ISSUER,),
+            b"https://as.example.com",
+        ],
+        ids=[
+            "none",
+            "empty",
+            "whitespace",
+            "leading-space",
+            "trailing-newline",
+            "list",
+            "tuple",
+            "bytes",
+        ],
     )
-    def test_aud_is_a_single_string(self, field, value):
-        # The assertion aud is one string, never an array (FAPI 2.0 SP §5.3.3.1).
+    def test_blank_or_non_string_issuer_raises(self, value):
+        # aud is one exact, non-blank string (RFC 10070 §4, FAPI 2.0 SP §5.3.3.1).
         private_pem, _ = _ec_keypair()
-        config = PrivateKeyJwt(
-            private_key=private_pem, algorithm="ES256", **{field: value}
+        with pytest.raises(ConfigurationException) as exc_info:
+            PrivateKeyJwt(private_key=private_pem, algorithm="ES256", issuer=value)
+        assert exc_info.value.message == (
+            "PrivateKeyJwt.issuer must be the authorization server's issuer "
+            f"identifier (RFC 10070 §4), got {value!r}"
         )
-        params: dict[str, str] = {}
-
-        with pytest.raises(ValueError, match=f"{field} must be a string"):
-            apply_private_key_jwt(
-                params,
-                config,
-                client_id="my-client",
-                default_audience="https://as.example.com/token",
-            )
-        assert params == {}
 
 
 # Every client-authenticating endpoint and its prepare function. Each tuple is
@@ -506,7 +476,9 @@ class TestPrepareFunctionPrecedence:
         # Both client_secret and private_key_jwt set — assertion must win.
         private_pem, _ = _ec_keypair()
         request_obj.private_key_jwt = PrivateKeyJwt(
-            private_key=private_pem, algorithm="ES256"
+            private_key=private_pem,
+            algorithm="ES256",
+            issuer=ISSUER,
         )
         params, _headers, auth = prepare_fn(request_obj)
 
@@ -517,8 +489,10 @@ class TestPrepareFunctionPrecedence:
         decoded = pyjwt.decode(
             params["client_assertion"], options={"verify_signature": False}
         )
-        assert decoded["sub"] == "c", label
-        assert decoded["aud"] == ADDR, label
+        assert {k: decoded[k] for k in ("sub", "aud")} == {
+            "sub": "c",
+            "aud": ISSUER,
+        }, label
 
     @pytest.mark.parametrize(
         ("label", "prepare_fn", "request_obj"),
@@ -569,7 +543,9 @@ class TestEndToEndNoBasicHeader:
             address=ADDR,
             client_id="c",
             scope="api",
-            private_key_jwt=PrivateKeyJwt(private_key=private_pem, algorithm="PS256"),
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem, algorithm="PS256", issuer=ISSUER
+            ),
         )
         response = request_client_credentials_token(request)
         assert response.is_successful
@@ -584,7 +560,7 @@ class TestEndToEndNoBasicHeader:
             body["client_assertion"][0],
             public_pem,
             algorithms=["PS256"],
-            audience=ADDR,
+            audience=ISSUER,
         )
         assert decoded["iss"] == "c"
 
@@ -600,7 +576,9 @@ class TestEndToEndNoBasicHeader:
             address=ADDR,
             client_id="c",
             scope="api",
-            private_key_jwt=PrivateKeyJwt(private_key=private_pem, algorithm="ES256"),
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem, algorithm="ES256", issuer=ISSUER
+            ),
         )
         response = await async_request_client_credentials_token(request)
         assert response.is_successful
@@ -623,7 +601,9 @@ class TestEndToEndNoBasicHeader:
             client_id="c",
             code="abc",
             redirect_uri="https://app/cb",
-            private_key_jwt=PrivateKeyJwt(private_key=private_pem, algorithm="ES256"),
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem, algorithm="ES256", issuer=ISSUER
+            ),
         )
         response = request_authorization_code_token(request)
         assert response.is_successful
@@ -644,7 +624,7 @@ class TestSigningFailureReturnsErrorResponse:
     error handler instead of propagating uncaught to the caller.
     """
 
-    _BAD_KEY = PrivateKeyJwt(private_key="not-a-pem", algorithm="PS256")
+    _BAD_KEY = PrivateKeyJwt(private_key="not-a-pem", algorithm="PS256", issuer=ISSUER)
 
     def test_sync_client_credentials_bad_key_returns_error(self):
         request = ClientCredentialsTokenRequest(

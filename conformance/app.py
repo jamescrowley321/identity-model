@@ -387,16 +387,17 @@ def _fapi2_public_jwk() -> dict:
     return jwk
 
 
-def _fapi2_private_key_jwt() -> PrivateKeyJwt:
+def _fapi2_private_key_jwt(issuer: str) -> PrivateKeyJwt:
     """Build the private_key_jwt assertion params (RFC 7523).
 
-    The FAPI 2.0 profile sets ``issuer`` from discovery, so the assertion
-    ``aud`` is the issuer (FAPI 2.0 Security Profile §5.3.3.1).
+    *issuer* is the discovery issuer, the assertion's sole ``aud`` (RFC 10070
+    §4, FAPI 2.0 Security Profile §5.3.3.1).
     """
     return PrivateKeyJwt(
         private_key=_FAPI2_CLIENT_KEY.private_key_pem,
         algorithm="ES256",
         kid=_FAPI2_CLIENT_KID,
+        issuer=issuer,
     )
 
 
@@ -1015,14 +1016,19 @@ def _authorize_fapi2(
     """
     redirect_uri = f"{RP_BASE_URL}/callback"
     try:
-        # The library's profile: validates the OP's FAPI 2.0 metadata, fixes the
-        # assertion aud to the discovery issuer and resolves mtls_endpoint_aliases.
+        # The library's profile: validates the OP's FAPI 2.0 metadata, checks the
+        # assertion aud is the discovery issuer and resolves mtls_endpoint_aliases.
         # The harness redirects to http://localhost, a loopback URI (RFC 8252 §7.3).
         profile = FAPI2ClientProfile(
             disco,
             client_id=client_id,
             redirect_uri=redirect_uri,
-            client_auth=_fapi2_mtls_auth() if mtls else _fapi2_private_key_jwt(),
+            client_auth=(
+                _fapi2_mtls_auth()
+                if mtls
+                # A successful discovery response always has issuer (§3 REQUIRED).
+                else _fapi2_private_key_jwt(disco.issuer or "")
+            ),
             native_app=True,
             jarm=jarm,
             scope=scope,

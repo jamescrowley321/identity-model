@@ -15,7 +15,7 @@ FAPI 2.0 mandates:
 
 from __future__ import annotations
 
-from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import InitVar, dataclass, field
 import enum
 from ipaddress import ip_address
 import math
@@ -582,17 +582,16 @@ def _sender_constraint_request_violations(
 def _assertion_audience_violations(
     private_key_jwt: PrivateKeyJwt | None, issuer: str
 ) -> list[FAPIViolation]:
-    """§5.3.3.1: the assertion ``aud`` is the issuer, never the endpoint URL."""
+    """§5.3.3.1: the assertion ``aud`` (``PrivateKeyJwt.issuer``) is the issuer."""
     if private_key_jwt is None:
         return []
-    aud = private_key_jwt.audience or private_key_jwt.issuer
-    if aud == issuer:
+    if private_key_jwt.issuer == issuer:
         return []
     return [
         FAPIViolation(
             FAPIViolationCode.ASSERTION_AUDIENCE_NOT_ISSUER,
-            f"private_key_jwt assertion aud would be {aud!r}, not the issuer "
-            f"{issuer!r} (FAPI 2.0 Security Profile §5.3.3.1)",
+            f"private_key_jwt assertion aud would be {private_key_jwt.issuer!r}, "
+            f"not the issuer {issuer!r} (FAPI 2.0 Security Profile §5.3.3.1)",
         )
     ]
 
@@ -609,9 +608,8 @@ def validate_fapi_client_config(
     FAPI 2.0 Security Profile §5.3.3.1: the client authenticates with
     ``private_key_jwt`` or mTLS and sender-constrains its tokens with DPoP or
     mTLS.  A ``private_key_jwt`` assertion's ``aud`` must be the issuer as a
-    single string, so an ``audience`` or ``issuer`` naming anything else, or
-    neither being set (the endpoint-URL fallback), is a violation.  JWT
-    algorithms are limited by §5.4.1.
+    single string, so a ``PrivateKeyJwt.issuer`` naming anything else is a
+    violation.  JWT algorithms are limited by §5.4.1.
 
     This checks the specification, so it is wider than
     :class:`FAPI2ClientProfile`.  It accepts two combinations §5.3.3.1
@@ -1029,9 +1027,8 @@ class FAPI2ClientProfile:
     certificate), and the redirect URI is ``https`` (or an ``http`` loopback
     URI for a native app).  The issuer and endpoints come from the discovery
     document, never from the caller, and must be ``https`` URLs with a
-    host.  A ``PrivateKeyJwt`` without ``issuer`` or ``audience`` gets the
-    discovery issuer; one naming anything else is refused, so the assertion
-    ``aud`` is never the endpoint URL (§5.3.3.1).
+    host.  A ``PrivateKeyJwt`` whose ``issuer`` is not the discovery issuer
+    is refused (§5.3.3.1, RFC 10070 §4).
 
     The profile is narrower than the specification: a client uses exactly
     one of ``private_key_jwt`` (tokens DPoP-bound) or mTLS (tokens bound to
@@ -1084,7 +1081,7 @@ class FAPI2ClientProfile:
         request_object_signing_algorithms: The server's
             ``request_object_signing_alg_values_supported``, or ``None`` when
             it does not advertise the field.
-        private_key_jwt: ``client_auth`` with ``issuer`` set, for a
+        private_key_jwt: ``client_auth``, for a
             ``private_key_jwt`` client.
         mtls: ``client_auth`` for an mTLS client.
     """
@@ -1114,9 +1111,7 @@ class FAPI2ClientProfile:
         private_key_jwt: PrivateKeyJwt | None = None
         mtls: MtlsClientAuth | None = None
         if isinstance(self.client_auth, PrivateKeyJwt):
-            auth = self.client_auth
-            unset = auth.issuer is None and auth.audience is None
-            private_key_jwt = replace(auth, issuer=issuer if unset else auth.issuer)
+            private_key_jwt = self.client_auth
         elif isinstance(self.client_auth, MtlsClientAuth):
             mtls = self.client_auth
         else:
