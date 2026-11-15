@@ -63,7 +63,7 @@
     "oidcc-client-test-nonce-invalid": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "oidcc-client-test-scope-userinfo-claims": {
@@ -137,7 +137,7 @@
     "oidcc-client-test-nonce-invalid": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "oidcc-client-test-scope-userinfo-claims": {
@@ -424,13 +424,13 @@
     "fapi2-security-profile-final-client-test-invalid-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
@@ -543,13 +543,13 @@
     "fapi2-security-profile-final-client-test-invalid-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
@@ -656,13 +656,13 @@
     "fapi2-security-profile-final-client-test-invalid-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-nonce": {
       "expect": "reject",
       "reasons": [
-        "nonce_mismatch"
+        "id_token_validation"
       ]
     },
     "fapi2-security-profile-final-client-test-ensure-authorization-response-with-invalid-state-fails": {
