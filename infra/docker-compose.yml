@@ -3,6 +3,7 @@
 #
 #   docker compose -f infra/docker-compose.yml up -d --build --wait node-oidc-provider
 #   docker compose -f infra/docker-compose.yml up -d --build --wait keycloak
+#   docker compose -f infra/docker-compose.yml up -d --build --wait zitadel-setup
 #   docker compose -f infra/docker-compose.yml up -d --build --wait   # everything
 #
 # `make infra-up` / `make infra-down` wrap the node-oidc-provider +
@@ -82,3 +83,89 @@ services:
       timeout: 5s
       retries: 30
       start_period: 20s
+
+  zitadel-db:
+    image: postgres:17-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=zitadel-local-fixture
+      - POSTGRES_DB=zitadel
+    # Ephemeral: every `up` is a first-instance bootstrap.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d zitadel -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v4.20.3@sha256:1b30fea7ed88826dc0a98dacee4e2f2c8b05201fd26f5e4cb5386615b29f7638
+    container_name: zitadel-provider
+    # Root so first-instance setup can write the bootstrap PAT into the volume.
+    user: "0"
+    command: start-from-init --masterkey "LocalFixtureMasterkey32Character" --tlsMode disabled
+    ports:
+      - "127.0.0.1:9020:9020"
+    environment:
+      # Listen on the external port so the issuer (http://localhost:9020) is
+      # the same URL inside the compose network and on the host.
+      - ZITADEL_PORT=9020
+      - ZITADEL_EXTERNALDOMAIN=localhost
+      - ZITADEL_EXTERNALPORT=9020
+      - ZITADEL_EXTERNALSECURE=false
+      - ZITADEL_TLS_ENABLED=false
+      - ZITADEL_DATABASE_POSTGRES_DSN=postgresql://postgres:zitadel-local-fixture@zitadel-db:5432/zitadel?sslmode=disable
+      # Bootstrap machine user (IAM_OWNER); its PAT drives zitadel-setup.
+      - ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME=fixture-admin
+      - ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME=Fixture bootstrap admin
+      - ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE=2099-01-01T00:00:00Z
+      - ZITADEL_FIRSTINSTANCE_PATPATH=/zitadel/bootstrap/admin.pat
+      - ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED=false
+      # Built-in server-rendered login; no separate login container.
+      - ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED=false
+      # "test" is the shared AuthCodeFlowConfig password.
+      - ZITADEL_DEFAULTINSTANCE_PASSWORDCOMPLEXITYPOLICY_MINLENGTH=4
+      - ZITADEL_DEFAULTINSTANCE_PASSWORDCOMPLEXITYPOLICY_HASUPPERCASE=false
+      - ZITADEL_DEFAULTINSTANCE_PASSWORDCOMPLEXITYPOLICY_HASNUMBER=false
+      - ZITADEL_DEFAULTINSTANCE_PASSWORDCOMPLEXITYPOLICY_HASSYMBOL=false
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  # Provisions the project, clients and users over the Zitadel API, leaves the
+  # generated TEST_* profile at /out/.env.zitadel, then idles so `--wait`
+  # gates on provisioning. Copy the profile out with:
+  #   docker compose -f infra/docker-compose.yml cp zitadel-setup:/out/.env.zitadel .env.zitadel
+  zitadel-setup:
+    build:
+      context: ./zitadel
+      dockerfile: Dockerfile
+    environment:
+      - ZITADEL_API_URL=http://zitadel:9020
+      - ZITADEL_ISSUER=http://localhost:9020
+      - ZITADEL_PAT_FILE=/zitadel/bootstrap/admin.pat
+      - ZITADEL_ENV_OUT=/out/.env.zitadel
+    volumes:
+      - zitadel-bootstrap:/zitadel/bootstrap:ro
+    depends_on:
+      zitadel:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/out/.env.zitadel"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  zitadel-bootstrap:

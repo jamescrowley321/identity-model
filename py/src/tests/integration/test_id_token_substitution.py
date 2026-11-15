@@ -23,6 +23,8 @@ its decision predicate is mirrored locally and kept in lockstep by this test.
 import jwt as pyjwt
 import pytest
 
+from ..harness import Provider
+
 
 pytestmark = pytest.mark.integration
 
@@ -56,7 +58,18 @@ class TestIdTokenSubstitutionDiscriminator:
     """The default marker set must separate a real ID token from a real access
     token for the provider under test."""
 
-    def test_marker_set_separates_id_and_access_tokens(self, auth_code_result):
+    def test_marker_set_separates_id_and_access_tokens(
+        self, auth_code_result, harness_provider, request
+    ):
+        if harness_provider is Provider.ZITADEL:
+            # Known finding: Zitadel JWT access tokens carry neither
+            # ``scope`` nor ``scp``, so the default marker set rejects them.
+            request.applymarker(
+                pytest.mark.xfail(
+                    strict=True,
+                    reason="Zitadel JWT access tokens carry no scope/scp claim",
+                )
+            )
         token = auth_code_result["token_response"].token or {}
         id_token = token.get("id_token")
         access_token = token.get("access_token")

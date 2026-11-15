@@ -648,6 +648,7 @@ def opaque_access_token(
 _SLUG_TO_PROVIDER: dict[str, Provider] = {
     "node-oidc": Provider.NODE_OIDC,
     "keycloak": Provider.KEYCLOAK,
+    "zitadel": Provider.ZITADEL,
     "ory": Provider.ORY,
     "descope": Provider.DESCOPE,
 }
@@ -657,6 +658,30 @@ _SLUG_TO_PROVIDER: dict[str, Provider] = {
 def harness_provider(provider_slug) -> Provider | None:
     """The real :class:`Provider` under test, or ``None`` for an unknown slug."""
     return _SLUG_TO_PROVIDER.get(provider_slug)
+
+
+@pytest.fixture(scope="session")
+def is_node_oidc_fixture(harness_provider) -> bool:
+    """Whether the provider under test is the bundled node-oidc-provider.
+
+    Gates the tests that assert on what only that fixture registers (the
+    ``urn:test:api`` resource, the static ``private_key_jwt`` client).
+    """
+    return harness_provider is Provider.NODE_OIDC
+
+
+# The token endpoint error for a bad code or refresh token is ``invalid_grant``
+# (RFC 6749 §5.2). Zitadel answers ``invalid_request`` instead.
+_INVALID_GRANT_ERROR = "invalid_grant"
+_INVALID_GRANT_ERROR_BY_PROVIDER: dict[Provider, str] = {
+    Provider.ZITADEL: "invalid_request",
+}
+
+
+@pytest.fixture(scope="session")
+def invalid_grant_error(harness_provider) -> str:
+    """The error code this provider returns for a bad code or refresh token."""
+    return _INVALID_GRANT_ERROR_BY_PROVIDER.get(harness_provider, _INVALID_GRANT_ERROR)
 
 
 @pytest.fixture(scope="session")
@@ -836,6 +861,9 @@ def _follow_redirects_counted(
     return None, resp
 
 
+_TEXT_INPUT_TYPES = frozenset({"", "text", "email"})
+
+
 class _LoginFormParser(HTMLParser):
     """Extract the HTML login ``<form>`` — the one carrying a password input.
 
@@ -844,6 +872,10 @@ class _LoginFormParser(HTMLParser):
     ``username``/``password`` inputs rather than node-oidc's devInteractions
     JSON-ish endpoint. This captures that form's action plus every input
     name/value so hidden fields (Keycloak's ``credentialId`` etc.) round-trip.
+
+    Identifier-first providers (e.g. Zitadel) ask for the username on its own
+    page, so when no form carries a password the first form with a text input
+    is captured instead.
     """
 
     def __init__(self) -> None:
@@ -855,9 +887,13 @@ class _LoginFormParser(HTMLParser):
         self._current_action: str | None = None
         self._current_inputs: dict[str, str] = {}
         self._current_has_password = False
+        self._current_text_fields: set[str] = set()
+        self._captured_password_form = False
         self.action: str | None = None
         self.inputs: dict[str, str] = {}
         self.field_names: set[str] = set()
+        self.text_fields: set[str] = set()
+        self.has_password = False
 
     def handle_starttag(self, tag, attrs):
         attrs_d = {k: (v or "") for k, v in attrs}
@@ -866,35 +902,58 @@ class _LoginFormParser(HTMLParser):
                 self._current_action = attrs_d.get("action")
                 self._current_inputs = {}
                 self._current_has_password = False
+                self._current_text_fields = set()
             self._form_depth += 1
         elif tag == "input" and self._form_depth > 0:
             name = attrs_d.get("name")
             if not name:
                 return
             self._current_inputs[name] = attrs_d.get("value", "")
-            if attrs_d.get("type", "").lower() == "password":
+            input_type = attrs_d.get("type", "").lower()
+            if input_type == "password":
                 self._current_has_password = True
+            elif input_type in _TEXT_INPUT_TYPES:
+                self._current_text_fields.add(name)
 
     def handle_endtag(self, tag):
         if tag == "form" and self._form_depth > 0:
             self._form_depth -= 1
             if self._form_depth != 0:
                 return
-            # Outermost </form> closed: keep the first form that collects a password
-            if self._current_has_password and self.action is None:
+            # Outermost </form> closed: keep the first form that collects a
+            # password, else the first that collects a text identifier.
+            if self._captured_password_form:
+                return
+            is_identifier_form = (
+                bool(self._current_text_fields) and not self.field_names
+            )
+            if self._current_has_password or is_identifier_form:
+                self._captured_password_form = self._current_has_password
+                self.has_password = self._current_has_password
                 self.action = self._current_action
                 self.inputs = dict(self._current_inputs)
                 self.field_names = set(self._current_inputs)
+                self.text_fields = set(self._current_text_fields)
 
 
-def _parse_login_form(html_text: str, base_url: str):
-    """Parse an HTML login form.
+@dataclass(frozen=True)
+class _LoginForm:
+    """A parsed login form.
 
-    Returns ``(action_url, field_names, hidden)`` where ``action_url`` is the
-    absolute, HTML-entity-unescaped POST target (``&amp;`` -> ``&``), or
-    ``None`` when no password-bearing form is present. ``hidden`` holds every
-    input except the credential fields the caller fills.
+    ``action_url`` is the absolute, HTML-entity-unescaped POST target
+    (``&amp;`` -> ``&``). ``hidden`` holds every input except the credential
+    fields the caller fills; ``text_fields`` names the visible text inputs.
     """
+
+    action_url: str
+    field_names: frozenset[str]
+    text_fields: frozenset[str]
+    hidden: dict[str, str]
+    has_password: bool
+
+
+def _parse_login_form(html_text: str, base_url: str) -> _LoginForm | None:
+    """Parse an HTML login form; ``None`` when the page has none."""
     parser = _LoginFormParser()
     parser.feed(html_text)
     if not parser.field_names:
@@ -909,7 +968,13 @@ def _parse_login_form(html_text: str, base_url: str):
         for k, v in parser.inputs.items()
         if k not in {"username", "login", "password"}
     }
-    return action_url, parser.field_names, hidden
+    return _LoginForm(
+        action_url=action_url,
+        field_names=frozenset(parser.field_names),
+        text_fields=frozenset(parser.text_fields),
+        hidden=hidden,
+        has_password=parser.has_password,
+    )
 
 
 def _iter_set_cookies(response: httpx.Response):
@@ -985,27 +1050,42 @@ def _submit_login(client, resp, interaction_url, config):
     form = _parse_login_form(resp.text, interaction_url)
     if form is None:
         pytest.fail(f"Could not locate a login form at {interaction_url}")
-    action_url, field_names, hidden = form
-    data = dict(hidden)
-    if "username" in field_names:
-        data["username"] = config.login_hint
-    if "login" in field_names:
-        data["login"] = config.login_hint
-    if "username" not in field_names and "login" not in field_names:
-        # Provider names its identifier field something else (not
-        # username/login). Fall back to the sole non-password field so the
-        # identifier is still sent rather than silently dropped; if more than
-        # one non-password field exists it is ambiguous, so fail loudly.
-        identifier_fields = field_names - {"password"}
-        if len(identifier_fields) == 1:
-            data[next(iter(identifier_fields))] = config.login_hint
-        else:
+    if not form.has_password:
+        # Identifier-first (e.g. Zitadel): the username page answers with the
+        # password page.
+        resp = client.post(form.action_url, data=_identifier_fields(form, config))
+        form = _parse_login_form(resp.text, str(resp.url))
+        if form is None or not form.has_password:
             pytest.fail(
-                f"Could not identify the username field in the login form at "
-                f"{action_url}; fields={sorted(field_names)}"
+                f"No password form after submitting the username at {resp.url} "
+                f"(HTTP {resp.status_code})"
             )
+    data = _identifier_fields(form, config)
     data["password"] = config.login_password
-    return client.post(action_url, data=data)
+    return client.post(form.action_url, data=data)
+
+
+def _identifier_fields(
+    form: _LoginForm, config: "AuthCodeFlowConfig"
+) -> dict[str, str]:
+    """The form's hidden fields plus the login identifier."""
+    data = dict(form.hidden)
+    named = form.field_names & {"username", "login"}
+    if named:
+        return data | dict.fromkeys(named, config.login_hint)
+    # Provider names its identifier field something else (not
+    # username/login). Fall back to the sole text field (else the sole
+    # non-password field) so the identifier is still sent rather than
+    # silently dropped; more than one candidate is ambiguous, so fail loudly.
+    candidates = form.text_fields or (form.field_names - {"password"})
+    if len(candidates) != 1:
+        pytest.fail(
+            f"Could not identify the username field in the login form at "
+            f"{form.action_url}; fields={sorted(form.field_names)}"
+        )
+    (identifier,) = candidates
+    data[identifier] = config.login_hint
+    return data
 
 
 @dataclass(frozen=True)

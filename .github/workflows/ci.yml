@@ -222,6 +222,28 @@ jobs:
           path: py/token_characterization_*.md
           if-no-files-found: ignore
 
+  integration-tests-zitadel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python + uv
+        uses: ./.github/actions/setup-python-uv
+
+      - name: Integration Tests (Zitadel)
+        run: make test-integration-zitadel
+
+      - name: Upload token characterization (Zitadel)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: token-characterization-zitadel
+          path: py/token_characterization_*.md
+          if-no-files-found: ignore
+
   integration-tests-cross-issuer:
     # Both Docker IdPs up side by side so a REAL token minted by one is rejected
     # by an RS trusting the other (true cross-issuer, not a forged mock). The
@@ -705,7 +727,7 @@ jobs:
 
   ci-complete:
     if: always()
-    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, conformance-harness-tests, publish-parity, example-tests, build, security-gate, load-smoke]
+    needs: [changes, lint, unit-tests, fastapi-tests, integration-tests-ory, integration-tests-descope, integration-tests-node-oidc, integration-tests-keycloak, integration-tests-zitadel, integration-tests-cross-issuer, integration-tests-ws, integration-tests-go, go-checks, go-vulncheck, go-mutation-gate, integration-tests-rust, rust-checks, rust-mutation-gate, tools-tests, conformance-harness-tests, publish-parity, example-tests, build, security-gate, load-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Check CI results
@@ -719,6 +741,7 @@ jobs:
             "${{ needs.integration-tests-descope.result }}" \
             "${{ needs.integration-tests-node-oidc.result }}" \
             "${{ needs.integration-tests-keycloak.result }}" \
+            "${{ needs.integration-tests-zitadel.result }}" \
             "${{ needs.integration-tests-cross-issuer.result }}" \
             "${{ needs.integration-tests-ws.result }}" \
             "${{ needs.integration-tests-go.result }}" \
