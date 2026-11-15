@@ -32,7 +32,7 @@ from py_identity_model.discovery import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    DiscoveryException,
+    DiscoveryValidationError,
     NetworkException,
 )
 from py_identity_model.sync.http_client import (
@@ -174,7 +174,9 @@ class TestEndpointAuthorityFromIssuer:
             "https://example.com",
             {"jwks_uri": "https://evil.com/jwks"},
         )
-        with pytest.raises(DiscoveryException, match=r"authority.*does not match"):
+        with pytest.raises(
+            DiscoveryValidationError, match=r"authority.*does not match"
+        ):
             validate_and_parse_discovery_response(
                 response, policy=None, requested_address=ADDRESS
             )
@@ -223,7 +225,9 @@ class TestEndpointAuthorityFromIssuer:
             "https://example.com",
             {"token_endpoint": "https://attacker.com/token"},
         )
-        with pytest.raises(DiscoveryException, match=r"authority.*does not match"):
+        with pytest.raises(
+            DiscoveryValidationError, match=r"authority.*does not match"
+        ):
             validate_and_parse_discovery_response(response, requested_address=ADDRESS)
 
     def test_skips_authority_when_validation_disabled(self):

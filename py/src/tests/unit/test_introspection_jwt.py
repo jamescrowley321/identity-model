@@ -28,6 +28,12 @@ from py_identity_model.core.introspection_jwt import (
     SignedIntrospectionRefused,
     verified_introspection_response,
 )
+from py_identity_model.exceptions import (
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryIssuerMismatchError,
+    InvalidArgumentError,
+)
 from py_identity_model.sync.introspection import introspect_token
 
 
@@ -288,32 +294,32 @@ class TestSignedIntrospectionOptions:
         ],
     )
     def test_symmetric_or_empty_algorithms_rejected(self, jwks, algorithms):
-        with pytest.raises(ValueError, match="asymmetric"):
+        with pytest.raises(InvalidArgumentError, match="asymmetric"):
             SignedIntrospectionOptions(issuer=ISSUER, jwks=jwks, algorithms=algorithms)
 
     def test_issuer_required(self, jwks):
-        with pytest.raises(ValueError, match="issuer"):
+        with pytest.raises(InvalidArgumentError, match="issuer"):
             SignedIntrospectionOptions(issuer="", jwks=jwks)
 
     def test_jwks_required_in_manual_mode(self):
-        with pytest.raises(ValueError, match="both issuer and jwks"):
+        with pytest.raises(InvalidArgumentError, match="both issuer and jwks"):
             SignedIntrospectionOptions(issuer=ISSUER)
 
     @pytest.mark.parametrize("manual", [{"issuer": ISSUER}, {"jwks": "jwks"}])
     def test_discovery_and_manual_inputs_conflict(self, jwks, manual):
         manual = {k: jwks if v == "jwks" else v for k, v in manual.items()}
 
-        with pytest.raises(ValueError, match="not both"):
+        with pytest.raises(InvalidArgumentError, match="not both"):
             SignedIntrospectionOptions(discovery_address=DISCO_ADDRESS, **manual)
 
     def test_discovery_policy_needs_discovery_address(self, jwks):
-        with pytest.raises(ValueError, match="discovery_policy requires"):
+        with pytest.raises(InvalidArgumentError, match="discovery_policy requires"):
             SignedIntrospectionOptions(
                 issuer=ISSUER, jwks=jwks, discovery_policy=DiscoveryPolicy()
             )
 
     def test_negative_leeway_rejected(self, jwks):
-        with pytest.raises(ValueError, match="leeway"):
+        with pytest.raises(InvalidArgumentError, match="leeway"):
             SignedIntrospectionOptions(issuer=ISSUER, jwks=jwks, leeway=-1)
 
     def test_discovery_mode_needs_nothing_else(self):
@@ -494,18 +500,41 @@ class TestSignedIntrospectionDiscovery:
 
     @respx.mock
     @pytest.mark.parametrize("asynchronous", [False, True])
-    async def test_discovery_failure_is_not_a_refusal(self, sign, asynchronous):
-        respx.get(DISCO_ADDRESS).mock(return_value=httpx.Response(500))
+    @pytest.mark.parametrize(
+        ("discovery", "expected"),
+        [
+            (httpx.Response(500), DiscoveryException),
+            (
+                httpx.Response(
+                    200, json={**DISCO_JSON, "issuer": "https://other.example"}
+                ),
+                DiscoveryIssuerMismatchError,
+            ),
+            (
+                httpx.Response(
+                    200, json={**DISCO_JSON, "jwks_uri": "http://auth.example.com/jwks"}
+                ),
+                DiscoveryHTTPSRequiredError,
+            ),
+        ],
+        ids=["unavailable", "issuer-mismatch", "http-jwks-uri"],
+    )
+    async def test_discovery_failure_raises_as_validate_token(
+        self, sign, asynchronous, discovery, expected
+    ):
+        # Discovery mode fetches the keys after the request; an unavailable
+        # provider or an invalid document raises the same type validate_token
+        # raises, never a refusal or an untyped failed response.
+        respx.get(DISCO_ADDRESS).mock(return_value=discovery)
         _respond(sign())
 
         if asynchronous:
-            response = await aintrospect_token(
-                _disco_request(), cache=AsyncValidationCache()
-            )
+            with pytest.raises(expected) as excinfo:
+                await aintrospect_token(_disco_request(), cache=AsyncValidationCache())
         else:
-            response = introspect_token(_disco_request(), cache=ValidationCache())
-
-        assert (response.is_successful, response.error_kind) == (False, None)
+            with pytest.raises(expected) as excinfo:
+                introspect_token(_disco_request(), cache=ValidationCache())
+        assert type(excinfo.value) is expected
 
     @respx.mock
     def test_malformed_body_refused_before_discovery(self):

@@ -1629,7 +1629,9 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
                 disco_doc_address=disco_url,
                 nonce=session.nonce or None,
             )
-        except TokenValidationException as exc:
+        except PyIdentityModelException as exc:
+            # Discovery and JWKS failures raise their own types; record them
+            # like any other validation failure.
             session.result["status"] = "error"
             session.result["error"] = f"{_id_token_rejection_class(exc)}: {exc.message}"
             logger.error("REJECTED: id_token validation failed: %s", exc.message)

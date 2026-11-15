@@ -58,8 +58,8 @@ from py_identity_model.core.discovery_policy import DiscoveryPolicy
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.core.token_validation_logic import build_resolved_config
 from py_identity_model.exceptions import (
+    DiscoveryHTTPSRequiredError,
     SignatureVerificationException,
-    TokenValidationException,
 )
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
@@ -243,7 +243,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
         strict = TokenValidationConfig(
             perform_disco=True, audience=None, issuer=HTTP_ISSUER
         )
-        with pytest.raises(TokenValidationException, match="HTTPS is required"):
+        with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
             sync_validate_token(
                 jwt=_token(new_pem, NEW_KID),
                 token_validation_config=strict,

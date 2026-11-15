@@ -12,6 +12,7 @@ import httpx
 from ..logging_config import logger
 from ..logging_utils import redact_url
 from .client_auth import apply_client_auth
+from .error_handlers import raise_configuration_error
 from .models import (
     DeviceAuthorizationRequest,
     DeviceAuthorizationResponse,
@@ -145,6 +146,7 @@ def process_device_auth_response(
 
 def handle_device_auth_error(e: Exception) -> DeviceAuthorizationResponse:
     """Handle errors during device authorization requests."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during device authorization: {e!s}"
         logger.error(error_msg, exc_info=True)
@@ -274,6 +276,7 @@ def process_device_token_response(
 
 def handle_device_token_error(e: Exception) -> DeviceTokenResponse:
     """Handle errors during device token polling."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during device token poll: {e!s}"
         logger.error(error_msg, exc_info=True)

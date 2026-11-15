@@ -225,40 +225,40 @@ class TestRefusedBeforeSending:
     @respx.mock
     def test_public_client_without_verifier(self):
         route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(200))
-        response = request_authorization_code_token(_auth_code())
-        assert response.is_successful is False
+        with pytest.raises(ProtocolParameterError):
+            request_authorization_code_token(_auth_code())
         assert route.call_count == 0
 
     @respx.mock
     def test_par_redirect_uri_with_fragment(self):
         route = respx.post(PAR_URL).mock(return_value=httpx.Response(201))
-        response = push_authorization_request(
-            PushedAuthorizationRequest(
-                address=PAR_URL, client_id="app1", redirect_uri=REDIRECT_URI + "#f"
+        with pytest.raises(ProtocolParameterError):
+            push_authorization_request(
+                PushedAuthorizationRequest(
+                    address=PAR_URL, client_id="app1", redirect_uri=REDIRECT_URI + "#f"
+                )
             )
-        )
-        assert response.is_successful is False
         assert route.call_count == 0
 
     @respx.mock
     def test_token_exchange_relative_resource(self):
         route = respx.post(TOKEN_URL).mock(return_value=httpx.Response(200))
-        response = exchange_token(
-            TokenExchangeRequest(
-                address=TOKEN_URL,
-                client_id="svc",
-                subject_token="st",
-                subject_token_type=ACCESS_TOKEN_TYPE,
-                resource="/api",
+        with pytest.raises(ProtocolParameterError):
+            exchange_token(
+                TokenExchangeRequest(
+                    address=TOKEN_URL,
+                    client_id="svc",
+                    subject_token="st",
+                    subject_token_type=ACCESS_TOKEN_TYPE,
+                    resource="/api",
+                )
             )
-        )
-        assert response.is_successful is False
         assert route.call_count == 0
 
     @respx.mock
     def test_update_client_with_other_client_id(self):
         update = _update({"client_id": "other"})
         route = respx.put(update.address).mock(return_value=httpx.Response(200))
-        response = update_client(update)
-        assert response.is_successful is False
+        with pytest.raises(ProtocolParameterError):
+            update_client(update)
         assert route.call_count == 0

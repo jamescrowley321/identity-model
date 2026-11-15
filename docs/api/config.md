@@ -248,7 +248,7 @@ async with AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
 | `CacheConfig` | `cache_max_entries` | `int` | `64`, applied separately to the JWKS cache and the discovery cache | ≥ 1 |
 
 Error messages name the setting and the rule, never the value you passed.
-`ConfigError` is a `ValueError`.
+`ConfigError` is a `ConfigurationException`.
 
 The same settings, with their Go and Rust names and the cache rules, are on
 the cross-language

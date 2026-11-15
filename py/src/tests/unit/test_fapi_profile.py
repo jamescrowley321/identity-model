@@ -53,6 +53,7 @@ from py_identity_model.core.models import (
 from py_identity_model.core.parsers import jwks_from_dict
 from py_identity_model.core.state_validation import AuthorizeCallbackValidationResult
 from py_identity_model.exceptions import (
+    ConfigurationException,
     JarmValidationException,
     TokenValidationException,
 )
@@ -573,14 +574,14 @@ class TestFAPI2ClientProfileConstruction:
         with pytest.raises(FrozenInstanceError):
             profile.native_app = True  # type: ignore[misc]
 
-    def test_error_is_value_error_with_joined_message(self):
+    def test_error_is_configuration_exception_with_joined_message(self):
         error = FAPIProfileError(
             [
                 FAPIViolation(code=FAPIViolationCode.CLIENT_ID_MISSING, message="a"),
                 FAPIViolation(code=FAPIViolationCode.REQUEST_URI_MISSING, message="b"),
             ]
         )
-        assert isinstance(error, ValueError)
+        assert isinstance(error, ConfigurationException)
         assert str(error) == "a; b"
         assert error.codes == [
             FAPIViolationCode.CLIENT_ID_MISSING,

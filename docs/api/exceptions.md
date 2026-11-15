@@ -8,6 +8,11 @@ PyIdentityModelException
 │   ├── AuthorizeCallbackException
 │   │   └── JarmValidationException
 │   ├── LogoutStateValidationException
+│   ├── DiscoveryValidationError
+│   │   ├── DiscoveryParseError
+│   │   ├── DiscoveryMissingFieldsError
+│   │   └── DiscoveryIssuerMismatchError
+│   ├── JwksValidationError
 │   └── TokenValidationException
 │       ├── SignatureVerificationException
 │       ├── TokenExpiredException
@@ -18,6 +23,8 @@ PyIdentityModelException
 │       ├── KeyAlgorithmMismatchException
 │       ├── WeakKeyException
 │       ├── CertificateBindingError
+│       ├── ClaimsValidationError
+│       ├── DPoPValidationError
 │       ├── IntrospectedTokenError  (see Token Introspection)
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
@@ -25,19 +32,29 @@ PyIdentityModelException
 │           └── IdTokenMissingClaimError
 ├── NetworkException
 │   ├── DiscoveryException
-│   │   ├── DiscoveryParseError
-│   │   ├── DiscoveryMissingFieldsError
-│   │   └── DiscoveryIssuerMismatchError
 │   ├── JwksException
 │   ├── TokenRequestException
 │   └── UserInfoException
 ├── ConfigurationException
+│   ├── ConfigError
+│   ├── FAPIProfileError
+│   ├── InvalidArgumentError
+│   ├── DPoPKeyError
+│   ├── ClientAuthMethodError
+│   ├── AzpRequiresClientIdError
+│   ├── DPoPReplayCacheError
 │   ├── DiscoveryHTTPSRequiredError
 │   ├── RequestObjectError
 │   └── WeakSigningKeyError
 ├── FailedResponseAccessError
 └── SuccessfulResponseAccessError
 ```
+
+A `NetworkException` means a provider could not be reached or answered with a
+non-success status: retrying later may succeed. A `ValidationException` means
+a token or a fetched document is invalid: retrying returns the same result. A
+`ConfigurationException` means the call itself is misconfigured; it is raised,
+never returned on a failed response.
 
 ## Base Exception
 
@@ -48,6 +65,16 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.ValidationException
 
 ::: py_identity_model.exceptions.AuthorizeCallbackException
+
+::: py_identity_model.exceptions.DiscoveryValidationError
+
+::: py_identity_model.exceptions.DiscoveryParseError
+
+::: py_identity_model.exceptions.DiscoveryMissingFieldsError
+
+::: py_identity_model.exceptions.DiscoveryIssuerMismatchError
+
+::: py_identity_model.exceptions.JwksValidationError
 
 `JarmValidationException`: see [JARM](jarm.md#py_identity_model.exceptions.JarmValidationException).
 
@@ -87,12 +114,6 @@ PyIdentityModelException
 
 ::: py_identity_model.exceptions.DiscoveryException
 
-::: py_identity_model.exceptions.DiscoveryParseError
-
-::: py_identity_model.exceptions.DiscoveryMissingFieldsError
-
-::: py_identity_model.exceptions.DiscoveryIssuerMismatchError
-
 ::: py_identity_model.exceptions.JwksException
 
 ::: py_identity_model.exceptions.TokenRequestException
@@ -104,6 +125,18 @@ PyIdentityModelException
 ::: py_identity_model.exceptions.ConfigurationException
 
 ::: py_identity_model.exceptions.DiscoveryHTTPSRequiredError
+
+::: py_identity_model.exceptions.InvalidArgumentError
+
+::: py_identity_model.exceptions.InvalidArgumentKind
+
+::: py_identity_model.exceptions.DPoPKeyError
+
+::: py_identity_model.exceptions.DPoPKeyErrorKind
+
+`ConfigError`: see [Configuration](config.md#py_identity_model.core.config.ConfigError).
+
+`FAPIProfileError`: see [FAPI 2.0](fapi.md#py_identity_model.core.fapi.FAPIProfileError).
 
 ::: py_identity_model.exceptions.RequestObjectError
 

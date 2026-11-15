@@ -41,6 +41,7 @@ from ..core.token_binding import (
 from ..core.token_validation_logic import (
     build_resolved_config,
     decode_with_config,
+    keep_signature_verdict_on_failed_refresh,
     log_validation_start,
     log_validation_success,
     validate_claims,
@@ -320,6 +321,7 @@ def _discover_and_resolve_key(
             # is_successful=False by get_jwks) must not wedge the cooldown,
             # so a single dropped packet does not stretch a rotation outage
             # by the cooldown window.
+            cached_response = jwks_response
             jwks_response, from_retained_cache = _refresh_jwks(
                 jwks_uri, policy, client, cache, stale_response=jwks_response
             )
@@ -351,6 +353,12 @@ def _discover_and_resolve_key(
                             # repeats in the window.
                             cache._kid_miss_last_attempt[jwks_uri] = time.monotonic()
             else:
+                # The refresh fetch failed: judge the token on the cached
+                # keys (a key miss), not on the outage.
+                logger.warning(
+                    "JWKS refresh of %s failed: %s", jwks_uri, jwks_response.error
+                )
+                jwks_response = cached_response
                 kid_found = False
             validate_jwks_response(jwks_response)
             if not kid_found:
@@ -409,8 +417,9 @@ def _retry_with_refreshed_jwks(
 
     jwks_response, from_retained_cache = _refresh_jwks(jwks_uri, policy, client, cache)
     # Transient upstream failures (wrapped as is_successful=False) must not
-    # stamp the cooldown — let validate_jwks_response raise naturally so
+    # stamp the cooldown: raise before it, keeping the signature verdict, so
     # the next attempt can retry once upstream recovers.
+    keep_signature_verdict_on_failed_refresh(jwks_response)
     validate_jwks_response(jwks_response)
 
     try:

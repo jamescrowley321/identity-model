@@ -57,7 +57,7 @@ from py_identity_model.core.token_client_logic import (
 from py_identity_model.core.token_exchange_logic import (
     prepare_token_exchange_request_data,
 )
-from py_identity_model.exceptions import ConfigurationException
+from py_identity_model.exceptions import ConfigurationException, InvalidArgumentError
 
 
 UUID_STRING_LENGTH = 36
@@ -196,7 +196,9 @@ class TestBuildClientAssertion:
     @pytest.mark.parametrize("algorithm", ["HS256", "none", "RS1"])
     def test_unsupported_algorithm_raises(self, algorithm):
         private_pem, _ = _ec_keypair()
-        with pytest.raises(ValueError, match="Unsupported client assertion algorithm"):
+        with pytest.raises(
+            InvalidArgumentError, match="Unsupported client assertion algorithm"
+        ):
             build_client_assertion(
                 client_id="my-client",
                 audience="https://as.example.com/token",
@@ -210,7 +212,7 @@ class TestBuildClientAssertion:
     )
     def test_empty_required_params_raise(self, client_id, audience):
         private_pem, _ = _ec_keypair()
-        with pytest.raises(ValueError, match="must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="must not be empty"):
             build_client_assertion(
                 client_id=client_id,
                 audience=audience,
@@ -219,7 +221,7 @@ class TestBuildClientAssertion:
             )
 
     def test_empty_private_key_raises(self):
-        with pytest.raises(ValueError, match="private_key must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="private_key must not be empty"):
             build_client_assertion(
                 client_id="my-client",
                 audience="https://as.example.com",
@@ -232,7 +234,7 @@ class TestBuildClientAssertion:
         # A lifetime <= the clock-skew leeway would mint an already-expired
         # assertion (exp = (now - leeway) + lifetime <= now).
         private_pem, _ = _ec_keypair()
-        with pytest.raises(ValueError, match="clock-skew leeway"):
+        with pytest.raises(InvalidArgumentError, match="clock-skew leeway"):
             build_client_assertion(
                 client_id="my-client",
                 audience="https://as.example.com",
@@ -244,7 +246,7 @@ class TestBuildClientAssertion:
     @pytest.mark.parametrize("value", [" ", "\t", "\n  "])
     def test_whitespace_only_client_id_raises(self, value):
         private_pem, _ = _ec_keypair()
-        with pytest.raises(ValueError, match="client_id must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="client_id must not be empty"):
             build_client_assertion(
                 client_id=value,
                 audience="https://as.example.com",
@@ -254,7 +256,7 @@ class TestBuildClientAssertion:
 
     def test_whitespace_only_kid_raises(self):
         private_pem, _ = _ec_keypair()
-        with pytest.raises(ValueError, match="kid must be non-empty"):
+        with pytest.raises(InvalidArgumentError, match="kid must be non-empty"):
             build_client_assertion(
                 client_id="my-client",
                 audience="https://as.example.com",

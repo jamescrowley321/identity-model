@@ -16,6 +16,7 @@ import uuid
 
 import jwt as pyjwt
 
+from ..exceptions import InvalidArgumentError, InvalidArgumentKind
 from ..oidc_constants import ClientAssertionTypes, TokenRequest
 from .jwt_signing import validate_signing_algorithm
 from .key_strength import enforce_signing_key_strength
@@ -64,7 +65,7 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         The signed client assertion JWT.
 
     Raises:
-        ValueError: If a required parameter is empty, *algorithm* is not a
+        InvalidArgumentError: If a required parameter is empty, *algorithm* is not a
             supported asymmetric signing algorithm, *lifetime* is not
             positive, or *kid* is an empty string.
         WeakSigningKeyError: If *private_key* is an RSA key under 2048 bits
@@ -78,7 +79,9 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         # Reject whitespace-only string values: they are truthy but would be
         # signed into ``iss``/``sub``/``aud`` and rejected opaquely by the AS.
         if not value or (isinstance(value, str) and not value.strip()):
-            raise ValueError(f"{name} must not be empty")
+            raise InvalidArgumentError(
+                name, InvalidArgumentKind.MISSING, f"{name} must not be empty"
+            )
 
     validate_signing_algorithm(algorithm, context="client assertion")
 
@@ -86,13 +89,17 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
     # lifetime at or below the leeway yields an assertion already expired at
     # mint time. Require a lifetime that clears the skew window.
     if lifetime <= _CLOCK_SKEW_LEEWAY_SECONDS:
-        raise ValueError(
+        raise InvalidArgumentError(
+            "lifetime",
+            InvalidArgumentKind.INVALID_VALUE,
             f"lifetime must be greater than the {_CLOCK_SKEW_LEEWAY_SECONDS}s "
-            f"clock-skew leeway, got {lifetime}"
+            f"clock-skew leeway, got {lifetime}",
         )
 
     if kid is not None and not kid.strip():
-        raise ValueError("kid must be non-empty when provided")
+        raise InvalidArgumentError(
+            "kid", InvalidArgumentKind.MISSING, "kid must be non-empty when provided"
+        )
 
     # RFC 7518 §3.3 / §3.5: RSA keys of 2048 bits or larger.
     enforce_signing_key_strength(private_key, algorithm)

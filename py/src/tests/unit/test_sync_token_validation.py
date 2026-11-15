@@ -15,8 +15,8 @@ import respx
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DiscoveryMissingFieldsError,
     SignatureVerificationException,
-    TokenValidationException,
 )
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
@@ -98,7 +98,7 @@ class TestSyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryMissingFieldsError,
             match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(
@@ -122,7 +122,7 @@ class TestSyncTokenValidation:
         with (
             HTTPClient() as client,
             pytest.raises(
-                TokenValidationException,
+                DiscoveryMissingFieldsError,
                 match=r"Missing required parameters: jwks_uri",
             ),
         ):
@@ -147,7 +147,7 @@ class TestSyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryMissingFieldsError,
             match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(

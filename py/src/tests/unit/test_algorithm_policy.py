@@ -40,6 +40,7 @@ from py_identity_model.core.introspection_jwt import (
 )
 from py_identity_model.core.jarm import select_jarm_algorithm
 from py_identity_model.exceptions import (
+    InvalidArgumentError,
     JarmValidationException,
     KeyAlgorithmMismatchException,
 )
@@ -269,7 +270,7 @@ class TestVerifyRefusesSignableAlgOutsideSet:
         }
 
     def test_dpop_options_refuse(self):
-        with pytest.raises(ValueError, match="ES256K"):
+        with pytest.raises(InvalidArgumentError, match="ES256K"):
             DPoPVerificationOptions(
                 algorithms=frozenset({"ES256K"}),
                 replay_cache=InMemoryDPoPReplayCache(),

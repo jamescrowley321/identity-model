@@ -12,10 +12,10 @@ from urllib.parse import urlparse, urlsplit
 
 from ..exceptions import (
     ConfigurationException,
-    DiscoveryException,
     DiscoveryHTTPSRequiredError,
     DiscoveryMissingFieldsError,
     DiscoveryParseError,
+    DiscoveryValidationError,
     ProtocolParameterError,
     ProtocolParameterErrorReason,
 )
@@ -150,7 +150,7 @@ def _validate_subject_types(subject_types: list) -> None:
     valid_subject_types = ["public", "pairwise"]
     for subject_type in subject_types:
         if subject_type not in valid_subject_types:
-            raise DiscoveryException(
+            raise DiscoveryValidationError(
                 f"Invalid subject type: {subject_type}. Must be 'public' or 'pairwise'",
             )
 
@@ -166,7 +166,7 @@ def _validate_response_type(response_type: str, valid_response_types: list) -> N
         components = response_type.split()
         valid_components = ["code", "id_token", "token"]
         if not all(comp in valid_components for comp in components):
-            raise DiscoveryException(
+            raise DiscoveryValidationError(
                 f"Invalid response type: {response_type}",
             )
 

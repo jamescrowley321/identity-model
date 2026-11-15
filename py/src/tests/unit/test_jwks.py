@@ -6,6 +6,7 @@ import pytest
 import respx
 
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.models import JwksErrorKind
 from py_identity_model.exceptions import (
     ConfigurationException,
     FailedResponseAccessError,
@@ -663,7 +664,7 @@ class TestGetJwks:
         with pytest.raises(FailedResponseAccessError):
             _ = result.keys
         assert result.error is not None
-        assert "Unhandled exception during JWKS request" in result.error
+        assert result.error_kind is JwksErrorKind.UNEXPECTED_ERROR
         assert "Network error" in result.error
 
     @respx.mock
@@ -684,8 +685,7 @@ class TestGetJwks:
         assert result.is_successful is False
         with pytest.raises(FailedResponseAccessError):
             _ = result.keys
-        assert result.error is not None
-        assert "Unhandled exception during JWKS request" in result.error
+        assert result.error_kind is JwksErrorKind.INVALID_JSON
 
 
 _SIGNING_KEY = {

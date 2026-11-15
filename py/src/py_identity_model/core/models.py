@@ -17,6 +17,8 @@ from ..exceptions import (
     ClientAuthMethodErrorReason,
     ConfigurationException,
     FailedResponseAccessError,
+    InvalidArgumentError,
+    InvalidArgumentKind,
     SuccessfulResponseAccessError,
 )
 from .client_auth_method import ClientAuthMethod
@@ -542,6 +544,10 @@ class DiscoveryDocumentResponse(BaseResponse):
     error_kind: DiscoveryErrorKind | None = None
     status_code: int | None = None
     missing_fields: tuple[str, ...] = ()
+    # Set with ISSUER_MISMATCH: the issuer the request was built from and the
+    # one the document returned.
+    requested_issuer: str | None = None
+    returned_issuer: str | None = None
 
     # Core OpenID Connect endpoints
     issuer: str | None = None
@@ -650,6 +656,24 @@ class JwksRequest(BaseRequest):
     policy: DiscoveryPolicy | None = None
 
 
+class JwksErrorKind(Enum):
+    """Why a JWKS fetch failed, set on ``JwksResponse.error_kind``."""
+
+    UNEXPECTED_STATUS = "unexpected_status"
+    """The endpoint returned a non-success HTTP status; see ``status_code``."""
+    NETWORK_ERROR = "network_error"
+    """The HTTP transport failed."""
+    INVALID_CONFIGURATION = "invalid_configuration"
+    """The JWKS URL failed a URL or policy check."""
+    INVALID_JSON = "invalid_json"
+    """The response body could not be decoded as JSON."""
+    INVALID_DOCUMENT = "invalid_document"
+    """The JWK Set is too large, has the wrong content type, or has no usable
+    key."""
+    UNEXPECTED_ERROR = "unexpected_error"
+    """An unclassified exception occurred."""
+
+
 @dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class JwksResponse(BaseResponse):
     """Response from a JWKS endpoint fetch.
@@ -659,6 +683,8 @@ class JwksResponse(BaseResponse):
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"keys"})
 
+    error_kind: JwksErrorKind | None = field(default=None, kw_only=True)
+    status_code: int | None = field(default=None, kw_only=True)
     keys: list[JsonWebKey] | None = None
     cache_control: str | None = None
 
@@ -784,15 +810,14 @@ class MtlsClientAuth:
     auth_method: ClientAuthMethod = ClientAuthMethod.TLS_CLIENT_AUTH
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.auth_method, ClientAuthMethod)
-            or not self.auth_method.is_mtls
-        ):
+        if not isinstance(self.auth_method, ClientAuthMethod):
             raise ClientAuthMethodError(
-                ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD,
-                self.auth_method
-                if isinstance(self.auth_method, ClientAuthMethod)
-                else ClientAuthMethod.NONE,
+                ClientAuthMethodErrorReason.NOT_A_CLIENT_AUTH_METHOD,
+                self.auth_method,
+            )
+        if not self.auth_method.is_mtls:
+            raise ClientAuthMethodError(
+                ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD, self.auth_method
             )
 
 
@@ -899,7 +924,11 @@ class AuthorizationCodeTokenRequest(BaseRequest):
 
     def __post_init__(self) -> None:
         if self.require_dpop_token_type and self.dpop_key is None:
-            raise ValueError("require_dpop_token_type needs a dpop_key")
+            raise InvalidArgumentError(
+                "dpop_key",
+                InvalidArgumentKind.MISSING,
+                "require_dpop_token_type needs a dpop_key",
+            )
 
 
 class TokenErrorKind(Enum):
@@ -989,7 +1018,11 @@ class RefreshTokenRequest(BaseRequest):
 
     def __post_init__(self) -> None:
         if self.require_dpop_token_type and self.dpop_key is None:
-            raise ValueError("require_dpop_token_type needs a dpop_key")
+            raise InvalidArgumentError(
+                "dpop_key",
+                InvalidArgumentKind.MISSING,
+                "require_dpop_token_type needs a dpop_key",
+            )
 
 
 @dataclass(frozen=True, kw_only=True, repr=False, eq=False)
@@ -1068,20 +1101,32 @@ class SignedIntrospectionOptions:
     def __post_init__(self) -> None:
         if self.discovery_address:
             if self.issuer is not None or self.jwks is not None:
-                raise ValueError(
+                raise InvalidArgumentError(
+                    "discovery_address",
+                    InvalidArgumentKind.CONFLICT,
                     "SignedIntrospectionOptions takes either discovery_address "
-                    "or issuer and jwks, not both"
+                    "or issuer and jwks, not both",
                 )
         else:
             if not self.issuer or self.jwks is None:
-                raise ValueError(
+                raise InvalidArgumentError(
+                    "discovery_address",
+                    InvalidArgumentKind.MISSING,
                     "SignedIntrospectionOptions requires discovery_address, "
-                    "or both issuer and jwks"
+                    "or both issuer and jwks",
                 )
             if self.discovery_policy is not None:
-                raise ValueError("discovery_policy requires discovery_address")
+                raise InvalidArgumentError(
+                    "discovery_policy",
+                    InvalidArgumentKind.CONFLICT,
+                    "discovery_policy requires discovery_address",
+                )
         if self.leeway is not None and self.leeway < 0:
-            raise ValueError("leeway must not be negative")
+            raise InvalidArgumentError(
+                "leeway",
+                InvalidArgumentKind.INVALID_VALUE,
+                "leeway must not be negative",
+            )
         if self.algorithms is not None and (
             not self.algorithms
             or any(
@@ -1089,8 +1134,10 @@ class SignedIntrospectionOptions:
                 for alg in self.algorithms
             )
         ):
-            raise ValueError(
-                "algorithms must be a non-empty set of asymmetric algorithms"
+            raise InvalidArgumentError(
+                "algorithms",
+                InvalidArgumentKind.INVALID_VALUE,
+                "algorithms must be a non-empty set of asymmetric algorithms",
             )
 
 

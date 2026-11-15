@@ -2,6 +2,7 @@ import httpx
 import pytest
 import respx
 
+from py_identity_model.core.models import DiscoveryErrorKind
 from py_identity_model.core.validators import (
     validate_https_url as _validate_https_url,
 )
@@ -20,7 +21,8 @@ from py_identity_model.discovery import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    DiscoveryException,
+    DiscoveryMissingFieldsError,
+    DiscoveryValidationError,
 )
 
 from ..constants import DISCO_URL
@@ -138,7 +140,7 @@ class TestDiscoveryValidationFunctions:
         """Test that validation fails when required parameters are missing"""
         # Missing issuer
         with pytest.raises(
-            DiscoveryException,
+            DiscoveryMissingFieldsError,
             match=r"Missing required parameters.*issuer",
         ):
             _validate_required_parameters(
@@ -151,7 +153,7 @@ class TestDiscoveryValidationFunctions:
 
         # Missing multiple parameters
         with pytest.raises(
-            DiscoveryException,
+            DiscoveryMissingFieldsError,
             match="Missing required parameters",
         ):
             _validate_required_parameters({"issuer": "https://example.com"})
@@ -171,7 +173,7 @@ class TestDiscoveryValidationFunctions:
     def test_validate_parameter_values_invalid_subject_types(self):
         """Test that invalid subject types fail validation"""
         with pytest.raises(
-            DiscoveryException,
+            DiscoveryValidationError,
             match=r"Invalid subject type.*Must be 'public' or 'pairwise'",
         ):
             _validate_parameter_values(
@@ -197,7 +199,7 @@ class TestDiscoveryValidationFunctions:
 
     def test_validate_parameter_values_invalid_response_types(self):
         """Test that invalid response types fail validation"""
-        with pytest.raises(DiscoveryException, match="Invalid response type"):
+        with pytest.raises(DiscoveryValidationError, match="Invalid response type"):
             _validate_parameter_values(
                 {
                     "response_types_supported": ["invalid_response_type"],
@@ -255,8 +257,7 @@ class TestDiscoveryComplianceIntegration:
         result = get_discovery_document(request)
 
         assert result.is_successful is False
-        assert result.error is not None
-        assert "Invalid issuer" in result.error
+        assert result.error_kind is DiscoveryErrorKind.HTTPS_REQUIRED
 
     @respx.mock
     def test_discovery_validates_parameter_values(self):
@@ -282,8 +283,7 @@ class TestDiscoveryComplianceIntegration:
         result = get_discovery_document(request)
 
         assert result.is_successful is False
-        assert result.error is not None
-        assert "Invalid parameter values" in result.error
+        assert result.error_kind is DiscoveryErrorKind.INVALID_DOCUMENT
 
     @respx.mock
     def test_discovery_validates_endpoint_urls(self):
@@ -309,8 +309,7 @@ class TestDiscoveryComplianceIntegration:
         result = get_discovery_document(request)
 
         assert result.is_successful is False
-        assert result.error is not None
-        assert "Invalid endpoint URL" in result.error
+        assert result.error_kind is DiscoveryErrorKind.INVALID_CONFIGURATION
 
     @respx.mock
     def test_discovery_handles_network_errors(self):

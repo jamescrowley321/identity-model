@@ -65,8 +65,6 @@ from py_identity_model.aio import (
     validate_id_token,
 )
 
-from .middleware import _is_upstream_fetch_failure
-
 
 if TYPE_CHECKING:
     from py_identity_model.aio import AsyncHTTPClient
@@ -292,7 +290,7 @@ async def _validate_id_token(
         # surface as a 500.
         raise
     except PyIdentityModelException as exc:
-        if not (isinstance(exc, NetworkException) or _is_upstream_fetch_failure(exc)):
+        if not isinstance(exc, NetworkException):
             logger.info("ID token validation failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

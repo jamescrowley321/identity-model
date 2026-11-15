@@ -76,6 +76,7 @@ class TestAuthCodeTokenExchange:
             client_id="app1",
             code="expired_code",
             redirect_uri="https://app.com/cb",
+            code_verifier="verifier",
         )
         response = request_authorization_code_token(request)
 
@@ -190,6 +191,7 @@ class TestAsyncAuthCodeTokenExchange:
             client_id="app1",
             code="expired_code",
             redirect_uri="https://app.com/cb",
+            code_verifier="verifier",
         )
         response = await request_authorization_code_token_async(request)
 

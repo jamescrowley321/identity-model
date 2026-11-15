@@ -24,6 +24,8 @@ from fastapi_identity_model import (
 from py_identity_model import (
     AuthorizeCallbackException,
     ConfigurationException,
+    DiscoveryException,
+    JwksException,
     NetworkException,
     TokenValidationException,
     UserInfoErrorKind,
@@ -749,8 +751,8 @@ async def test_userinfo_skipped_for_a_non_bearer_token(monkeypatch, token_type):
     "error",
     [
         NetworkException("JWKS fetch failed"),
-        TokenValidationException("Network error during JWKS request: timed out"),
-        TokenValidationException("Network error during discovery: timed out"),
+        JwksException("Network error during JWKS request: timed out"),
+        DiscoveryException("Network error during discovery: timed out"),
     ],
 )
 async def test_provider_outage_during_id_token_validation_is_502(monkeypatch, error):

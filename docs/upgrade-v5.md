@@ -37,7 +37,7 @@ it:
 
 Build them with keyword arguments; each setting has a default, so
 `HTTPConfig()` and `CacheConfig()` are complete. An invalid value raises one
-`ConfigError` (a `ValueError`) listing every bad setting. A setting of the
+`ConfigError` (a `ConfigurationException`) listing every bad setting. A setting of the
 other config (`HTTPConfig(cache_max_entries=8)`), or the other config passed
 to a client or cache (`HTTPClient(config=CacheConfig())`), raises `TypeError`.
 A single `Config` used to be accepted by both and each silently ignored the
@@ -315,7 +315,7 @@ Every request that authenticates a client also accepts an optional
 method is picked from what you set (`private_key_jwt`, then `mtls`, then
 `client_secret` as HTTP Basic, else a public client). Setting it sends only
 that method. If its credential is missing, nothing is sent: the request
-function returns an unsuccessful response whose `error` names the missing
+function raises `ClientAuthMethodError`, which names the missing
 credential. This is how you send `client_secret_post`:
 
 ```python
@@ -871,7 +871,7 @@ that is not an array of strings counts as advertising nothing.
 
 `FAPI2ClientProfile` builds an immutable FAPI 2.0 client from
 the authorization server's discovery document. It raises `FAPIProfileError`
-(a `ValueError` with a `violations` list) when the document fails
+(a `ConfigurationException` with a `violations` list) when the document fails
 `validate_fapi_discovery`, when the client does not authenticate with
 `private_key_jwt` or mTLS, or when the redirect URI is not `https` (an `http`
 loopback URI is allowed with `native_app=True`). It refuses a
@@ -1111,11 +1111,8 @@ RFC 9700 §2.1.1: "Public clients MUST use PKCE". An authorization code
 redemption whose client authenticates with `ClientAuthMethod.NONE` (no secret,
 no `private_key_jwt`, no mTLS, or `client_auth_method=ClientAuthMethod.NONE`)
 and has no non-empty `code_verifier` is refused before anything is sent:
-`request_authorization_code_token` returns an unsuccessful response whose
-`error` includes the `ProtocolParameterError` message ("a public client must
-send a code_verifier (PKCE)"). The response carries no reason;
-`prepare_auth_code_token_request_data` raises the error with reason
-`PKCE_REQUIRED`. An empty `client_secret` counts as no
+`request_authorization_code_token` raises `ProtocolParameterError` ("a public
+client must send a code_verifier (PKCE)") with reason `PKCE_REQUIRED`. An empty `client_secret` counts as no
 secret. Confidential clients are unchanged.
 
 ```python
@@ -1138,9 +1135,8 @@ RFC 6749 §3.1.2 and RFC 8707 §2 require both to be absolute URIs (RFC 3986
 §4.3) with no fragment component. `build_authorization_url` raises
 `ProtocolParameterError` (reason `NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`) for
 its `redirect_uri` and for a `resource` passed as an extra parameter. PAR
-(`redirect_uri`) and token exchange (`resource`) are refused before anything
-is sent and return an unsuccessful response whose `error` includes that
-error's message. In 4.x `redirect_uri="cb#frag"` was
+(`redirect_uri`) and token exchange (`resource`) raise the same error before
+anything is sent. In 4.x `redirect_uri="cb#frag"` was
 sent as is. A query component is still allowed.
 
 ### A client update leaves out server-issued fields and keeps its `client_id`
@@ -1152,9 +1148,8 @@ RFC 7592 §2.2: the update request "MUST NOT include the
 `update_client` now drops those four fields from `extra_metadata`, so the
 metadata of a read response can be passed back as is. When `extra_metadata`
 has a `client_id` key with any other value (including `None`), it sends
-nothing and returns an unsuccessful response whose `error` includes the
-`ProtocolParameterError` message; `prepare_update_request` raises it with
-reason `CLIENT_ID_MISMATCH`. In 4.x both reached the server.
+nothing and raises `ProtocolParameterError` with reason
+`CLIENT_ID_MISMATCH`. In 4.x both reached the server.
 
 ## DPoP client
 
@@ -1175,7 +1170,7 @@ Two things change:
   refresh token is not lost and the Bearer tokens can still be revoked.
   `token` stays guarded on a failed response, and `repr` redacts
   `rejected_token`.
-- `require_dpop_token_type=True` without a `dpop_key` raises `ValueError`
+- `require_dpop_token_type=True` without a `dpop_key` raises `InvalidArgumentError`
   when the request is built. In 4.x it failed every response.
 
 ```python
@@ -1336,7 +1331,7 @@ request's absolute URL and method, so they never hit this.
 
 Signed introspection responses (RFC 9701) are new in 5.0.
 `SignedIntrospectionOptions` takes either `discovery_address` or both `issuer`
-and `jwks`; passing both, or neither, raises `ValueError`.
+and `jwks`; passing both, or neither, raises `InvalidArgumentError`.
 
 - **Discovery mode** (`discovery_address=`, recommended): the issuer, keys and
   algorithms come from the discovery document. The keys go through the
@@ -1913,8 +1908,7 @@ before signing with an RSA key under 2048 bits
 [§3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.5)). It is a
 `ConfigurationException` with `kty`, `bits` and `min_bits`. This is the floor
 verification keys meet. A token, PAR, introspection, revocation or device
-request whose `PrivateKeyJwt` has such a key returns an unsuccessful response
-with that error's message, the way those helpers report other request errors.
+request whose `PrivateKeyJwt` has such a key raises it before anything is sent.
 Replace the key with one of 2048 bits or more, or use an EC or Ed25519 key.
 
 ## UserInfo
@@ -2017,6 +2011,126 @@ claims = validate_logout_token(
 
 With `perform_disco=False`, `validate_logout_token` also requires an issuer;
 see [Without discovery, an issuer is required](#without-discovery-an-issuer-is-required).
+
+## Errors
+
+### Discovery and JWKS failures raise typed exceptions
+
+In 4.x `validate_token` turned every failed discovery or JWKS fetch into a
+`TokenValidationException` carrying the error string, so a provider outage
+could not be told apart from a bad token. `validate_token`, the JARM
+validators and signed introspection in discovery mode now raise the type that
+says what went wrong:
+
+| Failure | Raises | Base |
+|---|---|---|
+| Discovery: transport failure, non-success status, blocked redirect | `DiscoveryException` (`status_code` set for a status) | `NetworkException` |
+| Discovery: body is not a JSON object | `DiscoveryParseError` | `ValidationException` |
+| Discovery: a required field is missing, including `jwks_uri` | `DiscoveryMissingFieldsError` (`fields`) | `ValidationException` |
+| Discovery: issuer differs from the requested one | `DiscoveryIssuerMismatchError` (`requested`, `returned`) | `ValidationException` |
+| Discovery: any other invalid document (content type, endpoint authority, values) | `DiscoveryValidationError` | `ValidationException` |
+| Discovery: a URL fails the HTTPS policy | `DiscoveryHTTPSRequiredError` | `ConfigurationException` |
+| Discovery: a URL fails another check | `ConfigurationException` | `PyIdentityModelException` |
+| JWKS: transport failure, non-success status, blocked redirect | `JwksException` (`status_code` set for a status) | `NetworkException` |
+| JWKS: too large, wrong content type, not JSON, no usable or no keys | `JwksValidationError` | `ValidationException` |
+| JWKS: the URL fails a URL or policy check | `ConfigurationException` | `PyIdentityModelException` |
+
+`DiscoveryParseError`, `DiscoveryMissingFieldsError` and
+`DiscoveryIssuerMismatchError` now derive from the new
+`DiscoveryValidationError`, not from `DiscoveryException`: a document that
+fails validation is never a `NetworkException`, so a retry or circuit-breaker
+policy keyed on `NetworkException` does not retry an issuer mix-up.
+
+```python
+from py_identity_model import (
+    NetworkException,
+    PyIdentityModelException,
+    validate_token,
+)
+
+try:
+    claims = validate_token(token, config, disco_doc_address=address)
+except NetworkException:
+    ...  # provider unavailable: retry later, answer 503
+except PyIdentityModelException:
+    ...  # token or provider document invalid: answer 401
+```
+
+An `except TokenValidationException` handler no longer catches discovery or
+JWKS failures; catch `PyIdentityModelException` (or the types above) as well.
+
+`introspect_token` with `SignedIntrospectionOptions(discovery_address=...)`
+fetches the discovery document and keys after its own request, and raises
+these same exceptions when that fetch fails. A failed introspection request
+itself is still returned as a failed response.
+
+A 2xx discovery document whose members have the wrong JSON type (for example
+`"subject_types_supported": 5`) is `DiscoveryErrorKind.INVALID_DOCUMENT` and
+raises `DiscoveryValidationError`, not an unexpected error.
+
+`JwksResponse` gains `error_kind` (a `JwksErrorKind`) and `status_code`.
+`DiscoveryDocumentResponse` gains `requested_issuer` and `returned_issuer`,
+set with `DiscoveryErrorKind.ISSUER_MISMATCH`. A failed discovery response's
+`error` is the exception's message: the `Invalid issuer: `,
+`Invalid endpoint URL: `, `Missing required parameters: ` and
+`Invalid parameter values: ` prefixes are gone. Match on `error_kind`, not on
+the text.
+
+### Request functions raise configuration errors
+
+A request the caller misconfigured now raises its `ConfigurationException`
+before anything is sent, instead of returning `is_successful=False` with
+`error="Unexpected error during ..."` and no `error_kind`. This covers the
+token, authorization-code, refresh, token-exchange, device, PAR,
+introspection, revocation, registration and UserInfo functions. Examples:
+
+- `client_auth_method` without its credential: `ClientAuthMethodError`.
+- `PrivateKeyJwt` with an unsupported `algorithm` or an empty `kid`:
+  `InvalidArgumentError`.
+- A public client redeeming a code without PKCE, or a `redirect_uri` or
+  `resource` that is not an absolute URI without a fragment:
+  `ProtocolParameterError`.
+- An RSA signing key under 2048 bits: `WeakSigningKeyError`.
+
+Transport failures and error responses from the server are still returned as
+failed responses. So are the argument checks that still raise `ValueError`
+in the token-exchange, PAR and request-object (JAR) builders, apart from the
+signing-algorithm check.
+
+### Argument errors are typed, not `ValueError`
+
+Argument checks raise `InvalidArgumentError` (with `argument`, the parameter
+name, and `kind`, an `InvalidArgumentKind`) or, for DPoP keys,
+`DPoPKeyError` (with `kind`, a `DPoPKeyErrorKind`). Both are
+`ConfigurationException`s. In 4.x these were bare `ValueError`s:
+
+- `DPoPKey`, `DPoPKey.from_pem`, `DPoPKey.from_jwk`, `generate_dpop_key`
+  and `compute_jwk_thumbprint`: `DPoPKeyError`.
+- `compute_ath`, `create_dpop_proof`, `build_dpop_headers`,
+  `DPoPProofRequest`, `DPoPVerificationOptions`, `InMemoryDPoPReplayCache`,
+  `SignedIntrospectionOptions`, `require_dpop_token_type` without a
+  `dpop_key`, `build_client_assertion` and request-object signing with an
+  unsupported algorithm: `InvalidArgumentError`.
+
+`ConfigError` and `FAPIProfileError` are `ConfigurationException`s and no
+longer `ValueError`s. Replace `except ValueError` around these calls with the
+new types or with `except ConfigurationException`.
+
+`MtlsClientAuth(auth_method="tls_client_auth")` (a string, the 4.x form)
+raises `ClientAuthMethodError` with reason `NOT_A_CLIENT_AUTH_METHOD` and a
+message naming the value passed. Pass `ClientAuthMethod.TLS_CLIENT_AUTH`.
+
+### FastAPI: provider outages are 503, by type
+
+The middleware and the WebSocket authenticator classify a validation failure
+by its type. A `NetworkException` (the discovery document or JWK Set could not
+be fetched) is HTTP 503 or WebSocket close 1013. Before, only a transport
+error whose message started with `Network error during` was; a provider
+returning 503 was answered 401. A `DPoPReplayCacheError` or a non-library
+error is 500 or close 1011. Every other library error, including an invalid
+discovery document, is 401 or close 1008. A `ConfigurationException` answered
+401 is logged at warning level with its traceback, since it may be this
+server's own setup; other rejections stay at info level.
 
 ## Go and Rust
 

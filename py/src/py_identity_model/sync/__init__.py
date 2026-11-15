@@ -129,6 +129,7 @@ from .jwks import (
     JsonWebAlgorithmsKeyTypes,
     JsonWebKey,
     JsonWebKeyParameterNames,
+    JwksErrorKind,
     JwksRequest,
     JwksResponse,
     get_jwks,
@@ -252,6 +253,7 @@ __all__ = [
     "JsonWebAlgorithmsKeyTypes",
     "JsonWebKey",
     "JsonWebKeyParameterNames",
+    "JwksErrorKind",
     "JwksRequest",
     "JwksResponse",
     # mTLS (RFC 8705)

@@ -40,6 +40,8 @@ from py_identity_model.core.dpop_verify import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DPoPKeyError,
+    InvalidArgumentError,
     TokenValidationException,
 )
 
@@ -429,7 +431,7 @@ class TestKeyChecks:
         assert _kind(proof, options=options) is DPoPErrorKind.UNSUPPORTED_ALGORITHM
 
     def test_algorithms_outside_supported_set_is_config_error(self):
-        with pytest.raises(ValueError, match="HS256"):
+        with pytest.raises(InvalidArgumentError, match="HS256"):
             _options(algorithms=frozenset({"HS256"}))
 
     @pytest.mark.parametrize(
@@ -437,7 +439,7 @@ class TestKeyChecks:
         [("max_age", 0), ("max_age", -1), ("iat_leeway", -1), ("max_age", True)],
     )
     def test_invalid_window_is_config_error(self, field, value):
-        with pytest.raises(ValueError, match=field):
+        with pytest.raises(InvalidArgumentError, match=field):
             _options(**{field: value})
 
     @pytest.mark.parametrize(
@@ -601,12 +603,12 @@ class TestMalformed:
     @pytest.mark.parametrize("url", ["", "/api/resource", None])
     def test_relative_request_url_is_value_error(self, url):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="url"):
+        with pytest.raises(InvalidArgumentError, match="url"):
             _verify(_sign(key), url=url)
 
     def test_empty_method_is_value_error(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="method"):
+        with pytest.raises(InvalidArgumentError, match="method"):
             _verify(_sign(key), method="")
 
 
@@ -709,7 +711,8 @@ class TestReplayCache:
     @pytest.mark.parametrize("max_entries", [0, True, "10"])
     def test_invalid_max_entries(self, max_entries):
         with pytest.raises(
-            ValueError, match=_exactly("max_entries must be a positive integer")
+            InvalidArgumentError,
+            match=_exactly("max_entries must be a positive integer"),
         ):
             InMemoryDPoPReplayCache(max_entries=max_entries)
 
@@ -953,7 +956,7 @@ class TestJwkThumbprint:
 
     def test_non_string_member(self):
         with pytest.raises(
-            ValueError,
+            DPoPKeyError,
             match=_exactly("JWK thumbprint needs string members ('crv', 'kty', 'x')"),
         ):
             compute_jwk_thumbprint({"kty": "OKP", "crv": "Ed25519", "x": 5})
@@ -971,7 +974,7 @@ class TestJwkThumbprint:
         )
 
     def test_unsupported_kty(self):
-        with pytest.raises(ValueError, match="kty"):
+        with pytest.raises(DPoPKeyError, match="kty"):
             compute_jwk_thumbprint({"kty": "oct", "k": "AAAA"})
 
 
