@@ -37,18 +37,20 @@ DISCOVERY = DiscoveryDocumentResponse(
 
 
 def build_profile_example() -> FAPI2ClientProfile:
-    """Build the profile; the assertion aud is set to the discovery issuer."""
+    """Build the profile; the assertion aud is the discovery issuer."""
     print("\n" + "=" * 60)
     print("FAPI 2.0 - Client Profile")
     print("=" * 60)
 
     client_key = generate_dpop_key("ES256")
     profile = FAPI2ClientProfile(
-        DISCOVERY,
+        discovery=DISCOVERY,
         client_id="fapi-client",
         redirect_uri="https://client.example.com/callback",
         client_auth=PrivateKeyJwt(
-            private_key=client_key.private_key_pem, algorithm="ES256"
+            private_key=client_key.private_key_pem,
+            algorithm="ES256",
+            issuer=ISSUER,
         ),
     )
     print(f"\n  Issuer: {profile.issuer}")

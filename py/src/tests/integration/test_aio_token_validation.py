@@ -39,7 +39,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=async_validate_claims,
             require_https=require_https,
@@ -76,7 +75,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=async_validate_claims,
             require_https=require_https,
@@ -111,7 +109,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=sync_validate_claims,
             require_https=require_https,

@@ -11,6 +11,7 @@ import contextvars
 from dataclasses import dataclass, field
 import datetime
 import html
+from http import HTTPStatus
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import re
 import secrets
 import sys
 import tempfile
+import threading
 from urllib.parse import urlencode
 
 from cryptography import x509
@@ -39,6 +41,7 @@ from py_identity_model import (
     ClientRegistrationRequest,
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
     DiscoveryPolicy,
     DPoPKey,
     FAPI2ClientProfile,
@@ -49,11 +52,13 @@ from py_identity_model import (
     PrivateKeyJwt,
     RequestObjectKey,
     TokenValidationConfig,
+    UserInfoErrorKind,
     UserInfoRequest,
     build_authorization_url,
     build_end_session_url,
     clear_jwks_cache,
     create_request_object,
+    discovery_document_url,
     generate_dpop_key,
     generate_pkce_pair,
     get_discovery_document,
@@ -61,7 +66,6 @@ from py_identity_model import (
     get_userinfo,
     is_jarm_response,
     parse_authorize_callback_response,
-    parse_discovery_url,
     process_jarm_response,
     push_authorization_request,
     register_client,
@@ -77,7 +81,6 @@ from py_identity_model.core.parsers import (
     extract_jwt_header_fields,
     find_key_by_kid,
 )
-from py_identity_model.core.userinfo_logic import validate_userinfo_sub
 from py_identity_model.exceptions import (
     ConfigurationException,
     JarmValidationException,
@@ -217,6 +220,11 @@ _install_rp_log_router()
 
 SUITE_BASE_URL = os.environ.get(
     "CONFORMANCE_SUITE_BASE_URL", "https://localhost.emobix.co.uk:8443"
+)
+# The suite's mTLS origin (its BASE_MTLS_URL), where it serves the endpoints an
+# mTLS client calls.
+SUITE_MTLS_BASE_URL = os.environ.get(
+    "CONFORMANCE_SUITE_MTLS_BASE_URL", "https://localhost.emobix.co.uk:8444"
 )
 # Browser-facing base URL: used for redirect_uri / post_logout_redirect_uri,
 # which the user agent (the runner, on the host) follows.
@@ -387,16 +395,17 @@ def _fapi2_public_jwk() -> dict:
     return jwk
 
 
-def _fapi2_private_key_jwt() -> PrivateKeyJwt:
+def _fapi2_private_key_jwt(issuer: str) -> PrivateKeyJwt:
     """Build the private_key_jwt assertion params (RFC 7523).
 
-    The FAPI 2.0 profile sets ``issuer`` from discovery, so the assertion
-    ``aud`` is the issuer (FAPI 2.0 Security Profile §5.3.3.1).
+    *issuer* is the discovery issuer, the assertion's sole ``aud`` (RFC 10070
+    §4, FAPI 2.0 Security Profile §5.3.3.1).
     """
     return PrivateKeyJwt(
         private_key=_FAPI2_CLIENT_KEY.private_key_pem,
         algorithm="ES256",
         kid=_FAPI2_CLIENT_KID,
+        issuer=issuer,
     )
 
 
@@ -482,8 +491,8 @@ _FAPI2_MTLS_CERT_PATH, _FAPI2_MTLS_KEY_PATH, _FAPI2_MTLS_JWKS = (
 def _fapi2_mtls_auth() -> MtlsClientAuth:
     """mTLS client-auth config presenting the RP's self-signed client cert."""
     return MtlsClientAuth(
-        certificate=_FAPI2_MTLS_CERT_PATH,
-        private_key=_FAPI2_MTLS_KEY_PATH,
+        certificate_path=_FAPI2_MTLS_CERT_PATH,
+        private_key_path=_FAPI2_MTLS_KEY_PATH,
         auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 
@@ -552,7 +561,7 @@ def discover(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -570,7 +579,7 @@ def discover(
         )
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
@@ -581,7 +590,7 @@ def discover(
             error_session.result = {
                 "test_id": test_id,
                 "status": "error",
-                "error": f"discovery_failed: {disco.error}",
+                "error": _discovery_failure(disco),
             }
             test_results[test_id] = error_session
         return JSONResponse(
@@ -622,7 +631,7 @@ def register(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         return JSONResponse(
@@ -632,7 +641,7 @@ def register(
 
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
     if not disco.is_successful:
@@ -761,6 +770,9 @@ def authorize(
     The conformance test runner calls this to start an authorization flow.
     """
     _set_active_test(profile, test_name)
+    # A new flow starts with no recorded outcome, so a flow that never reaches
+    # the callback can't be read as an earlier flow's result.
+    test_results.pop(test_id, None)
     http_client = _get_http_client()
 
     # Dynamic RP: the runner registers a client (RFC 7591) and passes back its
@@ -771,7 +783,7 @@ def authorize(
 
     # Fetch discovery document for this issuer
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -787,9 +799,9 @@ def authorize(
             status_code=400,
             content={"error": "invalid_issuer", "detail": "Invalid issuer URL"},
         )
-    policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
+    policy = _discovery_policy(mtls=mtls.lower() == "true")
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
@@ -801,7 +813,7 @@ def authorize(
             error_session.result = {
                 "test_id": test_id,
                 "status": "error",
-                "error": f"discovery_failed: {disco.error}",
+                "error": _discovery_failure(disco),
             }
             test_results[test_id] = error_session
         return JSONResponse(
@@ -852,7 +864,7 @@ def authorize(
     }:
         return _authorize_fapi2(
             disco=disco,
-            disco_address=disco_endpoint.url,
+            disco_address=disco_url,
             issuer=issuer,
             client_id=client_id,
             scope=_FAPI2_SCOPE,
@@ -958,7 +970,8 @@ def authorize(
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
-        "disco_address": disco_endpoint.url,
+        "disco_address": disco_url,
+        "test_id": test_id,
     }
     _last_fapi_profile = None
 
@@ -1015,14 +1028,19 @@ def _authorize_fapi2(
     """
     redirect_uri = f"{RP_BASE_URL}/callback"
     try:
-        # The library's profile: validates the OP's FAPI 2.0 metadata, fixes the
-        # assertion aud to the discovery issuer and resolves mtls_endpoint_aliases.
+        # The library's profile: validates the OP's FAPI 2.0 metadata, checks the
+        # assertion aud is the discovery issuer and resolves mtls_endpoint_aliases.
         # The harness redirects to http://localhost, a loopback URI (RFC 8252 §7.3).
         profile = FAPI2ClientProfile(
-            disco,
+            discovery=disco,
             client_id=client_id,
             redirect_uri=redirect_uri,
-            client_auth=_fapi2_mtls_auth() if mtls else _fapi2_private_key_jwt(),
+            client_auth=(
+                _fapi2_mtls_auth()
+                if mtls
+                # A successful discovery response always has issuer (§3 REQUIRED).
+                else _fapi2_private_key_jwt(disco.issuer or "")
+            ),
             native_app=True,
             jarm=jarm,
             scope=scope,
@@ -1086,6 +1104,7 @@ def _authorize_fapi2(
         "issuer": issuer,
         "client_id": client_id,
         "disco_address": disco_address,
+        "test_id": test_id,
     }
     _last_fapi_profile = profile
 
@@ -1102,10 +1121,10 @@ def _fetch_and_validate_discovery(
 ) -> HTMLResponse | tuple:
     """Fetch discovery document and validate issuer for a callback flow.
 
-    Returns an HTMLResponse on error, or a (disco, disco_endpoint) tuple on success.
+    Returns an HTMLResponse on error, or a (disco, disco_url) tuple on success.
     """
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL in callback: %s", exc)
@@ -1116,16 +1135,16 @@ def _fetch_and_validate_discovery(
             content="<h1>Invalid Issuer</h1><p>Discovery URL is invalid</p>",
             status_code=400,
         )
-    policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
+    policy = _discovery_policy(mtls=session.mtls)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
     if not disco.is_successful:
         logger.error("REJECTED: discovery fetch failed in callback: %s", disco.error)
         session.result["status"] = "error"
-        session.result["error"] = f"discovery_failed: {disco.error}"
+        session.result["error"] = _discovery_failure(disco)
         _store_test_result(session)
         return HTMLResponse(
             content=f"<h1>Discovery Failed</h1><p>{html.escape(str(disco.error))}</p>",
@@ -1157,7 +1176,7 @@ def _fetch_and_validate_discovery(
             status_code=502,
         )
 
-    return disco, disco_endpoint
+    return disco, disco_url
 
 
 def _validate_fapi2_callback_issuer(
@@ -1232,7 +1251,7 @@ def _fetch_userinfo(
     session: AuthSession,
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
-    expected_sub: str | None,
+    expected_sub: str,
     http_client: HTTPClient,
 ) -> dict | HTMLResponse:
     """Fetch + validate UserInfo, returning claims or an error ``HTMLResponse``.
@@ -1265,6 +1284,7 @@ def _fetch_userinfo(
             UserInfoRequest(
                 address=userinfo_endpoint,
                 token=access_token,
+                expected_sub=expected_sub,
                 dpop_key=(
                     session.dpop_key if (session.fapi2 and not session.mtls) else None
                 ),
@@ -1278,16 +1298,20 @@ def _fetch_userinfo(
         return {}
 
     error_msg: str | None
-    if userinfo_response.is_successful and userinfo_response.raw is not None:
+    signed = userinfo_response.unverified_jwt
+    if (
+        userinfo_response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        and signed is not None
+    ):
         try:
             if not jwks_response.is_successful:
                 raise TokenValidationException(
                     f"OP JWKS unavailable: {jwks_response.error}"
                 )
-            kid, jwt_alg = extract_jwt_header_fields(userinfo_response.raw)
+            kid, jwt_alg = extract_jwt_header_fields(signed)
             key, alg = find_key_by_kid(kid, jwks_response.keys or [], jwt_alg=jwt_alg)
             return validate_token(
-                userinfo_response.raw,
+                signed,
                 token_validation_config=TokenValidationConfig(
                     perform_disco=False,
                     key=key,
@@ -1303,14 +1327,9 @@ def _fetch_userinfo(
         except PyJWTError as exc:
             logger.error("Malformed signed UserInfo: %s", exc)
             error_msg = "malformed signed UserInfo"
-    elif userinfo_response.is_successful and not isinstance(
-        userinfo_response.claims, dict
-    ):
-        error_msg = "UserInfo response is not a JSON object"
+    elif userinfo_response.is_successful:
+        return userinfo_response.claims or {}
     else:
-        userinfo_response = validate_userinfo_sub(userinfo_response, expected_sub)
-        if userinfo_response.is_successful:
-            return userinfo_response.claims or {}
         error_msg = userinfo_response.error
 
     # OIDC Core 1.0 §5.3.2/§5.3.4: an unverifiable signed response or a sub
@@ -1339,7 +1358,14 @@ def _id_token_validation_config(
     OIDC-Core defaults.
     """
     if session.fapi_profile is not None:
-        return session.fapi_profile.id_token_validation_config()
+        config = session.fapi_profile.id_token_validation_config()
+        if session.mtls:
+            # The discovery the library runs for the ID Token must admit the
+            # suite's mTLS origin too (see _discovery_policy).
+            config.discovery_policy = DiscoveryPolicy(
+                additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+            )
+        return config
     return TokenValidationConfig(
         perform_disco=True,
         audience=session.client_id,
@@ -1353,6 +1379,7 @@ def _fetch_fapi2_resource(
     session: AuthSession,
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
+    id_token_sub: str,
     http_client: HTTPClient,
 ) -> None:
     """Make the FAPI 2.0 sender-constrained resource ("accounts") request.
@@ -1360,8 +1387,9 @@ def _fetch_fapi2_resource(
     For the ``plain_fapi`` profile the OIDF client test treats a dedicated
     resource endpoint — not userinfo — as the resource server, and the
     happy-path module only reaches FINISHED once the RP calls it (see
-    ``_FAPI2_RESOURCE_PATH``). We reuse ``get_userinfo`` (``expected_sub=None`` so
-    no OIDC sub check runs) purely as a sender-constrained GET presenting the
+    ``_FAPI2_RESOURCE_PATH``). We reuse ``get_userinfo`` (its ``sub`` check
+    against *id_token_sub* is irrelevant here, as only the request matters)
+    purely as a sender-constrained GET presenting the
     cnf-bound access token: DPoP sessions attach a resource proof (``ath``) with
     the RFC 9449 §8 nonce retry; mTLS sessions present the client certificate at
     the mtls resource host (derived from the mtls token endpoint). Best-effort —
@@ -1377,14 +1405,14 @@ def _fetch_fapi2_resource(
         request = UserInfoRequest(
             address=f"{base.rstrip('/')}/{_FAPI2_RESOURCE_PATH}",
             token=access_token,
-            expected_sub=None,
+            expected_sub=id_token_sub,
             mtls=_fapi2_mtls_auth(),
         )
     elif session.dpop_key:
         request = UserInfoRequest(
             address=session.issuer.rstrip("/") + "/" + _FAPI2_RESOURCE_PATH,
             token=access_token,
-            expected_sub=None,
+            expected_sub=id_token_sub,
             dpop_key=session.dpop_key,
         )
     else:
@@ -1436,6 +1464,7 @@ def _parse_callback(
         # MUST be rejected (the negative message-signing modules). There is no
         # verified state yet, so respond 400 without completing the flow.
         logger.error("REJECTED: JARM response validation failed: %s", exc.message)
+        _record_last_flow_rejection(f"jarm_validation: {exc.message}")
         return HTMLResponse(
             content=(
                 f"<h1>JARM Validation Failed</h1><p>{html.escape(str(exc.message))}</p>"
@@ -1443,7 +1472,8 @@ def _parse_callback(
             status_code=400,
         )
     except PyIdentityModelException as exc:
-        logger.error("Callback parse error: %s", exc)
+        logger.error("REJECTED: callback parse error: %s", exc)
+        _record_last_flow_rejection(f"callback_parse: {exc}")
         return HTMLResponse(
             content="<h1>Callback Error</h1><p>Failed to parse callback</p>",
             status_code=400,
@@ -1461,7 +1491,8 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # Look up session by state
     state_value = cb_response.state
     if state_value is None or state_value not in sessions:
-        logger.error("Unknown state: %s", state_value)
+        logger.error("REJECTED: unknown or missing state: %s", state_value)
+        _record_last_flow_rejection(f"state_validation: unknown state {state_value!r}")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,
@@ -1510,7 +1541,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     disco_result = _fetch_and_validate_discovery(session.issuer, http_client, session)
     if isinstance(disco_result, HTMLResponse):
         return disco_result
-    disco, disco_endpoint = disco_result
+    disco, disco_url = disco_result
 
     # FAPI 2.0: validate the RFC 9207 ``iss`` authorization-response parameter.
     fapi2_iss_error = _validate_fapi2_callback_issuer(cb_response, session)
@@ -1592,11 +1623,12 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             claims = validate_id_token(
                 id_token_jwt,
                 token_validation_config=_id_token_validation_config(session, disco),
-                disco_doc_address=disco_endpoint.url,
+                disco_doc_address=disco_url,
+                nonce=session.nonce or None,
             )
         except TokenValidationException as exc:
             session.result["status"] = "error"
-            session.result["error"] = f"id_token_validation: {exc.message}"
+            session.result["error"] = f"{_id_token_rejection_class(exc)}: {exc.message}"
             logger.error("REJECTED: id_token validation failed: %s", exc.message)
             _store_test_result(session)
             return HTMLResponse(
@@ -1635,8 +1667,9 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             )
 
     # Fetch UserInfo (if endpoint is available and we have an access token)
+    id_token_sub = claims.get("sub") or ""
     userinfo_result = _fetch_userinfo(
-        session, disco, access_token, claims.get("sub"), http_client
+        session, disco, access_token, id_token_sub, http_client
     )
     if isinstance(userinfo_result, HTMLResponse):
         return userinfo_result
@@ -1645,7 +1678,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     # FAPI 2.0 (plain_fapi): drive the dedicated resource endpoint so the OIDF
     # happy-path module transitions to FINISHED (userinfo alone leaves it
     # WAITING for this profile).
-    _fetch_fapi2_resource(session, disco, access_token, http_client)
+    _fetch_fapi2_resource(session, disco, access_token, id_token_sub, http_client)
 
     # Record the id_token + end-session endpoint so a later /logout can build the
     # RP-Initiated Logout URL. /logout carries no flow parameters of its own, so
@@ -1805,6 +1838,16 @@ async def backchannel_logout(request: Request) -> JSONResponse:
     if not isinstance(logout_token, str):
         logout_token = None
     response = await run_in_threadpool(_receive_backchannel_logout, logout_token)
+    if response.status_code == HTTPStatus.BAD_REQUEST:
+        rejection = json.loads(response.body)
+        reason = (
+            "logout_token_validation"
+            if rejection["error"] == "invalid_logout_token"
+            else rejection["error"]
+        )
+        _record_last_flow_rejection(
+            f"{reason}: {rejection['detail']}", after_login=True
+        )
     # Back-Channel Logout 1.0 §2.8: the RP's response SHOULD carry no-store cache
     # headers so a logout is never served from cache. Set on every response
     # (success and error) since the OP posts to this fixed URI.
@@ -1880,6 +1923,9 @@ def post_logout_callback(state: str | None = Query(default=None)) -> HTMLRespons
         validate_post_logout_state(_expected_logout_state, state)
     except LogoutStateValidationException as exc:
         logger.error("REJECTED: post-logout state validation failed: %s", exc.message)
+        _record_last_flow_rejection(
+            f"logout_state_validation: {exc.message}", after_login=True
+        )
         return HTMLResponse(
             content=(
                 "<h1>Logout State Validation Failed</h1>"
@@ -1902,6 +1948,112 @@ def get_result(test_id: str) -> JSONResponse:
         session = test_results[test_id]
         return JSONResponse(content=session.result)
     return JSONResponse(status_code=404, content={"error": "not_found"})
+
+
+def _id_token_rejection_class(exc: TokenValidationException) -> str:
+    """Reason class for a rejected ID Token.
+
+    A token refused for ``alg=none`` gets its own class, so the
+    ``idtoken-sig-none`` modules can require that exact refusal.
+    """
+    alg = (exc.details or {}).get("alg")
+    if isinstance(alg, str) and alg.lower() == "none":
+        return "alg_none"
+    return "id_token_validation"
+
+
+def _discovery_policy(*, mtls: bool) -> DiscoveryPolicy:
+    """Discovery policy for a flow.
+
+    The suite serves its mTLS endpoints from a second origin
+    (``SUITE_MTLS_BASE_URL``). Without ``mtls_endpoint_aliases`` it advertises
+    them as the plain endpoints, so an mTLS flow allows that origin as an
+    endpoint authority (RFC 8705 §5).
+    """
+    return DiscoveryPolicy(
+        require_https=False,
+        validate_issuer=True,
+        additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL] if mtls else [],
+    )
+
+
+def _discovery_failure(disco: DiscoveryDocumentResponse) -> str:
+    """``<reason class>: <detail>`` for a failed discovery fetch.
+
+    An issuer mismatch gets its own class so the issuer-mismatch modules can
+    require it rather than any discovery failure.
+    """
+    reason = (
+        "issuer_mismatch"
+        if disco.error_kind is DiscoveryErrorKind.ISSUER_MISMATCH
+        else "discovery_failed"
+    )
+    return f"{reason}: {disco.error}"
+
+
+HARNESS_CONFLICT = "conflict"
+
+# Sync endpoints run in a threadpool; the read-merge-write of an unattributed
+# rejection must not interleave with another.
+_unattributed_lock = threading.Lock()
+
+
+def merge_unattributed_rejection(
+    existing: dict | None, test_id: str, error: str, *, after_login: bool
+) -> dict | None:
+    """The record for a rejection that carries no session key, or None to keep it.
+
+    Such a rejection is filed under the most recent flow's test, so it must not
+    be able to turn that test's verdict into a pass:
+
+    - nothing recorded yet: record the rejection;
+    - a rejection already recorded: keep it (the first rejection stands);
+    - a success recorded: for a logout rejection (``after_login``), which by
+      design follows the module's login, record the rejection; otherwise record
+      a ``conflict``, which the runner always fails.
+    """
+    status = (existing or {}).get("status")
+    if status is None:
+        return {"test_id": test_id, "status": "error", "error": error}
+    if status != "success":
+        logger.warning("Ignoring unattributed rejection for %s: %s", test_id, error)
+        return None
+    if after_login:
+        return {"test_id": test_id, "status": "error", "error": error}
+    logger.error("Unattributed rejection after a recorded success: %s", error)
+    return {
+        "test_id": test_id,
+        "status": HARNESS_CONFLICT,
+        "error": f"{error} (after a recorded success)",
+    }
+
+
+def _record_last_flow_rejection(error: str, *, after_login: bool = False) -> None:
+    """Record a rejection the RP made before it could identify the flow's session.
+
+    A callback with an unknown state, a JARM response that fails validation, a
+    Back-Channel Logout Token or a post-logout state carries no usable session
+    key, so the rejection is filed under the most recent flow's test (the runner
+    drives one module at a time), merged per
+    :func:`merge_unattributed_rejection`. The runner reads it from ``/results``.
+    """
+    flow_context = _last_flow_context
+    test_id = flow_context.get("test_id", "") if flow_context else ""
+    if not test_id:
+        return
+    with _unattributed_lock:
+        existing = test_results.get(test_id)
+        record = merge_unattributed_rejection(
+            existing.result if existing else None,
+            test_id,
+            error,
+            after_login=after_login,
+        )
+        if record is None:
+            return
+        error_session = AuthSession(issuer=flow_context["issuer"], state="", nonce="")
+        error_session.result = record
+        test_results[test_id] = error_session
 
 
 def _store_test_result(session: AuthSession) -> None:

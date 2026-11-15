@@ -47,15 +47,14 @@ NONCE_CHALLENGE = httpx.Response(
 # One original request + exactly one use_dpop_nonce retry (RFC 9449 §8).
 EXPECTED_RETRY_CALLS = 2
 
-DPOP_KEY = generate_dpop_key("ES256")
-
 
 def _refresh(**overrides: Any) -> RefreshTokenRequest:
     fields: dict[str, Any] = {
         "address": TOKEN_URL,
         "client_id": "app1",
         "refresh_token": "rt-1",
-        "dpop_key": DPOP_KEY,
+        # A fresh key per request: a key remembers server nonces (RFC 9449 §8.2).
+        "dpop_key": generate_dpop_key("ES256"),
         **overrides,
     }
     return RefreshTokenRequest(**fields)
@@ -68,7 +67,8 @@ def _auth_code(**overrides: Any) -> AuthorizationCodeTokenRequest:
         "code": "code",
         "redirect_uri": "https://app.example.com/cb",
         "code_verifier": "verifier",
-        "dpop_key": DPOP_KEY,
+        # A fresh key per request: a key remembers server nonces (RFC 9449 §8.2).
+        "dpop_key": generate_dpop_key("ES256"),
         **overrides,
     }
     return AuthorizationCodeTokenRequest(**fields)
@@ -187,9 +187,7 @@ ASYNC_CALLS = [
 @pytest.mark.unit
 class TestSyncDpopTokenTypeRequired:
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
-    @pytest.mark.parametrize(
-        "token_type", ["Bearer", "bearer", "", None, 1, "DPoP-ish"]
-    )
+    @pytest.mark.parametrize("token_type", ["Bearer", "bearer", "DPoP-ish"])
     @respx.mock
     def test_downgrade_fails(self, call: SyncCall, build, token_type):
         token = {**DPOP_TOKEN, "token_type": token_type}
@@ -204,13 +202,27 @@ class TestSyncDpopTokenTypeRequired:
         assert response.rejected_token == token
 
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
+    @pytest.mark.parametrize("token_type", ["", None, 1])
+    @respx.mock
+    def test_invalid_token_type_fails_as_invalid_response(
+        self, call: SyncCall, build, token_type
+    ):
+        """RFC 6749 §5.1: no usable ``token_type`` is an invalid response."""
+        token = {**DPOP_TOKEN, "token_type": token_type}
+        respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=token))
+        response = call(build(require_dpop_token_type=True))
+        assert response.is_successful is False
+        assert response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
+        assert response.rejected_token == token
+
+    @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
     @respx.mock
     def test_missing_token_type_fails(self, call: SyncCall, build):
         token = {k: v for k, v in DPOP_TOKEN.items() if k != "token_type"}
         respx.post(TOKEN_URL).mock(return_value=httpx.Response(200, json=token))
         response = call(build(require_dpop_token_type=True))
         assert response.is_successful is False
-        assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
+        assert response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
 
     @pytest.mark.parametrize(("call", "build"), SYNC_CALLS)
     @pytest.mark.parametrize("token_type", ["DPoP", "dpop", "DPOP"])

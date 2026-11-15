@@ -43,7 +43,7 @@ from py_identity_model.aio import (
 # Configuration
 DISCO_ADDRESS = os.environ.get(
     "DISCO_ADDRESS",
-    "https://demo.duendesoftware.com",
+    "https://demo.duendesoftware.com/.well-known/openid-configuration",
 )
 CLIENT_ID = os.environ.get("CLIENT_ID", "m2m")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET", "secret")

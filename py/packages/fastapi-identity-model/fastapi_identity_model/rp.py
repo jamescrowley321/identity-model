@@ -97,7 +97,7 @@ def oidc_public_paths(prefix: str = "") -> list[str]:
         app.add_middleware(
             TokenValidationMiddleware,
             discovery_url=settings.discovery_url,
-            audience=settings.audience,
+            audience=settings.expected_audience,
             excluded_paths=[
                 *settings.excluded_paths,
                 *oidc_public_paths(router_prefix),
@@ -285,6 +285,7 @@ async def _validate_id_token(
             http_client=http_client,
             trusted_audiences=settings.trusted_audiences,
             validate_azp=settings.validate_azp,
+            nonce=expected_nonce,
         )
     except ConfigurationException:
         # A misconfigured RP is a server fault, not a bad ID token: let it
@@ -303,12 +304,6 @@ async def _validate_id_token(
             detail="Identity provider unavailable",
         ) from exc
 
-    # Checked here (not via nonce=) to keep the "Nonce mismatch" 401 detail.
-    if claims.get("nonce") != expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Nonce mismatch",
-        )
     return claims
 
 
@@ -329,7 +324,7 @@ def _is_bearer(token: dict) -> bool:
 async def _fetch_userinfo(
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
-    expected_sub: str | None,
+    expected_sub: str,
     http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Fetch UserInfo, enforcing the OIDC Core 5.3.2 ``sub`` match as a hard gate.
@@ -342,10 +337,10 @@ async def _fetch_userinfo(
     userinfo_endpoint = disco.userinfo_endpoint
     if not access_token or not userinfo_endpoint:
         return {}
-    # Fetch without expected_sub so is_successful reflects only the fetch;
-    # the sub comparison is enforced here so a mismatch fails the login.
     ui = await get_userinfo(
-        UserInfoRequest(address=userinfo_endpoint, token=access_token),
+        UserInfoRequest(
+            address=userinfo_endpoint, token=access_token, expected_sub=expected_sub
+        ),
         http_client=http_client,
     )
     if ui.error_kind is UserInfoErrorKind.MISSING_SUB:
@@ -353,16 +348,19 @@ async def _fetch_userinfo(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UserInfo response has no subject",
         )
-    if not ui.is_successful:
-        logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
-        return {}
-    claims = ui.claims or {}
-    if expected_sub is not None and claims.get("sub") != expected_sub:
+    # A signed UserInfo (UNVERIFIABLE_SUB) cannot be checked here: fail closed.
+    if ui.error_kind in (
+        UserInfoErrorKind.SUB_MISMATCH,
+        UserInfoErrorKind.UNVERIFIABLE_SUB,
+    ) or (ui.is_successful and (ui.claims or {}).get("sub") != expected_sub):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UserInfo subject does not match ID token subject",
         )
-    return claims
+    if not ui.is_successful:
+        logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
+        return {}
+    return ui.claims or {}
 
 
 async def _callback(  # noqa: PLR0913  # request-scoped args + the router's build-time options

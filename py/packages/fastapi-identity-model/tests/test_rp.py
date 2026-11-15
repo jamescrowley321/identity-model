@@ -26,6 +26,7 @@ from py_identity_model import (
     ConfigurationException,
     NetworkException,
     TokenValidationException,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from py_identity_model.aio import validate_id_token as avalidate_id_token
@@ -341,16 +342,6 @@ async def test_callback_provider_error_detail_is_generic(monkeypatch, caplog):
     assert secret not in caplog.text
 
 
-async def test_callback_nonce_mismatch(monkeypatch):
-    _patch(monkeypatch)
-    async with _client(_app()) as client:
-        state, _ = await _login(client)
-        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": "attacker-nonce"}
-        resp = await client.get(f"/auth/callback?code=abc&state={state}")
-    assert resp.status_code == 401
-    assert "Nonce mismatch" in resp.json()["detail"]
-
-
 async def test_callback_userinfo_failure_is_tolerated(monkeypatch):
     # An unavailable/failed UserInfo fetch is tolerated: identity comes from
     # the validated ID token, so login still completes with empty userinfo.
@@ -379,6 +370,43 @@ async def test_callback_userinfo_sub_mismatch_aborts(monkeypatch):
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
     assert "subject" in resp.json()["detail"].lower()
+
+
+async def test_callback_userinfo_sub_mismatch_kind_aborts(monkeypatch):
+    # get_userinfo enforces the expected_sub the RP passes; its SUB_MISMATCH
+    # failure must fail the login, not be tolerated as a transient error.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub mismatch: expected 'user-1', got 'someone-else'",
+            error_kind=UserInfoErrorKind.SUB_MISMATCH,
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
+    [call] = rp.get_userinfo.call_args_list
+    assert call.args[0].expected_sub == "user-1"
+
+
+async def test_callback_signed_userinfo_aborts(monkeypatch):
+    # The RP cannot verify a signed UserInfo response, so its sub is unchecked:
+    # the login fails closed, as it did in 4.x.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub cannot be verified",
+            error_kind=UserInfoErrorKind.UNVERIFIABLE_SUB,
+            unverified_jwt="header.payload.sig",
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
 
 
 async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
@@ -454,7 +482,7 @@ def _composed_app(excluded_paths) -> FastAPI:
     app.add_middleware(
         TokenValidationMiddleware,
         discovery_url=SETTINGS.discovery_url,
-        audience=SETTINGS.audience,
+        audience=SETTINGS.expected_audience,
         excluded_paths=excluded_paths,
     )
 
@@ -558,14 +586,16 @@ def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> 
     return pyjwt.encode(claims, key, algorithm="RS256")
 
 
-async def _callback(settings: OIDCSettings, key, **token_claims) -> httpx.Response:
+async def _callback(
+    settings: OIDCSettings, key, token_nonce: str | None = None, **token_claims
+) -> httpx.Response:
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
     app.include_router(build_oidc_router(settings), prefix="/auth")
     async with _client(app) as client:
         state, nonce = await _login(client)
         rp.request_authorization_code_token.return_value.token = {
-            "id_token": _id_token(key, nonce, **token_claims),
+            "id_token": _id_token(key, token_nonce or nonce, **token_claims),
             "access_token": "at",
             "token_type": "Bearer",
         }
@@ -585,6 +615,16 @@ class TestLoginCallbackAudiences:
         settings = replace(SETTINGS, trusted_audiences=["urn:api"])
         resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
         assert (resp.status_code, resp.headers["location"]) == (302, "/")
+
+    async def test_nonce_mismatch_fails_login(self, id_token_key):
+        # validate_id_token binds the nonce sent on /auth/login (§3.1.3.7 step 11).
+        resp = await _callback(
+            SETTINGS, id_token_key, token_nonce="attacker-nonce", aud="cid"
+        )
+        assert (resp.status_code, resp.json()) == (
+            401,
+            {"detail": "ID token validation failed"},
+        )
 
     async def test_single_audience_logs_in(self, id_token_key):
         resp = await _callback(SETTINGS, id_token_key, aud="cid")

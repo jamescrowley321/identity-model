@@ -21,7 +21,8 @@ PyIdentityModelException
 │       ├── IntrospectedTokenError  (see Token Introspection)
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
-│           └── UntrustedAudienceException
+│           ├── UntrustedAudienceException
+│           └── IdTokenMissingClaimError
 ├── NetworkException
 │   ├── DiscoveryException
 │   │   ├── DiscoveryParseError
@@ -75,6 +76,8 @@ PyIdentityModelException
 `IdTokenValidationException`: see [ID Token validation](id-token.md#py_identity_model.exceptions.IdTokenValidationException).
 
 `UntrustedAudienceException`: see [ID Token validation](id-token.md#py_identity_model.exceptions.UntrustedAudienceException).
+
+`IdTokenMissingClaimError`: see [ID Token validation](id-token.md#py_identity_model.exceptions.IdTokenMissingClaimError).
 
 ## Network Exceptions
 

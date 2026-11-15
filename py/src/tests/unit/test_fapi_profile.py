@@ -102,6 +102,7 @@ def _pkj(**overrides: Any) -> PrivateKeyJwt:
     fields: dict[str, Any] = {
         "private_key": DPOP_KEY.private_key_pem,
         "algorithm": "ES256",
+        "issuer": ISSUER,
         **overrides,
     }
     return PrivateKeyJwt(**fields)
@@ -109,8 +110,8 @@ def _pkj(**overrides: Any) -> PrivateKeyJwt:
 
 def _mtls(**overrides: Any) -> MtlsClientAuth:
     fields: dict[str, Any] = {
-        "certificate": "client.pem",
-        "private_key": "client.key",
+        "certificate_path": "client.pem",
+        "private_key_path": "client.key",
         "auth_method": ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         **overrides,
     }
@@ -150,7 +151,7 @@ def _profile(**kwargs: Any) -> FAPI2ClientProfile:
         "client_auth": _pkj(),
         **kwargs,
     }
-    return FAPI2ClientProfile(_discovery(), **args)
+    return FAPI2ClientProfile(discovery=_discovery(), **args)
 
 
 def _par(**overrides: Any) -> PushedAuthorizationRequest:
@@ -162,7 +163,7 @@ def _par(**overrides: Any) -> PushedAuthorizationRequest:
         "nonce": "nonce",
         "code_challenge": "challenge",
         "code_challenge_method": "S256",
-        "private_key_jwt": _pkj(issuer=ISSUER),
+        "private_key_jwt": _pkj(),
         "dpop_key": DPOP_KEY,
         **overrides,
     }
@@ -310,7 +311,7 @@ class TestValidateFAPIAuthorizationRequest:
 
     def test_weak_private_key_jwt_algorithm_rejected(self):
         result = validate_fapi_authorization_request(
-            _par(private_key_jwt=_pkj(issuer=ISSUER, algorithm="RS256"))
+            _par(private_key_jwt=_pkj(algorithm="RS256"))
         )
         assert _messages(result.violations) == [
             _alg_violation("private_key_jwt", "RS256")
@@ -329,7 +330,7 @@ class TestValidateFAPIAuthorizationRequest:
 class TestValidateFAPIClientConfig:
     def test_private_key_jwt_with_dpop(self):
         result = validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER), dpop_key=DPOP_KEY
+            issuer=ISSUER, private_key_jwt=_pkj(), dpop_key=DPOP_KEY
         )
         assert _messages(result.violations) == []
         assert result.is_compliant is True
@@ -348,23 +349,10 @@ class TestValidateFAPIClientConfig:
         )
         assert _messages(result.violations) == []
 
-    def test_audience_equal_to_issuer_allowed(self):
-        result = validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(audience=ISSUER), dpop_key=DPOP_KEY
-        )
-        assert _messages(result.violations) == []
-
-    def test_endpoint_url_fallback_rejected(self):
-        """Neither issuer nor audience: aud would fall back to the endpoint URL."""
-        result = validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(), dpop_key=DPOP_KEY
-        )
-        assert _messages(result.violations) == [AUD_NOT_ISSUER.format(aud=None)]
-
-    def test_audience_naming_an_endpoint_rejected(self):
+    def test_token_endpoint_as_issuer_rejected(self):
         result = validate_fapi_client_config(
             issuer=ISSUER,
-            private_key_jwt=_pkj(issuer=ISSUER, audience=TOKEN_ENDPOINT),
+            private_key_jwt=_pkj(issuer=TOKEN_ENDPOINT),
             dpop_key=DPOP_KEY,
         )
         assert _messages(result.violations) == [
@@ -406,9 +394,7 @@ class TestValidateFAPIClientConfig:
         assert result.violations == []
 
     def test_private_key_jwt_without_dpop_rejected(self):
-        result = validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(issuer=ISSUER)
-        )
+        result = validate_fapi_client_config(issuer=ISSUER, private_key_jwt=_pkj())
         assert _messages(result.violations) == [NO_SENDER_CONSTRAINT]
 
 
@@ -422,7 +408,7 @@ class TestFAPI2ClientProfileConstruction:
         assert profile.authorization_endpoint == AUTHORIZATION_ENDPOINT
         assert profile.pushed_authorization_request_endpoint == PAR_ENDPOINT
         assert profile.token_endpoint == TOKEN_ENDPOINT
-        assert profile.private_key_jwt == _pkj(issuer=ISSUER)
+        assert profile.private_key_jwt == _pkj()
         assert profile.mtls is None
         assert profile.scope == "openid"
 
@@ -433,19 +419,13 @@ class TestFAPI2ClientProfileConstruction:
         assert profile.private_key_jwt is None
         assert profile.mtls == _mtls()
 
-    def test_caller_private_key_jwt_is_not_mutated(self):
+    def test_profile_keeps_the_callers_private_key_jwt(self):
         pkj = _pkj()
-        _profile(client_auth=pkj)
-        assert pkj.issuer is None
+        assert _profile(client_auth=pkj).private_key_jwt is pkj
 
-    def test_private_key_jwt_with_matching_issuer_kept(self):
-        assert _profile(client_auth=_pkj(issuer=ISSUER)).private_key_jwt == _pkj(
-            issuer=ISSUER
-        )
-
-    def test_private_key_jwt_audience_naming_endpoint_refused(self):
+    def test_private_key_jwt_token_endpoint_issuer_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
-            _profile(client_auth=_pkj(audience=TOKEN_ENDPOINT))
+            _profile(client_auth=_pkj(issuer=TOKEN_ENDPOINT))
         assert _messages(exc_info.value.violations) == [
             AUD_NOT_ISSUER.format(aud=TOKEN_ENDPOINT)
         ]
@@ -488,7 +468,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_non_compliant_discovery_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(pushed_authorization_request_endpoint=None),
+                discovery=_discovery(pushed_authorization_request_endpoint=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -503,7 +483,7 @@ class TestFAPI2ClientProfileConstruction:
         """971-B: ``true`` is not a PAR endpoint; refused, not passed to urlparse."""
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(pushed_authorization_request_endpoint=True),
+                discovery=_discovery(pushed_authorization_request_endpoint=True),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -517,7 +497,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_failed_discovery_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                DiscoveryDocumentResponse(is_successful=False),
+                discovery=DiscoveryDocumentResponse(is_successful=False),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -529,7 +509,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_missing_issuer_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(issuer=None),
+                discovery=_discovery(issuer=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_mtls(),
@@ -539,7 +519,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_missing_authorization_endpoint_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(authorization_endpoint=None),
+                discovery=_discovery(authorization_endpoint=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_mtls(),
@@ -556,7 +536,7 @@ class TestFAPI2ClientProfileConstruction:
             "issuer": "https://other.example.com",
         }
         with pytest.raises(TypeError):
-            FAPI2ClientProfile(_discovery(), **kwargs)
+            FAPI2ClientProfile(discovery=_discovery(), **kwargs)
 
     def test_replace_reruns_every_check(self):
         uri = "http://client.example.com/callback"
@@ -577,8 +557,8 @@ class TestFAPI2ClientProfileConstruction:
     def test_error_is_value_error_with_joined_message(self):
         error = FAPIProfileError(
             [
-                FAPIViolation(FAPIViolationCode.CLIENT_ID_MISSING, "a"),
-                FAPIViolation(FAPIViolationCode.REQUEST_URI_MISSING, "b"),
+                FAPIViolation(code=FAPIViolationCode.CLIENT_ID_MISSING, message="a"),
+                FAPIViolation(code=FAPIViolationCode.REQUEST_URI_MISSING, message="b"),
             ]
         )
         assert isinstance(error, ValueError)
@@ -679,7 +659,9 @@ class TestFAPI2ClientProfileAuthorizationUrl:
 
     def test_endpoint_with_query_keeps_it(self):
         profile = FAPI2ClientProfile(
-            _discovery(authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}?tenant=a"),
+            discovery=_discovery(
+                authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}?tenant=a"
+            ),
             client_id=CLIENT_ID,
             redirect_uri=REDIRECT_URI,
             client_auth=_pkj(),
@@ -730,7 +712,7 @@ class TestFAPI2ClientProfileTokenRequest:
         assert request.code == "code"
         assert request.redirect_uri == REDIRECT_URI
         assert request.code_verifier == "verifier"
-        assert request.private_key_jwt == _pkj(issuer=ISSUER)
+        assert request.private_key_jwt == _pkj()
         assert request.dpop_key is DPOP_KEY
         assert request.mtls is None
         assert request.client_secret is None
@@ -777,7 +759,7 @@ def _profile_from(discovery: DiscoveryDocumentResponse, **kwargs: Any):
         "client_auth": _pkj(),
         **kwargs,
     }
-    return FAPI2ClientProfile(discovery, **args)
+    return FAPI2ClientProfile(discovery=discovery, **args)
 
 
 @pytest.mark.unit
@@ -872,10 +854,10 @@ class TestFAPI2ClientProfileImmutability:
     @pytest.mark.parametrize(
         ("value", "name"),
         [
-            (_pkj(issuer=ISSUER), "issuer"),
-            (_pkj(issuer=ISSUER), "audience"),
-            (_pkj(issuer=ISSUER), "algorithm"),
-            (_mtls(), "certificate"),
+            (_pkj(), "issuer"),
+            (_pkj(), "algorithm"),
+            (_mtls(), "certificate_path"),
+            (_mtls(), "private_key_path"),
             (_mtls(), "auth_method"),
             (RequestObjectKey(private_key="pem"), "lifetime"),
             (RequestObjectKey(private_key="pem"), "algorithm"),
@@ -989,8 +971,9 @@ def test_authorization_url_trailing_ampersand_without_query_starts_query():
     ],
 )
 def test_endpoint_without_host_refused(name):
+    discovery = _discovery(**{name: "https:///path"})
     with pytest.raises(FAPIProfileError) as exc_info:
-        _profile_from(_discovery(**{name: "https:///path"}))
+        _profile_from(discovery, client_auth=_pkj(issuer=discovery.issuer))
     assert _messages(exc_info.value.violations) == [
         f"{name} must have a host, got 'https:///path'"
     ]
@@ -1115,7 +1098,7 @@ class TestFAPI2ClientProfileSignedRequestObject:
             address=PAR_ENDPOINT,
             client_id=CLIENT_ID,
             request=request.request,
-            private_key_jwt=_pkj(issuer=ISSUER),
+            private_key_jwt=_pkj(),
             dpop_key=DPOP_KEY,
         )
 
@@ -1258,7 +1241,7 @@ def _signed_par(
         "address": PAR_ENDPOINT,
         "client_id": CLIENT_ID,
         "request": request_object,
-        "private_key_jwt": _pkj(issuer=ISSUER),
+        "private_key_jwt": _pkj(),
         "dpop_key": DPOP_KEY,
         **overrides,
     }
@@ -1426,7 +1409,8 @@ class TestValidateFAPISignedAuthorizationRequest:
     @pytest.mark.parametrize("value", [None, b"a.b.c"])
     def test_request_reassigned_to_non_string_reported(self, value):
         request = _signed_par(_request_object())
-        request.request = value
+        # Frozen models block this; bypass it to cover the send-time guard.
+        object.__setattr__(request, "request", value)
         result = validate_fapi_authorization_request(request)
         assert _messages(result.violations) == [
             "request object is not a JWT (RFC 9101 §2.1)"
@@ -1467,7 +1451,7 @@ class TestFAPI2ClientProfileRefreshTokenRequest:
             address=TOKEN_ENDPOINT,
             client_id=CLIENT_ID,
             refresh_token="rt",
-            private_key_jwt=_pkj(issuer=ISSUER),
+            private_key_jwt=_pkj(),
             dpop_key=DPOP_KEY,
             require_dpop_token_type=True,
         )

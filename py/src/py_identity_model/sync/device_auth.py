@@ -63,9 +63,11 @@ def request_device_authorization(
             owned_client.close()
 
 
-@retry_with_backoff()
+# A single attempt, never retried: RFC 8628 §3.5 leaves the wait between
+# polls to the caller's loop, which must not poll faster than ``interval``.
+@retry_with_backoff(max_retries=0)
 def _poll_device_token(client, url, data, headers, auth=None):
-    """Make device token poll request with retry logic."""
+    """Make one device token poll request."""
     kwargs: dict = {"data": data, "headers": headers}
     if auth is not None:
         kwargs["auth"] = auth
@@ -78,12 +80,18 @@ def poll_device_token(
 ) -> DeviceTokenResponse:
     """Poll the token endpoint for device authorization completion (RFC 8628).
 
-    Makes a single poll attempt. Check ``error_code`` on the response
-    to determine whether to continue polling:
+    Makes a single poll attempt and never retries it, so the caller's loop
+    controls the polling rate (RFC 8628 §3.5). Wait at least the device
+    authorization response's ``interval`` (5 seconds when absent) before
+    each poll, then check ``error_code`` on the response:
 
-    - ``"authorization_pending"`` - poll again after ``interval`` seconds
-    - ``"slow_down"`` - poll again after ``interval`` seconds (increased)
-    - ``"expired_token"`` / ``"access_denied"`` - stop polling
+    - ``"authorization_pending"`` - poll again after the current interval
+    - ``"slow_down"`` - add 5 seconds to the interval for this and every
+      later poll, then poll again
+    - any other failure (``"expired_token"``, ``"access_denied"``, other
+      errors, or ``error_code`` ``None``) - stop polling. A network error
+      also comes back with ``error_code`` ``None``; if you retry it, first
+      lengthen the interval, e.g. by doubling it.
 
     Args:
         request: Device token request with device code.
