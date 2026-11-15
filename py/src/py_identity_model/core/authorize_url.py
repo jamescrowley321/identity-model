@@ -7,6 +7,8 @@ query parameters for the authorization code flow.
 
 from urllib.parse import urlencode, urlparse
 
+from .validators import validate_absolute_uri_without_fragment
+
 
 _RESERVED_PARAMS = frozenset(
     {
@@ -62,6 +64,9 @@ def build_authorization_url(  # noqa: PLR0913  # RFC 6749 §4.1.1 + RFC 7636 §4
             (or vice versa per RFC 7636 §4.3), if *authorization_endpoint*
             is empty, or if *code_challenge_method* is not ``"S256"``
             or ``"plain"``.
+        ProtocolParameterError: If *redirect_uri*, or a ``resource`` in
+            *extra_params*, is not an absolute URI or has a fragment
+            (RFC 6749 §3.1.2, RFC 8707 §2).
     """
     # Validate authorization_endpoint is non-empty
     if not authorization_endpoint or not authorization_endpoint.strip():
@@ -91,6 +96,10 @@ def build_authorization_url(  # noqa: PLR0913  # RFC 6749 §4.1.1 + RFC 7636 §4
             f"code_challenge_method must be 'S256' or 'plain', "
             f"got '{code_challenge_method}'"
         )
+
+    validate_absolute_uri_without_fragment(redirect_uri, "redirect_uri")
+    if "resource" in extra_params:
+        validate_absolute_uri_without_fragment(extra_params["resource"], "resource")
 
     # Strip fragment — query params after #fragment are ignored by browsers
     parsed = urlparse(authorization_endpoint)

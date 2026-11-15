@@ -306,7 +306,7 @@ from py_identity_model import ClientAuthMethod
 
 if method.uses_client_secret:
     ...
-MtlsClientAuth(certificate=cert, private_key=key,
+MtlsClientAuth(certificate_path=cert, private_key_path=key,
                auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH)
 ```
 
@@ -329,19 +329,29 @@ request_client_credentials_token(
 )
 ```
 
-### `private_key_jwt` assertions are addressed to the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950))
+### `PrivateKeyJwt` requires `issuer`; the assertion `aud` is the issuer ([#950](https://github.com/jamescrowley321/identity-model/issues/950), [#1120](https://github.com/jamescrowley321/identity-model/issues/1120))
 
-`PrivateKeyJwt` has a new `issuer` field. Set it to the authorization
-server's issuer identifier (the discovery document's `issuer`), and every
-client assertion the library builds (PAR, token, introspection, revocation,
-device authorization and token exchange) carries it as `aud`, as
+`PrivateKeyJwt.audience` is removed. `PrivateKeyJwt` takes a required,
+keyword-only `issuer`: the authorization server's issuer identifier (the
+discovery document's `issuer`). Every client assertion the library builds
+(PAR, token, introspection, revocation, device authorization and token
+exchange) carries it as its only `aud`, a single string.
+[RFC 10070 §4](https://www.rfc-editor.org/rfc/rfc10070#section-4) requires
+this for client authentication and forbids the token endpoint URL as `aud`;
 [FAPI 2.0 Security Profile §5.3.3.1](https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.3.1)
-requires. An explicit `audience` still wins. With neither set, `aud` is still
-the request `address` (the endpoint URL), as in 4.x.
+agrees. 4.x used `audience` if set and otherwise the request `address` (the
+endpoint URL). There is no fallback any more.
 
 ```python
 from py_identity_model import PrivateKeyJwt
 
+# Before
+private_key_jwt = PrivateKeyJwt(private_key=pem, algorithm="ES256")
+private_key_jwt = PrivateKeyJwt(
+    private_key=pem, algorithm="ES256", audience=token_endpoint
+)
+
+# After
 private_key_jwt = PrivateKeyJwt(
     private_key=pem,
     algorithm="ES256",
@@ -349,9 +359,11 @@ private_key_jwt = PrivateKeyJwt(
 )
 ```
 
-`aud` is always a single string. An `audience` or `issuer` that is not a
-`str` (for example a list) raises `ValueError` when the request is built;
-4.x signed a list into the assertion as a JSON array.
+Leaving out `issuer` raises `TypeError`. A `None` or empty value, one with
+leading or trailing whitespace, or one that is not a `str` (for example a
+list), raises
+`ConfigurationException` when the `PrivateKeyJwt` is built. 4.x signed a
+list into the assertion as a JSON array.
 
 ### FastAPI: `OIDCSettings.from_env` is a separate helper ([#899](https://github.com/jamescrowley321/identity-model/pull/899))
 
@@ -563,7 +575,137 @@ proof window is accepted, with no error. Build them once at startup.
 - `InMemoryDPoPReplayCache` copies (`copy.deepcopy`, `dataclasses.asdict`)
   are the same cache; pickling one raises `TypeError`.
 
+## Models
+
+### Request, options and result types are frozen and keyword-only ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+Every request type (`DiscoveryDocumentRequest`, `JwksRequest`, every
+`*TokenRequest`, `PushedAuthorizationRequest`, `UserInfoRequest`, the client
+registration requests and the others), every response type, and these
+configuration and value types are now `@dataclass(frozen=True, kw_only=True)`:
+
+- `TokenValidationConfig`, `DiscoveryPolicy`, `SignedIntrospectionOptions`,
+  `PrivateKeyJwt`, `MtlsClientAuth`, `RequestObjectKey`, `JsonWebKey`,
+  `TokenPresentation`, `TrustScope`, `DPoPProofRequest`, `FAPI2ClientProfile`;
+- the results `AuthorizeCallbackResponse`, `StateValidationResult`,
+  `FAPIValidationResult`, `FAPIViolation`, `ConfigIssue` and `DPoPProof`;
+- in fastapi-identity-model, `OIDCSettings` and `AuthOptions`.
+
+Pass every field by name. A positional argument raises `TypeError`, so a field
+added in a later release can never shift your arguments onto the wrong field.
+Assigning a field raises `dataclasses.FrozenInstanceError`. For a request,
+configuration or value type, use `dataclasses.replace`, which runs the type's
+validation again on the copy; before, assigning a field skipped that
+validation. Responses (`*Response` and `AuthorizeCallbackResponse`) are
+read-only: `dataclasses.replace` raises on them, because reading a field that
+does not apply to the outcome (`error` on a success, data fields on a failure)
+raises.
+
+`OIDCSettings.audience` is renamed `audience_override`, and
+`OIDCSettings.expected_audience` is the only way to read the audience the
+middleware checks: `audience_override`, or `client_id` when it is `None`. It
+is worked out on read, so a copy with a new `client_id` follows it.
+
+!!! warning "Security: update every `settings.audience` read"
+    There is no `audience` attribute any more, so `settings.audience` raises
+    `AttributeError` and `OIDCSettings(audience=...)` raises `TypeError`. This
+    is deliberate: an unset audience would otherwise read as `None`, and
+    passing `TokenValidationConfig(audience=None)` turns off `aud` enforcement
+    for tokens that omit the claim. Replace each read with
+    `settings.expected_audience`. An empty or non-string `audience_override`
+    raises `ValueError`.
+
+```python
+# Before
+config = TokenValidationConfig(True, None, "my-api")
+config.leeway = 30
+
+settings = OIDCSettings("https://op.example.com/.well-known/openid-configuration", "app")
+settings.audience = "my-api"
+
+# After
+import dataclasses
+
+config = TokenValidationConfig(perform_disco=True, audience="my-api")
+config = dataclasses.replace(config, leeway=30)
+
+settings = OIDCSettings(
+    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    client_id="app",
+    audience_override="my-api",
+)
+```
+
+Values a frozen object holds are not copied. `AuthOptions.dpop` still refers to
+the same replay cache, so every middleware and WebSocket authenticator built
+from one `AuthOptions` shares it. List and dict fields, such as
+`DiscoveryPolicy.additional_endpoint_base_addresses` or a response's `token`,
+are not frozen themselves; replace the object rather than editing them.
+
+`CacheCounters` stays mutable: it is a live, thread-safe tally that the caches
+update.
+
+### `MtlsClientAuth` takes `certificate_path` and `private_key_path` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`MtlsClientAuth.certificate` and `MtlsClientAuth.private_key` are renamed to
+`certificate_path` and `private_key_path`. They are filesystem paths to PEM
+files, as before: the TLS layer loads them with
+`ssl.SSLContext.load_cert_chain`. `PrivateKeyJwt.private_key` and
+`RequestObjectKey.private_key` remain PEM content.
+
+```python
+# Before
+MtlsClientAuth(certificate="/etc/client.crt", private_key="/etc/client.key")
+
+# After
+MtlsClientAuth(certificate_path="/etc/client.crt", private_key_path="/etc/client.key")
+```
+
+### `PushedAuthorizationRequest.redirect_uri` is required ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`redirect_uri` has no default. Leaving it out raises `TypeError` when you build
+the request, instead of an error when it is sent. An empty `redirect_uri`
+still raises `ValueError` when the request is prepared.
+
+```python
+PushedAuthorizationRequest(
+    address=par_endpoint,
+    client_id="my-client",
+    redirect_uri="https://client.example.com/callback",
+)
+```
+
 ## Discovery
+
+### `parse_discovery_url` is replaced by `discovery_document_url` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`DiscoveryDocumentRequest.address`, `disco_doc_address` and
+`OIDCSettings.discovery_url` are the discovery document URL, the same as
+`address` on every other request. Passing a bare issuer fetches the issuer URL
+itself, which fails.
+
+`discovery_document_url(issuer)` builds that URL from an issuer identifier as
+OpenID Connect Discovery 1.0 §4.1 specifies: a terminating `/` is removed and
+`/.well-known/openid-configuration` is appended. It raises
+`ConfigurationException` for an empty value, a non-HTTP(S) URL, a URL without
+a host, a query or fragment, a value that is not a valid URL, or a value that
+already ends with the well-known path.
+
+`parse_discovery_url` and `DiscoveryEndpoint` are removed. `parse_discovery_url`
+appended the path only when it was missing and returned the authority as well;
+`discovery_document_url` takes only an issuer and returns the URL.
+
+```python
+# Before
+from py_identity_model import parse_discovery_url
+
+url = parse_discovery_url("https://login.example.com").url
+
+# After
+from py_identity_model import discovery_document_url
+
+url = discovery_document_url("https://login.example.com")
+```
 
 ### Every Discovery §3 REQUIRED field must be present ([#891](https://github.com/jamescrowley321/identity-model/pull/891))
 
@@ -605,11 +747,10 @@ if not disco.is_successful and disco.error_kind is DiscoveryErrorKind.MISSING_FI
 
 A missing `jwks_uri` now reports `Missing required parameters: jwks_uri`.
 
-`DiscoveryPolicy`'s fields after `validate_endpoints`
-(`additional_endpoint_base_addresses`, `authority`,
-`allow_loopback_endpoints`) are keyword-only. A call that passed
-`require_key_set` as the fifth positional argument raises `TypeError`: drop it
-and pass the later fields by name.
+`DiscoveryPolicy` is keyword-only (see
+[Request, options and result types are frozen and keyword-only](#request-options-and-result-types-are-frozen-and-keyword-only-1128)).
+A call that passed `require_key_set` positionally raises `TypeError`: drop it
+and pass the other fields by name.
 
 ```python
 # Before
@@ -657,10 +798,8 @@ the authorization server's discovery document. It raises `FAPIProfileError`
 (a `ValueError` with a `violations` list) when the document fails
 `validate_fapi_discovery`, when the client does not authenticate with
 `private_key_jwt` or mTLS, or when the redirect URI is not `https` (an `http`
-loopback URI is allowed with `native_app=True`). It fills
-`PrivateKeyJwt.issuer` from the discovery issuer and refuses an `audience` or
-`issuer` that names anything else, so the assertion `aud` is never the
-endpoint URL. Its request builders fix PAR, `response_type=code` and PKCE
+loopback URI is allowed with `native_app=True`). It refuses a
+`PrivateKeyJwt` whose `issuer` is not the discovery issuer. Its request builders fix PAR, `response_type=code` and PKCE
 `S256`, require a DPoP key for a `private_key_jwt` client whose algorithm the
 server lists in `dpop_signing_alg_values_supported`, cap `nonce` at 64
 characters, and raise on anything that would weaken the flow. The issuer and
@@ -671,10 +810,12 @@ responses.
 
 ```python
 profile = FAPI2ClientProfile(
-    discovery,
+    discovery=discovery,
     client_id="fapi-client",
     redirect_uri="https://client.example.com/callback",
-    client_auth=PrivateKeyJwt(private_key=pem, algorithm="ES256"),
+    client_auth=PrivateKeyJwt(
+        private_key=pem, algorithm="ES256", issuer=discovery.issuer
+    ),
 )
 dpop_key = generate_dpop_key("ES256")
 par = push_authorization_request(
@@ -797,13 +938,19 @@ disco = get_discovery_document(
 After:
 
 ```python
+from py_identity_model import discovery_document_url
+
 disco = get_discovery_document(
-    DiscoveryDocumentRequest(address="https://login.example.com")
+    DiscoveryDocumentRequest(
+        address=discovery_document_url("https://login.example.com")
+    )
 )
-# Also accepted:
-#   "https://login.example.com/"
-#   "https://login.example.com/.well-known/openid-configuration"
+# address == "https://login.example.com/.well-known/openid-configuration"
 ```
+
+`address` is the discovery document URL; the library does not append the
+well-known path. See
+[`parse_discovery_url` is replaced by `discovery_document_url`](#parse_discovery_url-is-replaced-by-discovery_document_url-1128).
 
 Use the issuer exactly as your provider publishes it. If you call
 `process_discovery_response` (`py_identity_model.core.discovery_logic`) or
@@ -818,6 +965,109 @@ disco = process_discovery_response(
     response, policy, requested_address="https://login.example.com"
 )
 ```
+
+## OAuth requests
+
+### Authorization code and refresh token requests are sent once
+
+`request_authorization_code_token` and `refresh_token` (sync and async) no
+longer retry on `429`, `5xx` or transport errors. The authorization code is
+single-use (RFC 6749 §4.1.2: "The client MUST NOT use the authorization code
+more than once"), and a rotating refresh token is too: if a request reached
+the server and only its response was lost, a retry presents a used credential,
+the server refuses it and may revoke the tokens it already issued. A failure
+now comes back as an unsuccessful response on the first attempt; start a new
+login, or retry the refresh yourself only when you know the request was not
+processed.
+
+The single `use_dpop_nonce` retry (RFC 9449 §8) is kept: the server refused the
+first request before using the credential. Client credentials, token
+exchange, PAR and the other calls still retry with backoff.
+
+### Device token polling is one request per call
+
+`poll_device_token` (sync and async) sends one request and never retries it.
+In 4.x it retried after 1 s and 2 s, faster than the polling interval RFC 8628
+§3.5 requires. Your polling loop sets the rate:
+
+```python
+interval = auth_response.interval or 5  # RFC 8628 §3.5 default
+while True:
+    time.sleep(interval)
+    poll = poll_device_token(token_request)
+    if poll.is_successful:
+        break
+    if poll.error_code == "authorization_pending":
+        continue
+    if poll.error_code == "slow_down":
+        interval += 5  # for this and every later poll
+        continue
+    raise RuntimeError(poll.error)  # any other error: stop polling
+```
+
+### A token response must carry `access_token` and `token_type`
+
+RFC 6749 §5.1 makes both REQUIRED, and §7.1 says the client "MUST NOT use an
+access token if it does not understand the token type". The client
+credentials, authorization code and refresh token calls now fail a `2xx`
+response that is not a JSON object with non-empty string `access_token` and
+`token_type` members, with `error_kind` `TokenErrorKind.INVALID_TOKEN_RESPONSE`.
+In 4.x `{}` was a successful response. `ClientCredentialsTokenResponse` gains
+the `error_kind` field. On the authorization code and refresh token responses
+a JSON object body is kept on `rejected_token`, so a rotated refresh token is
+not lost. The value of `token_type` is not checked here; compare
+it with the types you support before using the token.
+
+### Public clients must send a `code_verifier`
+
+RFC 9700 §2.1.1: "Public clients MUST use PKCE". An authorization code
+redemption whose client authenticates with `ClientAuthMethod.NONE` (no secret,
+no `private_key_jwt`, no mTLS, or `client_auth_method=ClientAuthMethod.NONE`)
+and has no non-empty `code_verifier` is refused before anything is sent:
+`request_authorization_code_token` returns an unsuccessful response whose
+`error` includes the `ProtocolParameterError` message ("a public client must
+send a code_verifier (PKCE)"). The response carries no reason;
+`prepare_auth_code_token_request_data` raises the error with reason
+`PKCE_REQUIRED`. An empty `client_secret` counts as no
+secret. Confidential clients are unchanged.
+
+```python
+verifier, challenge = generate_pkce_pair()
+# send code_challenge=challenge, code_challenge_method="S256" when authorizing
+response = request_authorization_code_token(
+    AuthorizationCodeTokenRequest(
+        address=token_endpoint,
+        client_id="public-app",
+        code=code,
+        redirect_uri=REDIRECT_URI,
+        code_verifier=verifier,
+    )
+)
+```
+
+### `redirect_uri` and `resource` must be absolute URIs without a fragment
+
+RFC 6749 §3.1.2 and RFC 8707 §2 require both to be absolute URIs (RFC 3986
+§4.3) with no fragment component. `build_authorization_url` raises
+`ProtocolParameterError` (reason `NOT_ABSOLUTE_URI` or `URI_HAS_FRAGMENT`) for
+its `redirect_uri` and for a `resource` passed as an extra parameter. PAR
+(`redirect_uri`) and token exchange (`resource`) are refused before anything
+is sent and return an unsuccessful response whose `error` includes that
+error's message. In 4.x `redirect_uri="cb#frag"` was
+sent as is. A query component is still allowed.
+
+### A client update leaves out server-issued fields and keeps its `client_id`
+
+RFC 7592 §2.2: the update request "MUST NOT include the
+`registration_access_token`, `registration_client_uri`,
+`client_secret_expires_at`, or `client_id_issued_at` fields", and its
+`client_id` "MUST be the same as its currently issued client identifier".
+`update_client` now drops those four fields from `extra_metadata`, so the
+metadata of a read response can be passed back as is. When `extra_metadata`
+has a `client_id` key with any other value (including `None`), it sends
+nothing and returns an unsuccessful response whose `error` includes the
+`ProtocolParameterError` message; `prepare_update_request` raises it with
+reason `CLIENT_ID_MISMATCH`. In 4.x both reached the server.
 
 ## DPoP client
 
@@ -861,10 +1111,25 @@ still compares equal to `"ES256"` and the other strings, and
 
 ### Each retry attempt mints a fresh DPoP proof ([#1019](https://github.com/jamescrowley321/identity-model/issues/1019))
 
-The authorization code, refresh, client credentials and PAR calls now build
-the request, including the DPoP proof and any `private_key_jwt` assertion,
-on every `429`/`5xx` backoff attempt. A server that remembers `jti` values
-(RFC 9449 §11.1) no longer rejects the retry as a replay. No API change.
+The client credentials and PAR calls now build the request, including the
+DPoP proof and any `private_key_jwt` assertion, on every `429`/`5xx` backoff
+attempt. A server that remembers `jti` values (RFC 9449 §11.1) no longer
+rejects the retry as a replay. No API change. (The authorization code and
+refresh token calls are not retried; see
+[OAuth requests](#authorization-code-and-refresh-token-requests-are-sent-once).)
+
+### The server's `DPoP-Nonce` is used in the next proof
+
+RFC 9449 §8.2: "The client MUST use the new nonce value supplied for the next
+token request and for all subsequent token requests until the authorization
+server supplies a new nonce." In 4.x a nonce sent on a `200` response was
+dropped, and a nonce from a `use_dpop_nonce` challenge was used only for that
+call's retry. Now a `DPoPKey` remembers the latest `DPoP-Nonce` each server
+(scheme, host and port) and role sent, on any response, and the token, PAR
+and UserInfo calls put it in their next proof to that server. A resource
+server's nonce is never sent to the authorization server, even on a shared
+origin (§9). `DPoPKey.nonce_for(uri, resource_server=...)` returns the nonce
+for a server. No code change is needed.
 
 ## Access token validation
 
@@ -1328,6 +1593,22 @@ except KeyNotFoundException as exc:
     print(exc.details["kid"], exc.details["available_kids"])
 ```
 
+### Keys of different types may share a `kid`
+
+[RFC 7517 §4.5](https://www.rfc-editor.org/rfc/rfc7517#section-4.5) allows keys
+with different `kty` values to share a `kid`. When several signing keys carry the
+token's `kid`, 5.0 uses the first one whose `kty` fits the header `alg`, whose
+`alg` is absent (or empty) or equal to it, and, for ECDSA, whose `crv` is the
+algorithm's curve (`ES256` → `P-256`, `ES384` → `P-384`, `ES512` →
+`P-521`, `ES256K` → `secp256k1`). In 4.x the first key with that `kid` was used, so
+an ES256 token whose `kid` was also on an Ed25519 (`OKP`) key failed with
+`Key type 'OKP' is incompatible with algorithm 'ES256'` if the `OKP` key was
+listed first. When no same-`kid` key fits, the first one is checked as in 4.x,
+so the error depends on that key: a `kty` mismatch raises
+`TokenValidationException`, a declared `alg` mismatch raises
+`KeyAlgorithmMismatchException`, and a key on another curve fails signature
+verification.
+
 ### An empty `kid` or `use` means absent; `key_ops` is accepted ([#1065](https://github.com/jamescrowley321/identity-model/issues/1065))
 
 5.0 reads JWKs the way the Go and Rust libraries do:
@@ -1503,66 +1784,59 @@ only warned. A missing or empty `k` counts as 0 bits. Use a longer secret.
 
 ## UserInfo
 
-### A UserInfo response without `sub` is an error ([#884](https://github.com/jamescrowley321/identity-model/pull/884))
+### `expected_sub` is required
 
-Every UserInfo response must carry `sub` (OIDC Core §5.3.2). `get_userinfo`
-returns an unsuccessful `UserInfoResponse` when the JSON body has no
-non-empty string `sub`, whether or not you pass `expected_sub`. In 4.x this
-was checked only when `expected_sub` was set.
+OIDC Core §5.3.2: "The sub Claim in the UserInfo Response MUST be verified to
+exactly match the sub Claim in the ID Token; if they do not match, the
+UserInfo Response values MUST NOT be used." `UserInfoRequest` now requires the
+keyword argument `expected_sub`, the `sub` of the validated ID token of the
+login the access token belongs to. There is no default. In 4.x the check ran
+only when you passed it.
 
 ```python
-from py_identity_model import get_userinfo, UserInfoRequest
-
+# Before
 response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token))
-if not response.is_successful:
-    print(response.error)  # 5.0: also when the body has no sub
+
+# After
+response = get_userinfo(
+    UserInfoRequest(
+        address=USERINFO_URL, token=access_token, expected_sub=id_token_claims["sub"]
+    )
+)
 ```
 
-The failed response's `error_kind` is `UserInfoErrorKind.MISSING_SUB`, so you
-can tell a missing `sub` from a failed request:
+A failed check sets `error_kind`:
 
-```python
-from py_identity_model import UserInfoErrorKind
+| `error_kind` | Meaning |
+|---|---|
+| `UserInfoErrorKind.MISSING_SUB` | The JSON body has no non-empty string `sub` ([#884](https://github.com/jamescrowley321/identity-model/pull/884)) |
+| `UserInfoErrorKind.SUB_MISMATCH` | The `sub` differs from `expected_sub` |
+| `UserInfoErrorKind.UNVERIFIABLE_SUB` | The response is a signed or encrypted JWT (`application/jwt`) ([#882](https://github.com/jamescrowley321/identity-model/pull/882)) |
 
-if response.error_kind is UserInfoErrorKind.MISSING_SUB:
-    ...  # the provider answered, but without sub
-```
-
-The FastAPI relying-party router fails the login with `401` ("UserInfo
-response has no subject") when the UserInfo response has no `sub`. Other
-UserInfo failures are still logged and the login continues on the ID Token.
-
-### `expected_sub` is enforced on signed UserInfo ([#882](https://github.com/jamescrowley321/identity-model/pull/882))
-
-With `expected_sub` set, a signed or encrypted (`application/jwt`) UserInfo
-response is now an error. The UserInfo call has no keys to verify the JWT,
-and comparing the `sub` of an unverified JWT would prove nothing (OIDC Core
-§5.3.4). In 4.x it was returned as successful without checking `sub`.
-
-Before:
+The library has no keys to verify a signed UserInfo response, and comparing
+the `sub` of an unverified JWT would prove nothing (OIDC Core §5.3.4). Such a
+response fails with `UNVERIFIABLE_SUB` and keeps the JWT on
+`unverified_jwt`; verify it, then compare its `sub`:
 
 ```python
 response = get_userinfo(
     UserInfoRequest(address=USERINFO_URL, token=access_token, expected_sub=id_token_sub)
 )
-jwt = response.raw  # sub was never compared
-```
-
-`expected_sub` still checks a JSON UserInfo response. For a provider that
-returns signed UserInfo, omit `expected_sub`, verify the JWT yourself, and
-compare `sub` for both response formats:
-
-```python
-response = get_userinfo(UserInfoRequest(address=USERINFO_URL, token=access_token))
-if not response.is_successful:
+if response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB:
+    claims = validate_token(response.unverified_jwt, validation_config, DISCOVERY_URL)
+    if claims.get("sub") != id_token_sub:
+        raise ValueError("UserInfo sub does not match the ID Token")
+elif response.is_successful:
+    claims = response.claims  # sub already matched
+else:
     raise ValueError(response.error)
-if response.raw is not None:  # application/jwt: verify before reading claims
-    claims = validate_token(response.raw, validation_config, DISCOVERY_URL)
-else:  # JSON
-    claims = response.claims
-if claims.get("sub") != id_token_sub:
-    raise ValueError("UserInfo sub does not match the ID Token")
 ```
+
+The FastAPI relying-party router passes the ID token `sub` and fails the login
+with `401` on `MISSING_SUB` ("UserInfo response has no subject") or on
+`SUB_MISMATCH` and `UNVERIFIABLE_SUB` ("UserInfo subject does not match ID
+token subject"): it cannot verify a signed UserInfo response. Other UserInfo
+failures are still logged and the login continues on the ID Token.
 
 ## Back-Channel Logout
 

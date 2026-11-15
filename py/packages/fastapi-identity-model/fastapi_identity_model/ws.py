@@ -133,7 +133,7 @@ def build_ws_authenticator(
     Args:
         discovery_url: The OpenID Connect discovery document URL. Defaults to
             ``settings.discovery_url``; required without ``settings``.
-        audience: Expected ``aud`` claim. Defaults to ``settings.audience``.
+        audience: Expected ``aud`` claim. Defaults to ``settings.expected_audience``.
             Required — a ``None`` audience does
             not enforce ``aud`` for tokens that omit it, which on a shared
             multi-tenant issuer accepts tokens minted for other clients.
@@ -185,7 +185,7 @@ def build_ws_authenticator(
     """
     if settings is not None:
         discovery_url = discovery_url or settings.discovery_url
-        audience = audience or settings.audience
+        audience = audience or settings.expected_audience
     if not discovery_url:
         raise ValueError("build_ws_authenticator requires a discovery_url or settings.")
     if not audience:

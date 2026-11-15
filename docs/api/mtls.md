@@ -38,8 +38,8 @@ response = request_client_credentials_token(
         client_id="my-mtls-client",
         scope="api",
         mtls=MtlsClientAuth(
-            certificate="/path/to/client-cert.pem",
-            private_key="/path/to/client-key.pem",
+            certificate_path="/path/to/client-cert.pem",
+            private_key_path="/path/to/client-key.pem",
             auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         ),
     )

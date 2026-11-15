@@ -70,7 +70,7 @@ uv add py-identity-model
 ```python
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com"))
+response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com/.well-known/openid-configuration"))
 if response.is_successful:
     print(f"Token Endpoint: {response.token_endpoint}")
 ```
@@ -81,7 +81,7 @@ if response.is_successful:
 from py_identity_model import TokenValidationConfig, validate_token
 
 config = TokenValidationConfig(perform_disco=True, audience="my-api")
-claims = validate_token(jwt=token, token_validation_config=config, disco_doc_address="https://issuer.example.com")
+claims = validate_token(jwt=token, token_validation_config=config, disco_doc_address="https://issuer.example.com/.well-known/openid-configuration")
 ```
 
 ### Async API
