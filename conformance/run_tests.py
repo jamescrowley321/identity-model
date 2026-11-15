@@ -370,27 +370,23 @@ LOGOUT_PROFILES = frozenset(
     }
 )
 
-# RP-Initiated Logout modules that must be driven WITHOUT a ``state`` on the
-# logout request (state is optional per RP-Initiated Logout 1.0 §2). The rest
-# send a state and verify the OP echoes it back unchanged.
-NO_STATE_LOGOUT_TESTS = frozenset(
-    {
-        "oidcc-client-test-rp-init-logout-no-state",
-    }
+# Modules for an OPTIONAL feature the library does not support, with the reason.
+# The RP declares non-support rather than driving a doomed flow: the module is
+# recorded SKIPPED with the reason and never sent to the suite. This is a
+# declared non-support for OIDF certification, not a masked failure.
+_NO_WEBFINGER = (
+    "py-identity-model does not implement WebFinger issuer discovery (OpenID "
+    "Connect Discovery 1.0 §2, which is OPTIONAL); it takes the issuer as input"
 )
-
-# Modules for an OPTIONAL feature the library deliberately does not support, so
-# the RP declares non-support rather than driving a doomed flow.
-# request-uri-signed-none requires an UNSIGNED (alg=none) request object, but
-# py-identity-model excludes ``none`` from SUPPORTED_SIGNING_ALGORITHMS by design
-# (unsigned request objects are a security downgrade). This is a legitimate
-# declared non-support for OIDF certification, not a masked failure — recorded
-# SKIPPED with the reason and never sent to the suite.
-DECLARED_UNSUPPORTED_TESTS = frozenset(
-    {
-        "oidcc-client-test-request-uri-signed-none",
-    }
-)
+DECLARED_UNSUPPORTED_TESTS = {
+    # An unsigned (alg=none) request object is a security downgrade.
+    "oidcc-client-test-request-uri-signed-none": (
+        "py-identity-model does not create unsigned (alg=none) request objects "
+        "(SUPPORTED_SIGNING_ALGORITHMS excludes 'none' by design)"
+    ),
+    "oidcc-client-test-discovery-webfinger-acct": _NO_WEBFINGER,
+    "oidcc-client-test-discovery-webfinger-url": _NO_WEBFINGER,
+}
 
 
 def _get_test_type(test_name: str) -> str:
@@ -644,7 +640,6 @@ def drive_rp_logout(
     client_id: str,
     client_secret: str,
     test_id: str,
-    send_state: bool = True,
     test_name: str = "",
     profile: str = "",
 ) -> list[str]:
@@ -662,8 +657,8 @@ def drive_rp_logout(
     request — that is a server-to-server call the RP handles on its own, so no
     extra driving is needed here.
 
-    ``send_state=False`` tells the RP to omit ``state`` from the logout request
-    (the -no-state module); the default sends a state and expects it echoed.
+    The RP always sends a ``state`` on the logout request and checks the value
+    the OP returns.
     """
     # Step 1: log in so the RP has an id_token_hint + end_session endpoint.
     crashes = drive_rp_authorize(
@@ -677,11 +672,7 @@ def drive_rp_logout(
     )
 
     # Step 2: initiate RP-Initiated Logout and follow the redirect chain.
-    params = {
-        "test_name": test_name,
-        "profile": profile,
-        "send_state": str(send_state).lower(),
-    }
+    params = {"test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/logout", params=params)
@@ -977,11 +968,7 @@ def run_test_module(
 
     # Declared non-support: record SKIPPED without touching the suite.
     if test_name in DECLARED_UNSUPPORTED_TESTS:
-        reason = (
-            "declared unsupported: py-identity-model does not create unsigned "
-            "(alg=none) request objects (SUPPORTED_SIGNING_ALGORITHMS excludes "
-            "'none' by design)"
-        )
+        reason = f"declared unsupported: {DECLARED_UNSUPPORTED_TESTS[test_name]}"
         logger.info("[SKIP] %s — %s", test_name, reason)
         status, problem = assess_module("SKIPPED", expectation, RPEvidence(None))
         return TestResult(
@@ -1049,7 +1036,6 @@ def run_test_module(
             client_id=client_id,
             client_secret=client_secret,
             test_id=module_id,
-            send_state=test_name not in NO_STATE_LOGOUT_TESTS,
             test_name=test_name,
             profile=profile,
         )

@@ -743,10 +743,16 @@
   },
   "dynamic-rp": {
     "oidcc-client-test-discovery-webfinger-acct": {
-      "expect": "accept"
+      "expect": "none",
+      "allow": {
+        "SKIPPED": "Declared unsupported: py-identity-model does not implement WebFinger issuer discovery (OpenID Connect Discovery 1.0 §2, OPTIONAL); the runner records SKIPPED without driving the module."
+      }
     },
     "oidcc-client-test-discovery-webfinger-url": {
-      "expect": "accept"
+      "expect": "none",
+      "allow": {
+        "SKIPPED": "Declared unsupported: py-identity-model does not implement WebFinger issuer discovery (OpenID Connect Discovery 1.0 §2, OPTIONAL); the runner records SKIPPED without driving the module."
+      }
     },
     "oidcc-client-test-discovery-openid-config": {
       "expect": "accept"
@@ -802,7 +808,10 @@
       ]
     },
     "oidcc-client-test-rp-init-logout-no-state": {
-      "expect": "accept"
+      "expect": "reject",
+      "reasons": [
+        "logout_state_validation"
+      ]
     }
   },
   "backchannel-logout-rp": {

@@ -344,6 +344,9 @@ _last_logout_context: dict[str, str] | None = None
 # /post-logout-callback (RP-Initiated Logout 1.0 §2 state round-trip).
 _expected_logout_state: str | None = None
 
+# The default ``id_token_signed_response_alg`` (OIDC Registration 1.0 §2).
+LOGOUT_TOKEN_ALGORITHMS = ["RS256"]
+
 # Most recent dynamically-registered client (RFC 7591): the issued client_id
 # and, for confidential clients, client_secret. Populated by /register so a
 # subsequent /authorize flow can use the freshly registered client.
@@ -1756,6 +1759,24 @@ async def callback_post(request: Request) -> HTMLResponse | JSONResponse:
     return await run_in_threadpool(_handle_callback, callback_url)
 
 
+def _logout_token_validation_config(flow_context: dict) -> TokenValidationConfig:
+    """Logout Token validation settings for the flow that logged in.
+
+    Back-Channel Logout 1.0 §2.6 step 3 validates ``alg`` as for ID Tokens, and
+    OIDC Core §3.1.3.7 step 7 says it SHOULD be RS256 or the client's registered
+    ``id_token_signed_response_alg``. The harness's clients register none, so
+    only RS256 is allowed; a token signed with another of the OP's keys is
+    refused (the -wrong-alg module).
+    """
+    return TokenValidationConfig(
+        perform_disco=True,
+        audience=flow_context["client_id"],
+        issuer=flow_context["issuer"],
+        algorithms=LOGOUT_TOKEN_ALGORITHMS,
+        require_https=False,
+    )
+
+
 def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
     """Validate a Back-Channel Logout Token posted by the OP (sync worker).
 
@@ -1786,12 +1807,7 @@ def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
     try:
         claims = validate_logout_token(
             logout_token,
-            TokenValidationConfig(
-                perform_disco=True,
-                audience=flow_context["client_id"],
-                issuer=flow_context["issuer"],
-                require_https=False,
-            ),
+            _logout_token_validation_config(flow_context),
             disco_doc_address=flow_context["disco_address"],
         )
     except LogoutTokenValidationException as exc:
@@ -1865,22 +1881,15 @@ async def backchannel_logout(request: Request) -> JSONResponse:
 def logout(
     test_name: str = Query("", description="Test module name for RP log capture"),
     profile: str = Query("", description="Profile/plan name for RP log capture"),
-    send_state: str = Query(
-        "true", description="Whether to include a state on the logout request"
-    ),
 ) -> RedirectResponse | JSONResponse:
     """Initiate RP-Initiated Logout (OpenID Connect RP-Initiated Logout 1.0 §2).
 
     Builds the OP's end-session URL with the ``id_token_hint``, ``client_id``,
-    ``post_logout_redirect_uri`` and (optionally) a fresh ``state`` via the
+    ``post_logout_redirect_uri`` and a fresh ``state`` via the
     library's ``build_end_session_url``, remembers the ``state`` for the
     round-trip check, and redirects the user agent to the OP. Returns 400 if no
     login flow has completed yet (no end-session endpoint / id_token to log out
     with).
-
-    ``state`` is OPTIONAL in RP-Initiated Logout 1.0 §2. ``send_state=false``
-    omits it (the -no-state module); the round-trip check then expects the OP to
-    return no state either.
     """
     _set_active_test(profile, test_name)
     logout_context = _last_logout_context
@@ -1895,9 +1904,7 @@ def logout(
         )
 
     global _expected_logout_state
-    _expected_logout_state = (
-        secrets.token_urlsafe(32) if send_state.lower() == "true" else None
-    )
+    _expected_logout_state = secrets.token_urlsafe(32)
 
     end_session_url = build_end_session_url(
         logout_context["end_session_endpoint"],
