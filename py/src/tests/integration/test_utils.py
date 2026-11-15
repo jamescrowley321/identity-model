@@ -171,6 +171,10 @@ def get_config(env_file: str | None = None) -> dict:
         "TEST_PKCE_PUBLIC_REDIRECT_URI": os.environ.get(
             "TEST_PKCE_PUBLIC_REDIRECT_URI", ""
         ),
+        # Device-flow client, for providers whose client-credentials client
+        # cannot use the device grant; unset falls back to TEST_CLIENT_ID.
+        "TEST_DEVICE_CLIENT_ID": os.environ.get("TEST_DEVICE_CLIENT_ID", ""),
+        "TEST_DEVICE_CLIENT_SECRET": os.environ.get("TEST_DEVICE_CLIENT_SECRET", ""),
         # Opaque token client for introspection/revocation tests
         "TEST_OPAQUE_CLIENT_ID": os.environ.get("TEST_OPAQUE_CLIENT_ID", ""),
         "TEST_OPAQUE_CLIENT_SECRET": os.environ.get("TEST_OPAQUE_CLIENT_SECRET", ""),

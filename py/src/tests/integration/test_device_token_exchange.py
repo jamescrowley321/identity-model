@@ -51,6 +51,17 @@ def _provider_lacks_token_exchange(error: str | None) -> bool:
 # ============================================================================
 
 
+def _device_client_id(test_config) -> str:
+    return test_config.get("TEST_DEVICE_CLIENT_ID") or test_config["TEST_CLIENT_ID"]
+
+
+def _device_client_secret(test_config) -> str | None:
+    """The device client's secret; a dedicated device client may be public."""
+    if test_config.get("TEST_DEVICE_CLIENT_ID"):
+        return test_config.get("TEST_DEVICE_CLIENT_SECRET") or None
+    return test_config.get("TEST_CLIENT_SECRET")
+
+
 @pytest.mark.integration
 class TestDeviceAuthLive:
     """Test Device Authorization Grant against a live provider.
@@ -67,9 +78,9 @@ class TestDeviceAuthLive:
         response = request_device_authorization(
             DeviceAuthorizationRequest(
                 address=endpoint,
-                client_id=test_config["TEST_CLIENT_ID"],
+                client_id=_device_client_id(test_config),
                 scope=test_config.get("TEST_SCOPE", "openid"),
-                client_secret=test_config.get("TEST_CLIENT_SECRET"),
+                client_secret=_device_client_secret(test_config),
             )
         )
 
@@ -126,9 +137,9 @@ class TestDeviceAuthLive:
         poll_response = poll_device_token(
             DeviceTokenRequest(
                 address=token_endpoint,
-                client_id=test_config["TEST_CLIENT_ID"],
+                client_id=_device_client_id(test_config),
                 device_code=auth_response.device_code,
-                client_secret=test_config.get("TEST_CLIENT_SECRET"),
+                client_secret=_device_client_secret(test_config),
             )
         )
 
@@ -154,9 +165,9 @@ class TestDeviceAuthLive:
         response = poll_device_token(
             DeviceTokenRequest(
                 address=token_endpoint,
-                client_id=test_config["TEST_CLIENT_ID"],
+                client_id=_device_client_id(test_config),
                 device_code="invalid-device-code-value",
-                client_secret=test_config.get("TEST_CLIENT_SECRET"),
+                client_secret=_device_client_secret(test_config),
             )
         )
 

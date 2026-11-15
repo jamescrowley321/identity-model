@@ -116,6 +116,7 @@ class TestLiveAuthCodePKCE:
         discovery_document,
         test_config,
         provider_capabilities,
+        invalid_grant_error,
     ):
         """Invalid authorization code is rejected with invalid_grant."""
         if "dev_interactions" not in provider_capabilities:
@@ -142,4 +143,4 @@ class TestLiveAuthCodePKCE:
         )
         assert token_response.is_successful is False
         assert token_response.error is not None
-        assert "invalid_grant" in token_response.error
+        assert invalid_grant_error in token_response.error

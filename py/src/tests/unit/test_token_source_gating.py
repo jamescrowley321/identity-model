@@ -92,14 +92,15 @@ def test_credential_gating_when_secret_absent() -> None:
         source.mint(Provider.ORY, Grant.CLIENT_CREDENTIALS)
 
 
-def test_auth_code_requires_injected_minter() -> None:
-    keycloak = ProviderConfig(
-        provider=Provider.KEYCLOAK,
+@pytest.mark.parametrize("provider", [Provider.KEYCLOAK, Provider.ZITADEL])
+def test_auth_code_requires_injected_minter(provider: Provider) -> None:
+    config = ProviderConfig(
+        provider=provider,
         capabilities={"authorization_code"},
     )
-    source = TokenSource([keycloak])
+    source = TokenSource([config])
     with pytest.raises(HarnessCredentialError, match="auth-code minter"):
-        source.mint(Provider.KEYCLOAK, Grant.AUTHORIZATION_CODE)
+        source.mint(provider, Grant.AUTHORIZATION_CODE)
 
 
 def test_unconfigured_provider_raises_capability_error() -> None:

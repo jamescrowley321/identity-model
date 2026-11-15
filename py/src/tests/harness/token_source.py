@@ -6,7 +6,7 @@ previously spread across ``client_credentials_token``, ``jwt_access_token``,
 Descope-shaped multi-tenant minter — capability/credential-gated exactly like
 ``provider_matrix.detect_capabilities``.
 
-* Real providers (node-oidc, Keycloak, Ory, Descope) mint through the library's
+* Real providers (node-oidc, Keycloak, Zitadel, Ory, Descope) mint through the library's
   own token logic (``request_client_credentials_token`` / an injected auth-code
   minter) — never reimplemented.
 * The ``MOCK`` provider mints valid tokens and, via ``malform=``, the forged
@@ -54,6 +54,7 @@ class Provider(StrEnum):
 
     NODE_OIDC = "node-oidc"
     KEYCLOAK = "keycloak"
+    ZITADEL = "zitadel"
     ORY = "ory"
     DESCOPE = "descope"
     MOCK = "mock"

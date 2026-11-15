@@ -243,6 +243,7 @@ make test-unit
 # Integration tests against a specific provider (Docker fixtures)
 make test-integration-node-oidc
 make test-integration-keycloak
+make test-integration-zitadel
 ```
 
 ### Where can I find examples?

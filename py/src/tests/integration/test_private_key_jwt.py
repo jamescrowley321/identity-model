@@ -13,7 +13,6 @@ provider (remote providers in the CI matrix do not register this client).
 
 import base64
 import secrets
-from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import (
@@ -85,28 +84,8 @@ def test_static_private_key_matches_registered_jwk():
     assert _b64url_uint(public_numbers.y) == PKJWT_REGISTERED_JWK_Y
 
 
-def _is_node_oidc_fixture(raw_discovery: dict) -> bool:
-    """Whether the active provider is the local private_key_jwt fixture.
-
-    The static key only matches the ``test-private-key-jwt`` client in the
-    bundled node-oidc-provider fixture, which runs on localhost, serves
-    discovery at the host root, and advertises ``private_key_jwt`` support.
-
-    The host-root check is what distinguishes node-oidc from other local
-    providers: Keycloak also runs on localhost and advertises
-    ``private_key_jwt``, but serves discovery under ``/realms/<realm>`` and
-    does not register the static test client — so it must skip these tests.
-    """
-    issuer = raw_discovery.get("issuer", "")
-    methods = raw_discovery.get("token_endpoint_auth_methods_supported", [])
-    parsed = urlparse(issuer)
-    is_local = parsed.hostname in ("localhost", "127.0.0.1")
-    at_host_root = parsed.path in ("", "/")
-    return is_local and at_host_root and "private_key_jwt" in methods
-
-
-def _require_node_oidc(raw_discovery: dict) -> None:
-    if not _is_node_oidc_fixture(raw_discovery):
+def _require_node_oidc(is_node_oidc_fixture: bool) -> None:
+    if not is_node_oidc_fixture:
         pytest.skip(
             "private_key_jwt fixture client only registered in node-oidc-provider"
         )
@@ -127,7 +106,7 @@ class TestPrivateKeyJwtLive:
 
     def test_client_credentials_with_private_key_jwt(
         self,
-        raw_discovery,
+        is_node_oidc_fixture,
         token_endpoint,
     ):
         """Token endpoint authenticates the client via a signed assertion.
@@ -135,7 +114,7 @@ class TestPrivateKeyJwtLive:
         No ``client_secret`` is supplied — the provider must accept solely on
         the strength of the verified ``client_assertion``.
         """
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
 
         response = request_client_credentials_token(
             ClientCredentialsTokenRequest(
@@ -155,7 +134,7 @@ class TestPrivateKeyJwtLive:
 
     def test_client_credentials_wrong_key_rejected(
         self,
-        raw_discovery,
+        is_node_oidc_fixture,
         token_endpoint,
     ):
         """A mismatched signing key is rejected — proves real verification.
@@ -163,7 +142,7 @@ class TestPrivateKeyJwtLive:
         A freshly generated key does not match the client's registered public
         JWK, so the assertion signature must fail verification at the provider.
         """
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
 
         wrong_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
@@ -188,10 +167,11 @@ class TestPrivateKeyJwtLive:
     def test_par_with_private_key_jwt(
         self,
         provider_capabilities,
+        is_node_oidc_fixture,
         raw_discovery,
     ):
         """PAR endpoint authenticates the client via a signed assertion."""
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
         if "par" not in provider_capabilities:
             pytest.skip("Provider does not support PAR")
 
@@ -220,7 +200,7 @@ class TestPrivateKeyJwtLive:
     def test_authorization_code_with_private_key_jwt(
         self,
         provider_capabilities,
-        raw_discovery,
+        is_node_oidc_fixture,
         discovery_document,
     ):
         """Full auth-code flow exchanges the code with a signed assertion.
@@ -228,7 +208,7 @@ class TestPrivateKeyJwtLive:
         Drives the devInteractions login/consent to obtain a code, then
         authenticates the token request with ``private_key_jwt`` (no secret).
         """
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
         if "dev_interactions" not in provider_capabilities:
             pytest.skip("Provider does not support automated auth code flow")
 
@@ -262,10 +242,10 @@ class TestPrivateKeyJwtLiveAsync:
 
     async def test_client_credentials_with_private_key_jwt(
         self,
-        raw_discovery,
+        is_node_oidc_fixture,
         token_endpoint,
     ):
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
 
         response = await async_request_client_credentials_token(
             ClientCredentialsTokenRequest(
@@ -285,10 +265,10 @@ class TestPrivateKeyJwtLiveAsync:
 
     async def test_client_credentials_wrong_key_rejected(
         self,
-        raw_discovery,
+        is_node_oidc_fixture,
         token_endpoint,
     ):
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
 
         wrong_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
