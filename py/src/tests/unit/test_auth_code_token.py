@@ -131,6 +131,7 @@ class TestAuthCodeTokenExchange:
             client_id="app1",
             code="auth_code_123",
             redirect_uri="https://app.com/cb",
+            code_verifier="verifier",
         )
         request_authorization_code_token(request)
 

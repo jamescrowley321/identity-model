@@ -94,6 +94,7 @@ ENDPOINTS = [
             client_id=CLIENT_ID,
             code="code",
             redirect_uri="https://rp.example.com/cb",
+            code_verifier="verifier",
             **kw,
         ),
         prepare_auth_code_token_request_data,

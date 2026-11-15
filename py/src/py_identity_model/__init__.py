@@ -40,6 +40,8 @@ from .exceptions import (
     LogoutStateValidationException,
     LogoutTokenValidationException,
     NetworkException,
+    ProtocolParameterError,
+    ProtocolParameterErrorReason,
     PyIdentityModelException,
     SignatureVerificationException,
     SuccessfulResponseAccessError,
@@ -306,6 +308,8 @@ __all__ = [
     "NetworkException",
     # Client authentication (private_key_jwt)
     "PrivateKeyJwt",
+    "ProtocolParameterError",
+    "ProtocolParameterErrorReason",
     # PAR
     "PushedAuthorizationRequest",
     "PushedAuthorizationResponse",
