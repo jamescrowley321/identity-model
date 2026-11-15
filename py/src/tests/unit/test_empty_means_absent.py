@@ -6,6 +6,7 @@ value, and a real value is unaffected. Also covers the relaxed ``key_ops`` /
 """
 
 import base64
+import dataclasses
 import json
 import time
 
@@ -89,6 +90,7 @@ class TestEmptyClientId:
                 trusted_audiences=[_CLIENT_ID],
                 validate_azp=True,
                 now=_NOW,
+                nonce=None,
             )
 
     def test_validate_azp_with_real_client_id_runs(self):
@@ -98,6 +100,7 @@ class TestEmptyClientId:
             client_id=_CLIENT_ID,
             validate_azp=True,
             now=_NOW,
+            nonce=None,
         )
 
     @pytest.mark.parametrize("client_id", ["", None], ids=["empty", "missing"])
@@ -109,6 +112,7 @@ class TestEmptyClientId:
                 client_id=client_id,
                 trusted_audiences=[_OTHER_AUD],
                 now=_NOW,
+                nonce=None,
             )
         assert exc_info.value.details == {"untrusted_audiences": [""]}
 
@@ -119,6 +123,7 @@ class TestEmptyClientId:
             client_id=_CLIENT_ID,
             trusted_audiences=[_OTHER_AUD],
             now=_NOW,
+            nonce=None,
         )
 
     def test_empty_audience_listed_in_trusted_audiences_is_trusted(self):
@@ -129,6 +134,7 @@ class TestEmptyClientId:
             client_id=None,
             trusted_audiences=[_OTHER_AUD, ""],
             now=_NOW,
+            nonce=None,
         )
 
     @respx.mock
@@ -264,9 +270,8 @@ class TestEmptyUse:
         assert key == JsonWebKey(kty="RSA", n="example_n", e="AQAB", use=expected_use)
         assert is_signing_key(key) is signing
 
-    def test_use_set_empty_after_construction_is_still_signing(self):
-        key = jwks_from_dict(_RSA)
-        key.use = ""
+    def test_use_replaced_with_empty_is_still_signing(self):
+        key = dataclasses.replace(jwks_from_dict(_RSA), use="")
         assert is_signing_key(key) is True
 
     @respx.mock

@@ -31,6 +31,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -42,7 +43,7 @@ class TestAsyncUserInfo:
 
     @respx.mock
     async def test_async_get_userinfo_jwt_response(self):
-        """Test async UserInfo request with JWT response."""
+        """A JWT response cannot be checked against the ID token sub."""
         url = "https://example.com/userinfo"
         jwt_string = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyNDgyODk3NjEwMDEifQ.signature"
         respx.get(url).mock(
@@ -56,12 +57,13 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
-        assert result.is_successful is True
-        assert result.raw == jwt_string
-        assert result.claims is None
+        assert result.is_successful is False
+        assert result.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert result.unverified_jwt == jwt_string
 
     @respx.mock
     async def test_async_get_userinfo_http_error(self):
@@ -72,6 +74,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="expired_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -90,6 +93,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -145,10 +149,10 @@ class TestAsyncUserInfoSubValidation:
         result = await get_userinfo(request)
 
         assert result.is_successful is False
-        assert result.error is not None
-        assert "sub mismatch" in result.error
-        assert "user-123" in result.error
-        assert "user-999" in result.error
+        assert (
+            result.error == "UserInfo sub mismatch: expected 'user-123', got 'user-999'"
+        )
+        assert result.error_kind is UserInfoErrorKind.SUB_MISMATCH
 
     @respx.mock
     async def test_sub_validation_missing_sub(self):
@@ -185,8 +189,8 @@ class TestAsyncUserInfoSubValidation:
         ids=["absent", "empty", "non-string", "null", "non-object"],
     )
     @respx.mock
-    async def test_missing_sub_rejected_without_expected_sub(self, body):
-        """A response with no usable sub is rejected even without expected_sub.
+    async def test_missing_sub_rejected(self, body):
+        """A response with no usable sub is rejected.
 
         OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
         """
@@ -199,34 +203,12 @@ class TestAsyncUserInfoSubValidation:
             )
         )
 
-        request = UserInfoRequest(address=url, token="tok")
+        request = UserInfoRequest(address=url, token="tok", expected_sub="user-123")
         result = await get_userinfo(request)
 
         assert result.is_successful is False
         assert result.error == "UserInfo response is missing required 'sub' claim"
         assert result.error_kind is UserInfoErrorKind.MISSING_SUB
-
-    @respx.mock
-    async def test_sub_validation_not_requested(self):
-        """No expected_sub skips validation entirely."""
-        url = "https://example.com/userinfo"
-        respx.get(url).mock(
-            return_value=httpx.Response(
-                200,
-                json={"sub": "user-123", "name": "Test"},
-                headers={"Content-Type": "application/json"},
-            )
-        )
-
-        request = UserInfoRequest(
-            address=url,
-            token="tok",
-        )
-        result = await get_userinfo(request)
-
-        assert result.is_successful is True
-        assert result.claims is not None
-        assert result.claims["sub"] == "user-123"
 
     @respx.mock
     async def test_sub_validation_jwt_response(self):
@@ -255,6 +237,7 @@ class TestAsyncUserInfoSubValidation:
         assert result.is_successful is False
         assert result.error == (
             "UserInfo sub cannot be verified: the response is a signed or encrypted "
-            "JWT (application/jwt). Verify and decode it, then compare its sub, "
-            "or omit expected_sub."
+            "JWT (application/jwt)"
         )
+        assert result.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert result.unverified_jwt == jwt_string

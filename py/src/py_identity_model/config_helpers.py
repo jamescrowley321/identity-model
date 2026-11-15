@@ -207,7 +207,7 @@ def _build[C: (HTTPConfig, CacheConfig)](
     # Report under the key the caller wrote, in the config's field order.
     raise ConfigError(
         [
-            ConfigIssue(key_for[s.field], problems[s.field])
+            ConfigIssue(setting=key_for[s.field], message=problems[s.field])
             for s in settings
             if s.field in problems
         ]

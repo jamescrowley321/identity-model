@@ -141,7 +141,7 @@ class AuthorizationScheme(enum.Enum):
     """RFC 9449 §7.1."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class TokenPresentation:
     """How an access token was presented on one request.
 

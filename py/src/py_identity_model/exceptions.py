@@ -202,6 +202,30 @@ class UntrustedAudienceException(IdTokenValidationException):
         )
 
 
+class IdTokenRequiredClaim(Enum):
+    """An ID Token claim OpenID Connect Core 1.0 §2 marks REQUIRED and that
+    standard JWT validation does not itself require."""
+
+    EXP = "exp"
+    """Expiration time (§2; checked in §3.1.3.7 step 9)."""
+    IAT = "iat"
+    """Issued-at time (§2)."""
+
+
+class IdTokenMissingClaimError(IdTokenValidationException):
+    """Raised when an ID Token lacks a claim OpenID Connect Core 1.0 §2 marks
+    REQUIRED. ``claim`` says which one; ``details["claim"]`` carries its name.
+    """
+
+    def __init__(self, claim: IdTokenRequiredClaim) -> None:
+        self.claim = claim
+        super().__init__(
+            f"ID token missing required '{claim.value}' claim",
+            token_part="payload",
+            details={"claim": claim.value},
+        )
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.
@@ -507,6 +531,56 @@ class RequestObjectError(ConfigurationException):
         super().__init__(_REQUEST_OBJECT_MESSAGES[kind], details={"kind": kind.value})
 
 
+class ProtocolParameterErrorReason(Enum):
+    """Which OAuth request-parameter MUST a request breaks."""
+
+    NOT_ABSOLUTE_URI = "not_absolute_uri"
+    """A ``redirect_uri`` or ``resource`` has no scheme (RFC 6749 §3.1.2,
+    RFC 8707 §2)."""
+
+    URI_HAS_FRAGMENT = "uri_has_fragment"
+    """A ``redirect_uri`` or ``resource`` has a fragment component (RFC 6749
+    §3.1.2, RFC 8707 §2)."""
+
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """A client update's ``extra_metadata`` names a ``client_id`` other than
+    the client's own (RFC 7592 §2.2)."""
+
+    PKCE_REQUIRED = "pkce_required"
+    """A public client redeems an authorization code without a
+    ``code_verifier`` (RFC 9700 §2.1.1)."""
+
+
+class ProtocolParameterError(ConfigurationException):
+    """A request parameter breaks a protocol MUST.
+
+    Raised before any request is sent.
+
+    Attributes:
+        reason: Which rule was broken.
+        parameter: The request parameter involved.
+    """
+
+    def __init__(self, reason: ProtocolParameterErrorReason, parameter: str) -> None:
+        self.reason = reason
+        self.parameter = parameter
+        messages = {
+            ProtocolParameterErrorReason.NOT_ABSOLUTE_URI: (
+                f"{parameter} must be an absolute URI"
+            ),
+            ProtocolParameterErrorReason.URI_HAS_FRAGMENT: (
+                f"{parameter} must not include a fragment component"
+            ),
+            ProtocolParameterErrorReason.CLIENT_ID_MISMATCH: (
+                f"{parameter} client_id must equal the request's client_id"
+            ),
+            ProtocolParameterErrorReason.PKCE_REQUIRED: (
+                f"a public client must send a {parameter} (PKCE)"
+            ),
+        }
+        super().__init__(messages[reason])
+
+
 class FailedResponseAccessError(PyIdentityModelException):
     """Raised when accessing data fields on a failed response."""
 
@@ -556,6 +630,8 @@ __all__ = [
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",
+    "ProtocolParameterError",
+    "ProtocolParameterErrorReason",
     "PyIdentityModelException",
     "RequestObjectError",
     "RequestObjectErrorKind",

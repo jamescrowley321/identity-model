@@ -23,7 +23,10 @@ from fastapi_identity_model import (
 )
 from py_identity_model import (
     AuthorizeCallbackException,
+    ConfigurationException,
+    NetworkException,
     TokenValidationException,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from py_identity_model.aio import validate_id_token as avalidate_id_token
@@ -45,6 +48,7 @@ _DISCO = SimpleNamespace(
     token_endpoint="https://op/token",
     userinfo_endpoint="https://op/userinfo",
     issuer="https://op",
+    authorization_response_iss_parameter_supported=None,
 )
 
 
@@ -59,7 +63,7 @@ def _patch(monkeypatch, *, disco=_DISCO, token=None, claims=None, userinfo=None)
                 error=None,
                 token=token
                 if token is not None
-                else {"id_token": "idt", "access_token": "at"},
+                else {"id_token": "idt", "access_token": "at", "token_type": "Bearer"},
             )
         ),
     )
@@ -145,7 +149,12 @@ async def test_store_tokens_persists_tokens(monkeypatch):
         rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
         await client.get(f"/auth/callback?code=abc&state={state}")
         me = (await client.get("/me")).json()
-    assert me["tokens"]["access_token"] == "at"
+    assert me["tokens"] == {
+        "access_token": "at",
+        "token_type": "Bearer",
+        "refresh_token": None,
+        "id_token": "idt",
+    }
 
 
 async def test_form_post_callback_full_login_flow(monkeypatch):
@@ -333,16 +342,6 @@ async def test_callback_provider_error_detail_is_generic(monkeypatch, caplog):
     assert secret not in caplog.text
 
 
-async def test_callback_nonce_mismatch(monkeypatch):
-    _patch(monkeypatch)
-    async with _client(_app()) as client:
-        state, _ = await _login(client)
-        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": "attacker-nonce"}
-        resp = await client.get(f"/auth/callback?code=abc&state={state}")
-    assert resp.status_code == 401
-    assert "Nonce mismatch" in resp.json()["detail"]
-
-
 async def test_callback_userinfo_failure_is_tolerated(monkeypatch):
     # An unavailable/failed UserInfo fetch is tolerated: identity comes from
     # the validated ID token, so login still completes with empty userinfo.
@@ -371,6 +370,43 @@ async def test_callback_userinfo_sub_mismatch_aborts(monkeypatch):
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 401
     assert "subject" in resp.json()["detail"].lower()
+
+
+async def test_callback_userinfo_sub_mismatch_kind_aborts(monkeypatch):
+    # get_userinfo enforces the expected_sub the RP passes; its SUB_MISMATCH
+    # failure must fail the login, not be tolerated as a transient error.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub mismatch: expected 'user-1', got 'someone-else'",
+            error_kind=UserInfoErrorKind.SUB_MISMATCH,
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
+    [call] = rp.get_userinfo.call_args_list
+    assert call.args[0].expected_sub == "user-1"
+
+
+async def test_callback_signed_userinfo_aborts(monkeypatch):
+    # The RP cannot verify a signed UserInfo response, so its sub is unchecked:
+    # the login fails closed, as it did in 4.x.
+    _patch(monkeypatch)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        rp.get_userinfo.return_value = UserInfoResponse(
+            is_successful=False,
+            error="UserInfo sub cannot be verified",
+            error_kind=UserInfoErrorKind.UNVERIFIABLE_SUB,
+            unverified_jwt="header.payload.sig",
+        )
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "UserInfo subject does not match ID token subject"}
 
 
 async def test_callback_userinfo_missing_sub_aborts(monkeypatch):
@@ -446,7 +482,7 @@ def _composed_app(excluded_paths) -> FastAPI:
     app.add_middleware(
         TokenValidationMiddleware,
         discovery_url=SETTINGS.discovery_url,
-        audience=SETTINGS.audience,
+        audience=SETTINGS.expected_audience,
         excluded_paths=excluded_paths,
     )
 
@@ -550,15 +586,18 @@ def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> 
     return pyjwt.encode(claims, key, algorithm="RS256")
 
 
-async def _callback(settings: OIDCSettings, key, **token_claims) -> httpx.Response:
+async def _callback(
+    settings: OIDCSettings, key, token_nonce: str | None = None, **token_claims
+) -> httpx.Response:
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
     app.include_router(build_oidc_router(settings), prefix="/auth")
     async with _client(app) as client:
         state, nonce = await _login(client)
         rp.request_authorization_code_token.return_value.token = {
-            "id_token": _id_token(key, nonce, **token_claims),
+            "id_token": _id_token(key, token_nonce or nonce, **token_claims),
             "access_token": "at",
+            "token_type": "Bearer",
         }
         return await client.get(f"/auth/callback?code=abc&state={state}")
 
@@ -576,6 +615,16 @@ class TestLoginCallbackAudiences:
         settings = replace(SETTINGS, trusted_audiences=["urn:api"])
         resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
         assert (resp.status_code, resp.headers["location"]) == (302, "/")
+
+    async def test_nonce_mismatch_fails_login(self, id_token_key):
+        # validate_id_token binds the nonce sent on /auth/login (§3.1.3.7 step 11).
+        resp = await _callback(
+            SETTINGS, id_token_key, token_nonce="attacker-nonce", aud="cid"
+        )
+        assert (resp.status_code, resp.json()) == (
+            401,
+            {"detail": "ID token validation failed"},
+        )
 
     async def test_single_audience_logs_in(self, id_token_key):
         resp = await _callback(SETTINGS, id_token_key, aud="cid")
@@ -603,3 +652,127 @@ class TestLoginCallbackAudiences:
             settings, id_token_key, aud=["cid", "urn:api"], azp="cid"
         )
         assert resp.status_code == 302
+
+
+# --- RFC 9207 authorization response issuer ----------------------------------
+
+_ISS_ADVERTISED = SimpleNamespace(
+    **{**vars(_DISCO), "authorization_response_iss_parameter_supported": True}
+)
+_ISS_REJECTED = (400, {"detail": "Authorization response issuer mismatch"})
+
+
+@pytest.mark.parametrize(
+    ("disco", "iss_param"),
+    [
+        pytest.param(_ISS_ADVERTISED, "", id="advertised-and-missing"),
+        pytest.param(_ISS_ADVERTISED, "&iss=https%3A%2F%2Fevil", id="advertised-wrong"),
+        pytest.param(_DISCO, "&iss=https%3A%2F%2Fevil", id="not-advertised-wrong"),
+        pytest.param(_DISCO, "&iss=https%3A%2F%2Fop%2F", id="trailing-slash"),
+    ],
+)
+async def test_callback_rejects_issuer(monkeypatch, disco, iss_param):
+    _patch(monkeypatch, disco=disco)
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        resp = await client.get(f"/auth/callback?code=abc&state={state}{iss_param}")
+        me = (await client.get("/me")).json()
+    assert (resp.status_code, resp.json(), me) == (*_ISS_REJECTED, {})
+    rp.request_authorization_code_token.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("disco", "iss_param"),
+    [
+        pytest.param(_ISS_ADVERTISED, "&iss=https%3A%2F%2Fop", id="advertised-match"),
+        pytest.param(_DISCO, "&iss=https%3A%2F%2Fop", id="not-advertised-match"),
+        pytest.param(_DISCO, "", id="not-advertised-absent"),
+        pytest.param(
+            SimpleNamespace(
+                **{
+                    **vars(_DISCO),
+                    "authorization_response_iss_parameter_supported": "false",
+                }
+            ),
+            "",
+            id="non-bool-flag-is-not-advertised",
+        ),
+    ],
+)
+async def test_callback_accepts_issuer(monkeypatch, disco, iss_param):
+    _patch(monkeypatch, disco=disco)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        resp = await client.get(f"/auth/callback?code=abc&state={state}{iss_param}")
+        me = (await client.get("/me")).json()
+    assert (resp.status_code, me["sub"]) == (302, "user-1")
+
+
+# --- RFC 6749 §7.1 token_type ------------------------------------------------
+
+
+@pytest.mark.parametrize("token_type", ["bearer", "BEARER"])
+async def test_userinfo_fetched_for_any_case_of_bearer(monkeypatch, token_type):
+    _patch(
+        monkeypatch,
+        token={"id_token": "idt", "access_token": "at", "token_type": token_type},
+    )
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        await client.get(f"/auth/callback?code=abc&state={state}")
+        me = (await client.get("/me")).json()
+    assert me["userinfo"] == {"sub": "user-1", "email": "u@e"}
+    assert rp.get_userinfo.await_args.args[0].token == "at"
+
+
+@pytest.mark.parametrize("token_type", ["DPoP", "mac", None])
+async def test_userinfo_skipped_for_a_non_bearer_token(monkeypatch, token_type):
+    token = {"id_token": "idt", "access_token": "at"}
+    if token_type is not None:
+        token["token_type"] = token_type
+    _patch(monkeypatch, token=token)
+    async with _client(_app()) as client:
+        state, nonce = await _login(client)
+        rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+        me = (await client.get("/me")).json()
+    assert (resp.status_code, me["sub"], me["userinfo"]) == (302, "user-1", {})
+    rp.get_userinfo.assert_not_awaited()
+
+
+# --- ID token validation error mapping ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        NetworkException("JWKS fetch failed"),
+        TokenValidationException("Network error during JWKS request: timed out"),
+        TokenValidationException("Network error during discovery: timed out"),
+    ],
+)
+async def test_provider_outage_during_id_token_validation_is_502(monkeypatch, error):
+    _patch(monkeypatch)
+    rp.validate_id_token.side_effect = error
+    async with _client(_app()) as client:
+        state, _ = await _login(client)
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert (resp.status_code, resp.json()) == (
+        502,
+        {"detail": "Identity provider unavailable"},
+    )
+
+
+async def test_configuration_error_during_id_token_validation_is_500(monkeypatch):
+    _patch(monkeypatch)
+    rp.validate_id_token.side_effect = ConfigurationException("bad config")
+    app = _app()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://testserver",
+    ) as client:
+        state, _ = await _login(client)
+        resp = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert resp.status_code == 500

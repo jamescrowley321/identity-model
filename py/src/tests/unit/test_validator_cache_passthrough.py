@@ -36,30 +36,34 @@ def _passed(mock: Mock) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("module", "name"),
+    ("module", "name", "extra"),
     [
-        pytest.param(sync_logout, "validate_logout_token", id="logout"),
-        pytest.param(sync_id_token, "validate_id_token", id="id-token"),
+        pytest.param(sync_logout, "validate_logout_token", {}, id="logout"),
+        pytest.param(
+            sync_id_token, "validate_id_token", {"nonce": None}, id="id-token"
+        ),
     ],
 )
-def test_sync_validators_pass_the_cache(monkeypatch, module, name):
+def test_sync_validators_pass_the_cache(monkeypatch, module, name, extra):
     stand_in = Mock(side_effect=_Stop)
     monkeypatch.setattr(module, "_validate_jwt_without_binding", stand_in)
     validator = getattr(module, name)
     cache = ValidationCache()
     with HTTPClient() as client, pytest.raises(_Stop):
-        validator(TOKEN, VALIDATION, DISCO_URL, http_client=client, cache=cache)
+        validator(
+            TOKEN, VALIDATION, DISCO_URL, http_client=client, cache=cache, **extra
+        )
     assert _passed(stand_in) == {"http_client": client, "cache": cache}
 
 
 @pytest.mark.parametrize(
-    ("module", "name"),
+    ("module", "name", "extra"),
     [
-        pytest.param(aio_logout, "validate_logout_token", id="logout"),
-        pytest.param(aio_id_token, "validate_id_token", id="id-token"),
+        pytest.param(aio_logout, "validate_logout_token", {}, id="logout"),
+        pytest.param(aio_id_token, "validate_id_token", {"nonce": None}, id="id-token"),
     ],
 )
-async def test_async_validators_pass_the_cache(monkeypatch, module, name):
+async def test_async_validators_pass_the_cache(monkeypatch, module, name, extra):
     stand_in = AsyncMock(side_effect=_Stop)
     monkeypatch.setattr(module, "_validate_jwt_without_binding", stand_in)
     validator = getattr(module, name)
@@ -67,22 +71,24 @@ async def test_async_validators_pass_the_cache(monkeypatch, module, name):
     async with AsyncHTTPClient() as client:
         with pytest.raises(_Stop):
             await validator(
-                TOKEN, VALIDATION, DISCO_URL, http_client=client, cache=cache
+                TOKEN, VALIDATION, DISCO_URL, http_client=client, cache=cache, **extra
             )
     assert _passed(stand_in) == {"http_client": client, "cache": cache}
 
 
 @pytest.mark.parametrize(
-    ("module", "name"),
+    ("module", "name", "extra"),
     [
-        pytest.param(sync_logout, "validate_logout_token", id="logout"),
-        pytest.param(sync_id_token, "validate_id_token", id="id-token"),
+        pytest.param(sync_logout, "validate_logout_token", {}, id="logout"),
+        pytest.param(
+            sync_id_token, "validate_id_token", {"nonce": None}, id="id-token"
+        ),
     ],
 )
-def test_sync_validators_default_to_no_cache(monkeypatch, module, name):
+def test_sync_validators_default_to_no_cache(monkeypatch, module, name, extra):
     stand_in = Mock(side_effect=_Stop)
     monkeypatch.setattr(module, "_validate_jwt_without_binding", stand_in)
     validator = getattr(module, name)
     with pytest.raises(_Stop):
-        validator(TOKEN, VALIDATION, DISCO_URL)
+        validator(TOKEN, VALIDATION, DISCO_URL, **extra)
     assert _passed(stand_in) == {"http_client": None, "cache": None}

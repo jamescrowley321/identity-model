@@ -23,6 +23,7 @@ from .test_fapi_profile import (
     DPOP_KEY,
     ED448_PEM,
     ISSUER,
+    TOKEN_ENDPOINT,
     _discovery,
     _mtls,
     _par,
@@ -100,7 +101,9 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
     ),
     FAPIViolationCode.ASSERTION_AUDIENCE_NOT_ISSUER: lambda: (
         validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(), dpop_key=DPOP_KEY
+            issuer=ISSUER,
+            private_key_jwt=_pkj(issuer=TOKEN_ENDPOINT),
+            dpop_key=DPOP_KEY,
         ).codes
     ),
     FAPIViolationCode.REQUEST_OBJECT_LIFETIME_INVALID: lambda: _refused(

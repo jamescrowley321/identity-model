@@ -35,7 +35,7 @@ app = FastAPI()
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
-    audience=settings.audience,
+    audience=settings.expected_audience,
     excluded_paths=settings.excluded_paths,
 )
 
@@ -140,7 +140,8 @@ settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, .
 `TRUSTED_AUDIENCES` are comma-separated lists; an empty `TRUSTED_AUDIENCES`
 entry raises `ValueError`. `VALIDATE_AZP` is `true` or `false`. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
 `SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
-to the `OIDCSettings` default when unset.
+to the `OIDCSettings` default when unset. `AUDIENCE` sets `audience_override`;
+read the audience to check from `settings.expected_audience`.
 
 HTTP settings belong to a `py-identity-model` `HTTPConfig`, and cache settings
 to a `CacheConfig`. Build an `AsyncHTTPClient` from the first (timeouts,
@@ -164,7 +165,7 @@ cache = AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))
 app.add_middleware(
     TokenValidationMiddleware,
     discovery_url=settings.discovery_url,
-    audience=settings.audience,
+    audience=settings.expected_audience,
     http_client=http_client,
     cache=cache,
 )
@@ -180,9 +181,19 @@ lifespan). A cache holds no connections and needs no closing.
 from fastapi_identity_model import TokenManager
 
 tm = TokenManager(discovery_url=..., client_id=..., client_secret=...)
-tm.set_tokens(access_token=..., refresh_token=..., expires_in=3600)
+tm.set_tokens(
+    access_token=..., refresh_token=..., expires_in=3600, token_type="Bearer"
+)
 access = await tm.get_access_token()   # auto-refreshes shortly before expiry
+headers = {"Authorization": f"{tm.token_type.value} {access}"}
 ```
+
+`token_type` is the token response's `token_type`, matched case-insensitively.
+Anything but `Bearer` or `DPoP` raises `TokenManagerError` with
+`kind=TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE`. Every failure is a
+`TokenManagerError` whose `kind` says why: `NO_REFRESH_TOKEN`,
+`DISCOVERY_FAILED`, `REFRESH_FAILED`, `MISSING_ACCESS_TOKEN` or
+`UNSUPPORTED_TOKEN_TYPE`.
 
 ## License
 

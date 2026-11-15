@@ -13,6 +13,7 @@ is caught (Epic 19 mutation gate).
 import base64
 import json
 import logging
+from typing import Any
 
 import pytest
 
@@ -238,3 +239,96 @@ class TestDeprecatedGetPublicKeyFromJwkAmbiguous:
         )
         assert exc.value.token_part == "header"
         assert exc.value.details == {"available_kids": ["a", "b"], "key_count": 3}
+
+
+# --- Shared ``kid`` (RFC 7517 §4.5: keys of different kty may share a kid) ---
+
+
+def _okp(kid, alg="EdDSA"):
+    return JsonWebKey(kty="OKP", kid=kid, alg=alg, use="sig", crv="Ed25519", x="o")
+
+
+def _ec_on(crv, alg=None):
+    return JsonWebKey(kty="EC", kid="shared", alg=alg, use="sig", crv=crv, x="x", y="y")
+
+
+def test_shared_kid_skips_key_of_other_type():
+    ec = _ec_on("P-256")
+
+    assert find_key_by_kid("shared", [_okp("shared"), ec], jwt_alg="ES256") == (
+        ec.as_dict(),
+        "ES256",
+    )
+
+
+def test_shared_kid_skips_key_declaring_other_alg():
+    es256 = _ec_on("P-256", alg="ES256")
+
+    assert find_key_by_kid(
+        "shared", [_ec_on("P-384", alg="ES384"), es256], jwt_alg="ES256"
+    ) == (es256.as_dict(), "ES256")
+
+
+def test_shared_kid_skips_key_on_other_curve():
+    p256 = _ec_on("P-256")
+
+    assert find_key_by_kid("shared", [_ec_on("P-384"), p256], jwt_alg="ES256") == (
+        p256.as_dict(),
+        "ES256",
+    )
+
+
+def test_shared_kid_treats_empty_alg_as_absent():
+    rsa = JsonWebKey(kty="RSA", kid="shared", alg="", use="sig", n="n", e="e")
+    ec = _ec_on("P-256", alg="")
+
+    assert find_key_by_kid("shared", [rsa, ec], jwt_alg="ES256") == (
+        ec.as_dict(),
+        "ES256",
+    )
+
+
+def test_shared_kid_keeps_first_key_of_fitting_type():
+    first = _ec_on("P-256")
+    second = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-256", x="a", y="b")
+
+    assert find_key_by_kid("shared", [first, second], jwt_alg="ES256") == (
+        first.as_dict(),
+        "ES256",
+    )
+
+
+def test_shared_kid_without_header_alg_uses_first_key():
+    first = _ec_on("P-256", alg="ES256")
+
+    assert find_key_by_kid("shared", [first, _rsa(kid="shared")], jwt_alg=None) == (
+        first.as_dict(),
+        "ES256",
+    )
+
+
+def test_shared_kid_without_fitting_key_reports_first_key():
+    with pytest.raises(TokenValidationException) as excinfo:
+        find_key_by_kid("shared", [_okp("shared"), _rsa(kid="shared")], jwt_alg="ES256")
+
+    assert excinfo.value.message == (
+        "Key type 'OKP' is incompatible with algorithm 'ES256' (expected key type 'EC')"
+    )
+
+
+def test_shared_kid_non_string_alg_is_typed_error():
+    list_alg: Any = ["ES256"]
+
+    with pytest.raises(TokenValidationException) as excinfo:
+        find_key_by_kid("shared", [_okp("shared"), _ec_on("P-256")], jwt_alg=list_alg)
+
+    assert excinfo.value.message == "Invalid 'alg' header: expected a string"
+
+
+def test_shared_kid_selects_okp_key_for_eddsa():
+    okp = _okp("shared", alg=None)
+
+    assert find_key_by_kid("shared", [_rsa(kid="shared"), okp], jwt_alg="EdDSA") == (
+        okp.as_dict(),
+        "EdDSA",
+    )
