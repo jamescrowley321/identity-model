@@ -50,6 +50,8 @@ def test_logout_always_sends_a_state(monkeypatch):
         "_last_logout_context",
         {"end_session_endpoint": END_SESSION, "id_token": "", "client_id": "c"},
     )
+    # /logout writes this global; patching it restores the value afterwards.
+    monkeypatch.setattr(harness_app, "_expected_logout_state", None)
     client = TestClient(harness_app.app, follow_redirects=False)
 
     response = client.get("/logout", params={"send_state": "false"})
