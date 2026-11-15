@@ -1,5 +1,7 @@
 """Unit tests for JWT Secured Authorization Request (JAR, RFC 9101)."""
 
+import base64
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -12,16 +14,23 @@ from cryptography.hazmat.primitives.serialization import (
 import jwt as pyjwt
 import pytest
 
-from py_identity_model import generate_pkce_pair
+from py_identity_model import (
+    RequestObjectError,
+    RequestObjectErrorKind,
+    WeakSigningKeyError,
+    generate_pkce_pair,
+)
 from py_identity_model.core.jar import (
     build_jar_authorization_url,
     create_request_object,
 )
+from py_identity_model.core.key_strength import MIN_RSA_KEY_BITS
 
 
 # Expected JAR token values
 JAR_LIFETIME_SECONDS = 600
 UUID_STRING_LENGTH = 36
+WEAK_RSA_BITS = MIN_RSA_KEY_BITS - 1
 
 
 def _ec_private_key_pem() -> bytes:
@@ -442,59 +451,176 @@ class TestCreateRequestObject:
 
 @pytest.mark.unit
 class TestBuildJARAuthorizationUrl:
+    @staticmethod
+    def _ro(client_id: str) -> str:
+        return create_request_object(
+            private_key=_ec_private_key_pem(),
+            algorithm="ES256",
+            client_id=client_id,
+            audience="https://auth.example.com",
+            redirect_uri="https://app.example.com/callback",
+        )
+
     def test_basic_url(self):
+        ro = self._ro("my-app")
         url = build_jar_authorization_url(
             authorization_endpoint=AUTH_ENDPOINT,
             client_id="my-app",
-            request_object="eyJ...",
+            request_object=ro,
         )
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
         assert params["client_id"] == ["my-app"]
-        assert params["request"] == ["eyJ..."]
+        assert params["request"] == [ro]
         assert "scope" not in params
         assert "response_type" not in params
 
     def test_with_duplicated_params(self):
+        ro = self._ro("my-app")
         url = build_jar_authorization_url(
             authorization_endpoint=AUTH_ENDPOINT,
             client_id="my-app",
-            request_object="eyJ...",
+            request_object=ro,
             scope="openid",
             response_type="code",
         )
         parsed = urlparse(url)
         params = parse_qs(parsed.query)
         assert params["client_id"] == ["my-app"]
-        assert params["request"] == ["eyJ..."]
+        assert params["request"] == [ro]
         assert params["scope"] == ["openid"]
         assert params["response_type"] == ["code"]
 
     def test_endpoint_with_existing_query(self):
+        ro = self._ro("my-app")
         url = build_jar_authorization_url(
             authorization_endpoint=AUTH_ENDPOINT + "?foo=bar",
             client_id="my-app",
-            request_object="eyJ...",
+            request_object=ro,
         )
         assert "?foo=bar&client_id=" in url
 
     def test_endpoint_with_fragment_containing_question_mark(self):
         """URL separator uses urlparse, not naive '?' string check."""
+        ro = self._ro("app")
         url = build_jar_authorization_url(
             authorization_endpoint="https://auth.example.com/authorize#section?ref",
             client_id="app",
-            request_object="jwt",
+            request_object=ro,
         )
         # Should use '?' since there's no query string, only a fragment
         assert "authorize#section?ref?client_id=" in url
 
     def test_url_starts_with_endpoint(self):
+        ro = self._ro("app")
         url = build_jar_authorization_url(
             authorization_endpoint=AUTH_ENDPOINT,
             client_id="app",
-            request_object="jwt",
+            request_object=ro,
         )
         assert url.startswith(AUTH_ENDPOINT + "?")
+
+
+@pytest.mark.unit
+class TestJARClientIdBinding:
+    """RFC 9101 §5: the query client_id must match the request object's."""
+
+    def test_mismatched_client_id_rejected(self):
+        request_object = TestBuildJARAuthorizationUrl._ro("c1")
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "OTHER", request_object)
+        assert exc_info.value.kind is RequestObjectErrorKind.CLIENT_ID_MISMATCH
+
+    def test_request_object_without_client_id_rejected(self):
+        request_object = pyjwt.encode(
+            {"iss": "c1"}, _ec_private_key_pem(), algorithm="ES256"
+        )
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", request_object)
+        assert exc_info.value.kind is RequestObjectErrorKind.CLIENT_ID_MISMATCH
+
+    def test_non_jwt_rejected(self):
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", "not-a-jwt")
+        assert exc_info.value.kind is RequestObjectErrorKind.NOT_A_JWT
+
+    def test_non_string_rejected(self):
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", cast("str", b"a.b.c"))
+        assert exc_info.value.kind is RequestObjectErrorKind.NOT_A_JWT
+
+    def test_deeply_nested_payload_rejected(self):
+        payload = base64.urlsafe_b64encode(b"[" * 100_000).rstrip(b"=").decode()
+        request_object = f"eyJhbGciOiJub25lIn0.{payload}.sig"
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", request_object)
+        assert exc_info.value.kind is RequestObjectErrorKind.NOT_A_JWT
+
+    def test_encrypted_request_object_rejected(self):
+        with pytest.raises(RequestObjectError) as exc_info:
+            build_jar_authorization_url(AUTH_ENDPOINT, "c1", "a.b.c.d.e")
+        assert exc_info.value.kind is RequestObjectErrorKind.ENCRYPTED
+
+    def test_matching_client_id_accepted(self):
+        request_object = TestBuildJARAuthorizationUrl._ro("c1")
+        url = build_jar_authorization_url(AUTH_ENDPOINT, "c1", request_object)
+        assert parse_qs(urlparse(url).query) == {
+            "client_id": ["c1"],
+            "request": [request_object],
+        }
+
+
+@pytest.mark.unit
+class TestJARForbiddenClaims:
+    """RFC 9101 §4: request and request_uri are never inside a request object."""
+
+    @pytest.mark.parametrize("claim", ["request", "request_uri"])
+    def test_forbidden_claim_rejected(self, claim):
+        extra_claims: dict[str, Any] = {claim: "urn:example:x"}
+        with pytest.raises(RequestObjectError) as exc_info:
+            create_request_object(
+                private_key=_ec_private_key_pem(),
+                algorithm="ES256",
+                client_id="c1",
+                audience="https://auth.example.com",
+                redirect_uri="https://app.example.com/callback",
+                **extra_claims,
+            )
+        assert exc_info.value.kind is RequestObjectErrorKind.FORBIDDEN_CLAIM
+        assert exc_info.value.details == {"kind": "forbidden_claim"}
+
+
+@pytest.mark.unit
+class TestJARSigningKeyStrength:
+    """RFC 7518 §3.3 / §3.5: RSA signing keys of at least 2048 bits."""
+
+    @pytest.mark.parametrize("algorithm", ["RS256", "PS256"])
+    def test_rsa_under_2048_refused(self, algorithm):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=WEAK_RSA_BITS)
+        pem = key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        with pytest.raises(WeakSigningKeyError) as exc_info:
+            create_request_object(
+                private_key=pem,
+                algorithm=algorithm,
+                client_id="c1",
+                audience="https://auth.example.com",
+                redirect_uri="https://app.example.com/callback",
+            )
+        assert exc_info.value.details == {
+            "kty": "RSA",
+            "bits": WEAK_RSA_BITS,
+            "min_bits": MIN_RSA_KEY_BITS,
+        }
+
+    def test_rsa_2048_signs(self):
+        request_object = create_request_object(
+            private_key=_rsa_private_key_pem(),
+            algorithm="PS256",
+            client_id="c1",
+            audience="https://auth.example.com",
+            redirect_uri="https://app.example.com/callback",
+        )
+        assert pyjwt.get_unverified_header(request_object)["alg"] == "PS256"
 
 
 def _ec_key_pair() -> tuple[bytes, bytes]:

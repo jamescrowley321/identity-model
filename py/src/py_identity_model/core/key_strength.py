@@ -1,5 +1,5 @@
 """
-Minimum strength for token verification keys.
+Minimum strength for verification and signing keys.
 
 RFC 7518 §3.3 (RS*) and §3.5 (PS*) require an RSA key of 2048 bits or larger,
 FAPI 2.0 Security Profile §5.4.1 requires at least 224 bits for elliptic
@@ -7,16 +7,21 @@ curve keys, and RFC 7518 §3.2 requires an HMAC key at least as long as the
 hash output (256, 384 or 512 bits for HS256, HS384 or HS512). The floor is checked on the JWK selected to verify a token, before
 it is converted to a crypto key, so the same rule applies in Python, Go and
 Rust whichever curves the crypto backend knows (``spec/vectors/validation.json``
-JWT-014).
+JWT-014). The same floor is checked on a private key before the library signs
+with it (request objects, client assertions).
 """
 
 from __future__ import annotations
 
 import binascii
 
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import get_default_algorithms
+from jwt.exceptions import PyJWTError
 from jwt.utils import base64url_decode
 
-from ..exceptions import WeakKeyException
+from ..exceptions import WeakKeyException, WeakSigningKeyError
 
 
 MIN_RSA_KEY_BITS = 2048
@@ -107,9 +112,49 @@ def enforce_key_strength(jwk: dict, alg: str | None = None) -> None:
         )
 
 
+def load_signing_key(private_key: object, algorithm: str) -> object | None:
+    """Return the key PyJWT signs with for *private_key* and *algorithm*.
+
+    Uses PyJWT's own key preparation, so the floor measures exactly the key
+    that would sign. ``None`` when *algorithm* is unknown or PyJWT can't
+    prepare the key; signing then fails in PyJWT with its own error.
+    """
+    algorithm_impl = get_default_algorithms().get(algorithm)
+    if algorithm_impl is None:
+        return None
+    try:
+        return algorithm_impl.prepare_key(private_key)
+    except (PyJWTError, ValueError, TypeError, UnsupportedAlgorithm):
+        return None
+
+
+def enforce_signing_key_strength(private_key: object, algorithm: str) -> None:
+    """Refuse to sign with an RSA key below the strength floor.
+
+    Only RSA needs a check: PyJWT binds each ``ES*`` algorithm to its curve
+    (P-256 and up), so no EC signing key is under :data:`MIN_EC_KEY_BITS`, and
+    OKP keys have a fixed size.
+
+    Args:
+        private_key: The signing key as passed to the signing helper (PEM
+            ``str``/``bytes`` or a ``cryptography`` key).
+        algorithm: The JWS ``alg`` it will sign with.
+
+    Raises:
+        WeakSigningKeyError: If the key is an RSA key under 2048 bits.
+    """
+    key = load_signing_key(private_key, algorithm)
+    if isinstance(key, rsa.RSAPrivateKey) and key.key_size < MIN_RSA_KEY_BITS:
+        raise WeakSigningKeyError(
+            kty="RSA", bits=key.key_size, min_bits=MIN_RSA_KEY_BITS
+        )
+
+
 __all__ = [
     "MIN_EC_KEY_BITS",
     "MIN_HMAC_KEY_BITS",
     "MIN_RSA_KEY_BITS",
     "enforce_key_strength",
+    "enforce_signing_key_strength",
+    "load_signing_key",
 ]
