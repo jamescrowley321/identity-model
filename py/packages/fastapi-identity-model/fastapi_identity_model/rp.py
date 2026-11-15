@@ -89,7 +89,7 @@ def oidc_public_paths(prefix: str = "") -> list[str]:
         app.add_middleware(
             TokenValidationMiddleware,
             discovery_url=settings.discovery_url,
-            audience=settings.audience,
+            audience=settings.expected_audience,
             excluded_paths=[
                 *settings.excluded_paths,
                 *oidc_public_paths(router_prefix),

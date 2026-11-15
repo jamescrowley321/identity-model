@@ -6,6 +6,7 @@ value, and a real value is unaffected. Also covers the relaxed ``key_ops`` /
 """
 
 import base64
+import dataclasses
 import json
 import time
 
@@ -264,9 +265,8 @@ class TestEmptyUse:
         assert key == JsonWebKey(kty="RSA", n="example_n", e="AQAB", use=expected_use)
         assert is_signing_key(key) is signing
 
-    def test_use_set_empty_after_construction_is_still_signing(self):
-        key = jwks_from_dict(_RSA)
-        key.use = ""
+    def test_use_replaced_with_empty_is_still_signing(self):
+        key = dataclasses.replace(jwks_from_dict(_RSA), use="")
         assert is_signing_key(key) is True
 
     @respx.mock

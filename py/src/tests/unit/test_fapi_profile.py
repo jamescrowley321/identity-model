@@ -110,8 +110,8 @@ def _pkj(**overrides: Any) -> PrivateKeyJwt:
 
 def _mtls(**overrides: Any) -> MtlsClientAuth:
     fields: dict[str, Any] = {
-        "certificate": "client.pem",
-        "private_key": "client.key",
+        "certificate_path": "client.pem",
+        "private_key_path": "client.key",
         "auth_method": ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
         **overrides,
     }
@@ -151,7 +151,7 @@ def _profile(**kwargs: Any) -> FAPI2ClientProfile:
         "client_auth": _pkj(),
         **kwargs,
     }
-    return FAPI2ClientProfile(_discovery(), **args)
+    return FAPI2ClientProfile(discovery=_discovery(), **args)
 
 
 def _par(**overrides: Any) -> PushedAuthorizationRequest:
@@ -468,7 +468,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_non_compliant_discovery_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(pushed_authorization_request_endpoint=None),
+                discovery=_discovery(pushed_authorization_request_endpoint=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -483,7 +483,7 @@ class TestFAPI2ClientProfileConstruction:
         """971-B: ``true`` is not a PAR endpoint; refused, not passed to urlparse."""
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(pushed_authorization_request_endpoint=True),
+                discovery=_discovery(pushed_authorization_request_endpoint=True),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -497,7 +497,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_failed_discovery_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                DiscoveryDocumentResponse(is_successful=False),
+                discovery=DiscoveryDocumentResponse(is_successful=False),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_pkj(),
@@ -509,7 +509,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_missing_issuer_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(issuer=None),
+                discovery=_discovery(issuer=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_mtls(),
@@ -519,7 +519,7 @@ class TestFAPI2ClientProfileConstruction:
     def test_missing_authorization_endpoint_refused(self):
         with pytest.raises(FAPIProfileError) as exc_info:
             FAPI2ClientProfile(
-                _discovery(authorization_endpoint=None),
+                discovery=_discovery(authorization_endpoint=None),
                 client_id=CLIENT_ID,
                 redirect_uri=REDIRECT_URI,
                 client_auth=_mtls(),
@@ -536,7 +536,7 @@ class TestFAPI2ClientProfileConstruction:
             "issuer": "https://other.example.com",
         }
         with pytest.raises(TypeError):
-            FAPI2ClientProfile(_discovery(), **kwargs)
+            FAPI2ClientProfile(discovery=_discovery(), **kwargs)
 
     def test_replace_reruns_every_check(self):
         uri = "http://client.example.com/callback"
@@ -557,8 +557,8 @@ class TestFAPI2ClientProfileConstruction:
     def test_error_is_value_error_with_joined_message(self):
         error = FAPIProfileError(
             [
-                FAPIViolation(FAPIViolationCode.CLIENT_ID_MISSING, "a"),
-                FAPIViolation(FAPIViolationCode.REQUEST_URI_MISSING, "b"),
+                FAPIViolation(code=FAPIViolationCode.CLIENT_ID_MISSING, message="a"),
+                FAPIViolation(code=FAPIViolationCode.REQUEST_URI_MISSING, message="b"),
             ]
         )
         assert isinstance(error, ValueError)
@@ -659,7 +659,9 @@ class TestFAPI2ClientProfileAuthorizationUrl:
 
     def test_endpoint_with_query_keeps_it(self):
         profile = FAPI2ClientProfile(
-            _discovery(authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}?tenant=a"),
+            discovery=_discovery(
+                authorization_endpoint=f"{AUTHORIZATION_ENDPOINT}?tenant=a"
+            ),
             client_id=CLIENT_ID,
             redirect_uri=REDIRECT_URI,
             client_auth=_pkj(),
@@ -757,7 +759,7 @@ def _profile_from(discovery: DiscoveryDocumentResponse, **kwargs: Any):
         "client_auth": _pkj(),
         **kwargs,
     }
-    return FAPI2ClientProfile(discovery, **args)
+    return FAPI2ClientProfile(discovery=discovery, **args)
 
 
 @pytest.mark.unit
@@ -854,7 +856,8 @@ class TestFAPI2ClientProfileImmutability:
         [
             (_pkj(), "issuer"),
             (_pkj(), "algorithm"),
-            (_mtls(), "certificate"),
+            (_mtls(), "certificate_path"),
+            (_mtls(), "private_key_path"),
             (_mtls(), "auth_method"),
             (RequestObjectKey(private_key="pem"), "lifetime"),
             (RequestObjectKey(private_key="pem"), "algorithm"),
@@ -1406,7 +1409,8 @@ class TestValidateFAPISignedAuthorizationRequest:
     @pytest.mark.parametrize("value", [None, b"a.b.c"])
     def test_request_reassigned_to_non_string_reported(self, value):
         request = _signed_par(_request_object())
-        request.request = value
+        # Frozen models block this; bypass it to cover the send-time guard.
+        object.__setattr__(request, "request", value)
         result = validate_fapi_authorization_request(request)
         assert _messages(result.violations) == [
             "request object is not a JWT (RFC 9101 §2.1)"

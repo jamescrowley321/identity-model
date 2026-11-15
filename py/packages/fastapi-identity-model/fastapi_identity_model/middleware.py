@@ -203,7 +203,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         discovery_url: The OpenID Connect discovery document URL. Defaults to
             ``settings.discovery_url``; required without ``settings``.
         audience: Expected audience claim in the token. Defaults to
-            ``settings.audience``. Required — a ``None``
+            ``settings.expected_audience``. Required — a ``None``
             audience does not enforce ``aud`` for tokens that omit the claim,
             which on a shared multi-tenant issuer accepts tokens minted for
             other clients.
@@ -277,7 +277,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         if settings is not None:
             discovery_url = discovery_url or settings.discovery_url
-            audience = audience or settings.audience
+            audience = audience or settings.expected_audience
             if excluded_paths is None:
                 excluded_paths = list(settings.excluded_paths)
         if not discovery_url:

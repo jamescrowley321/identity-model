@@ -288,7 +288,7 @@ def _fapi2_session() -> harness_app.AuthSession:
         code_verifier="cv",
         fapi2=True,
         fapi_profile=FAPI2ClientProfile(
-            DiscoveryDocumentResponse(is_successful=True, **DISCO),
+            discovery=DiscoveryDocumentResponse(is_successful=True, **DISCO),
             client_id="conformance-rp",
             redirect_uri="https://rp.example.com/callback",
             client_auth=harness_app._fapi2_private_key_jwt(ISSUER),

@@ -52,7 +52,7 @@ pip install py-identity-model
 ```python
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com"))
+response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com/.well-known/openid-configuration"))
 ```
 
 ```python

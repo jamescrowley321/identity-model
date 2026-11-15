@@ -1,5 +1,6 @@
 """Unit tests for private_key_jwt client authentication (RFC 7523)."""
 
+import dataclasses
 import time
 from typing import Any
 from urllib.parse import parse_qs
@@ -475,10 +476,13 @@ class TestPrepareFunctionPrecedence:
     ):
         # Both client_secret and private_key_jwt set — assertion must win.
         private_pem, _ = _ec_keypair()
-        request_obj.private_key_jwt = PrivateKeyJwt(
-            private_key=private_pem,
-            algorithm="ES256",
-            issuer=ISSUER,
+        request_obj = dataclasses.replace(
+            request_obj,
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem,
+                algorithm="ES256",
+                issuer=ISSUER,
+            ),
         )
         params, _headers, auth = prepare_fn(request_obj)
 
@@ -505,8 +509,11 @@ class TestPrepareFunctionPrecedence:
         # PAR, token, introspection, revocation, device and token exchange all
         # address the assertion to the issuer, not to their endpoint URL.
         private_pem, _ = _ec_keypair()
-        request_obj.private_key_jwt = PrivateKeyJwt(
-            private_key=private_pem, algorithm="ES256", issuer=ISSUER
+        request_obj = dataclasses.replace(
+            request_obj,
+            private_key_jwt=PrivateKeyJwt(
+                private_key=private_pem, algorithm="ES256", issuer=ISSUER
+            ),
         )
         params, _headers, _auth = prepare_fn(request_obj)
 

@@ -44,7 +44,7 @@ def build_profile_example() -> FAPI2ClientProfile:
 
     client_key = generate_dpop_key("ES256")
     profile = FAPI2ClientProfile(
-        DISCOVERY,
+        discovery=DISCOVERY,
         client_id="fapi-client",
         redirect_uri="https://client.example.com/callback",
         client_auth=PrivateKeyJwt(

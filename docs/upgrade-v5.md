@@ -306,7 +306,7 @@ from py_identity_model import ClientAuthMethod
 
 if method.uses_client_secret:
     ...
-MtlsClientAuth(certificate=cert, private_key=key,
+MtlsClientAuth(certificate_path=cert, private_key_path=key,
                auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH)
 ```
 
@@ -575,7 +575,137 @@ proof window is accepted, with no error. Build them once at startup.
 - `InMemoryDPoPReplayCache` copies (`copy.deepcopy`, `dataclasses.asdict`)
   are the same cache; pickling one raises `TypeError`.
 
+## Models
+
+### Request, options and result types are frozen and keyword-only ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+Every request type (`DiscoveryDocumentRequest`, `JwksRequest`, every
+`*TokenRequest`, `PushedAuthorizationRequest`, `UserInfoRequest`, the client
+registration requests and the others), every response type, and these
+configuration and value types are now `@dataclass(frozen=True, kw_only=True)`:
+
+- `TokenValidationConfig`, `DiscoveryPolicy`, `SignedIntrospectionOptions`,
+  `PrivateKeyJwt`, `MtlsClientAuth`, `RequestObjectKey`, `JsonWebKey`,
+  `TokenPresentation`, `TrustScope`, `DPoPProofRequest`, `FAPI2ClientProfile`;
+- the results `AuthorizeCallbackResponse`, `StateValidationResult`,
+  `FAPIValidationResult`, `FAPIViolation`, `ConfigIssue` and `DPoPProof`;
+- in fastapi-identity-model, `OIDCSettings` and `AuthOptions`.
+
+Pass every field by name. A positional argument raises `TypeError`, so a field
+added in a later release can never shift your arguments onto the wrong field.
+Assigning a field raises `dataclasses.FrozenInstanceError`. For a request,
+configuration or value type, use `dataclasses.replace`, which runs the type's
+validation again on the copy; before, assigning a field skipped that
+validation. Responses (`*Response` and `AuthorizeCallbackResponse`) are
+read-only: `dataclasses.replace` raises on them, because reading a field that
+does not apply to the outcome (`error` on a success, data fields on a failure)
+raises.
+
+`OIDCSettings.audience` is renamed `audience_override`, and
+`OIDCSettings.expected_audience` is the only way to read the audience the
+middleware checks: `audience_override`, or `client_id` when it is `None`. It
+is worked out on read, so a copy with a new `client_id` follows it.
+
+!!! warning "Security: update every `settings.audience` read"
+    There is no `audience` attribute any more, so `settings.audience` raises
+    `AttributeError` and `OIDCSettings(audience=...)` raises `TypeError`. This
+    is deliberate: an unset audience would otherwise read as `None`, and
+    passing `TokenValidationConfig(audience=None)` turns off `aud` enforcement
+    for tokens that omit the claim. Replace each read with
+    `settings.expected_audience`. An empty or non-string `audience_override`
+    raises `ValueError`.
+
+```python
+# Before
+config = TokenValidationConfig(True, None, "my-api")
+config.leeway = 30
+
+settings = OIDCSettings("https://op.example.com/.well-known/openid-configuration", "app")
+settings.audience = "my-api"
+
+# After
+import dataclasses
+
+config = TokenValidationConfig(perform_disco=True, audience="my-api")
+config = dataclasses.replace(config, leeway=30)
+
+settings = OIDCSettings(
+    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    client_id="app",
+    audience_override="my-api",
+)
+```
+
+Values a frozen object holds are not copied. `AuthOptions.dpop` still refers to
+the same replay cache, so every middleware and WebSocket authenticator built
+from one `AuthOptions` shares it. List and dict fields, such as
+`DiscoveryPolicy.additional_endpoint_base_addresses` or a response's `token`,
+are not frozen themselves; replace the object rather than editing them.
+
+`CacheCounters` stays mutable: it is a live, thread-safe tally that the caches
+update.
+
+### `MtlsClientAuth` takes `certificate_path` and `private_key_path` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`MtlsClientAuth.certificate` and `MtlsClientAuth.private_key` are renamed to
+`certificate_path` and `private_key_path`. They are filesystem paths to PEM
+files, as before: the TLS layer loads them with
+`ssl.SSLContext.load_cert_chain`. `PrivateKeyJwt.private_key` and
+`RequestObjectKey.private_key` remain PEM content.
+
+```python
+# Before
+MtlsClientAuth(certificate="/etc/client.crt", private_key="/etc/client.key")
+
+# After
+MtlsClientAuth(certificate_path="/etc/client.crt", private_key_path="/etc/client.key")
+```
+
+### `PushedAuthorizationRequest.redirect_uri` is required ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`redirect_uri` has no default. Leaving it out raises `TypeError` when you build
+the request, instead of an error when it is sent. An empty `redirect_uri`
+still raises `ValueError` when the request is prepared.
+
+```python
+PushedAuthorizationRequest(
+    address=par_endpoint,
+    client_id="my-client",
+    redirect_uri="https://client.example.com/callback",
+)
+```
+
 ## Discovery
+
+### `parse_discovery_url` is replaced by `discovery_document_url` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+
+`DiscoveryDocumentRequest.address`, `disco_doc_address` and
+`OIDCSettings.discovery_url` are the discovery document URL, the same as
+`address` on every other request. Passing a bare issuer fetches the issuer URL
+itself, which fails.
+
+`discovery_document_url(issuer)` builds that URL from an issuer identifier as
+OpenID Connect Discovery 1.0 §4.1 specifies: a terminating `/` is removed and
+`/.well-known/openid-configuration` is appended. It raises
+`ConfigurationException` for an empty value, a non-HTTP(S) URL, a URL without
+a host, a query or fragment, a value that is not a valid URL, or a value that
+already ends with the well-known path.
+
+`parse_discovery_url` and `DiscoveryEndpoint` are removed. `parse_discovery_url`
+appended the path only when it was missing and returned the authority as well;
+`discovery_document_url` takes only an issuer and returns the URL.
+
+```python
+# Before
+from py_identity_model import parse_discovery_url
+
+url = parse_discovery_url("https://login.example.com").url
+
+# After
+from py_identity_model import discovery_document_url
+
+url = discovery_document_url("https://login.example.com")
+```
 
 ### Every Discovery §3 REQUIRED field must be present ([#891](https://github.com/jamescrowley321/identity-model/pull/891))
 
@@ -617,11 +747,10 @@ if not disco.is_successful and disco.error_kind is DiscoveryErrorKind.MISSING_FI
 
 A missing `jwks_uri` now reports `Missing required parameters: jwks_uri`.
 
-`DiscoveryPolicy`'s fields after `validate_endpoints`
-(`additional_endpoint_base_addresses`, `authority`,
-`allow_loopback_endpoints`) are keyword-only. A call that passed
-`require_key_set` as the fifth positional argument raises `TypeError`: drop it
-and pass the later fields by name.
+`DiscoveryPolicy` is keyword-only (see
+[Request, options and result types are frozen and keyword-only](#request-options-and-result-types-are-frozen-and-keyword-only-1128)).
+A call that passed `require_key_set` positionally raises `TypeError`: drop it
+and pass the other fields by name.
 
 ```python
 # Before
@@ -681,7 +810,7 @@ responses.
 
 ```python
 profile = FAPI2ClientProfile(
-    discovery,
+    discovery=discovery,
     client_id="fapi-client",
     redirect_uri="https://client.example.com/callback",
     client_auth=PrivateKeyJwt(
@@ -809,13 +938,19 @@ disco = get_discovery_document(
 After:
 
 ```python
+from py_identity_model import discovery_document_url
+
 disco = get_discovery_document(
-    DiscoveryDocumentRequest(address="https://login.example.com")
+    DiscoveryDocumentRequest(
+        address=discovery_document_url("https://login.example.com")
+    )
 )
-# Also accepted:
-#   "https://login.example.com/"
-#   "https://login.example.com/.well-known/openid-configuration"
+# address == "https://login.example.com/.well-known/openid-configuration"
 ```
+
+`address` is the discovery document URL; the library does not append the
+well-known path. See
+[`parse_discovery_url` is replaced by `discovery_document_url`](#parse_discovery_url-is-replaced-by-discovery_document_url-1128).
 
 Use the issuer exactly as your provider publishes it. If you call
 `process_discovery_response` (`py_identity_model.core.discovery_logic`) or

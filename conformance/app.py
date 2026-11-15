@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import datetime
 import html
 from http import HTTPStatus
@@ -58,6 +58,7 @@ from py_identity_model import (
     build_end_session_url,
     clear_jwks_cache,
     create_request_object,
+    discovery_document_url,
     generate_dpop_key,
     generate_pkce_pair,
     get_discovery_document,
@@ -65,7 +66,6 @@ from py_identity_model import (
     get_userinfo,
     is_jarm_response,
     parse_authorize_callback_response,
-    parse_discovery_url,
     process_jarm_response,
     push_authorization_request,
     register_client,
@@ -491,8 +491,8 @@ _FAPI2_MTLS_CERT_PATH, _FAPI2_MTLS_KEY_PATH, _FAPI2_MTLS_JWKS = (
 def _fapi2_mtls_auth() -> MtlsClientAuth:
     """mTLS client-auth config presenting the RP's self-signed client cert."""
     return MtlsClientAuth(
-        certificate=_FAPI2_MTLS_CERT_PATH,
-        private_key=_FAPI2_MTLS_KEY_PATH,
+        certificate_path=_FAPI2_MTLS_CERT_PATH,
+        private_key_path=_FAPI2_MTLS_KEY_PATH,
         auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 
@@ -561,7 +561,7 @@ def discover(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -579,7 +579,7 @@ def discover(
         )
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
@@ -631,7 +631,7 @@ def register(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         return JSONResponse(
@@ -641,7 +641,7 @@ def register(
 
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
     if not disco.is_successful:
@@ -783,7 +783,7 @@ def authorize(
 
     # Fetch discovery document for this issuer
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -801,7 +801,7 @@ def authorize(
         )
     policy = _discovery_policy(mtls=mtls.lower() == "true")
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
@@ -864,7 +864,7 @@ def authorize(
     }:
         return _authorize_fapi2(
             disco=disco,
-            disco_address=disco_endpoint.url,
+            disco_address=disco_url,
             issuer=issuer,
             client_id=client_id,
             scope=_FAPI2_SCOPE,
@@ -970,7 +970,7 @@ def authorize(
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
-        "disco_address": disco_endpoint.url,
+        "disco_address": disco_url,
         "test_id": test_id,
     }
     _last_fapi_profile = None
@@ -1032,7 +1032,7 @@ def _authorize_fapi2(
         # assertion aud is the discovery issuer and resolves mtls_endpoint_aliases.
         # The harness redirects to http://localhost, a loopback URI (RFC 8252 §7.3).
         profile = FAPI2ClientProfile(
-            disco,
+            discovery=disco,
             client_id=client_id,
             redirect_uri=redirect_uri,
             client_auth=(
@@ -1121,10 +1121,10 @@ def _fetch_and_validate_discovery(
 ) -> HTMLResponse | tuple:
     """Fetch discovery document and validate issuer for a callback flow.
 
-    Returns an HTMLResponse on error, or a (disco, disco_endpoint) tuple on success.
+    Returns an HTMLResponse on error, or a (disco, disco_url) tuple on success.
     """
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL in callback: %s", exc)
@@ -1137,7 +1137,7 @@ def _fetch_and_validate_discovery(
         )
     policy = _discovery_policy(mtls=session.mtls)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_endpoint.url, policy=policy),
+        DiscoveryDocumentRequest(address=disco_url, policy=policy),
         http_client=http_client,
     )
 
@@ -1176,7 +1176,7 @@ def _fetch_and_validate_discovery(
             status_code=502,
         )
 
-    return disco, disco_endpoint
+    return disco, disco_url
 
 
 def _validate_fapi2_callback_issuer(
@@ -1362,8 +1362,11 @@ def _id_token_validation_config(
         if session.mtls:
             # The discovery the library runs for the ID Token must admit the
             # suite's mTLS origin too (see _discovery_policy).
-            config.discovery_policy = DiscoveryPolicy(
-                additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+            config = replace(
+                config,
+                discovery_policy=DiscoveryPolicy(
+                    additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+                ),
             )
         return config
     return TokenValidationConfig(
@@ -1541,7 +1544,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     disco_result = _fetch_and_validate_discovery(session.issuer, http_client, session)
     if isinstance(disco_result, HTMLResponse):
         return disco_result
-    disco, disco_endpoint = disco_result
+    disco, disco_url = disco_result
 
     # FAPI 2.0: validate the RFC 9207 ``iss`` authorization-response parameter.
     fapi2_iss_error = _validate_fapi2_callback_issuer(cb_response, session)
@@ -1623,7 +1626,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             claims = validate_id_token(
                 id_token_jwt,
                 token_validation_config=_id_token_validation_config(session, disco),
-                disco_doc_address=disco_endpoint.url,
+                disco_doc_address=disco_url,
             )
         except TokenValidationException as exc:
             session.result["status"] = "error"

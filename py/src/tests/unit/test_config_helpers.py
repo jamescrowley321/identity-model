@@ -204,7 +204,7 @@ def test_prefix_applies_to_every_key_and_alias(ca_file):
 def test_unconvertible_value_is_a_config_error(key, raw, message):
     with pytest.raises(ConfigError) as exc:
         _from_mapping(key, {key: raw})
-    assert exc.value.issues == (ConfigIssue(key, message),)
+    assert exc.value.issues == (ConfigIssue(setting=key, message=message),)
 
 
 @pytest.mark.parametrize(
@@ -221,14 +221,14 @@ def test_unconvertible_value_is_a_config_error(key, raw, message):
 def test_range_issue_names_the_key_it_came_from(key, raw, message):
     with pytest.raises(ConfigError) as exc:
         _from_mapping(key, {key: raw})
-    assert exc.value.issues == (ConfigIssue(key, message),)
+    assert exc.value.issues == (ConfigIssue(setting=key, message=message),)
 
 
 def test_alias_issue_names_the_alias_that_was_read():
     with pytest.raises(ConfigError) as exc:
         http_config_from_mapping({"APP_HTTP_RETRY_COUNT": "-1"}, prefix="APP_")
     assert exc.value.issues == (
-        ConfigIssue("APP_HTTP_RETRY_COUNT", "must be at least 0"),
+        ConfigIssue(setting="APP_HTTP_RETRY_COUNT", message="must be at least 0"),
     )
 
 
@@ -242,14 +242,14 @@ def test_every_problem_is_reported_at_once_in_field_order():
     with pytest.raises(ConfigError) as exc:
         http_config_from_mapping(values)
     assert exc.value.issues == (
-        ConfigIssue("HTTP_TIMEOUT", "must be greater than 0"),
-        ConfigIssue("MAX_JWKS_KEYS", "must be an integer"),
+        ConfigIssue(setting="HTTP_TIMEOUT", message="must be greater than 0"),
+        ConfigIssue(setting="MAX_JWKS_KEYS", message="must be an integer"),
     )
     with pytest.raises(ConfigError) as exc:
         cache_config_from_mapping(values)
     assert exc.value.issues == (
-        ConfigIssue("DISCO_CACHE_TTL", "must be at least 60"),
-        ConfigIssue("JWKS_CACHE_MAX_ENTRIES", "must be an integer"),
+        ConfigIssue(setting="DISCO_CACHE_TTL", message="must be at least 60"),
+        ConfigIssue(setting="JWKS_CACHE_MAX_ENTRIES", message="must be an integer"),
     )
 
 
@@ -300,7 +300,9 @@ def test_env_error_names_the_variable(clean_env):
     clean_env.setenv("APP_MAX_JWKS_SIZE", "0")
     with pytest.raises(ConfigError) as exc:
         http_config_from_env(prefix="APP_")
-    assert exc.value.issues == (ConfigIssue("APP_MAX_JWKS_SIZE", "must be at least 1"),)
+    assert exc.value.issues == (
+        ConfigIssue(setting="APP_MAX_JWKS_SIZE", message="must be at least 1"),
+    )
 
 
 def test_every_config_field_has_a_key():

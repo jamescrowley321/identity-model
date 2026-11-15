@@ -49,7 +49,7 @@ import httpx
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import OIDCSettings, build_oidc_router
-from py_identity_model import parse_discovery_url
+from py_identity_model import discovery_document_url
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
@@ -269,7 +269,7 @@ async def discover(
     """
     _set_active_test(profile, test_name)
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -279,7 +279,7 @@ async def discover(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_endpoint.url,
+        discovery_url=disco_url,
         client_id="conformance-rp",
         redirect_uri=f"{RP_BASE_URL}/callback",
     )
@@ -335,7 +335,7 @@ async def authorize(
     # A new flow starts with no recorded outcome (see app.py /authorize).
     test_results.pop(test_id, None)
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        disco_url = discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -345,7 +345,7 @@ async def authorize(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_endpoint.url,
+        discovery_url=disco_url,
         client_id=client_id,
         client_secret=client_secret or None,
         redirect_uri=f"{RP_BASE_URL}/callback",

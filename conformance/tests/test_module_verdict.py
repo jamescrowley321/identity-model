@@ -552,7 +552,7 @@ def test_authorize_clears_the_previous_flow_record(harness, monkeypatch):
 
     harness.test_results["m9"] = harness.AuthSession(issuer=ISSUER, state="", nonce="")
     harness.test_results["m9"].result = ACCEPTED
-    monkeypatch.setattr(harness, "parse_discovery_url", _crash)
+    monkeypatch.setattr(harness, "discovery_document_url", _crash)
     client = TestClient(harness.app, raise_server_exceptions=False)
 
     authorize = client.get(
