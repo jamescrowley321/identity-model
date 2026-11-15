@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import datetime
 import html
 from http import HTTPStatus
@@ -1362,8 +1362,11 @@ def _id_token_validation_config(
         if session.mtls:
             # The discovery the library runs for the ID Token must admit the
             # suite's mTLS origin too (see _discovery_policy).
-            config.discovery_policy = DiscoveryPolicy(
-                additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+            config = replace(
+                config,
+                discovery_policy=DiscoveryPolicy(
+                    additional_endpoint_base_addresses=[SUITE_MTLS_BASE_URL]
+                ),
             )
         return config
     return TokenValidationConfig(
