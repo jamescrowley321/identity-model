@@ -6,6 +6,7 @@ validated token information and user claims.
 """
 
 from collections.abc import Callable
+import re
 from typing import Annotated
 
 from fastapi import (  # type: ignore[attr-defined]
@@ -15,11 +16,47 @@ from fastapi import (  # type: ignore[attr-defined]
     status,
 )
 
+from py_identity_model import ConfigurationException
 from py_identity_model.identity import ClaimsPrincipal
+
+from .middleware import AuthChallenge, BearerError
 
 
 # Error message constants
 _NOT_AUTHENTICATED_MSG = "Not authenticated"
+
+# RFC 6749 §3.3 scope-token.
+_SCOPE_TOKEN = re.compile(r"[\x21\x23-\x5b\x5d-\x7e]+")
+
+
+def _challenge(request: Request) -> AuthChallenge:
+    """The middleware's challenge for *request*, or a ``Bearer`` one without it."""
+    return getattr(request.state, "auth_challenge", None) or AuthChallenge()
+
+
+def _not_authenticated(request: Request) -> HTTPException:
+    # RFC 6750 §3.1: a request without credentials gets no error code.
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=_NOT_AUTHENTICATED_MSG,
+        headers={"WWW-Authenticate": _challenge(request).header()},
+    )
+
+
+def _forbidden(
+    request: Request, detail: str, scope: str | None = None
+) -> HTTPException:
+    # RFC 6750 §3: a token that does not enable access gets a challenge;
+    # §3.1: insufficient_scope with 403.
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+        headers={
+            "WWW-Authenticate": _challenge(request).header(
+                error=BearerError.INSUFFICIENT_SCOPE, scope=scope
+            )
+        },
+    )
 
 
 def get_current_user(request: Request) -> ClaimsPrincipal:
@@ -48,11 +85,7 @@ def get_current_user(request: Request) -> ClaimsPrincipal:
         ```
     """
     if not hasattr(request.state, "user"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_NOT_AUTHENTICATED_MSG,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _not_authenticated(request)
 
     return request.state.user
 
@@ -78,11 +111,7 @@ def get_claims(request: Request) -> dict:
         ```
     """
     if not hasattr(request.state, "claims"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_NOT_AUTHENTICATED_MSG,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _not_authenticated(request)
 
     return request.state.claims
 
@@ -108,11 +137,7 @@ def get_token(request: Request) -> str:
         ```
     """
     if not hasattr(request.state, "token"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_NOT_AUTHENTICATED_MSG,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _not_authenticated(request)
 
     return request.state.token
 
@@ -209,7 +234,8 @@ def require_claim(
         callable: A dependency function that validates the claim
 
     Raises:
-        HTTPException: If the required claim is not present or doesn't match the value
+        HTTPException: ``403`` with an ``insufficient_scope`` challenge if the
+            required claim is not present or doesn't match the value
 
     Example:
         ```python
@@ -225,17 +251,15 @@ def require_claim(
     """
 
     def _check_claim(
+        request: Request,
         user: CurrentUser,
     ) -> None:
         if not user.has_claim(claim_type, claim_value):
             if claim_value is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Required claim '{claim_type}' not found",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Required claim '{claim_type}' with value '{claim_value}' not found",
+                raise _forbidden(request, f"Required claim '{claim_type}' not found")
+            raise _forbidden(
+                request,
+                f"Required claim '{claim_type}' with value '{claim_value}' not found",
             )
 
     return _check_claim
@@ -252,7 +276,11 @@ def require_scope(scope: str) -> Callable[..., None]:
         callable: A dependency function that validates the scope
 
     Raises:
-        HTTPException: If the required scope is not present
+        ConfigurationException: *scope* is not a single RFC 6749 §3.3
+            scope-token.
+        HTTPException: ``403`` with ``WWW-Authenticate: Bearer
+            error="insufficient_scope", scope="<scope>"`` (or ``DPoP``) if
+            the required scope is not present
 
     Example:
         ```python
@@ -265,7 +293,12 @@ def require_scope(scope: str) -> Callable[..., None]:
         ```
     """
 
-    def _check_scope(claims: Claims) -> None:
+    if not _SCOPE_TOKEN.fullmatch(scope):
+        raise ConfigurationException(
+            f"require_scope needs a single RFC 6749 scope-token; got {scope!r}"
+        )
+
+    def _check_scope(request: Request, claims: Claims) -> None:
         # Scopes live in 'scope' (space-separated string) or 'scp' (array).
         raw = claims.get("scope") or claims.get("scp")
         if isinstance(raw, str):
@@ -279,9 +312,6 @@ def require_scope(scope: str) -> Callable[..., None]:
             scopes = []
 
         if scope not in scopes:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Required scope '{scope}' not found",
-            )
+            raise _forbidden(request, f"Required scope '{scope}' not found", scope)
 
     return _check_scope
