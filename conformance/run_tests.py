@@ -728,9 +728,18 @@ def _fetch_rp_jwks(rp_base_url: str, path: str = "/fapi2-jwks") -> dict:
     return jwks
 
 
-def _b64u_uint(value: int) -> str:
-    """base64url-encode an unsigned integer as a JWK field (RFC 7518 §6)."""
-    raw = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
+# Octets in a P-256 coordinate or private value (RFC 7518 §6.2.1.2, §6.2.2.1).
+P256_OCTETS = 32
+
+
+def _b64u_p256(value: int) -> str:
+    """base64url-encode a P-256 coordinate or private value at full width.
+
+    RFC 7518 §6.2.1.2: the octet string MUST be the full size of a coordinate
+    for the curve. A value with a leading zero byte encoded shorter is refused
+    by the RP ("Coords should be 32 bytes"), which failed a whole plan.
+    """
+    raw = value.to_bytes(P256_OCTETS, "big")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
@@ -755,9 +764,9 @@ def _generate_server_signing_jwks() -> dict:
         "use": "sig",
         "alg": "ES256",
         "kid": "py-idm-conformance-server-es256",
-        "x": _b64u_uint(public.x),
-        "y": _b64u_uint(public.y),
-        "d": _b64u_uint(numbers.private_value),
+        "x": _b64u_p256(public.x),
+        "y": _b64u_p256(public.y),
+        "d": _b64u_p256(numbers.private_value),
     }
     return {"keys": [private_jwk]}
 

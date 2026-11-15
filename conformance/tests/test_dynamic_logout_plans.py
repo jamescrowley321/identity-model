@@ -71,3 +71,31 @@ def test_logout_token_is_validated_with_the_registered_algorithm_only():
         "c",
         "https://op.example.com",
     )
+
+
+def _p256_key_with_short_x():
+    """The first small-scalar P-256 key whose ``x`` has a leading zero byte."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    for scalar in range(1, 5000):
+        key = ec.derive_private_key(scalar, ec.SECP256R1())
+        if key.public_key().public_numbers().x < 1 << 248:
+            return key
+    raise AssertionError("no short-x key in range")
+
+
+def test_server_signing_jwk_keeps_full_width_coordinates(monkeypatch):
+    import base64
+
+    import run_tests
+
+    key = _p256_key_with_short_x()
+    monkeypatch.setattr(run_tests.ec, "generate_private_key", lambda _curve: key)
+
+    jwk = run_tests._generate_server_signing_jwks()["keys"][0]
+
+    widths = {
+        member: len(base64.urlsafe_b64decode(jwk[member] + "=="))
+        for member in ("x", "y", "d")
+    }
+    assert widths == {"x": 32, "y": 32, "d": 32}
