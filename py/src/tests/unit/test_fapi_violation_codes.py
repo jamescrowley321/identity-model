@@ -21,7 +21,9 @@ from py_identity_model.core.models import DiscoveryDocumentResponse
 
 from .test_fapi_profile import (
     DPOP_KEY,
+    ED448_PEM,
     ISSUER,
+    TOKEN_ENDPOINT,
     _discovery,
     _mtls,
     _par,
@@ -88,6 +90,9 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
     FAPIViolationCode.ALGORITHM_NOT_ALLOWED: lambda: _request(
         dpop_key=generate_dpop_key("RS256")
     ),
+    FAPIViolationCode.KEY_NOT_ALLOWED: lambda: _request(
+        private_key_jwt=_pkj(private_key=ED448_PEM, algorithm="EdDSA")
+    ),
     FAPIViolationCode.SENDER_CONSTRAINT_MISSING: lambda: _request(dpop_key=None),
     FAPIViolationCode.MTLS_WITH_DPOP: lambda: _refused(
         lambda: _profile(client_auth=_mtls()).pushed_authorization_request(
@@ -96,7 +101,9 @@ SCENARIOS: dict[FAPIViolationCode, Callable[[], Codes]] = {
     ),
     FAPIViolationCode.ASSERTION_AUDIENCE_NOT_ISSUER: lambda: (
         validate_fapi_client_config(
-            issuer=ISSUER, private_key_jwt=_pkj(), dpop_key=DPOP_KEY
+            issuer=ISSUER,
+            private_key_jwt=_pkj(issuer=TOKEN_ENDPOINT),
+            dpop_key=DPOP_KEY,
         ).codes
     ),
     FAPIViolationCode.REQUEST_OBJECT_LIFETIME_INVALID: lambda: _refused(

@@ -118,7 +118,9 @@ class TestMtlsClientAuthLive:
                 address=token_endpoint,
                 client_id=client_id,
                 scope=test_config.get("TEST_SCOPE", "openid"),
-                mtls=MtlsClientAuth(certificate=cert_path, private_key=key_path),
+                mtls=MtlsClientAuth(
+                    certificate_path=cert_path, private_key_path=key_path
+                ),
             )
         )
 

@@ -77,7 +77,7 @@ class _GuardedResponseMixin:
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class BaseRequest:
     """Base class for all API requests.
 
@@ -88,7 +88,7 @@ class BaseRequest:
     address: str
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class BaseResponse(_GuardedResponseMixin):
     """Base class for all API responses with success/error state.
 
@@ -109,7 +109,7 @@ class BaseResponse(_GuardedResponseMixin):
     is_successful: bool
     error: str | None = None
 
-    __hash__ = None  # type: ignore[assignment]  # mutable dataclass
+    __hash__ = None  # type: ignore[assignment]  # fields hold dicts and lists
 
     def __repr__(self) -> str:
         """Safe repr that bypasses field-access guards and redacts secrets."""
@@ -183,7 +183,7 @@ class JsonWebAlgorithmsKeyTypes(Enum):
     Octet = "oct"
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class JsonWebKey:
     """
     A JSON Web Key (JWK) as defined in RFC 7517.
@@ -230,9 +230,9 @@ class JsonWebKey:
         """Validate the JWK after initialization"""
         # An empty ``kid`` or ``use`` means the member is absent.
         if self.kid == "":
-            self.kid = None
+            object.__setattr__(self, "kid", None)
         if self.use == "":
-            self.use = None
+            object.__setattr__(self, "use", None)
         if not self.kty:
             raise ConfigurationException(
                 "The 'kty' (Key Type) parameter is required",
@@ -435,14 +435,17 @@ class JsonWebKey:
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class DiscoveryDocumentRequest(BaseRequest):
     """Request for fetching an OpenID Connect discovery document.
 
     Attributes:
-        address: The base URL of the identity provider
-            (e.g. ``https://example.com``). The well-known path is
-            appended automatically.
+        address: The discovery document URL, fetched as given (e.g.
+            ``https://example.com/.well-known/openid-configuration``).
+            Build it from an issuer identifier with
+            :func:`~py_identity_model.discovery_document_url` (OpenID Connect
+            Discovery 1.0 §4.1). The document's ``issuer`` must equal this
+            URL without ``/.well-known/openid-configuration`` (§4.3).
         policy: Optional discovery policy for configuring validation
             behavior. When ``None``, strict defaults apply.
     """
@@ -473,7 +476,7 @@ class DiscoveryErrorKind(Enum):
     """An unclassified exception occurred."""
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class DiscoveryDocumentResponse(BaseResponse):
     """Response from an OpenID Connect discovery document fetch.
 
@@ -537,15 +540,14 @@ class DiscoveryDocumentResponse(BaseResponse):
         }
     )
 
-    # Structured diagnostics are keyword-only to preserve positional callers.
-    # The legacy error string remains available for display.
-    error_kind: DiscoveryErrorKind | None = field(default=None, kw_only=True)
-    status_code: int | None = field(default=None, kw_only=True)
-    missing_fields: tuple[str, ...] = field(default=(), kw_only=True)
+    # Structured diagnostics; the error string remains available for display.
+    error_kind: DiscoveryErrorKind | None = None
+    status_code: int | None = None
+    missing_fields: tuple[str, ...] = ()
     # Set with ISSUER_MISMATCH: the issuer the request was built from and the
     # one the document returned.
-    requested_issuer: str | None = field(default=None, kw_only=True)
-    returned_issuer: str | None = field(default=None, kw_only=True)
+    requested_issuer: str | None = None
+    returned_issuer: str | None = None
 
     # Core OpenID Connect endpoints
     issuer: str | None = None
@@ -631,8 +633,7 @@ class DiscoveryDocumentResponse(BaseResponse):
     # HTTP cache metadata (not a guarded field — always accessible)
     cache_control: str | None = None
 
-    # DPoP support (RFC 9449 §5.1).  Last, so positional callers of the
-    # fields above are unaffected.
+    # DPoP support (RFC 9449 §5.1).
     dpop_signing_alg_values_supported: list[str] | None = None
 
 
@@ -641,7 +642,7 @@ class DiscoveryDocumentResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class JwksRequest(BaseRequest):
     """Request for fetching a JSON Web Key Set.
 
@@ -673,7 +674,7 @@ class JwksErrorKind(Enum):
     """An unclassified exception occurred."""
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class JwksResponse(BaseResponse):
     """Response from a JWKS endpoint fetch.
 
@@ -693,7 +694,7 @@ class JwksResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PrivateKeyJwt:
     """``private_key_jwt`` client authentication parameters (RFC 7523).
 
@@ -711,15 +712,15 @@ class PrivateKeyJwt:
             FAPI 2.0 requires ``PS256``, ``ES256`` or ``EdDSA``.
         kid: Optional key ID placed in the assertion JWT header to aid the
             authorization server's key lookup.
-        audience: Override for the assertion ``aud`` claim.  Wins over
-            ``issuer`` when both are set.
+        issuer: Required.  The authorization server's issuer
+            identifier (the discovery document's ``issuer``).  It is the
+            assertion's sole ``aud`` value, a single string: RFC 10070 §4
+            requires the issuer identifier and forbids the token endpoint URL
+            for client authentication (also FAPI 2.0 Security Profile
+            §5.3.3.1).  ``None``, a non-string, an empty value, or one with
+            leading or trailing whitespace raises
+            :class:`~py_identity_model.exceptions.ConfigurationException`.
         lifetime: Assertion validity in seconds (default 300).
-        issuer: The authorization server's issuer identifier (the discovery
-            document's ``issuer``).  When set and ``audience`` is not, the
-            assertion ``aud`` is the issuer, a single string, as FAPI 2.0
-            Security Profile §5.3.3.1 requires.  With
-            neither set, ``aud`` falls back to the request ``address`` (the
-            endpoint URL, OpenID Connect Core 1.0 §9).
     """
 
     # repr suppressed: the raw PEM signing key must never leak into logs,
@@ -728,12 +729,22 @@ class PrivateKeyJwt:
     private_key: str | bytes = field(repr=False)
     algorithm: str = "PS256"
     kid: str | None = None
-    audience: str | None = None
     lifetime: int = 300
-    issuer: str | None = None
+    issuer: str
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.issuer, str)
+            or not self.issuer
+            or self.issuer != self.issuer.strip()
+        ):
+            raise ConfigurationException(
+                "PrivateKeyJwt.issuer must be the authorization server's issuer "
+                f"identifier (RFC 10070 §4), got {self.issuer!r}"
+            )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class RequestObjectKey:
     """Key for signing JAR request objects (RFC 9101).
 
@@ -761,7 +772,7 @@ class RequestObjectKey:
     lifetime: int = 300
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class MtlsClientAuth:
     """Mutual-TLS client authentication parameters (RFC 8705).
 
@@ -778,11 +789,13 @@ class MtlsClientAuth:
     wrappers build a short-lived, cert-configured client for the request.
 
     Attributes:
-        certificate: Filesystem path to the PEM-encoded client certificate.
-        private_key: Filesystem path to the PEM-encoded private key. ``repr``
-            is suppressed so the key path never leaks into logs or crash
-            reports, mirroring the ``private_key`` treatment on
-            :class:`PrivateKeyJwt`.
+        certificate_path: Filesystem path to the PEM-encoded client
+            certificate. A path, not PEM content: the TLS layer
+            (``ssl.SSLContext.load_cert_chain``) loads the certificate from a
+            file.
+        private_key_path: Filesystem path to the PEM-encoded private key.
+            ``repr`` is suppressed so the key path never leaks into logs or
+            crash reports.
         password: Optional password for an encrypted private key. Secret —
             ``repr`` suppressed.
         auth_method: The RFC 8705 §2 method:
@@ -791,8 +804,8 @@ class MtlsClientAuth:
             method raises :class:`~py_identity_model.exceptions.ClientAuthMethodError`.
     """
 
-    certificate: str
-    private_key: str = field(repr=False)
+    certificate_path: str
+    private_key_path: str = field(repr=False)
     password: str | None = field(default=None, repr=False)
     auth_method: ClientAuthMethod = ClientAuthMethod.TLS_CLIENT_AUTH
 
@@ -813,7 +826,7 @@ class MtlsClientAuth:
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ClientCredentialsTokenRequest(BaseRequest):
     """Request for an OAuth 2.0 client credentials token.
 
@@ -829,7 +842,7 @@ class ClientCredentialsTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -839,10 +852,10 @@ class ClientCredentialsTokenRequest(BaseRequest):
     scope: str | None = None
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class ClientCredentialsTokenResponse(BaseResponse):
     """Response from a client credentials token request.
 
@@ -852,6 +865,7 @@ class ClientCredentialsTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token"})
 
+    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
     token: dict | None = None
 
 
@@ -860,7 +874,7 @@ class ClientCredentialsTokenResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class AuthorizationCodeTokenRequest(BaseRequest):
     """Request for exchanging an authorization code for tokens.
 
@@ -891,7 +905,7 @@ class AuthorizationCodeTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -905,7 +919,7 @@ class AuthorizationCodeTokenRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
     require_dpop_token_type: bool = False
 
     def __post_init__(self) -> None:
@@ -925,8 +939,14 @@ class TokenErrorKind(Enum):
     than ``DPoP`` (RFC 9449 §5). The issued tokens are on the response's
     ``rejected_token``."""
 
+    INVALID_TOKEN_RESPONSE = "invalid_token_response"
+    """A success response that is not a JSON object with non-empty string
+    ``access_token`` and ``token_type`` members (RFC 6749 §5.1). On the
+    authorization code and refresh token responses a JSON object body is kept
+    on ``rejected_token``."""
 
-@dataclass(repr=False, eq=False)
+
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class AuthorizationCodeTokenResponse(BaseResponse):
     """Response from an authorization code token exchange.
 
@@ -942,8 +962,8 @@ class AuthorizationCodeTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token", "rejected_token"})
 
-    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
-    rejected_token: dict | None = field(default=None, kw_only=True)
+    error_kind: TokenErrorKind | None = None
+    rejected_token: dict | None = None
     token: dict | None = None
 
 
@@ -952,7 +972,7 @@ class AuthorizationCodeTokenResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class RefreshTokenRequest(BaseRequest):
     """Request for refreshing an OAuth 2.0 access token.
 
@@ -981,7 +1001,7 @@ class RefreshTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -992,7 +1012,7 @@ class RefreshTokenRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
     dpop_key: DPoPKey | None = None
     require_dpop_token_type: bool = False
 
@@ -1005,7 +1025,7 @@ class RefreshTokenRequest(BaseRequest):
             )
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class RefreshTokenResponse(BaseResponse):
     """Response from a refresh token grant.
 
@@ -1022,8 +1042,8 @@ class RefreshTokenResponse(BaseResponse):
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"token"})
     _secret_fields: ClassVar[frozenset[str]] = frozenset({"token", "rejected_token"})
 
-    error_kind: TokenErrorKind | None = field(default=None, kw_only=True)
-    rejected_token: dict | None = field(default=None, kw_only=True)
+    error_kind: TokenErrorKind | None = None
+    rejected_token: dict | None = None
     token: dict | None = None
 
 
@@ -1032,7 +1052,7 @@ class RefreshTokenResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SignedIntrospectionOptions:
     """Request a JWT introspection response and verify it (RFC 9701).
 
@@ -1064,21 +1084,19 @@ class SignedIntrospectionOptions:
             §5.5.2) pass ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and
             ``HS*`` are refused.
         discovery_address: The discovery document URL (discovery mode).
-            Keyword-only.
         discovery_policy: How the discovery document and ``jwks_uri`` are
             vetted. ``None`` (default) is a strict :class:`DiscoveryPolicy`.
-            Discovery mode only. Keyword-only.
+            Discovery mode only.
         leeway: Clock-skew tolerance in seconds for ``iat``, as
             ``TokenValidationConfig.leeway``. ``None`` (default) means none.
-            Keyword-only.
     """
 
     issuer: str | None = None
     jwks: JwksResponse | None = None
     algorithms: frozenset[str] | None = None
-    discovery_address: str | None = field(default=None, kw_only=True)
-    discovery_policy: DiscoveryPolicy | None = field(default=None, kw_only=True)
-    leeway: float | None = field(default=None, kw_only=True)
+    discovery_address: str | None = None
+    discovery_policy: DiscoveryPolicy | None = None
+    leeway: float | None = None
 
     def __post_init__(self) -> None:
         if self.discovery_address:
@@ -1123,7 +1141,7 @@ class SignedIntrospectionOptions:
             )
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class TokenIntrospectionRequest(BaseRequest):
     """Request for OAuth 2.0 Token Introspection (RFC 7662).
 
@@ -1138,7 +1156,7 @@ class TokenIntrospectionRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -1149,7 +1167,7 @@ class TokenIntrospectionRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
     signed_response: SignedIntrospectionOptions | None = None
 
 
@@ -1170,7 +1188,7 @@ class IntrospectionErrorKind(Enum):
     """``iss``, ``aud`` or ``iat`` is missing or wrong."""
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class TokenIntrospectionResponse(BaseResponse):
     """Response from a token introspection endpoint (RFC 7662).
 
@@ -1189,9 +1207,9 @@ class TokenIntrospectionResponse(BaseResponse):
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "jwt_claims"})
 
-    error_kind: IntrospectionErrorKind | None = field(default=None, kw_only=True)
+    error_kind: IntrospectionErrorKind | None = None
     claims: dict | None = None
-    jwt_claims: dict | None = field(default=None, kw_only=True)
+    jwt_claims: dict | None = None
 
 
 # ============================================================================
@@ -1199,7 +1217,7 @@ class TokenIntrospectionResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class PushedAuthorizationRequest(BaseRequest):
     """Request for OAuth 2.0 Pushed Authorization Request (RFC 9126).
 
@@ -1213,8 +1231,7 @@ class PushedAuthorizationRequest(BaseRequest):
     Attributes:
         address: The pushed authorization request endpoint URL.
         client_id: The client identifier.
-        redirect_uri: The registered redirect URI.  Required unless
-            ``request`` is set.
+        redirect_uri: The registered redirect URI.  Required and non-empty.
         scope: Space-delimited scopes (default ``"openid"``).
         response_type: OAuth 2.0 response type (default ``"code"``).
         state: CSRF protection value.
@@ -1234,13 +1251,13 @@ class PushedAuthorizationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
 
     client_id: str
-    redirect_uri: str = ""
+    redirect_uri: str
     scope: str = "openid"
     response_type: str = "code"
     state: str | None = None
@@ -1251,11 +1268,11 @@ class PushedAuthorizationRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
     response_mode: str | None = None
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class SignedPushedAuthorizationRequest(BaseRequest):
     """A pushed authorization request sent as a signed request object.
 
@@ -1278,7 +1295,7 @@ class SignedPushedAuthorizationRequest(BaseRequest):
             :class:`PushedAuthorizationRequest`.
         mtls: Mutual-TLS client authentication parameters (RFC 8705).
         client_auth_method: How to authenticate the client, as on
-            :class:`PushedAuthorizationRequest`.  Keyword-only.
+            :class:`PushedAuthorizationRequest`.
     """
 
     client_id: str
@@ -1289,7 +1306,7 @@ class SignedPushedAuthorizationRequest(BaseRequest):
     private_key_jwt: PrivateKeyJwt | None = None
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
     def __post_init__(self) -> None:
         self.check_request()
@@ -1306,7 +1323,7 @@ class SignedPushedAuthorizationRequest(BaseRequest):
             )
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class PushedAuthorizationResponse(BaseResponse):
     """Response from a pushed authorization request endpoint (RFC 9126).
 
@@ -1326,7 +1343,7 @@ class PushedAuthorizationResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class DeviceAuthorizationRequest(BaseRequest):
     """Request for OAuth 2.0 Device Authorization (RFC 8628).
 
@@ -1339,7 +1356,7 @@ class DeviceAuthorizationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -1349,10 +1366,10 @@ class DeviceAuthorizationRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class DeviceAuthorizationResponse(BaseResponse):
     """Response from the device authorization endpoint (RFC 8628).
 
@@ -1384,7 +1401,7 @@ class DeviceAuthorizationResponse(BaseResponse):
     interval: int | None = None
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class DeviceTokenRequest(BaseRequest):
     """Request for polling the token endpoint during device flow (RFC 8628).
 
@@ -1397,7 +1414,7 @@ class DeviceTokenRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -1407,10 +1424,10 @@ class DeviceTokenRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class DeviceTokenResponse(BaseResponse):
     """Response from a device token poll (RFC 8628).
 
@@ -1418,7 +1435,7 @@ class DeviceTokenResponse(BaseResponse):
     When ``is_successful`` is ``False``, check ``error_code``:
 
     - ``"authorization_pending"`` - user hasn't authorized yet, poll again
-    - ``"slow_down"`` - increase polling interval (see ``interval``)
+    - ``"slow_down"`` - add 5 seconds to the polling interval (RFC 8628 §3.5)
     - ``"expired_token"`` - device code expired, restart flow
     - ``"access_denied"`` - user denied authorization
 
@@ -1439,7 +1456,7 @@ class DeviceTokenResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class TokenExchangeRequest(BaseRequest):
     """Request for OAuth 2.0 Token Exchange (RFC 8693).
 
@@ -1461,7 +1478,7 @@ class TokenExchangeRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -1478,10 +1495,10 @@ class TokenExchangeRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class TokenExchangeResponse(BaseResponse):
     """Response from a token exchange request (RFC 8693).
 
@@ -1504,7 +1521,7 @@ class TokenExchangeResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class TokenRevocationRequest(BaseRequest):
     """Request for OAuth 2.0 Token Revocation (RFC 7009).
 
@@ -1518,7 +1535,7 @@ class TokenRevocationRequest(BaseRequest):
             picks by precedence: ``private_key_jwt``, then ``mtls``, then
             ``client_secret`` as HTTP Basic, else public. An explicit method
             needs its own credential and is the only one sent; see
-            :class:`ClientAuthMethod`. Keyword-only. ``mtls``, when set, is
+            :class:`ClientAuthMethod`. ``mtls``, when set, is
             always presented at the TLS layer, because it also binds tokens
             to the certificate (RFC 8705 §3) whichever method authenticates.
     """
@@ -1529,10 +1546,10 @@ class TokenRevocationRequest(BaseRequest):
     client_secret: str | None = field(default=None, repr=False)
     private_key_jwt: PrivateKeyJwt | None = None
     mtls: MtlsClientAuth | None = None
-    client_auth_method: ClientAuthMethod | None = field(default=None, kw_only=True)
+    client_auth_method: ClientAuthMethod | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class TokenRevocationResponse(BaseResponse):
     """Response from a token revocation endpoint (RFC 7009).
 
@@ -1547,20 +1564,21 @@ class TokenRevocationResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class UserInfoRequest(BaseRequest):
     """Request for the OpenID Connect UserInfo endpoint.
 
     Attributes:
         address: The UserInfo endpoint URL.
         token: A valid access token with ``openid`` scope.
-        expected_sub: Expected ``sub`` claim from the ID token for
-            verification per OIDC Core 1.0 Section 5.3.4.  When provided,
-            the ``sub`` in the UserInfo response is compared against this
-            value and a mismatch produces an error response.  A signed or
-            encrypted (``application/jwt``) response cannot be checked here,
-            so it also produces an error response; omit ``expected_sub`` to
-            receive the raw JWT, then verify it and compare its ``sub``.
+        expected_sub: The ``sub`` of the ID token the access token was issued
+            with.  Required and keyword-only: OIDC Core 1.0 §5.3.2 says the
+            UserInfo ``sub`` MUST exactly match the ID token's ``sub``, so a
+            response whose ``sub`` differs fails with
+            :attr:`UserInfoErrorKind.SUB_MISMATCH`.  A signed or encrypted
+            (``application/jwt``) response cannot be checked here and fails
+            with :attr:`UserInfoErrorKind.UNVERIFIABLE_SUB`, keeping the JWT
+            on ``unverified_jwt`` for you to verify and compare yourself.
         dpop_key: When set, the UserInfo request is DPoP-bound (RFC 9449): the
             access token is presented with ``Authorization: DPoP <token>`` and
             a resource-request DPoP proof (carrying the ``ath`` access-token
@@ -1573,7 +1591,7 @@ class UserInfoRequest(BaseRequest):
     """
 
     token: str = field(repr=False)
-    expected_sub: str | None = None
+    expected_sub: str = field(kw_only=True)
     dpop_key: DPoPKey | None = None
     mtls: MtlsClientAuth | None = None
 
@@ -1584,17 +1602,33 @@ class UserInfoErrorKind(Enum):
     MISSING_SUB = "missing_sub"
     """The response has no non-empty string ``sub`` (OIDC Core 1.0 §5.3.2)."""
 
+    SUB_MISMATCH = "sub_mismatch"
+    """The response ``sub`` differs from the request's ``expected_sub``, the
+    ID token ``sub`` (OIDC Core 1.0 §5.3.2)."""
 
-@dataclass(repr=False, eq=False)
+    UNVERIFIABLE_SUB = "unverifiable_sub"
+    """The response is a signed or encrypted JWT (``application/jwt``), whose
+    ``sub`` this client cannot verify against ``expected_sub``. The JWT is on
+    the response's ``unverified_jwt``."""
+
+
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class UserInfoResponse(BaseResponse):
     """Response from the UserInfo endpoint.
 
     Check ``is_successful`` before accessing ``claims`` or ``raw``.
+
+    ``unverified_jwt`` holds the JWT of a response refused with
+    :attr:`UserInfoErrorKind.UNVERIFIABLE_SUB`, so the caller can verify its
+    signature, then compare its ``sub`` with the ID token's before using any
+    claim (OIDC Core 1.0 §5.3.2, §5.3.4); it is ``None`` otherwise.
     """
 
     _guarded_fields: ClassVar[frozenset[str]] = frozenset({"claims", "raw"})
+    _secret_fields: ClassVar[frozenset[str]] = frozenset({"unverified_jwt"})
 
-    error_kind: UserInfoErrorKind | None = field(default=None, kw_only=True)
+    error_kind: UserInfoErrorKind | None = None
+    unverified_jwt: str | None = None
     claims: dict | None = None
     raw: str | None = None
 
@@ -1604,7 +1638,7 @@ class UserInfoResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ClientRegistrationRequest(BaseRequest):
     """Request to register a client (RFC 7591 Section 3, OIDC Registration 1.0).
 
@@ -1640,7 +1674,7 @@ class ClientRegistrationRequest(BaseRequest):
     initial_access_token: str | None = field(default=None, repr=False)
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ClientReadRequest(BaseRequest):
     """Request to read a client configuration (RFC 7592 Section 2.1).
 
@@ -1652,7 +1686,7 @@ class ClientReadRequest(BaseRequest):
     registration_access_token: str = field(repr=False)
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ClientUpdateRequest(BaseRequest):
     """Request to update a client configuration (RFC 7592 Section 2.2).
 
@@ -1687,7 +1721,7 @@ class ClientUpdateRequest(BaseRequest):
     extra_metadata: dict | None = None
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class ClientDeleteRequest(BaseRequest):
     """Request to deregister a client (RFC 7592 Section 2.3).
 
@@ -1699,7 +1733,7 @@ class ClientDeleteRequest(BaseRequest):
     registration_access_token: str = field(repr=False)
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class ClientRegistrationResponse(BaseResponse):
     """Response from the client registration endpoint (RFC 7591 / RFC 7592).
 
@@ -1730,7 +1764,7 @@ class ClientRegistrationResponse(BaseResponse):
     metadata: dict | None = None
 
 
-@dataclass(repr=False, eq=False)
+@dataclass(frozen=True, kw_only=True, repr=False, eq=False)
 class ClientDeleteResponse(BaseResponse):
     """Response from deregistering a client (RFC 7592 Section 2.3).
 
@@ -1744,7 +1778,7 @@ class ClientDeleteResponse(BaseResponse):
 # ============================================================================
 
 
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class TokenValidationConfig:
     """
     Configuration for JWT token validation.
@@ -1771,9 +1805,12 @@ class TokenValidationConfig:
             accepted issuers for multi-tenant validation.
         subject: Expected ``sub`` claim.  Validated after decoding.
         options: Additional PyJWT decode options (e.g., {'require': ['sub']}).
-            Security-critical options (verify_signature, verify_exp, verify_nbf,
-            verify_iat) cannot be disabled and will raise ConfigurationException
-            if set to False.
+            They cannot weaken a check: ``verify_signature``, ``verify_exp``,
+            ``verify_nbf`` and ``verify_iat`` can never be ``False``;
+            ``verify_aud`` cannot be ``False`` while ``audience`` is set, nor
+            ``verify_iss`` while an issuer is set or discovered; ``require``
+            must be a list of claim names. A violation raises
+            ``ConfigurationException``.
         claims_validator: Optional injectable claims validator, run after the
                          standard checks pass. A ``ClaimsValidator`` is any
                          callable ``(claims) -> None`` — sync, or async in the

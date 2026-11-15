@@ -202,6 +202,30 @@ class UntrustedAudienceException(IdTokenValidationException):
         )
 
 
+class IdTokenRequiredClaim(Enum):
+    """An ID Token claim OpenID Connect Core 1.0 §2 marks REQUIRED and that
+    standard JWT validation does not itself require."""
+
+    EXP = "exp"
+    """Expiration time (§2; checked in §3.1.3.7 step 9)."""
+    IAT = "iat"
+    """Issued-at time (§2)."""
+
+
+class IdTokenMissingClaimError(IdTokenValidationException):
+    """Raised when an ID Token lacks a claim OpenID Connect Core 1.0 §2 marks
+    REQUIRED. ``claim`` says which one; ``details["claim"]`` carries its name.
+    """
+
+    def __init__(self, claim: IdTokenRequiredClaim) -> None:
+        self.claim = claim
+        super().__init__(
+            f"ID token missing required '{claim.value}' claim",
+            token_part="payload",
+            details={"claim": claim.value},
+        )
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.
@@ -540,6 +564,121 @@ class DPoPKeyError(ConfigurationException):
         self.kind = kind
 
 
+class WeakSigningKeyError(ConfigurationException):
+    """A key the library was asked to sign with is below the strength floor.
+
+    The floor is the one verification keys meet (``WeakKeyException``): an RSA
+    key needs at least 2048 bits (RFC 7518 §3.3, §3.5). Raised before anything
+    is signed.
+
+    Attributes:
+        kty: The key type (``"RSA"``).
+        bits: The key's size in bits.
+        min_bits: The size it needed.
+    """
+
+    def __init__(self, kty: str, bits: int, min_bits: int) -> None:
+        self.kty = kty
+        self.bits = bits
+        self.min_bits = min_bits
+        super().__init__(
+            f"{kty} signing key is {bits} bits; at least {min_bits} required",
+            details={"kty": kty, "bits": bits, "min_bits": min_bits},
+        )
+
+
+class RequestObjectErrorKind(Enum):
+    """Why a JAR request object or authorization URL can't be built."""
+
+    FORBIDDEN_CLAIM = "forbidden_claim"
+    """``extra_claims`` holds ``request`` or ``request_uri``, which RFC 9101 §4
+    forbids inside a request object."""
+    NOT_A_JWT = "not_a_jwt"
+    """The request object is not a signed JWT whose claims can be read."""
+    ENCRYPTED = "encrypted"
+    """The request object is a compact JWE, so its ``client_id`` can't be
+    read."""
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """The request object's ``client_id`` is absent or differs from the
+    authorization request's ``client_id`` (RFC 9101 §5)."""
+
+
+_REQUEST_OBJECT_MESSAGES = {
+    RequestObjectErrorKind.FORBIDDEN_CLAIM: (
+        "request and request_uri must not be included in a request object (RFC 9101 §4)"
+    ),
+    RequestObjectErrorKind.NOT_A_JWT: "request object is not a signed JWT",
+    RequestObjectErrorKind.ENCRYPTED: (
+        "request object is encrypted; its client_id can't be checked"
+    ),
+    RequestObjectErrorKind.CLIENT_ID_MISMATCH: (
+        "request object client_id does not match the authorization request "
+        "client_id (RFC 9101 §5)"
+    ),
+}
+
+
+class RequestObjectError(ConfigurationException):
+    """A JAR request object (RFC 9101) can't be built or sent as given.
+
+    ``kind`` says which rule was broken; the message is fixed per kind.
+    """
+
+    def __init__(self, kind: RequestObjectErrorKind) -> None:
+        self.kind = kind
+        super().__init__(_REQUEST_OBJECT_MESSAGES[kind], details={"kind": kind.value})
+
+
+class ProtocolParameterErrorReason(Enum):
+    """Which OAuth request-parameter MUST a request breaks."""
+
+    NOT_ABSOLUTE_URI = "not_absolute_uri"
+    """A ``redirect_uri`` or ``resource`` has no scheme (RFC 6749 §3.1.2,
+    RFC 8707 §2)."""
+
+    URI_HAS_FRAGMENT = "uri_has_fragment"
+    """A ``redirect_uri`` or ``resource`` has a fragment component (RFC 6749
+    §3.1.2, RFC 8707 §2)."""
+
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """A client update's ``extra_metadata`` names a ``client_id`` other than
+    the client's own (RFC 7592 §2.2)."""
+
+    PKCE_REQUIRED = "pkce_required"
+    """A public client redeems an authorization code without a
+    ``code_verifier`` (RFC 9700 §2.1.1)."""
+
+
+class ProtocolParameterError(ConfigurationException):
+    """A request parameter breaks a protocol MUST.
+
+    Raised before any request is sent.
+
+    Attributes:
+        reason: Which rule was broken.
+        parameter: The request parameter involved.
+    """
+
+    def __init__(self, reason: ProtocolParameterErrorReason, parameter: str) -> None:
+        self.reason = reason
+        self.parameter = parameter
+        messages = {
+            ProtocolParameterErrorReason.NOT_ABSOLUTE_URI: (
+                f"{parameter} must be an absolute URI"
+            ),
+            ProtocolParameterErrorReason.URI_HAS_FRAGMENT: (
+                f"{parameter} must not include a fragment component"
+            ),
+            ProtocolParameterErrorReason.CLIENT_ID_MISMATCH: (
+                f"{parameter} client_id must equal the request's client_id"
+            ),
+            ProtocolParameterErrorReason.PKCE_REQUIRED: (
+                f"a public client must send a {parameter} (PKCE)"
+            ),
+        }
+        super().__init__(messages[reason])
+
+
 class FailedResponseAccessError(PyIdentityModelException):
     """Raised when accessing data fields on a failed response."""
 
@@ -595,7 +734,11 @@ __all__ = [
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",
+    "ProtocolParameterError",
+    "ProtocolParameterErrorReason",
     "PyIdentityModelException",
+    "RequestObjectError",
+    "RequestObjectErrorKind",
     "SignatureVerificationException",
     "SuccessfulResponseAccessError",
     "TokenExpiredException",
@@ -605,4 +748,5 @@ __all__ = [
     "UserInfoException",
     "ValidationException",
     "WeakKeyException",
+    "WeakSigningKeyError",
 ]

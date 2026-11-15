@@ -27,7 +27,6 @@ from py_identity_model.core.device_auth_logic import (
     prepare_device_auth_request_data,
     prepare_device_token_request_data,
 )
-from py_identity_model.core.dpop import generate_dpop_key
 from py_identity_model.core.introspection_logic import (
     prepare_introspection_request_data,
 )
@@ -94,6 +93,7 @@ ENDPOINTS = [
             client_id=CLIENT_ID,
             code="code",
             redirect_uri="https://rp.example.com/cb",
+            code_verifier="verifier",
             **kw,
         ),
         prepare_auth_code_token_request_data,
@@ -169,14 +169,16 @@ def _ec_pem() -> str:
 
 
 def _pkjwt() -> PrivateKeyJwt:
-    return PrivateKeyJwt(private_key=_ec_pem(), algorithm="ES256")
+    return PrivateKeyJwt(
+        private_key=_ec_pem(), algorithm="ES256", issuer="https://as.example.com"
+    )
 
 
 def _mtls(
     method: ClientAuthMethod = ClientAuthMethod.TLS_CLIENT_AUTH,
 ) -> MtlsClientAuth:
     return MtlsClientAuth(
-        certificate="/c.pem", private_key="/k.pem", auth_method=method
+        certificate_path="/c.pem", private_key_path="/k.pem", auth_method=method
     )
 
 
@@ -365,23 +367,6 @@ def test_public_request_function_raises_when_credential_missing():
     assert route.call_count == 0
 
 
-def test_client_auth_method_is_keyword_only():
-    # Added in 5.0 without shifting existing positional arguments: dpop_key
-    # still lands in dpop_key, and there's no positional slot for the method.
-    key = generate_dpop_key()
-    # address, client_id, refresh_token, scope, client_secret,
-    # private_key_jwt, mtls, dpop_key
-    request = RefreshTokenRequest(ADDRESS, CLIENT_ID, "rt", None, None, None, None, key)
-    assert (request.dpop_key, request.client_auth_method) == (key, None)
-    # address, token, client_id, token_type_hint, client_secret,
-    # private_key_jwt, mtls — then one more positional argument. Called
-    # through Any: the type checker rejects this call, which is the point.
-    revocation: Any = TokenRevocationRequest
-    positional = [ADDRESS, "tok", CLIENT_ID, None, None, None, None]
-    with pytest.raises(TypeError):
-        revocation(*positional, ClientAuthMethod.NONE)
-
-
 # --------------------------------------------------------------------------- #
 # MtlsClientAuth                                                               #
 # --------------------------------------------------------------------------- #
@@ -389,7 +374,7 @@ def test_client_auth_method_is_keyword_only():
 
 def test_mtls_defaults_to_tls_client_auth():
     assert (
-        MtlsClientAuth(certificate="/c.pem", private_key="/k.pem").auth_method
+        MtlsClientAuth(certificate_path="/c.pem", private_key_path="/k.pem").auth_method
         is ClientAuthMethod.TLS_CLIENT_AUTH
     )
 

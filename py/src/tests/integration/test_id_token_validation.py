@@ -134,6 +134,7 @@ class TestValidateIdTokenLive:
             id_token_flow["id_token"],
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            nonce=id_token_flow["nonce"],
         )
 
         # Signature/iss/aud/exp are enforced inside validate_id_token; assert the
@@ -157,7 +158,28 @@ class TestValidateIdTokenLive:
                 id_token_flow["id_token"],
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                nonce=id_token_flow["nonce"],
             )
+
+    def test_nonce_not_sent_rejects_token_nonce(
+        self, id_token_flow, test_config, issuer, require_https
+    ):
+        """``nonce=None`` (none sent) rejects a live ID Token that carries one (§2)."""
+        id_token = id_token_flow["id_token"]
+        if "nonce" not in _decode_unverified(id_token):
+            pytest.skip("OP did not echo the requested nonce into the ID Token")
+        config = _config_for(id_token_flow["client_id"], issuer, require_https)
+
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token(
+                id_token,
+                config,
+                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                nonce=None,
+            )
+        assert exc_info.value.message == (
+            "ID token carries a 'nonce' claim but no nonce was sent"
+        )
 
     def test_nonce_binding(self, id_token_flow, test_config, issuer, require_https):
         """The live ID Token binds to the nonce sent on the authorization request."""
@@ -199,6 +221,7 @@ class TestValidateIdTokenLive:
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
             max_age=id_token_flow["max_age"],
+            nonce=id_token_flow["nonce"],
         )
         assert isinstance(claims["auth_time"], int)
 
@@ -225,6 +248,7 @@ class TestValidateIdTokenLive:
             disco_doc_address=disco,
             access_token=access_token,
             access_token_issued_with_id_token=False,
+            nonce=id_token_flow["nonce"],
         )
 
         if "at_hash" in _decode_unverified(id_token):
@@ -239,9 +263,14 @@ class TestValidateIdTokenLive:
                     disco_doc_address=disco,
                     access_token=access_token + "tampered",
                     access_token_issued_with_id_token=False,
+                    nonce=id_token_flow["nonce"],
                 )
             validate_id_token(
-                id_token, config, disco_doc_address=disco, access_token=access_token
+                id_token,
+                config,
+                disco_doc_address=disco,
+                access_token=access_token,
+                nonce=id_token_flow["nonce"],
             )
         else:
             # No at_hash: nothing binds, so only the default presence rule rejects.
@@ -249,5 +278,9 @@ class TestValidateIdTokenLive:
                 IdTokenValidationException, match=r"missing required 'at_hash'"
             ):
                 validate_id_token(
-                    id_token, config, disco_doc_address=disco, access_token=access_token
+                    id_token,
+                    config,
+                    disco_doc_address=disco,
+                    access_token=access_token,
+                    nonce=id_token_flow["nonce"],
                 )

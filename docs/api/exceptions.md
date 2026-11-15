@@ -28,7 +28,8 @@ PyIdentityModelException
 │       ├── IntrospectedTokenError  (see Token Introspection)
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
-│           └── UntrustedAudienceException
+│           ├── UntrustedAudienceException
+│           └── IdTokenMissingClaimError
 ├── NetworkException
 │   ├── DiscoveryException
 │   ├── JwksException
@@ -42,7 +43,9 @@ PyIdentityModelException
 │   ├── ClientAuthMethodError
 │   ├── AzpRequiresClientIdError
 │   ├── DPoPReplayCacheError
-│   └── DiscoveryHTTPSRequiredError
+│   ├── DiscoveryHTTPSRequiredError
+│   ├── RequestObjectError
+│   └── WeakSigningKeyError
 ├── FailedResponseAccessError
 └── SuccessfulResponseAccessError
 ```
@@ -103,6 +106,8 @@ never returned on a failed response.
 
 `UntrustedAudienceException`: see [ID Token validation](id-token.md#py_identity_model.exceptions.UntrustedAudienceException).
 
+`IdTokenMissingClaimError`: see [ID Token validation](id-token.md#py_identity_model.exceptions.IdTokenMissingClaimError).
+
 ## Network Exceptions
 
 ::: py_identity_model.exceptions.NetworkException
@@ -132,6 +137,12 @@ never returned on a failed response.
 `ConfigError`: see [Configuration](config.md#py_identity_model.core.config.ConfigError).
 
 `FAPIProfileError`: see [FAPI 2.0](fapi.md#py_identity_model.core.fapi.FAPIProfileError).
+
+::: py_identity_model.exceptions.RequestObjectError
+
+::: py_identity_model.exceptions.RequestObjectErrorKind
+
+::: py_identity_model.exceptions.WeakSigningKeyError
 
 ## Response Guard Errors
 

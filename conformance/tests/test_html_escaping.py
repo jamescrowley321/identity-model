@@ -28,7 +28,12 @@ from unittest.mock import patch
 import app as harness_app
 from fastapi.testclient import TestClient
 
-from py_identity_model import JwksResponse, UserInfoResponse
+from py_identity_model import (
+    DiscoveryErrorKind,
+    JwksResponse,
+    UserInfoErrorKind,
+    UserInfoResponse,
+)
 
 # Importing the real exception class so the harness's `except` clause matches.
 from py_identity_model.exceptions import TokenValidationException
@@ -77,11 +82,6 @@ class _Disco:
     end_session_endpoint = "https://op.example.com/end-session"
 
 
-class _DiscoEndpoint:
-    url = "https://op.example.com"
-    authority = "https://op.example.com"
-
-
 class _TokenRespOk:
     is_successful = True
     token: ClassVar[dict[str, str]] = {
@@ -103,6 +103,7 @@ class TestDiscoveryFailedEscaping:
         class _FailedDisco:
             is_successful = False
             error = XSS_PAYLOAD
+            error_kind = DiscoveryErrorKind.NETWORK_ERROR
 
         with patch.object(
             harness_app, "get_discovery_document", return_value=_FailedDisco()
@@ -131,7 +132,9 @@ class TestIdTokenValidationFailedEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -169,11 +172,15 @@ class TestUserInfoValidationFailedEscaping:
             is_successful = False
             claims = None
             error = XSS_PAYLOAD
+            error_kind = UserInfoErrorKind.SUB_MISMATCH
+            unverified_jwt = None
 
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -221,7 +228,9 @@ class TestSuccessBodyClaimEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -271,7 +280,9 @@ class TestSuccessBodyClaimEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,

@@ -11,6 +11,7 @@ from .core.config import (
     ConfigIssue,
     HTTPConfig,
 )
+from .core.id_token_logic import RefreshNonce
 from .core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 
 # Backward compatible sync exports (default)
@@ -33,6 +34,8 @@ from .exceptions import (
     DPoPKeyErrorKind,
     DPoPReplayCacheError,
     FailedResponseAccessError,
+    IdTokenMissingClaimError,
+    IdTokenRequiredClaim,
     IdTokenValidationException,
     InvalidArgumentError,
     InvalidArgumentKind,
@@ -46,7 +49,11 @@ from .exceptions import (
     LogoutStateValidationException,
     LogoutTokenValidationException,
     NetworkException,
+    ProtocolParameterError,
+    ProtocolParameterErrorReason,
     PyIdentityModelException,
+    RequestObjectError,
+    RequestObjectErrorKind,
     SignatureVerificationException,
     SuccessfulResponseAccessError,
     TokenExpiredException,
@@ -56,6 +63,7 @@ from .exceptions import (
     UserInfoException,
     ValidationException,
     WeakKeyException,
+    WeakSigningKeyError,
 )
 
 # Identity models (shared)
@@ -91,7 +99,6 @@ from .sync import (
     DeviceTokenResponse,
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
-    DiscoveryEndpoint,
     DiscoveryErrorKind,
     DiscoveryPolicy,
     DPoPAlgorithm,
@@ -159,6 +166,7 @@ from .sync import (
     create_dpop_proof,
     create_request_object,
     delete_client,
+    discovery_document_url,
     exchange_token,
     extract_dpop_nonce,
     extract_jarm_response_jwt,
@@ -174,7 +182,6 @@ from .sync import (
     is_jarm_response,
     jwks_from_dict,
     parse_authorize_callback_response,
-    parse_discovery_url,
     poll_device_token,
     process_jarm_response,
     push_authorization_request,
@@ -276,7 +283,6 @@ __all__ = [
     # Request/Response models
     "DiscoveryDocumentRequest",
     "DiscoveryDocumentResponse",
-    "DiscoveryEndpoint",
     "DiscoveryErrorKind",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",
@@ -294,6 +300,8 @@ __all__ = [
     # HTTP Client
     "HTTPClient",
     "HTTPConfig",
+    "IdTokenMissingClaimError",
+    "IdTokenRequiredClaim",
     "IdTokenValidationException",
     "InMemoryDPoPReplayCache",
     "IntrospectedTokenError",
@@ -320,14 +328,19 @@ __all__ = [
     "NetworkException",
     # Client authentication (private_key_jwt)
     "PrivateKeyJwt",
+    "ProtocolParameterError",
+    "ProtocolParameterErrorReason",
     # PAR
     "PushedAuthorizationRequest",
     "PushedAuthorizationResponse",
     # Exceptions
     "PyIdentityModelException",
     # Refresh Token
+    "RefreshNonce",
     "RefreshTokenRequest",
     "RefreshTokenResponse",
+    "RequestObjectError",
+    "RequestObjectErrorKind",
     "RequestObjectKey",
     "SignatureVerificationException",
     "SignedIntrospectionOptions",
@@ -358,6 +371,7 @@ __all__ = [
     "ValidationCache",
     "ValidationException",
     "WeakKeyException",
+    "WeakSigningKeyError",
     "build_authorization_url",
     "build_dpop_headers",
     "build_end_session_url",
@@ -374,6 +388,7 @@ __all__ = [
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
+    "discovery_document_url",
     "exchange_token",
     "extract_dpop_nonce",
     "extract_jarm_response_jwt",
@@ -391,7 +406,6 @@ __all__ = [
     "is_jarm_response",
     "jwks_from_dict",
     "parse_authorize_callback_response",
-    "parse_discovery_url",
     "poll_device_token",
     "process_jarm_response",
     "push_authorization_request",

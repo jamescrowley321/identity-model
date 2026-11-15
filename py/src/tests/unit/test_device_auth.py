@@ -11,6 +11,9 @@ from py_identity_model import (
     DeviceTokenResponse,
     FailedResponseAccessError,
 )
+from py_identity_model.aio.device_auth import (
+    poll_device_token as poll_device_token_async,
+)
 from py_identity_model.core.device_auth_logic import (
     prepare_device_auth_request_data,
     prepare_device_token_request_data,
@@ -577,3 +580,42 @@ class TestDeviceAuthorizationResponseReprRedaction:
         assert a == b
         assert a != c
         assert a != "not-a-response"
+
+
+POLL_NOT_RETRIED = [
+    pytest.param(httpx.Response(503), id="503"),
+    pytest.param(httpx.Response(429), id="429"),
+    pytest.param(httpx.ReadTimeout("response lost"), id="read_timeout"),
+]
+
+
+@pytest.mark.unit
+class TestPollIsSingleAttempt:
+    """RFC 8628 §3.5: the caller's loop sets the polling rate, never a retry."""
+
+    @pytest.mark.parametrize("first", POLL_NOT_RETRIED)
+    @respx.mock
+    def test_sync_poll_sends_one_request(self, first):
+        route = respx.post(TOKEN_URL).mock(
+            side_effect=[first, httpx.Response(200, json={"access_token": "at"})]
+        )
+        response = poll_device_token(
+            DeviceTokenRequest(address=TOKEN_URL, client_id="app1", device_code="d")
+        )
+        assert response.is_successful is False
+        assert response.error_code is None
+        assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("first", POLL_NOT_RETRIED)
+    @respx.mock
+    async def test_async_poll_sends_one_request(self, first):
+        route = respx.post(TOKEN_URL).mock(
+            side_effect=[first, httpx.Response(200, json={"access_token": "at"})]
+        )
+        response = await poll_device_token_async(
+            DeviceTokenRequest(address=TOKEN_URL, client_id="app1", device_code="d")
+        )
+        assert response.is_successful is False
+        assert response.error_code is None
+        assert route.call_count == 1

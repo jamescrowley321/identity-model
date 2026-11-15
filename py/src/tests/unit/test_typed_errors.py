@@ -17,7 +17,6 @@ from py_identity_model import (
     ConfigError,
     FAPIProfileError,
     MtlsClientAuth,
-    PrivateKeyJwt,
     TokenValidationConfig,
 )
 from py_identity_model.core.config import ConfigIssue
@@ -143,12 +142,12 @@ class TestHierarchy:
         assert not issubclass(exc_type, ValueError)
 
     def test_config_error_carries_issues(self):
-        issue = ConfigIssue("http_timeout", "must be positive")
+        issue = ConfigIssue(setting="http_timeout", message="must be positive")
         error = ConfigError([issue])
         assert error.issues == (issue,)
 
     def test_fapi_profile_error_is_configuration_exception(self):
-        violation = FAPIViolation(FAPIViolationCode.CLIENT_ID_MISSING, "a")
+        violation = FAPIViolation(code=FAPIViolationCode.CLIENT_ID_MISSING, message="a")
         error = FAPIProfileError([violation])
         assert isinstance(error, ConfigurationException)
         assert error.codes == [FAPIViolationCode.CLIENT_ID_MISSING]
@@ -387,30 +386,6 @@ class TestRequestFunctionsRaise:
         )
         assert route.call_count == 0
 
-    @respx.mock
-    def test_non_string_assertion_audience_raises(self):
-        route = respx.post(f"{ISSUER}/token").mock(
-            return_value=httpx.Response(200, json={})
-        )
-        key = DPoPKey("ES256")
-        with pytest.raises(InvalidArgumentError) as excinfo:
-            request_client_credentials_token(
-                ClientCredentialsTokenRequest(
-                    address=f"{ISSUER}/token",
-                    client_id="client",
-                    private_key_jwt=PrivateKeyJwt(
-                        private_key=key.private_key_pem,
-                        algorithm="ES256",
-                        audience=[ISSUER],  # type: ignore[arg-type]
-                    ),
-                )
-            )
-        assert (excinfo.value.argument, excinfo.value.kind) == (
-            "audience",
-            InvalidArgumentKind.INVALID_TYPE,
-        )
-        assert route.call_count == 0
-
 
 class TestMtlsAuthMethod:
     """S23: a non-enum auth_method names the value passed."""
@@ -418,8 +393,8 @@ class TestMtlsAuthMethod:
     def test_string_method_is_not_a_client_auth_method(self):
         with pytest.raises(ClientAuthMethodError) as excinfo:
             MtlsClientAuth(
-                certificate="c.pem",
-                private_key="k.pem",
+                certificate_path="c.pem",
+                private_key_path="k.pem",
                 auth_method="tls_client_auth",  # type: ignore[arg-type]
             )
         assert (excinfo.value.reason, excinfo.value.method, str(excinfo.value)) == (
@@ -431,8 +406,8 @@ class TestMtlsAuthMethod:
     def test_non_mtls_member_names_that_member(self):
         with pytest.raises(ClientAuthMethodError) as excinfo:
             MtlsClientAuth(
-                certificate="c.pem",
-                private_key="k.pem",
+                certificate_path="c.pem",
+                private_key_path="k.pem",
                 auth_method=ClientAuthMethod.CLIENT_SECRET_BASIC,
             )
         assert (excinfo.value.reason, excinfo.value.method) == (

@@ -40,13 +40,21 @@ def basic_auth_credentials(client_id: str, client_secret: str) -> tuple[str, str
 
 
 class ClientAuthenticatingRequest(Protocol):
-    """The fields a confidential-client request carries for authentication."""
+    """The fields a confidential-client request carries for authentication.
 
-    address: str
-    client_id: str
-    private_key_jwt: PrivateKeyJwt | None
-    mtls: MtlsClientAuth | None
-    client_auth_method: ClientAuthMethod | None
+    Read-only, so the frozen request types satisfy it.
+    """
+
+    @property
+    def address(self) -> str: ...
+    @property
+    def client_id(self) -> str: ...
+    @property
+    def private_key_jwt(self) -> PrivateKeyJwt | None: ...
+    @property
+    def mtls(self) -> MtlsClientAuth | None: ...
+    @property
+    def client_auth_method(self) -> ClientAuthMethod | None: ...
 
 
 def resolve_client_auth_method(
@@ -101,14 +109,10 @@ def apply_client_auth(
     method = resolve_client_auth_method(request, client_secret=client_secret)
 
     if method is ClientAuthMethod.PRIVATE_KEY_JWT:
-        if request.private_key_jwt is None:
+        private_key_jwt = request.private_key_jwt
+        if private_key_jwt is None:
             raise _missing(method, "private_key_jwt")
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
+        apply_private_key_jwt(params, private_key_jwt, client_id=request.client_id)
         return None
 
     if method.is_mtls:

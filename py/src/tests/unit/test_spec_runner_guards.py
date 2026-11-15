@@ -6,7 +6,7 @@ import pytest
 from py_identity_model.core.dpop import create_dpop_proof, generate_dpop_key
 
 from ..dpop_proof_helpers import dpop_fixture_key, fixture, proof_jti
-from ..spec_vectors.test_spec_http_vectors import KnownGap, _dpop_expect
+from ..spec_vectors.test_spec_http_vectors import _dpop_expect
 from .test_spec_logic_vectors import test_logic_vector as run_logic_vector
 
 
@@ -51,14 +51,15 @@ def _nonce_result(second_nonce: str | None) -> tuple[dict, tuple]:
     return expect, (base, key, proofs, [proof_jti(p) for p in proofs])
 
 
-def test_cached_nonce_fix_can_xpass() -> None:
+def test_cached_nonce_passes() -> None:
     expect, result = _nonce_result("cached-nonce")
     _dpop_expect("DPOP-004", expect, result)
 
 
-def test_missing_cached_nonce_is_a_known_gap() -> None:
+def test_missing_cached_nonce_fails() -> None:
+    """RFC 9449 §8.2: a later proof without the cached nonce is a failure."""
     expect, result = _nonce_result(None)
-    with pytest.raises(KnownGap, match="not cached"):
+    with pytest.raises(AssertionError):
         _dpop_expect("DPOP-004", expect, result)
 
 

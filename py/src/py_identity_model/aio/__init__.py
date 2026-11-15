@@ -36,9 +36,8 @@ from ..core.claims_validation import (
     require_scopes,
 )
 from ..core.discovery_policy import (
-    DiscoveryEndpoint,
     DiscoveryPolicy,
-    parse_discovery_url,
+    discovery_document_url,
 )
 from ..core.dpop import (
     DPoPAlgorithm,
@@ -77,6 +76,7 @@ from ..core.fapi import (
     validate_fapi_client_config,
     validate_fapi_discovery,
 )
+from ..core.id_token_logic import RefreshNonce
 from ..core.jar import build_jar_authorization_url, create_request_object
 from ..core.jarm import (
     extract_jarm_response_jwt,
@@ -255,7 +255,6 @@ __all__ = [
     "DiscoveryDocumentRequest",
     "DiscoveryDocumentResponse",
     # Discovery Policy
-    "DiscoveryEndpoint",
     "DiscoveryErrorKind",
     "DiscoveryPolicy",
     "FAPI2ClientProfile",
@@ -281,6 +280,7 @@ __all__ = [
     "PushedAuthorizationRequest",
     "PushedAuthorizationResponse",
     # Refresh Token
+    "RefreshNonce",
     "RefreshTokenRequest",
     "RefreshTokenResponse",
     "RequestObjectKey",
@@ -319,6 +319,7 @@ __all__ = [
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
+    "discovery_document_url",
     "exchange_token",
     "extract_dpop_nonce",
     "extract_jarm_response_jwt",
@@ -334,7 +335,6 @@ __all__ = [
     "is_jarm_response",
     "jwks_from_dict",
     "parse_authorize_callback_response",
-    "parse_discovery_url",
     "poll_device_token",
     "process_jarm_response",
     "push_authorization_request",

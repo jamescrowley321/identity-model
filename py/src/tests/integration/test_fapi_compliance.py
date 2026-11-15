@@ -67,10 +67,10 @@ class TestFAPIDiscoveryCompliance:
         issuer = discovery_document.issuer
         build = partial(
             FAPI2ClientProfile,
-            discovery_document,
+            discovery=discovery_document,
             client_id="fapi-client",
             redirect_uri=REDIRECT_URI,
-            client_auth=_pkj(),
+            client_auth=_pkj(issuer=issuer),
         )
         if violations:
             with pytest.raises(FAPIProfileError) as exc_info:
@@ -82,8 +82,8 @@ class TestFAPIDiscoveryCompliance:
                 build()
             assert (
                 FAPIViolation(
-                    FAPIViolationCode.ENDPOINT_INVALID,
-                    f"issuer must use https, got {issuer!r}",
+                    code=FAPIViolationCode.ENDPOINT_INVALID,
+                    message=f"issuer must use https, got {issuer!r}",
                 )
                 in exc_info.value.violations
             )
@@ -101,6 +101,7 @@ def _pkj(**overrides: Any) -> PrivateKeyJwt:
     fields: dict[str, Any] = {
         "private_key": DPOP_KEY.private_key_pem,
         "algorithm": "ES256",
+        "issuer": "https://auth.example.com",
         **overrides,
     }
     return PrivateKeyJwt(**fields)
@@ -134,7 +135,9 @@ class TestFAPIClientConfigValidation:
     def test_tls_client_auth_with_mtls(self, discovery_document):
         result = validate_fapi_client_config(
             issuer=discovery_document.issuer,
-            mtls=MtlsClientAuth(certificate="client.pem", private_key="client.key"),
+            mtls=MtlsClientAuth(
+                certificate_path="client.pem", private_key_path="client.key"
+            ),
         )
         assert _messages(result.violations) == []
 
@@ -151,10 +154,10 @@ class TestFAPIClientConfigValidation:
         )
         assert result.is_compliant is False
 
-    def test_endpoint_url_audience_rejected(self, discovery_document):
+    def test_token_endpoint_as_issuer_rejected(self, discovery_document):
         result = validate_fapi_client_config(
             issuer=discovery_document.issuer,
-            private_key_jwt=_pkj(audience=discovery_document.token_endpoint),
+            private_key_jwt=_pkj(issuer=discovery_document.token_endpoint),
             dpop_key=DPOP_KEY,
         )
         assert result.is_compliant is False

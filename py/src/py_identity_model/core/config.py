@@ -62,7 +62,7 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ConfigIssue:
     """One invalid setting. Names the setting and the rule, never the value."""
 
@@ -202,7 +202,7 @@ class _ValidatedConfig:
                 else _check_ca_bundle(value)
             )
             if problem is not None:
-                issues.append(ConfigIssue(f.name, problem))
+                issues.append(ConfigIssue(setting=f.name, message=problem))
         if issues:
             raise ConfigError(issues)
 

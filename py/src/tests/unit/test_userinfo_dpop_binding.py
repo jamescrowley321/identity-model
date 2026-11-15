@@ -32,7 +32,8 @@ from py_identity_model.sync.userinfo import get_userinfo
 
 USERINFO_URL = "https://api.example.com/userinfo"
 ACCESS_TOKEN = "at-resource-123"
-USERINFO_CLAIMS = {"sub": "user-1", "name": "Jane Doe"}
+SUB = "user-1"
+USERINFO_CLAIMS = {"sub": SUB, "name": "Jane Doe"}
 
 # One original request + exactly one use_dpop_nonce retry (RFC 9449 §8).
 EXPECTED_RETRY_CALLS = 2
@@ -57,7 +58,12 @@ class TestUserInfoDpopSync:
         key = generate_dpop_key()
 
         response = get_userinfo(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, dpop_key=key)
+            UserInfoRequest(
+                address=USERINFO_URL,
+                token=ACCESS_TOKEN,
+                expected_sub=SUB,
+                dpop_key=key,
+            )
         )
 
         assert response.is_successful is True
@@ -77,7 +83,7 @@ class TestUserInfoDpopSync:
         )
 
         response = get_userinfo(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN)
+            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, expected_sub=SUB)
         )
 
         assert response.is_successful is True
@@ -102,7 +108,12 @@ class TestUserInfoDpopSync:
         key = generate_dpop_key()
 
         response = get_userinfo(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, dpop_key=key)
+            UserInfoRequest(
+                address=USERINFO_URL,
+                token=ACCESS_TOKEN,
+                expected_sub=SUB,
+                dpop_key=key,
+            )
         )
 
         assert response.is_successful is True
@@ -127,7 +138,12 @@ class TestUserInfoDpopSync:
         key = generate_dpop_key()
 
         response = get_userinfo(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, dpop_key=key)
+            UserInfoRequest(
+                address=USERINFO_URL,
+                token=ACCESS_TOKEN,
+                expected_sub=SUB,
+                dpop_key=key,
+            )
         )
 
         assert response.is_successful is False
@@ -145,7 +161,12 @@ class TestUserInfoDpopAsync:
         key = generate_dpop_key()
 
         response = await get_userinfo_async(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, dpop_key=key)
+            UserInfoRequest(
+                address=USERINFO_URL,
+                token=ACCESS_TOKEN,
+                expected_sub=SUB,
+                dpop_key=key,
+            )
         )
 
         assert response.is_successful is True
@@ -172,7 +193,12 @@ class TestUserInfoDpopAsync:
         key = generate_dpop_key()
 
         response = await get_userinfo_async(
-            UserInfoRequest(address=USERINFO_URL, token=ACCESS_TOKEN, dpop_key=key)
+            UserInfoRequest(
+                address=USERINFO_URL,
+                token=ACCESS_TOKEN,
+                expected_sub=SUB,
+                dpop_key=key,
+            )
         )
 
         assert response.is_successful is True

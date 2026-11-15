@@ -65,9 +65,11 @@ async def request_device_authorization(
             await owned_client.aclose()
 
 
-@retry_with_backoff_async()
+# A single attempt, never retried: RFC 8628 §3.5 leaves the wait between
+# polls to the caller's loop, which must not poll faster than ``interval``.
+@retry_with_backoff_async(max_retries=0)
 async def _poll_device_token(client, url, data, headers, auth=None):
-    """Make device token poll request with retry logic (async)."""
+    """Make one device token poll request (async)."""
     kwargs: dict = {"data": data, "headers": headers}
     if auth is not None:
         kwargs["auth"] = auth
@@ -80,8 +82,10 @@ async def poll_device_token(
 ) -> DeviceTokenResponse:
     """Poll the token endpoint for device authorization completion (RFC 8628, async).
 
-    Makes a single poll attempt. Check ``error_code`` on the response
-    to determine whether to continue polling.
+    Makes a single poll attempt and never retries it, so the caller's loop
+    controls the polling rate (RFC 8628 §3.5). See
+    :func:`py_identity_model.sync.device_auth.poll_device_token` for how to
+    act on ``error_code``.
 
     Args:
         request: Device token request with device code.
