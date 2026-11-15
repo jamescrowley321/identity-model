@@ -1054,25 +1054,43 @@ def _submit_login(client, resp, interaction_url, config):
         # Identifier-first (e.g. Zitadel): the username page answers with the
         # password page.
         resp = client.post(form.action_url, data=_identifier_fields(form, config))
+        # The client does not follow redirects; the password page may be
+        # served behind one.
+        redirects = 0
+        while is_redirect(resp.status_code):
+            location = _resolve_location(resp)
+            redirects += 1
+            if location is None or redirects > MAX_REDIRECTS:
+                break
+            resp = client.get(location)
         form = _parse_login_form(resp.text, str(resp.url))
         if form is None or not form.has_password:
             pytest.fail(
                 f"No password form after submitting the username at {resp.url} "
                 f"(HTTP {resp.status_code})"
             )
-    data = _identifier_fields(form, config)
+        # The identifier was already given, so this page need not ask for it.
+        data = _identifier_fields(form, config, required=False)
+    else:
+        data = _identifier_fields(form, config)
     data["password"] = config.login_password
     return client.post(form.action_url, data=data)
 
 
 def _identifier_fields(
-    form: _LoginForm, config: "AuthCodeFlowConfig"
+    form: _LoginForm, config: "AuthCodeFlowConfig", *, required: bool = True
 ) -> dict[str, str]:
-    """The form's hidden fields plus the login identifier."""
+    """The form's hidden fields plus the login identifier.
+
+    With ``required=False`` a form with no identifier input is returned as-is
+    instead of falling back to a non-text field.
+    """
     data = dict(form.hidden)
     named = form.field_names & {"username", "login"}
     if named:
         return data | dict.fromkeys(named, config.login_hint)
+    if not required and len(form.text_fields) != 1:
+        return data
     # Provider names its identifier field something else (not
     # username/login). Fall back to the sole text field (else the sole
     # non-password field) so the identifier is still sent rather than
