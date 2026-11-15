@@ -57,15 +57,16 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 | `fastapi-basic-rp` | `configs/fastapi-basic-rp.json` | Basic RP regression for the fastapi-identity-model router (`--rp-url http://localhost:8889`) |
 | `fastapi-config-rp` | `configs/fastapi-config-rp.json` | Config RP regression for the fastapi-identity-model router |
 | `fastapi-form-post-basic-rp` | `configs/fastapi-form-post-basic-rp.json` | Form Post Basic RP regression for the fastapi-identity-model router |
-| `dynamic-rp` | `configs/dynamic-rp.json` | Dynamic RP (RFC 7591 registration, WebFinger, `request_uri` request objects). Not run in CI |
-| `rpinitiated-logout-rp` | `configs/rpinitiated-logout-rp.json` | RP-Initiated Logout RP. Not run in CI |
-| `backchannel-logout-rp` | `configs/backchannel-logout-rp.json` | Back-Channel Logout RP. Not run in CI |
+| `dynamic-rp` | `configs/dynamic-rp.json` | Dynamic RP (RFC 7591 registration, `request_uri` request objects). The two WebFinger modules are declared unsupported |
+| `rpinitiated-logout-rp` | `configs/rpinitiated-logout-rp.json` | RP-Initiated Logout RP |
+| `backchannel-logout-rp` | `configs/backchannel-logout-rp.json` | Back-Channel Logout RP |
 
-CI runs the basic, config and form-post plans (`conformance` job), the three
-FAPI 2.0 plans (`conformance-fapi2` job) and the three `fastapi-*` plans
-(`conformance-fastapi` job). The dynamic and logout plans run only when invoked
-by hand (`python conformance/run_tests.py --plan <plan>` against `make
-conformance-up`), so their committed results are not current evidence.
+CI runs every plan on each pull request and on each push to `release/v5`: the
+basic, config and form-post plans (`conformance` job), the three FAPI 2.0 plans
+(`conformance-fapi2` job), the dynamic and two logout plans
+(`conformance-dynamic-logout` job, locally `make
+conformance-test-dynamic-logout`) and the three `fastapi-*` plans
+(`conformance-fastapi` job).
 
 ## How a module passes
 
