@@ -21,7 +21,6 @@ from typing import Any, NamedTuple
 import uuid
 
 import httpx
-import jwt
 import pytest
 
 from py_identity_model import (
@@ -90,6 +89,12 @@ def _find_repo_root() -> Path:
 
 _VECTORS_DIR = _find_repo_root() / "spec" / "vectors"
 _FIXTURES_DIR = _find_repo_root() / "spec" / "test-fixtures"
+# UserInfoRequest requires expected_sub (OIDC Core §5.3.2). A vector without
+# one runs with the sub of the standard claims fixture, the ID token sub of
+# the vector's login, which leaves its expected outcome unchanged.
+_USERINFO_FIXTURE_SUB: str = json.loads(
+    (_FIXTURES_DIR / "userinfo" / "standard-claims.json").read_text()
+)["sub"]
 
 
 class KnownGap(Exception):
@@ -209,7 +214,7 @@ def _userinfo_call(base: str, inp: dict) -> Any:
         UserInfoRequest(
             address=base + "/userinfo",
             token=inp["token"],
-            expected_sub=inp.get("expected_sub"),
+            expected_sub=str(inp.get("expected_sub", _USERINFO_FIXTURE_SUB)),
         )
     )
 
@@ -403,7 +408,10 @@ def _dpop_call(base: str, inp: dict) -> tuple:
     if inp["operation"] == "resource_request":
         path = "/userinfo"
         request = UserInfoRequest(
-            address=base + path, token=inp["access_token"], dpop_key=key[0]
+            address=base + path,
+            token=inp["access_token"],
+            expected_sub=_USERINFO_FIXTURE_SUB,
+            dpop_key=key[0],
         )
 
         def send() -> bool:
@@ -438,22 +446,8 @@ def _dpop_expect(case_id: str, expect: dict, result: tuple) -> None:
     # Check every send, including nonce retries, before reporting a known gap.
     assert jtis, f"{case_id}: no requests recorded"
     assert len(set(jtis)) == len(jtis), f"{case_id}: jti reused across {jtis}"
-    missing_nonce = False
-    for n, proof in enumerate(proofs):
-        proof_want = want
-        if (
-            n > 0
-            and "nonce" in want["payload"]
-            and "nonce" not in jwt.decode(proof, options={"verify_signature": False})
-        ):
-            missing_nonce = True
-            proof_want = {
-                "header": want["header"],
-                "payload": {k: v for k, v in want["payload"].items() if k != "nonce"},
-            }
-        assert_dpop_proof(case_id, proof, key, proof_want)
-    if missing_nonce:
-        raise KnownGap(f"{case_id}: the DPoP-Nonce is not cached (#784)")
+    for proof in proofs:
+        assert_dpop_proof(case_id, proof, key, want)
 
 
 # --- introspection ------------------------------------------------------------
@@ -664,7 +658,6 @@ ADAPTERS: dict[str, Adapter] = {
 
 #: Vectors py-identity-model does not meet yet, by parametrize id or case id.
 _KNOWN_GAPS = {
-    "DPOP-004-nonce-cached": "the DPoP-Nonce is not cached for later requests (#784)",
     "ACG-001-public-client": "no typed token members (#783)",
     "ACG-001-confidential-client-basic": "no typed token members (#783)",
     "ACG-004-code-verifier": "no typed token members (#783)",

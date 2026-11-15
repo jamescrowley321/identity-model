@@ -206,8 +206,13 @@ def custom_claims_validation_example(access_token: str):
 # =============================================================================
 
 
-def userinfo_example(access_token: str):
-    """Fetch user claims from the UserInfo endpoint."""
+def userinfo_example(access_token: str, id_token_sub: str):
+    """Fetch user claims from the UserInfo endpoint.
+
+    Needs an end-user access token from an authorization code login and the
+    ``sub`` of that login's validated ID token: the UserInfo ``sub`` must match
+    it (OIDC Core 1.0 §5.3.2).
+    """
     print("\\n" + "=" * 60)
     print("Example 6: UserInfo Endpoint")
     print("=" * 60)
@@ -231,6 +236,7 @@ def userinfo_example(access_token: str):
     userinfo_request = UserInfoRequest(
         address=userinfo_endpoint,
         token=access_token,
+        expected_sub=id_token_sub,
     )
 
     response = get_userinfo(userinfo_request)
@@ -242,9 +248,6 @@ def userinfo_example(access_token: str):
                 print(f"  {claim_name}: {claim_value}")
         return response
     print(f"✗ UserInfo request failed: {response.error}")
-    print(
-        "  Note: Client credentials tokens may not have a userinfo endpoint available"
-    )
     return response
 
 
@@ -389,8 +392,9 @@ def main():
         # Example 5: Custom Claims Validation
         custom_claims_validation_example(access_token)
 
-        # Example 6: UserInfo
-        userinfo_example(access_token)
+        # Example 6 (userinfo_example) needs an end-user login (authorization
+        # code flow) and its ID token's sub, so this client credentials token
+        # does not run it.
 
     # Example 7: Error Handling
     error_handling_example()

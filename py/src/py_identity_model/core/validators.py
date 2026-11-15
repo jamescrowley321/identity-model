@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from ..exceptions import (
     ConfigurationException,
@@ -16,6 +16,8 @@ from ..exceptions import (
     DiscoveryHTTPSRequiredError,
     DiscoveryMissingFieldsError,
     DiscoveryParseError,
+    ProtocolParameterError,
+    ProtocolParameterErrorReason,
 )
 from .discovery_policy import DiscoveryPolicy, is_loopback
 from .token_binding import TokenBinding
@@ -26,6 +28,29 @@ REQUIRED_BINDING_TYPE_MESSAGE = "required_binding must be a TokenBinding"
 
 if TYPE_CHECKING:
     from .models import TokenValidationConfig
+
+
+def validate_absolute_uri_without_fragment(value: str, parameter: str) -> None:
+    """Require *value* to be an absolute URI with no fragment component.
+
+    RFC 6749 §3.1.2 (``redirect_uri``) and RFC 8707 §2 / RFC 8693 §2.1
+    (``resource``): the value MUST be an absolute URI (RFC 3986 §4.3) and MUST
+    NOT include a fragment component. A query component is allowed.
+
+    Raises:
+        ProtocolParameterError: :attr:`ProtocolParameterErrorReason.NOT_ABSOLUTE_URI`
+            when *value* has no scheme, or
+            :attr:`ProtocolParameterErrorReason.URI_HAS_FRAGMENT` when it has a
+            fragment (even an empty one).
+    """
+    if not urlsplit(value).scheme:
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.NOT_ABSOLUTE_URI, parameter
+        )
+    if "#" in value:
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.URI_HAS_FRAGMENT, parameter
+        )
 
 
 # ============================================================================

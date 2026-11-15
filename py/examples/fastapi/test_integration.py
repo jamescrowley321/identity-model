@@ -283,31 +283,18 @@ def test_admin_endpoints_without_role(token: str):
     print("✅ Admin stats endpoint correctly rejects token without admin role")
 
 
-def test_userinfo_endpoint(token: str, userinfo_endpoint: str):
+def test_userinfo_endpoint(userinfo_endpoint: str):
     """Test UserInfo endpoint integration using py-identity-model."""
     print("\n🧪 Testing UserInfo endpoint...")
 
-    # Test with client credentials token - behavior varies by provider:
-    # Some return claims, others reject (no user context for client credentials)
-    request = UserInfoRequest(
-        address=userinfo_endpoint,
-        token=token,
-    )
-    response = get_userinfo(request)
-
-    if response.is_successful:
-        assert response.claims is not None or response.raw is not None
-        print("✅ UserInfo returned claims for client credentials token")
-    else:
-        assert response.error is not None
-        print(
-            "✅ UserInfo correctly rejects client credentials token (no user context)"
-        )
-
-    # Test with invalid token
+    # UserInfo returns claims about the end user of an OIDC login, checked
+    # against that login's ID token sub (OIDC Core 1.0 §5.3.2). A client
+    # credentials token has no end user, so only the rejection path runs here.
+    # An invalid token fails at the endpoint, before the sub comparison.
     request = UserInfoRequest(
         address=userinfo_endpoint,
         token="invalid-token",
+        expected_sub="no-end-user",
     )
     response = get_userinfo(request)
 
@@ -367,7 +354,7 @@ def run_tests():
         test_scope_based_authorization(token)
         test_admin_endpoints_without_role(token)
         if userinfo_endpoint:
-            test_userinfo_endpoint(token, userinfo_endpoint)
+            test_userinfo_endpoint(userinfo_endpoint)
         else:
             print("\n⚠️  Skipping UserInfo tests (no userinfo_endpoint in discovery)")
 
