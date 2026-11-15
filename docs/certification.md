@@ -141,12 +141,21 @@ make conformance-test HOSTED=1 CONFORMANCE_SERVER=https://www.certification.open
 ```
 
 The zips are git-ignored binaries. In CI, the `conformance-hosted` workflow
-(`workflow_dispatch`) produces the same artifacts and uploads them:
+produces the same artifacts and uploads them. It runs the Basic, Config and Form
+Post plans against the hosted suite on every push to `main`, daily at 08:00 UTC,
+and on demand (`workflow_dispatch`); each run tests the library as checked out
+at the triggering ref. To run it against another branch:
 
 ```bash
 gh workflow run conformance-hosted.yml --ref <branch>
 gh run download <run-id> -n conformance-hosted-results
 ```
+
+A hosted run fails when a plan's modules differ from
+`conformance/expected_modules.json`, when a SKIPPED or WARNING module is not on
+that manifest's allowlist, or when the RP harness did not record the expected
+outcome for a module (see `conformance/README.md`). The plan export is downloaded
+only when every module passes those checks.
 
 `--publish {none,summary,everything}` (default `none`) controls whether a run is
 listed on the public published-tests list; the artifacts are produced

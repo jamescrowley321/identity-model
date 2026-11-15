@@ -170,7 +170,9 @@ def _ec_pem() -> str:
 
 
 def _pkjwt() -> PrivateKeyJwt:
-    return PrivateKeyJwt(private_key=_ec_pem(), algorithm="ES256")
+    return PrivateKeyJwt(
+        private_key=_ec_pem(), algorithm="ES256", issuer="https://as.example.com"
+    )
 
 
 def _mtls(
