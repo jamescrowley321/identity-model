@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
-from run_tests import DECLARED_UNSUPPORTED_TESTS
+from run_tests import DECLARED_UNSUPPORTED_TESTS, MANIFEST_PATH
 
 
-MANIFEST = json.loads((Path(__file__).parents[1] / "expected_modules.json").read_text())
+MANIFEST = json.loads(MANIFEST_PATH.read_text())
 END_SESSION = "https://op.example.com/end_session"
 
 
