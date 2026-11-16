@@ -739,6 +739,14 @@ def test_router_missing_endpoint_detail_has_a_reason_class():
     )
 
 
+def test_router_nonce_detail_has_the_nonce_reason_class():
+    import app_fastapi
+
+    response = httpx.Response(401, json={"detail": "Nonce mismatch"})
+
+    assert app_fastapi._router_rejection(response) == "nonce_mismatch: Nonce mismatch"
+
+
 def test_conflict_fails_a_module_that_expects_no_harness_verdict():
     conflict = {"test_id": "m1", "status": "conflict", "error": "x"}
 
