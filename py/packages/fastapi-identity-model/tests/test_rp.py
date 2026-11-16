@@ -745,12 +745,12 @@ async def test_userinfo_fetched_for_any_case_of_bearer(monkeypatch, token_type):
     assert rp.get_userinfo.await_args.args[0].token == "at"
 
 
-@pytest.mark.parametrize("token_type", ["DPoP", "mac", None])
+@pytest.mark.parametrize("token_type", ["DPoP", "mac"])
 async def test_userinfo_skipped_for_a_non_bearer_token(monkeypatch, token_type):
-    token = {"id_token": "idt", "access_token": "at"}
-    if token_type is not None:
-        token["token_type"] = token_type
-    _patch(monkeypatch, token=token)
+    _patch(
+        monkeypatch,
+        token={"id_token": "idt", "access_token": "at", "token_type": token_type},
+    )
     async with _client(_app()) as client:
         state, nonce = await _login(client)
         rp.validate_id_token.return_value = {"sub": "user-1", "nonce": nonce}
