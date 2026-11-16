@@ -94,18 +94,18 @@ def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
     """The error for an unsuccessful refresh *response*."""
     rejected = response.rejected_token
     if (
-        rejected is None
-        or response.error_kind is not TokenErrorKind.INVALID_TOKEN_RESPONSE
+        rejected is not None
+        and response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
     ):
-        return TokenManagerError(
-            TokenManagerErrorKind.REFRESH_FAILED,
-            response.error or "no token in response",
-        )
-    # INVALID_TOKEN_RESPONSE: ``access_token`` or ``token_type`` is not a
-    # non-empty string (RFC 6749 §5.1).
-    if not _is_token(rejected.get("access_token")):
-        return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
-    return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
+        # RFC 6749 §5.1 requires both members as non-empty strings.
+        if not _is_token(rejected.get("access_token")):
+            return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
+        if not _is_token(rejected.get("token_type")):
+            return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
+    return TokenManagerError(
+        TokenManagerErrorKind.REFRESH_FAILED,
+        response.error or "no token in response",
+    )
 
 
 class TokenManager:

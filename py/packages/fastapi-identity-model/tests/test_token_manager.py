@@ -13,6 +13,7 @@ from fastapi_identity_model import (
 )
 import fastapi_identity_model.token_manager as tm_mod
 from py_identity_model import AuthorizationScheme
+from py_identity_model.aio import RefreshTokenResponse, TokenErrorKind
 
 
 pytestmark = pytest.mark.unit
@@ -290,3 +291,20 @@ async def test_concurrent_get_access_token_refreshes_once(token_endpoint):
     assert results == ["fresh"] * 5
     # The lock + re-check must collapse the concurrent callers into one grant.
     assert token_endpoint.call_count == 1
+
+
+def test_rejection_with_both_required_members_reports_the_library_error():
+    """An invalid response the manager cannot explain keeps the library's error."""
+    error = tm_mod._rejection(
+        RefreshTokenResponse(
+            is_successful=False,
+            error="expires_in must be a number",
+            error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+            rejected_token={"access_token": "fresh", "token_type": "Bearer"},
+        )
+    )
+
+    assert (error.kind, error.details) == (
+        TokenManagerErrorKind.REFRESH_FAILED,
+        {"kind": "refresh_failed", "error": "expires_in must be a number"},
+    )
