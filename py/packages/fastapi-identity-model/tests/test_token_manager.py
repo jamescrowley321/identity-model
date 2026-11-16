@@ -103,6 +103,25 @@ async def test_unknown_token_type_is_refused_and_not_stored(token_type):
     assert (tm.access_token, tm.token_type) == (None, None)
 
 
+@pytest.mark.parametrize("expires_in", [3600, "3600"])
+async def test_refreshed_token_is_reused_until_expires_in_has_passed(
+    token_endpoint, expires_in
+):
+    _answer(
+        token_endpoint,
+        {"access_token": "fresh", "expires_in": expires_in, "token_type": BEARER},
+    )
+    tm = _stale()
+
+    tokens = [await tm.get_access_token(), await tm.get_access_token()]
+
+    assert (tokens, tm.is_token_expired(), token_endpoint.call_count) == (
+        ["fresh", "fresh"],
+        False,
+        1,
+    )
+
+
 async def test_refresh_when_expired(token_endpoint):
     _answer(
         token_endpoint,
@@ -174,7 +193,11 @@ async def test_refused_response_keeps_the_rotated_refresh_token(
 @pytest.mark.parametrize(
     "expires_in",
     [
-        pytest.param("3600", id="string"),
+        pytest.param("soon", id="string"),
+        pytest.param("-5", id="negative-string"),
+        pytest.param("36.5", id="decimal-string"),
+        pytest.param("9" * 5000, id="digits-past-the-int-limit"),
+        pytest.param("9" * 30, id="digits-past-the-last-date"),
         pytest.param([3600], id="list"),
         pytest.param(True, id="bool"),
         pytest.param(1e30, id="too-large"),

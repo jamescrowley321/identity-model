@@ -103,15 +103,22 @@ def _response_expiry(value: object) -> datetime | None:
     Raises:
         TokenManagerError: ``REFRESH_FAILED`` when the value is not a
             lifetime in seconds (RFC 6749 §5.1) an expiry can be computed
-            from: not a number, negative, or past the last date.
+            from: not a number, negative, or past the last date. A string
+            of decimal digits is read as a number, as some providers send it.
     """
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
-        try:
+    try:
+        if isinstance(value, str) and value.isascii() and value.isdigit():
+            value = int(value)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ):
             return _expiry(value)
-        except (OverflowError, ValueError):
-            pass
+    except (OverflowError, ValueError):
+        pass
     raise TokenManagerError(
         TokenManagerErrorKind.REFRESH_FAILED, "expires_in is not a number of seconds"
     )
