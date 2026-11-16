@@ -510,6 +510,14 @@ def test_alg_none_id_token_rejection_has_its_own_class(harness):
     assert harness._id_token_rejection_class(exc) == "alg_none"
 
 
+def test_nonce_id_token_rejection_has_its_own_class(harness):
+    from py_identity_model.exceptions import IdTokenNonceError
+
+    exc = IdTokenNonceError("ID token 'nonce' claim does not match the expected value")
+
+    assert harness._id_token_rejection_class(exc) == "nonce_mismatch"
+
+
 def test_other_id_token_rejection_is_id_token_validation(harness):
     from py_identity_model.exceptions import TokenValidationException
 

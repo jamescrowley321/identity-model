@@ -83,6 +83,7 @@ from py_identity_model.core.parsers import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
+    IdTokenNonceError,
     JarmValidationException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
@@ -1649,30 +1650,8 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
 
         logger.info(
             "ACCEPTED: id_token validated by py-identity-model "
-            "(signature, issuer, audience, expiry, ID-Token profile)"
+            "(signature, issuer, audience, expiry, nonce, ID-Token profile)"
         )
-
-        # Validate nonce
-        token_nonce = claims.get("nonce")
-        if token_nonce != session.nonce:
-            session.result["status"] = "error"
-            session.result["error"] = (
-                f"nonce_mismatch: expected={session.nonce}, got={token_nonce}"
-            )
-            logger.error(
-                "REJECTED: nonce mismatch (expected=%s, got=%s)",
-                session.nonce,
-                token_nonce,
-            )
-            _store_test_result(session)
-            return HTMLResponse(
-                content=(
-                    "<h1>Nonce Mismatch</h1>"
-                    f"<p>Expected: {html.escape(str(session.nonce))}, "
-                    f"Got: {html.escape(str(token_nonce))}</p>"
-                ),
-                status_code=400,
-            )
 
     # Fetch UserInfo (if endpoint is available and we have an access token)
     id_token_sub = claims.get("sub") or ""
@@ -1965,9 +1944,12 @@ def get_result(test_id: str) -> JSONResponse:
 def _id_token_rejection_class(exc: TokenValidationException) -> str:
     """Reason class for a rejected ID Token.
 
-    A token refused for ``alg=none`` gets its own class, so the
-    ``idtoken-sig-none`` modules can require that exact refusal.
+    A token refused for ``alg=none`` or for its ``nonce`` gets its own class,
+    so the ``idtoken-sig-none`` and nonce modules can require that exact
+    refusal.
     """
+    if isinstance(exc, IdTokenNonceError):
+        return "nonce_mismatch"
     alg = (exc.details or {}).get("alg")
     if isinstance(alg, str) and alg.lower() == "none":
         return "alg_none"
