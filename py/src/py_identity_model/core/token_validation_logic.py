@@ -307,10 +307,38 @@ def _enforce_allowed_issuers(
             )
 
 
+def _require_discovery_issuer_listed(
+    discovery_issuer: str | list[str],
+    token_issuers: list[str],
+) -> None:
+    """Refuse a discovery document whose issuer ``token_issuers`` does not name.
+
+    ``token_issuers`` says which ``iss`` values one provider's keys may sign.
+    Without this, a caller that builds the discovery address from the token's
+    ``iss`` would accept a token signed by any provider's keys and carrying a
+    listed ``iss``.
+
+    Raises:
+        InvalidIssuerException: If the discovery issuer is not in
+            *token_issuers*.
+    """
+    if discovery_issuer not in token_issuers:
+        raise InvalidIssuerException(
+            "The discovery document's issuer is not in token_issuers; add it, "
+            "or pin it as the single entry of allowed_issuers",
+            details={
+                "issuer": discovery_issuer,
+                "token_issuers": sorted(token_issuers),
+            },
+        )
+
+
 def decode_with_config(
     jwt: str,
     token_validation_config: TokenValidationConfig,
     issuer: str | list[str] | None = None,
+    *,
+    accept_token_issuers: bool = False,
 ) -> dict:
     """
     Decode and validate JWT using the token validation configuration.
@@ -320,6 +348,11 @@ def decode_with_config(
         token_validation_config: Token validation configuration with a key set.
             ``algorithms=None`` means ``DEFAULT_ALLOWED_ALGORITHMS``.
         issuer: Optional issuer override (from discovery document)
+        accept_token_issuers: With a discovery issuer, check ``iss`` against
+            ``token_validation_config.token_issuers`` when that is set,
+            instead of the discovery issuer. For access tokens only: an ID
+            Token or Logout Token must carry the OP's own issuer (OIDC Core
+            §3.1.3.7 step 2, Back-Channel Logout 1.0 §2.6).
 
     Returns:
         dict: Decoded token claims
@@ -340,6 +373,12 @@ def decode_with_config(
             "multi-issuer is not supported in discovery mode"
         )
 
+    token_issuers = (
+        token_validation_config.token_issuers
+        if issuer is not None and accept_token_issuers
+        else None
+    )
+
     # Multi-tenant issuer pinning (OPT-IN): only when the caller sets
     # allowed_issuers. When it is None (the default) this is skipped entirely and
     # discovery stays authoritative — default behaviour is unchanged. When set,
@@ -354,13 +393,22 @@ def decode_with_config(
         _enforce_allowed_issuers(
             effective_issuer, token_validation_config.allowed_issuers
         )
+    elif issuer is not None and token_issuers:
+        _require_discovery_issuer_listed(issuer, token_issuers)
+
+    if token_issuers is not None:
+        expected_issuer: str | list[str] | None = token_issuers
+    elif issuer is not None:
+        expected_issuer = issuer
+    else:
+        expected_issuer = token_validation_config.issuer
 
     return decode_and_validate_jwt(
         jwt=jwt,
         key=token_validation_config.key,
         algorithms=resolve_algorithms(jwt, token_validation_config.algorithms),
         audience=token_validation_config.audience,
-        issuer=issuer if issuer is not None else token_validation_config.issuer,
+        issuer=expected_issuer,
         options=token_validation_config.options,
         leeway=token_validation_config.leeway,
         subject=token_validation_config.subject,
@@ -484,6 +532,7 @@ def build_resolved_config(
         # Propagate the issuer allowlist so the disco/retry paths (which validate
         # via this resolved config) still enforce issuer pinning.
         allowed_issuers=original_config.allowed_issuers,
+        token_issuers=original_config.token_issuers,
         # Preserve the injected discovery policy so a resolved config stays a
         # faithful copy of the caller's config.
         discovery_policy=original_config.discovery_policy,

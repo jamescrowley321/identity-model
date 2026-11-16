@@ -1809,7 +1809,10 @@ class TokenValidationConfig:
             §3.3) or an EC key under 224 bits (FAPI 2.0 SP §5.4.1) raises
             ``WeakKeyException``.
         issuer: Expected issuer claim.  A single string or a list of
-            accepted issuers for multi-tenant validation.
+            accepted issuers. Used with ``perform_disco=False``. In discovery
+            mode it is not used: ``iss`` is checked against the discovery
+            document's ``issuer``, or against ``token_issuers`` when
+            ``validate_token`` is given them.
         subject: Expected ``sub`` claim.  Validated after decoding.
         options: Additional PyJWT decode options (e.g., {'require': ['sub']}).
             They cannot weaken a check: ``verify_signature``, ``verify_exp``,
@@ -1843,6 +1846,25 @@ class TokenValidationConfig:
             Set it only for multi-tenant callers that resolve discovery from an
             untrusted token's ``iss`` — without it an attacker who stands up their
             own tenant and mints a validly-signed token would pass validation.
+        token_issuers: Optional list of the ``iss`` values ``validate_token``
+            accepts in discovery mode, for one provider that signs tokens with
+            several issuer values from one key set (for example a session
+            token whose issuer is not a URL). **Opt-in.** When ``None`` (the
+            default) ``iss`` must equal the discovery document's ``issuer``.
+            When set, ``iss`` must be one of the listed values instead; the
+            discovery document still supplies the keys. The list replaces the
+            discovery issuer, so list that too to accept it. The ``iss`` check
+            is never off. Every listed value is accepted from the keys of the
+            discovery document the caller points at, so the list belongs to
+            one provider: the discovery document's ``issuer`` must be in the
+            list, or be the single entry of ``allowed_issuers``, else
+            ``InvalidIssuerException``. ``ConfigurationException`` when the
+            list is empty, has a blank or non-string entry, is set with
+            ``perform_disco=False`` (use ``issuer``), or is set with an
+            ``allowed_issuers`` of more than one entry. ``validate_id_token``
+            and ``validate_logout_token`` ignore it: their ``iss`` must equal
+            the discovery issuer (OIDC Core §3.1.3.7 step 2, Back-Channel
+            Logout 1.0 §2.6).
         discovery_policy: Optional :class:`DiscoveryPolicy` applied to the
             discovery document (and its advertised endpoints) on the cached
             ``validate_token`` path. When ``None`` (the default) a policy is
@@ -1905,6 +1927,7 @@ class TokenValidationConfig:
     require_https: bool = True
     leeway: float | None = None
     allowed_issuers: list[str] | None = None
+    token_issuers: list[str] | None = None
     discovery_policy: DiscoveryPolicy | None = None
     required_binding: TokenBinding = TokenBinding.NONE
     dpop: DPoPVerificationOptions | None = None

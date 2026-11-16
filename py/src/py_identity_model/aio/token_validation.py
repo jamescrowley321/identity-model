@@ -440,6 +440,8 @@ async def _retry_with_refreshed_jwks(
     disco_doc_response: DiscoveryDocumentResponse,
     client: AsyncHTTPClient,
     cache: AsyncValidationCache,
+    *,
+    accept_token_issuers: bool = False,
 ) -> dict:
     """Re-fetch JWKS and retry decode once (key rotation recovery).
 
@@ -480,7 +482,12 @@ async def _retry_with_refreshed_jwks(
         kid, jwt_alg = extract_jwt_header_fields(jwt)
         key_dict, alg = find_key_by_kid(kid, jwks_response.keys or [], jwt_alg=jwt_alg)
         resolved_config = build_resolved_config(token_validation_config, key_dict, alg)
-        decoded = decode_with_config(jwt, resolved_config, disco_doc_response.issuer)
+        decoded = decode_with_config(
+            jwt,
+            resolved_config,
+            disco_doc_response.issuer,
+            accept_token_issuers=accept_token_issuers,
+        )
     except Exception:
         # Skip cooldown stamp when refresh degraded to a retained-cache
         # fallback. See sync._retry_with_refreshed_jwks.
@@ -548,6 +555,7 @@ async def validate_token(
         disco_doc_address,
         http_client,
         cache=cache,
+        accept_token_issuers=True,
     )
     await check_token_binding(claims, jwt, token_validation_config, presentation)
     return claims
@@ -560,12 +568,18 @@ async def _validate_jwt_without_binding(
     http_client: AsyncHTTPClient | None,
     *,
     cache: AsyncValidationCache | None,
+    accept_token_issuers: bool = False,
 ) -> dict:
     """Validate a JWT without checking its sender constraint.
 
     For ID Tokens (OIDC Core §3.1.3.7) and Logout Tokens (Back-Channel Logout
     §2.6), which arrive with no presentation. An access token must go through
     ``validate_token``, which adds the RFC 9449 §7 / RFC 8705 §3 check.
+
+    *accept_token_issuers* is ``True`` only from ``validate_token``: in
+    discovery mode ``token_issuers``, when set, is then the set ``iss`` is
+    checked against. ID Tokens and Logout Tokens are always checked against
+    the discovery issuer.
     """
     log_validation_start(jwt, token_validation_config)
     validate_token_config(token_validation_config)
@@ -587,11 +601,19 @@ async def _validate_jwt_without_binding(
 
         try:
             decoded_token = decode_with_config(
-                jwt, resolved_config, disco_doc_response.issuer
+                jwt,
+                resolved_config,
+                disco_doc_response.issuer,
+                accept_token_issuers=accept_token_issuers,
             )
         except SignatureVerificationException:
             decoded_token = await _retry_with_refreshed_jwks(
-                jwt, token_validation_config, disco_doc_response, client, cache
+                jwt,
+                token_validation_config,
+                disco_doc_response,
+                client,
+                cache,
+                accept_token_issuers=accept_token_issuers,
             )
     else:
         validate_config_for_manual_validation(token_validation_config)

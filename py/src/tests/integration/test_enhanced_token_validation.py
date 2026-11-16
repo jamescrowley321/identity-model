@@ -3,7 +3,10 @@
 import pytest
 
 from py_identity_model import TokenValidationConfig, validate_token
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    InvalidIssuerException,
+    TokenValidationException,
+)
 
 
 @pytest.mark.integration
@@ -88,6 +91,69 @@ class TestEnhancedTokenValidation:
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
         )
         assert decoded["iss"] == issuer
+
+    def test_token_issuers_accepts_a_listed_issuer(
+        self, client_credentials_token, test_config, issuer, require_https
+    ):
+        """token_issuers is the set the token's iss is checked against."""
+        token = client_credentials_token.token["access_token"]
+        config = TokenValidationConfig(
+            perform_disco=True,
+            token_issuers=[issuer, "session-issuer"],
+            require_https=require_https,
+            options={"verify_aud": False, "require_aud": False},
+        )
+
+        decoded = validate_token(
+            token,
+            config,
+            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+        )
+        assert decoded["iss"] == issuer
+
+    def test_token_issuers_refuses_an_unlisted_issuer(
+        self, client_credentials_token, test_config, issuer, require_https
+    ):
+        """The list replaces the discovery issuer, which allowed_issuers pins."""
+        token = client_credentials_token.token["access_token"]
+        config = TokenValidationConfig(
+            perform_disco=True,
+            token_issuers=["session-issuer"],
+            allowed_issuers=[issuer],
+            require_https=require_https,
+            options={"verify_aud": False, "require_aud": False},
+        )
+
+        with pytest.raises(InvalidIssuerException) as exc_info:
+            validate_token(
+                token,
+                config,
+                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            )
+        assert exc_info.value.message == "Invalid issuer"
+
+    def test_token_issuers_refuses_an_unlisted_discovery_issuer(
+        self, client_credentials_token, test_config, issuer, require_https
+    ):
+        """The discovery document's issuer must be named."""
+        token = client_credentials_token.token["access_token"]
+        config = TokenValidationConfig(
+            perform_disco=True,
+            token_issuers=["session-issuer"],
+            require_https=require_https,
+            options={"verify_aud": False, "require_aud": False},
+        )
+
+        with pytest.raises(InvalidIssuerException) as exc_info:
+            validate_token(
+                token,
+                config,
+                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            )
+        assert exc_info.value.details == {
+            "issuer": issuer,
+            "token_issuers": ["session-issuer"],
+        }
 
 
 @pytest.mark.integration
