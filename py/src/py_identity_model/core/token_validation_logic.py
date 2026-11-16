@@ -10,14 +10,12 @@ import inspect
 from jwt import PyJWTError
 
 from ..core.jwt_helpers import (
-    _normalize_verification_key,
     decode_and_validate_jwt,
 )
 from ..core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from ..core.models import (
     DiscoveryDocumentResponse,
     DiscoveryErrorKind,
-    JsonWebKey,
     JwksErrorKind,
     JwksResponse,
     TokenValidationConfig,
@@ -34,7 +32,6 @@ from ..exceptions import (
     InvalidIssuerException,
     JwksException,
     JwksValidationError,
-    KeyAlgorithmMismatchException,
     PyIdentityModelException,
     SignatureVerificationException,
     TokenValidationException,
@@ -245,21 +242,17 @@ def _require_allowed_alg(alg: object, allowed: list[str]) -> str:
 def resolve_algorithms(
     jwt: str,
     algorithms: list[str] | None,
-    key: dict | JsonWebKey | None = None,
 ) -> list[str]:
     """Return the algorithms to verify *jwt* with.
 
     An explicit list is returned unchanged. ``None`` pins verification to the
     token's header ``alg``, which must be in ``DEFAULT_ALLOWED_ALGORITHMS``.
     That set has no HMAC algorithm, so a public key is never used as an HMAC
-    secret (RFC 8725 §2.1). If *key* declares an ``alg``, the header ``alg``
-    must equal it (RFC 7517 §4.4), as in discovery mode.
+    secret (RFC 8725 §2.1).
 
     Raises:
         TokenValidationException: If *algorithms* is ``None`` and the header
             cannot be read or its ``alg`` is not in the default set.
-        KeyAlgorithmMismatchException: If *algorithms* is ``None`` and *key*
-            declares a different ``alg``.
     """
     if algorithms is not None:
         return algorithms
@@ -271,21 +264,7 @@ def resolve_algorithms(
             token_part="header",
             details={"error": str(exc)},
         ) from exc
-    allowed = _require_allowed_alg(alg, sorted(DEFAULT_ALLOWED_ALGORITHMS))
-    if key is not None:
-        _require_key_alg(_normalize_verification_key(key), allowed)
-    return [allowed]
-
-
-def _require_key_alg(key_data: dict, alg: str) -> None:
-    """Raise unless *key_data* declares no ``alg`` or declares *alg*."""
-    key_alg = key_data.get("alg")
-    if key_alg and key_alg != alg:
-        raise KeyAlgorithmMismatchException(
-            f"Key algorithm '{key_alg}' does not match JWT algorithm '{alg}'",
-            token_part="header",
-            details={"kid": key_data.get("kid"), "key_alg": key_alg, "jwt_alg": alg},
-        )
+    return [_require_allowed_alg(alg, sorted(DEFAULT_ALLOWED_ALGORITHMS))]
 
 
 def _enforce_allowed_issuers(
@@ -379,9 +358,7 @@ def decode_with_config(
     return decode_and_validate_jwt(
         jwt=jwt,
         key=token_validation_config.key,
-        algorithms=resolve_algorithms(
-            jwt, token_validation_config.algorithms, token_validation_config.key
-        ),
+        algorithms=resolve_algorithms(jwt, token_validation_config.algorithms),
         audience=token_validation_config.audience,
         issuer=issuer if issuer is not None else token_validation_config.issuer,
         options=token_validation_config.options,
