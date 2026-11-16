@@ -625,7 +625,7 @@ class TestLoginCallbackAudiences:
         )
         assert (resp.status_code, resp.json()) == (
             401,
-            {"detail": "ID token validation failed"},
+            {"detail": "Nonce mismatch"},
         )
 
     async def test_single_audience_logs_in(self, id_token_key):

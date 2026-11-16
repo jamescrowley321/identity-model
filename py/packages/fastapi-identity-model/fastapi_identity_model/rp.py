@@ -44,6 +44,7 @@ from starlette.responses import RedirectResponse
 from py_identity_model import (
     AuthorizationScheme,
     ConfigurationException,
+    IdTokenNonceError,
     NetworkException,
     PyIdentityModelException,
 )
@@ -292,6 +293,11 @@ async def _validate_id_token(
     except PyIdentityModelException as exc:
         if not isinstance(exc, NetworkException):
             logger.info("ID token validation failed: %s", exc)
+            if isinstance(exc, IdTokenNonceError):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Nonce mismatch",
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="ID token validation failed",
