@@ -129,8 +129,8 @@ py_identity_model.sync.token_validation.x__refresh_jwks__mutmut_26 0a0cc2866b64d
 # that would distinguish them (`require_https=True`, discovery_policy=None)
 # cannot reach the retry over an http scheme, because the initial discovery/JWKS
 # fetch under that same strict config already rejects it. Unobservable.
-py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_9 3d6463bbbfe07541
-py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_9 3d6463bbbfe07541
+py_identity_model.sync.token_validation.x__retry_with_refreshed_jwks__mutmut_10 3d6463bbbfe07541
+py_identity_model.aio.token_validation.x__retry_with_refreshed_jwks__mutmut_10 3d6463bbbfe07541
 
 # Discovery failure diagnostics (#832): this exact mutant only decorates
 # "Issuer must use HTTPS scheme" with an XX prefix/suffix. The raised

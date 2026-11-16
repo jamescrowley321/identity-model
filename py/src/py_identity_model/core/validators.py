@@ -24,6 +24,19 @@ from .token_binding import TokenBinding
 
 
 REQUIRED_BINDING_TYPE_MESSAGE = "required_binding must be a TokenBinding"
+TOKEN_ISSUERS_ENTRIES_MESSAGE = (
+    "token_issuers must be a non-empty list of non-blank strings; omit it or "
+    "set it to None to check the discovery document's issuer"
+)
+TOKEN_ISSUERS_WITHOUT_DISCOVERY_MESSAGE = (
+    "token_issuers applies to discovery mode only; with perform_disco=False "
+    "list the accepted issuers in issuer"
+)
+TOKEN_ISSUERS_ONE_PROVIDER_MESSAGE = (
+    "token_issuers lists the issuer values of one provider, so allowed_issuers "
+    "must name exactly one discovery issuer when both are set; use one "
+    "configuration per provider"
+)
 
 
 if TYPE_CHECKING:
@@ -198,6 +211,30 @@ def validate_parameter_values(response_data: dict) -> None:
 # ============================================================================
 
 
+def _validate_token_issuers(token_validation_config: TokenValidationConfig) -> None:
+    """Reject a ``token_issuers`` that names no issuer or spans providers.
+
+    Raises:
+        ConfigurationException: If ``token_issuers`` is set and is not a
+            non-empty list of non-blank strings, is set without discovery, or
+            is set with an ``allowed_issuers`` of more or fewer than one entry.
+    """
+    token_issuers = token_validation_config.token_issuers
+    if token_issuers is None:
+        return
+    if (
+        not isinstance(token_issuers, list)
+        or not token_issuers
+        or not all(isinstance(i, str) and i.strip() for i in token_issuers)
+    ):
+        raise ConfigurationException(TOKEN_ISSUERS_ENTRIES_MESSAGE)
+    if not token_validation_config.perform_disco:
+        raise ConfigurationException(TOKEN_ISSUERS_WITHOUT_DISCOVERY_MESSAGE)
+    allowed_issuers = token_validation_config.allowed_issuers
+    if allowed_issuers is not None and len(allowed_issuers) != 1:
+        raise ConfigurationException(TOKEN_ISSUERS_ONE_PROVIDER_MESSAGE)
+
+
 def validate_token_config(
     token_validation_config: TokenValidationConfig,
 ) -> None:
@@ -245,6 +282,8 @@ def validate_token_config(
 
     if not isinstance(token_validation_config.required_binding, TokenBinding):
         raise ConfigurationException(REQUIRED_BINDING_TYPE_MESSAGE)
+
+    _validate_token_issuers(token_validation_config)
 
     if token_validation_config.perform_disco:
         return

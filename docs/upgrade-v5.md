@@ -1827,6 +1827,11 @@ raises `ConfigurationException` when an `audience` is set, and
 `require` must be a list of claim names. With no audience configured,
 `verify_aud=False` is still accepted.
 
+In discovery mode the issuer always comes from discovery, so
+`verify_iss=False` always raises there. If you used it to accept a provider
+whose tokens carry an issuer other than the discovery issuer, see
+[Discovery mode: `token_issuers` for a provider with several issuer values](#discovery-mode-token_issuers-for-a-provider-with-several-issuer-values-1183).
+
 Before:
 
 ```python
@@ -1844,6 +1849,61 @@ or configure none:
 ```python
 TokenValidationConfig(perform_disco=True, options={"verify_aud": False})
 ```
+
+### Discovery mode: `token_issuers` for a provider with several issuer values ([#1183](https://github.com/jamescrowley321/identity-model/issues/1183))
+
+In discovery mode `validate_token` accepts a token only when its `iss` equals
+the discovery document's `issuer`. In 4.x, a caller whose provider signs
+tokens with several issuer values from one key set (for example a discovery
+issuer plus a session-token issuer that is not a URL) set
+`options={"verify_iss": False}` and checked `iss` itself. That option now
+raises `ConfigurationException`. List the accepted values in the new
+`TokenValidationConfig.token_issuers` instead; the discovery document still
+supplies the keys.
+
+Before:
+
+```python
+config = TokenValidationConfig(
+    perform_disco=True, audience="my-api", options={"verify_iss": False}
+)
+claims = validate_token(token, config, disco_doc_address=DISCOVERY_URL)
+if claims["iss"] not in (DISCOVERY_ISSUER, SESSION_ISSUER):
+    raise PermissionError("unexpected issuer")
+```
+
+After:
+
+```python
+config = TokenValidationConfig(
+    perform_disco=True,
+    audience="my-api",
+    token_issuers=[DISCOVERY_ISSUER, SESSION_ISSUER],
+)
+claims = validate_token(token, config, disco_doc_address=DISCOVERY_URL)
+```
+
+- `token_issuers=None`, the default, changes nothing: `iss` must equal the
+  discovery issuer.
+- The list replaces the discovery issuer: a token whose `iss` is not listed
+  raises `InvalidIssuerException`, so list the discovery issuer too if you
+  accept it.
+- The list is for one provider. Every listed value is accepted from the keys
+  of the discovery document you point at. If you validate several providers,
+  build one `TokenValidationConfig` per provider and never list another
+  provider's issuer.
+- The discovery document's own `issuer` must be in the list, or be the single
+  entry of `allowed_issuers`; otherwise validation raises
+  `InvalidIssuerException`.
+- `ConfigurationException`, before any request, for: an empty list, a blank
+  or non-string entry, `token_issuers` with `perform_disco=False` (use
+  `issuer` there), and `token_issuers` with an `allowed_issuers` that does
+  not have exactly one entry.
+- `TokenValidationConfig.issuer` is unchanged: in discovery mode it is not
+  used.
+- `validate_id_token` and `validate_logout_token` ignore `token_issuers`:
+  `iss` must equal the discovery issuer (OIDC Core §3.1.3.7 step 2,
+  Back-Channel Logout 1.0 §2.6).
 
 ### Every algorithm in an explicit list is usable ([#1132](https://github.com/jamescrowley321/identity-model/pull/1132))
 
