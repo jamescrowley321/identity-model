@@ -32,6 +32,7 @@ from py_identity_model.core.id_token_logic import validate_id_token_claims
 from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
+    IdTokenNonceError,
     IdTokenValidationException,
     UntrustedAudienceException,
 )
@@ -56,10 +57,10 @@ _CAPABILITY = json.loads(_SPEC_FILE.read_text())
 _CASES = _CAPABILITY["tests"]
 
 
-# ``untrusted_audience`` has its own exception type, so the runner pins it by
-# type rather than by message.
+# Reasons with their own exception type, pinned by type rather than by message.
 _REASON_EXCEPTION = {
     "untrusted_audience": UntrustedAudienceException,
+    "nonce_mismatch": IdTokenNonceError,
 }
 
 # Each ``configuration``-family reason maps to its typed configuration error:
@@ -77,7 +78,6 @@ _REASON_MESSAGE = {
     "missing_aud": "missing required 'aud'",
     "azp_required_multi_aud": "multiple audiences must contain an 'azp'",
     "azp_mismatch": "'azp' claim does not match",
-    "nonce_mismatch": "'nonce' claim does not match",
     "auth_time_stale": "'auth_time' is older than the permitted max_age",
     "auth_time_missing": "missing required numeric 'auth_time'",
     "at_hash_missing": "missing required 'at_hash'",

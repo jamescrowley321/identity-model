@@ -226,6 +226,17 @@ class IdTokenMissingClaimError(IdTokenValidationException):
         )
 
 
+class IdTokenNonceError(IdTokenValidationException):
+    """Raised when an ID Token's ``nonce`` is not the one the client sent.
+
+    OpenID Connect Core 1.0 §2 and §3.1.3.7 step 11: the claim is absent or
+    differs from the nonce sent, or is present when none was sent.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, token_part="payload")
+
+
 class LogoutStateValidationException(ValidationException):
     """Raised when the ``state`` returned to the post-logout redirect URI
     does not match the value sent to the end-session endpoint.

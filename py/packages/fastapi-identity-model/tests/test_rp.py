@@ -573,7 +573,9 @@ def real_id_token_validation(monkeypatch, id_token_key):
     monkeypatch.setattr(rp, "validate_id_token", _validate)
 
 
-def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> str:
+def _id_token(
+    key, nonce: str | None, aud: str | list[str], azp: str | None = None
+) -> str:
     now = int(time.time())
     claims = {
         "iss": _DISCO.issuer,
@@ -581,15 +583,21 @@ def _id_token(key, nonce: str, aud: str | list[str], azp: str | None = None) -> 
         "aud": aud,
         "iat": now,
         "exp": now + 300,
-        "nonce": nonce,
     }
+    if nonce is not None:
+        claims["nonce"] = nonce
     if azp is not None:
         claims["azp"] = azp
     return pyjwt.encode(claims, key, algorithm="RS256")
 
 
 async def _callback(
-    settings: OIDCSettings, key, token_nonce: str | None = None, **token_claims
+    settings: OIDCSettings,
+    key,
+    token_nonce: str | None = None,
+    *,
+    omit_nonce: bool = False,
+    **token_claims,
 ) -> httpx.Response:
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-secret")
@@ -597,7 +605,9 @@ async def _callback(
     async with _client(app) as client:
         state, nonce = await _login(client)
         rp.request_authorization_code_token.return_value.token = {
-            "id_token": _id_token(key, token_nonce or nonce, **token_claims),
+            "id_token": _id_token(
+                key, None if omit_nonce else token_nonce or nonce, **token_claims
+            ),
             "access_token": "at",
             "token_type": "Bearer",
         }
@@ -618,14 +628,20 @@ class TestLoginCallbackAudiences:
         resp = await _callback(settings, id_token_key, aud=["cid", "urn:api"])
         assert (resp.status_code, resp.headers["location"]) == (302, "/")
 
-    async def test_nonce_mismatch_fails_login(self, id_token_key):
+    @pytest.mark.parametrize(
+        "nonce_claim",
+        [
+            pytest.param({"token_nonce": "attacker-nonce"}, id="different"),
+            pytest.param({"token_nonce": "café"}, id="non-ascii"),
+            pytest.param({"omit_nonce": True}, id="absent"),
+        ],
+    )
+    async def test_nonce_mismatch_fails_login(self, id_token_key, nonce_claim):
         # validate_id_token binds the nonce sent on /auth/login (§3.1.3.7 step 11).
-        resp = await _callback(
-            SETTINGS, id_token_key, token_nonce="attacker-nonce", aud="cid"
-        )
+        resp = await _callback(SETTINGS, id_token_key, aud="cid", **nonce_claim)
         assert (resp.status_code, resp.json()) == (
             401,
-            {"detail": "ID token validation failed"},
+            {"detail": "Nonce mismatch"},
         )
 
     async def test_single_audience_logs_in(self, id_token_key):

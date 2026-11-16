@@ -510,6 +510,14 @@ def test_alg_none_id_token_rejection_has_its_own_class(harness):
     assert harness._id_token_rejection_class(exc) == "alg_none"
 
 
+def test_nonce_id_token_rejection_has_its_own_class(harness):
+    from py_identity_model.exceptions import IdTokenNonceError
+
+    exc = IdTokenNonceError("ID token 'nonce' claim does not match the expected value")
+
+    assert harness._id_token_rejection_class(exc) == "nonce_mismatch"
+
+
 def test_other_id_token_rejection_is_id_token_validation(harness):
     from py_identity_model.exceptions import TokenValidationException
 
@@ -729,6 +737,14 @@ def test_router_missing_endpoint_detail_has_a_reason_class():
     assert app_fastapi._router_rejection(response) == (
         "missing_endpoint: Provider discovery is missing 'token_endpoint'"
     )
+
+
+def test_router_nonce_detail_has_the_nonce_reason_class():
+    import app_fastapi
+
+    response = httpx.Response(401, json={"detail": "Nonce mismatch"})
+
+    assert app_fastapi._router_rejection(response) == "nonce_mismatch: Nonce mismatch"
 
 
 def test_conflict_fails_a_module_that_expects_no_harness_verdict():

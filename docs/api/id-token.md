@@ -38,7 +38,7 @@ the standard JWT validation (signature via discovery/JWKS, `iss`, `aud`,
   since §2 requires a present `nonce` to equal the value sent. For an ID Token
   returned by a token refresh, pass `RefreshNonce(original)`: the `nonce` may
   be absent, and if present must equal the original authentication's nonce
-  (§12.2).
+  (§12.2). A nonce rejection raises `IdTokenNonceError`.
 - **`auth_time` / `max_age`** — when you pass `max_age=`, `auth_time` must be
   present and recent enough (`now - auth_time <= max_age + leeway`).
 - **`at_hash` / `c_hash`** — when you pass `access_token=` / `code=`, the
@@ -110,5 +110,7 @@ as a pure function over an already-validated claim set:
 ::: py_identity_model.exceptions.UntrustedAudienceException
 
 ::: py_identity_model.exceptions.IdTokenMissingClaimError
+
+::: py_identity_model.exceptions.IdTokenNonceError
 
 ::: py_identity_model.exceptions.IdTokenRequiredClaim

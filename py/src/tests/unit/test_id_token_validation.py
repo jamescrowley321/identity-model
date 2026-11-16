@@ -34,6 +34,7 @@ from py_identity_model.exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
     IdTokenMissingClaimError,
+    IdTokenNonceError,
     IdTokenRequiredClaim,
     IdTokenValidationException,
     InvalidAudienceException,
@@ -302,14 +303,14 @@ class TestPureIdTokenClaimValidation:
     def test_nonce_mismatch_rejected(self):
         # §3.1.3.7 step 11: a mismatched ``nonce`` is rejected.
         claims = _valid_id_claims(nonce="n-abc")
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+        with pytest.raises(IdTokenNonceError, match=r"nonce"):
             validate_id_token_claims(
                 claims, "RS256", client_id=_AUDIENCE, nonce="n-different", now=_NOW
             )
 
     def test_nonce_expected_but_absent_rejected(self):
         # §3.1.3.7 step 11: caller expected a ``nonce`` but the token has none.
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+        with pytest.raises(IdTokenNonceError, match=r"nonce"):
             validate_id_token_claims(
                 _valid_id_claims(),
                 "RS256",
@@ -322,7 +323,7 @@ class TestPureIdTokenClaimValidation:
         # OIDC Core §2: a present ``nonce`` MUST equal the value sent. With no
         # nonce sent (``nonce=None``) a token carrying one is rejected.
         claims = _valid_id_claims(nonce="left-over")
-        with pytest.raises(IdTokenValidationException) as exc_info:
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token_claims(
                 claims, "RS256", client_id=_AUDIENCE, now=_NOW, nonce=None
             )
@@ -675,18 +676,25 @@ class TestNonAsciiInputsFailClosed:
                 nonce=None,
             )
 
-    def test_non_ascii_expected_nonce_raises_id_token_exception(self):
-        # A non-ASCII expected nonce makes hmac.compare_digest raise TypeError;
-        # surface IdTokenValidationException instead of the bare TypeError.
-        claims = _valid_id_claims(nonce="n-abc")
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+    @pytest.mark.parametrize(
+        ("token_nonce", "sent_nonce"), [("n-abc", "café"), ("café", "n-abc")]
+    )
+    def test_non_ascii_nonce_raises_nonce_error(self, token_nonce, sent_nonce):
+        # A non-ASCII operand makes hmac.compare_digest raise TypeError;
+        # surface the typed nonce error instead of the bare TypeError.
+        claims = _valid_id_claims(nonce=token_nonce)
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token_claims(
                 claims,
                 "RS256",
                 client_id=_AUDIENCE,
-                nonce="café",
+                nonce=sent_nonce,
                 now=_NOW,
             )
+        assert exc_info.value.message == (
+            "ID token 'nonce' comparison requires ASCII values"
+        )
+        assert exc_info.value.token_part == "payload"
 
 
 def _clear_sync_caches() -> None:
@@ -1060,7 +1068,7 @@ class TestSyncValidateIdToken:
             pem, _valid_id_claims(nonce="issued"), headers={"kid": key_dict["kid"]}
         )
 
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+        with pytest.raises(IdTokenNonceError, match=r"nonce"):
             validate_id_token(
                 token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
             )
@@ -1479,7 +1487,7 @@ class TestAsyncValidateIdToken:
             pem, _valid_id_claims(nonce="issued"), headers={"kid": key_dict["kid"]}
         )
 
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+        with pytest.raises(IdTokenNonceError, match=r"nonce"):
             await aio_validate_id_token(
                 token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
             )
@@ -1698,7 +1706,7 @@ class TestRefreshNonce:
 
     @pytest.mark.parametrize("token_nonce", ["other-nonce", None, 7])
     def test_pure_rejects_present_and_different(self, token_nonce):
-        with pytest.raises(IdTokenValidationException) as exc_info:
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token_claims(
                 _valid_id_claims(nonce=token_nonce),
                 "RS256",
@@ -1714,7 +1722,7 @@ class TestRefreshNonce:
     def test_plain_original_nonce_still_requires_presence(self):
         # Passing the original nonce as a string is the authentication-time
         # rule: the claim MUST be present. Refresh callers use RefreshNonce.
-        with pytest.raises(IdTokenValidationException) as exc_info:
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token_claims(
                 _valid_id_claims(),
                 "RS256",
@@ -1748,7 +1756,7 @@ class TestRefreshNonce:
     def test_sync_rejects_different(self, rsa_keypair):
         key_dict, pem = rsa_keypair
         token = sign_jwt(pem, _valid_id_claims(nonce="other-nonce"))
-        with pytest.raises(IdTokenValidationException) as exc_info:
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token(
                 token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
             )
@@ -1770,7 +1778,7 @@ class TestRefreshNonce:
     async def test_async_rejects_different(self, rsa_keypair):
         key_dict, pem = rsa_keypair
         token = sign_jwt(pem, _valid_id_claims(nonce="other-nonce"))
-        with pytest.raises(IdTokenValidationException) as exc_info:
+        with pytest.raises(IdTokenNonceError) as exc_info:
             await aio_validate_id_token(
                 token, _manual_config(key_dict), nonce=RefreshNonce(_ORIGINAL_NONCE)
             )
