@@ -90,6 +90,27 @@ def _is_token(value: object) -> bool:
     return isinstance(value, str) and bool(value)
 
 
+def _lifetime(value: object) -> float | None:
+    """The ``expires_in`` of a token response, in seconds, if it has one.
+
+    Raises:
+        TokenManagerError: ``REFRESH_FAILED`` when the value is not a number
+            of seconds an expiry can be computed from.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            timedelta(seconds=value)
+        except (OverflowError, ValueError):
+            pass
+        else:
+            return value
+    raise TokenManagerError(
+        TokenManagerErrorKind.REFRESH_FAILED, "expires_in is not a number of seconds"
+    )
+
+
 def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
     """The error for an unsuccessful refresh *response*."""
     rejected = response.rejected_token
@@ -170,7 +191,7 @@ class TokenManager:
         self,
         access_token: str,
         refresh_token: str | None = None,
-        expires_in: int | None = None,
+        expires_in: float | None = None,
         *,
         token_type: str | AuthorizationScheme,
     ) -> None:
@@ -263,13 +284,14 @@ class TokenManager:
                     raise _rejection(response)
                 new_access_token = token["access_token"]
                 token_type = _token_type(token["token_type"])
+                expires_in = _lifetime(token.get("expires_in"))
             except TokenManagerError:
                 self._refresh_token = refreshed
                 raise
             self.set_tokens(
                 access_token=new_access_token,
                 refresh_token=refreshed,
-                expires_in=token.get("expires_in"),
+                expires_in=expires_in,
                 token_type=token_type,
             )
             return self._access_token

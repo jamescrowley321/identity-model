@@ -172,6 +172,39 @@ async def test_refused_response_keeps_the_rotated_refresh_token(
 
 
 @pytest.mark.parametrize(
+    "expires_in",
+    [
+        pytest.param("3600", id="string"),
+        pytest.param([3600], id="list"),
+        pytest.param(True, id="bool"),
+        pytest.param(1e30, id="too-large"),
+    ],
+)
+async def test_unusable_expires_in_is_refused_and_keeps_the_rotated_refresh_token(
+    token_endpoint, expires_in
+):
+    _answer(
+        token_endpoint,
+        {
+            "access_token": "fresh",
+            "refresh_token": "r2",
+            "token_type": BEARER,
+            "expires_in": expires_in,
+        },
+    )
+    tm = _stale()
+    with pytest.raises(TokenManagerError) as exc:
+        await tm.get_access_token()
+    assert (*_error(exc), tm.access_token, tm.refresh_token, tm.token_type) == (
+        TokenManagerErrorKind.REFRESH_FAILED,
+        {"kind": "refresh_failed", "error": "expires_in is not a number of seconds"},
+        "stale",
+        "r2",
+        AuthorizationScheme.BEARER,
+    )
+
+
+@pytest.mark.parametrize(
     ("body", "kind"),
     [
         pytest.param(
