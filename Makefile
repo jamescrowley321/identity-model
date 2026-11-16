@@ -123,6 +123,19 @@ test-integration-keycloak: ## Run integration tests against Keycloak
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
+.PHONY: test-integration-zitadel
+test-integration-zitadel: ## Run integration tests against Zitadel
+	@echo "Starting Zitadel fixture..."
+	$(INFRA_COMPOSE) up -d --build --wait zitadel-setup
+	@# Zitadel generates client IDs and secrets, so the profile is copied out
+	@# of the provisioner rather than committed.
+	$(INFRA_COMPOSE) cp zitadel-setup:/out/.env.zitadel .env.zitadel || \
+		($(INFRA_COMPOSE) down && exit 1)
+	@echo "Running integration tests against Zitadel..."
+	$(UVPY) pytest src/tests $(LOCAL_FIXTURE_TESTS) --env-file=../.env.zitadel -v || \
+		($(INFRA_COMPOSE) down && exit 1)
+	$(INFRA_COMPOSE) down
+
 .PHONY: lint-go
 lint-go: ## go vet + golangci-lint (go/.golangci.yml; same pinned version as CI)
 	cd go && go vet ./...
@@ -287,7 +300,7 @@ security-gate: mutation-security ## Aggregate mechanical security gate (Epic 19 
 # ── Pre-push ────────────────────────────────────────────────────────
 
 .PHONY: pre-push
-pre-push: lint test-integration-node-oidc test-integration-keycloak test-integration-go test-integration-rust conformance-test-harness test-examples ## Full local validation before push
+pre-push: lint test-integration-node-oidc test-integration-keycloak test-integration-zitadel test-integration-go test-integration-rust conformance-test-harness test-examples ## Full local validation before push
 
 # ── Docs ─────────────────────────────────────────────────────────────
 

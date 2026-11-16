@@ -91,7 +91,7 @@ cd rust && cargo test                                                # Rust
 ```
 
 The repo-root `Makefile` wraps the common flows: `make infra-up` brings the
-shared providers up, `make test-integration-{node-oidc,keycloak,go,rust}` run the
+shared providers up, `make test-integration-{node-oidc,keycloak,zitadel,go,rust}` run the
 integration suites. See [`spec/README.md`](spec/README.md) and [`infra/README.md`](infra/README.md).
 
 ## License

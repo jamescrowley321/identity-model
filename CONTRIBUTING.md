@@ -91,6 +91,7 @@ started automatically where needed):
 ```bash
 make test-integration-node-oidc   # node-oidc-provider (local Docker)
 make test-integration-keycloak    # Keycloak (local Docker)
+make test-integration-zitadel     # Zitadel (local Docker)
 make test-integration-local       # your own provider via .env.local
 make test-integration-ory         # Ory
 make test-integration-descope     # Descope
