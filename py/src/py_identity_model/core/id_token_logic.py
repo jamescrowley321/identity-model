@@ -43,6 +43,7 @@ from ..exceptions import (
     AzpRequiresClientIdError,
     ConfigurationException,
     IdTokenMissingClaimError,
+    IdTokenNonceError,
     IdTokenRequiredClaim,
     IdTokenValidationException,
     UntrustedAudienceException,
@@ -393,9 +394,8 @@ def _check_nonce(claims: dict, nonce: str | RefreshNonce | None) -> None:
     """
     if nonce is None:
         if "nonce" in claims:
-            raise IdTokenValidationException(
-                "ID token carries a 'nonce' claim but no nonce was sent",
-                token_part="payload",
+            raise IdTokenNonceError(
+                "ID token carries a 'nonce' claim but no nonce was sent"
             )
         return
     if isinstance(nonce, RefreshNonce):
@@ -408,9 +408,8 @@ def _check_nonce(claims: dict, nonce: str | RefreshNonce | None) -> None:
     if not isinstance(token_nonce, str) or not _hashes_equal(
         token_nonce, expected, "'nonce'"
     ):
-        raise IdTokenValidationException(
-            "ID token 'nonce' claim does not match the expected value",
-            token_part="payload",
+        raise IdTokenNonceError(
+            "ID token 'nonce' claim does not match the expected value"
         )
 
 

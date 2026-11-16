@@ -1515,8 +1515,8 @@ skipped the check, so a token carrying a `nonce` was accepted unchecked.
   `nonce` MUST be present and equal it (OIDC Core §3.1.3.7 step 11, §3.2.2.11
   step 2).
 - `None`, when you sent none: a token that carries a `nonce` raises
-  `IdTokenValidationException`, because §2 requires a present `nonce` to equal
-  the value sent, and none was.
+  `IdTokenNonceError` (an `IdTokenValidationException`), because §2 requires a
+  present `nonce` to equal the value sent, and none was.
 - `nonce=""` raises `ConfigurationException`, as does `RefreshNonce("")`: an
   empty string is not a nonce that was sent. Pass `None` instead.
 - `RefreshNonce(original)`, for an ID Token returned by a token refresh: the

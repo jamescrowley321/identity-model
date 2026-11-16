@@ -29,7 +29,8 @@ PyIdentityModelException
 │       ├── LogoutTokenValidationException
 │       └── IdTokenValidationException
 │           ├── UntrustedAudienceException
-│           └── IdTokenMissingClaimError
+│           ├── IdTokenMissingClaimError
+│           └── IdTokenNonceError
 ├── NetworkException
 │   ├── DiscoveryException
 │   ├── JwksException
@@ -107,6 +108,8 @@ never returned on a failed response.
 `UntrustedAudienceException`: see [ID Token validation](id-token.md#py_identity_model.exceptions.UntrustedAudienceException).
 
 `IdTokenMissingClaimError`: see [ID Token validation](id-token.md#py_identity_model.exceptions.IdTokenMissingClaimError).
+
+`IdTokenNonceError`: see [ID Token validation](id-token.md#py_identity_model.exceptions.IdTokenNonceError).
 
 ## Network Exceptions
 
