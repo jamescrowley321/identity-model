@@ -16,6 +16,8 @@ from py_identity_model.aio import (
     AsyncHTTPClient,
     DiscoveryDocumentRequest,
     RefreshTokenRequest,
+    RefreshTokenResponse,
+    TokenErrorKind,
     get_discovery_document,
     refresh_token,
 )
@@ -31,7 +33,7 @@ class TokenManagerErrorKind(Enum):
     REFRESH_FAILED = "refresh_failed"
     """The refresh grant failed (``details["error"]`` holds the cause)."""
     MISSING_ACCESS_TOKEN = "missing_access_token"
-    """The refresh response has no ``access_token``."""
+    """The refresh response is a success with no ``access_token``."""
     UNSUPPORTED_TOKEN_TYPE = "unsupported_token_type"
     """The ``token_type`` is not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1)."""
 
@@ -82,6 +84,28 @@ def _token_type(value: object) -> AuthorizationScheme:
     if scheme is None:
         raise TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
     return scheme
+
+
+def _is_token(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
+    """The error for an unsuccessful refresh *response*."""
+    rejected = response.rejected_token
+    if (
+        rejected is None
+        or response.error_kind is not TokenErrorKind.INVALID_TOKEN_RESPONSE
+    ):
+        return TokenManagerError(
+            TokenManagerErrorKind.REFRESH_FAILED,
+            response.error or "no token in response",
+        )
+    # INVALID_TOKEN_RESPONSE: ``access_token`` or ``token_type`` is not a
+    # non-empty string (RFC 6749 §5.1).
+    if not _is_token(rejected.get("access_token")):
+        return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
+    return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
 
 
 class TokenManager:
@@ -228,27 +252,24 @@ class TokenManager:
                 http_client=self.http_client,
             )
 
-            if not response.is_successful or not response.token:
-                raise TokenManagerError(
-                    TokenManagerErrorKind.REFRESH_FAILED,
-                    response.error or "no token in response",
-                )
-
-            # Keep a rotated refresh token even when the access token is
-            # refused: the server may already have invalidated the old one.
-            refreshed = response.token.get("refresh_token") or self._refresh_token
-            new_access_token = response.token.get("access_token")
+            # Keep a rotated refresh token even when the response or its access
+            # token is refused: the server may already have invalidated the
+            # old one.
+            token = response.token if response.is_successful else None
+            issued = (token or response.rejected_token or {}).get("refresh_token")
+            refreshed = issued if _is_token(issued) else self._refresh_token
             try:
-                if not new_access_token:
-                    raise TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
-                token_type = _token_type(response.token.get("token_type"))
+                if token is None:
+                    raise _rejection(response)
+                new_access_token = token["access_token"]
+                token_type = _token_type(token["token_type"])
             except TokenManagerError:
                 self._refresh_token = refreshed
                 raise
             self.set_tokens(
                 access_token=new_access_token,
                 refresh_token=refreshed,
-                expires_in=response.token.get("expires_in"),
+                expires_in=token.get("expires_in"),
                 token_type=token_type,
             )
             return self._access_token

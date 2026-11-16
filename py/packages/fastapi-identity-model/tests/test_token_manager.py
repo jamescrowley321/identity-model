@@ -2,7 +2,9 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+import respx
 
 from fastapi_identity_model import (
     TokenManager,
@@ -16,23 +18,25 @@ from py_identity_model import AuthorizationScheme
 pytestmark = pytest.mark.unit
 
 BEARER = "Bearer"
+TOKEN_ENDPOINT = "https://op/token"
 
 
-def _disco(ok=True, token_endpoint="https://op/token", error=None):
+def _disco(ok=True, token_endpoint=TOKEN_ENDPOINT, error=None):
     return SimpleNamespace(is_successful=ok, token_endpoint=token_endpoint, error=error)
 
 
-def _refresh_response(ok=True, token=None, error=None):
-    return SimpleNamespace(is_successful=ok, token=token, error=error)
-
-
-def _patch_refresh(monkeypatch, response) -> AsyncMock:
+@pytest.fixture
+def token_endpoint(monkeypatch):
+    """The mocked token endpoint the real ``refresh_token`` grant posts to."""
     monkeypatch.setattr(
         tm_mod, "get_discovery_document", AsyncMock(return_value=_disco())
     )
-    refresh = AsyncMock(return_value=response)
-    monkeypatch.setattr(tm_mod, "refresh_token", refresh)
-    return refresh
+    with respx.mock:
+        yield respx.post(TOKEN_ENDPOINT)
+
+
+def _answer(route: respx.Route, body: dict) -> None:
+    route.mock(return_value=httpx.Response(200, json=body))
 
 
 def _stale(**kwargs) -> TokenManager:
@@ -98,63 +102,109 @@ async def test_unknown_token_type_is_refused_and_not_stored(token_type):
     assert (tm.access_token, tm.token_type) == (None, None)
 
 
-async def test_refresh_when_expired(monkeypatch):
-    _patch_refresh(
-        monkeypatch,
-        _refresh_response(
-            token={
-                "access_token": "fresh",
-                "refresh_token": "r2",
-                "expires_in": 3600,
-                "token_type": "DPoP",
-            }
-        ),
+async def test_refresh_when_expired(token_endpoint):
+    _answer(
+        token_endpoint,
+        {
+            "access_token": "fresh",
+            "refresh_token": "r2",
+            "expires_in": 3600,
+            "token_type": "DPoP",
+        },
     )
     tm = _stale(client_secret="secret")
     assert await tm.get_access_token() == "fresh"
     assert (tm.refresh_token, tm.token_type) == ("r2", AuthorizationScheme.DPOP)
 
 
-async def test_refresh_keeps_old_refresh_token_when_none_returned(monkeypatch):
-    _patch_refresh(
-        monkeypatch,
-        _refresh_response(token={"access_token": "fresh", "token_type": BEARER}),
-    )
+async def test_refresh_keeps_old_refresh_token_when_none_returned(token_endpoint):
+    _answer(token_endpoint, {"access_token": "fresh", "token_type": BEARER})
     tm = _stale()
     await tm.get_access_token()
     assert tm.refresh_token == "r1"
 
 
-@pytest.mark.parametrize(
-    "token", [{"access_token": "fresh"}, {"access_token": "fresh", "token_type": "mac"}]
-)
-async def test_refresh_with_unknown_token_type_raises(monkeypatch, token):
-    _patch_refresh(monkeypatch, _refresh_response(token=token))
+_REFUSED = [
+    pytest.param(
+        {"refresh_token": "r2"},
+        TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
+        id="no-access-token-or-type",
+    ),
+    pytest.param(
+        {"refresh_token": "r2", "token_type": BEARER},
+        TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
+        id="no-access-token",
+    ),
+    pytest.param(
+        {"access_token": "", "refresh_token": "r2", "token_type": BEARER},
+        TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
+        id="empty-access-token",
+    ),
+    pytest.param(
+        {"access_token": "fresh", "refresh_token": "r2"},
+        TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
+        id="no-token-type",
+    ),
+    pytest.param(
+        {"access_token": "fresh", "refresh_token": "r2", "token_type": "mac"},
+        TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
+        id="unknown-token-type",
+    ),
+]
+
+
+@pytest.mark.parametrize(("body", "kind"), _REFUSED)
+async def test_refused_response_keeps_the_rotated_refresh_token(
+    token_endpoint, body, kind
+):
+    _answer(token_endpoint, body)
     tm = _stale()
     with pytest.raises(TokenManagerError) as exc:
         await tm.get_access_token()
-    assert _error(exc) == (
-        TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
-        {"kind": "unsupported_token_type"},
-    )
-    assert (tm.access_token, tm.refresh_token) == ("stale", "r1")
-
-
-async def test_refused_token_type_keeps_the_rotated_refresh_token(monkeypatch):
-    _patch_refresh(
-        monkeypatch,
-        _refresh_response(
-            token={"access_token": "fresh", "refresh_token": "r2", "token_type": "mac"}
-        ),
-    )
-    tm = _stale()
-    with pytest.raises(TokenManagerError) as exc:
-        await tm.get_access_token()
-    assert (exc.value.kind, tm.access_token, tm.refresh_token, tm.token_type) == (
-        TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE,
+    assert (*_error(exc), tm.access_token, tm.refresh_token, tm.token_type) == (
+        kind,
+        {"kind": kind.value},
         "stale",
         "r2",
         AuthorizationScheme.BEARER,
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "kind"),
+    [
+        pytest.param(
+            {k: v for k, v in param.values[0].items() if k != "refresh_token"},
+            param.values[1],
+            id=param.id,
+        )
+        for param in _REFUSED
+    ]
+    + [
+        pytest.param(
+            {"refresh_token": "", "token_type": BEARER},
+            TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
+            id="empty-refresh-token",
+        ),
+        pytest.param(
+            {"refresh_token": 5, "token_type": BEARER},
+            TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
+            id="non-string-refresh-token",
+        ),
+    ],
+)
+async def test_refused_response_without_a_refresh_token_keeps_the_old_one(
+    token_endpoint, body, kind
+):
+    _answer(token_endpoint, body)
+    tm = _stale()
+    with pytest.raises(TokenManagerError) as exc:
+        await tm.get_access_token()
+    assert (*_error(exc), tm.access_token, tm.refresh_token) == (
+        kind,
+        {"kind": kind.value},
+        "stale",
+        "r1",
     )
 
 
@@ -183,26 +233,35 @@ async def test_discovery_failure_raises(monkeypatch):
     )
 
 
-async def test_refresh_grant_failure_raises(monkeypatch):
-    _patch_refresh(monkeypatch, _refresh_response(ok=False, error="invalid_grant"))
-    with pytest.raises(TokenManagerError) as exc:
-        await _stale().get_access_token()
-    assert _error(exc) == (
-        TokenManagerErrorKind.REFRESH_FAILED,
-        {"kind": "refresh_failed", "error": "invalid_grant"},
-    )
+_INVALID_GRANT = b'{"error":"invalid_grant","refresh_token":"r2"}'
 
 
-async def test_refresh_without_access_token_raises(monkeypatch):
-    _patch_refresh(monkeypatch, _refresh_response(token={"refresh_token": "r2"}))
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        pytest.param(
+            httpx.Response(400, content=_INVALID_GRANT),
+            "Token refresh failed with status code: 400. "
+            f"Response Content: {_INVALID_GRANT!r}",
+            id="error-response",
+        ),
+        pytest.param(
+            httpx.Response(200, json=["r2"]),
+            "Token response is not a JSON object: list",
+            id="not-a-json-object",
+        ),
+    ],
+)
+async def test_refresh_grant_failure_raises(token_endpoint, response, error):
+    token_endpoint.mock(return_value=response)
     tm = _stale()
     with pytest.raises(TokenManagerError) as exc:
         await tm.get_access_token()
     assert (*_error(exc), tm.access_token, tm.refresh_token) == (
-        TokenManagerErrorKind.MISSING_ACCESS_TOKEN,
-        {"kind": "missing_access_token"},
+        TokenManagerErrorKind.REFRESH_FAILED,
+        {"kind": "refresh_failed", "error": error},
         "stale",
-        "r2",
+        "r1",
     )
 
 
@@ -214,17 +273,15 @@ async def test_zero_expires_in_is_expired():
     assert tm.is_token_expired() is True
 
 
-async def test_concurrent_get_access_token_refreshes_once(monkeypatch):
-    refresh = _patch_refresh(
-        monkeypatch,
-        _refresh_response(
-            token={
-                "access_token": "fresh",
-                "refresh_token": "r2",
-                "expires_in": 3600,
-                "token_type": BEARER,
-            }
-        ),
+async def test_concurrent_get_access_token_refreshes_once(token_endpoint):
+    _answer(
+        token_endpoint,
+        {
+            "access_token": "fresh",
+            "refresh_token": "r2",
+            "expires_in": 3600,
+            "token_type": BEARER,
+        },
     )
     tm = _stale(client_secret="secret")
 
@@ -232,4 +289,4 @@ async def test_concurrent_get_access_token_refreshes_once(monkeypatch):
 
     assert results == ["fresh"] * 5
     # The lock + re-check must collapse the concurrent callers into one grant.
-    assert refresh.await_count == 1
+    assert token_endpoint.call_count == 1
