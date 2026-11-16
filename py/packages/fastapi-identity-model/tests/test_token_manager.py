@@ -180,6 +180,8 @@ async def test_refused_response_keeps_the_rotated_refresh_token(
         pytest.param(1e30, id="too-large"),
         pytest.param(1e12, id="past-the-last-date"),
         pytest.param(-1e12, id="before-the-first-date"),
+        pytest.param(-6.3e10, id="near-the-first-date"),
+        pytest.param(-1, id="negative"),
     ],
 )
 async def test_unusable_expires_in_is_refused_and_keeps_the_rotated_refresh_token(
@@ -342,4 +344,31 @@ def test_rejection_with_both_required_members_reports_the_library_error():
     assert (error.kind, error.details) == (
         TokenManagerErrorKind.REFRESH_FAILED,
         {"kind": "refresh_failed", "error": "expires_in must be a number"},
+    )
+
+
+async def test_unexplained_rejection_keeps_the_rotated_refresh_token(
+    monkeypatch, token_endpoint
+):
+    rejected = RefreshTokenResponse(
+        is_successful=False,
+        error="expires_in must be a number",
+        error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+        rejected_token={
+            "access_token": "fresh",
+            "token_type": BEARER,
+            "refresh_token": "r2",
+        },
+    )
+    monkeypatch.setattr(tm_mod, "refresh_token", AsyncMock(return_value=rejected))
+    tm = _stale()
+
+    with pytest.raises(TokenManagerError) as exc:
+        await tm.get_access_token()
+
+    assert (*_error(exc), tm.access_token, tm.refresh_token) == (
+        TokenManagerErrorKind.REFRESH_FAILED,
+        {"kind": "refresh_failed", "error": "expires_in must be a number"},
+        "stale",
+        "r2",
     )

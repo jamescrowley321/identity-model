@@ -97,22 +97,21 @@ def _expiry(expires_in: float | None) -> datetime | None:
     return datetime.now(UTC) + timedelta(seconds=expires_in)
 
 
-def _lifetime(value: object) -> float | None:
-    """The ``expires_in`` of a token response, in seconds, if it has one.
+def _response_expiry(value: object) -> datetime | None:
+    """When a token response's access token expires, from its ``expires_in``.
 
     Raises:
-        TokenManagerError: ``REFRESH_FAILED`` when the value is not a number
-            of seconds an expiry can be computed from.
+        TokenManagerError: ``REFRESH_FAILED`` when the value is not a
+            lifetime in seconds (RFC 6749 §5.1) an expiry can be computed
+            from: not a number, negative, or past the last date.
     """
     if value is None:
         return None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         try:
-            _expiry(value)
+            return _expiry(value)
         except (OverflowError, ValueError):
             pass
-        else:
-            return value
     raise TokenManagerError(
         TokenManagerErrorKind.REFRESH_FAILED, "expires_in is not a number of seconds"
     )
@@ -216,10 +215,19 @@ class TokenManager:
                 not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1: the token must not
                 be used). Nothing is stored.
         """
-        scheme = _token_type(token_type)
         # expires_in=0 means "already expired", not "no expiry".
-        expires_at = _expiry(expires_in)
-        self._token_type = scheme
+        self._store(
+            access_token, refresh_token, _expiry(expires_in), _token_type(token_type)
+        )
+
+    def _store(
+        self,
+        access_token: str,
+        refresh_token: str | None,
+        expires_at: datetime | None,
+        token_type: AuthorizationScheme,
+    ) -> None:
+        self._token_type = token_type
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._expires_at = expires_at
@@ -288,16 +296,11 @@ class TokenManager:
                     raise _rejection(response)
                 new_access_token = token["access_token"]
                 token_type = _token_type(token["token_type"])
-                expires_in = _lifetime(token.get("expires_in"))
+                expires_at = _response_expiry(token.get("expires_in"))
             except TokenManagerError:
                 self._refresh_token = refreshed
                 raise
-            self.set_tokens(
-                access_token=new_access_token,
-                refresh_token=refreshed,
-                expires_in=expires_in,
-                token_type=token_type,
-            )
+            self._store(new_access_token, refreshed, expires_at, token_type)
             return self._access_token
 
     @property
