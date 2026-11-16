@@ -90,6 +90,13 @@ def _is_token(value: object) -> bool:
     return isinstance(value, str) and bool(value)
 
 
+def _expiry(expires_in: float | None) -> datetime | None:
+    """When a token issued now with *expires_in* seconds to live expires."""
+    if expires_in is None:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=expires_in)
+
+
 def _lifetime(value: object) -> float | None:
     """The ``expires_in`` of a token response, in seconds, if it has one.
 
@@ -101,7 +108,7 @@ def _lifetime(value: object) -> float | None:
         return None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         try:
-            timedelta(seconds=value)
+            _expiry(value)
         except (OverflowError, ValueError):
             pass
         else:
@@ -209,16 +216,13 @@ class TokenManager:
                 not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1: the token must not
                 be used). Nothing is stored.
         """
-        self._token_type = _token_type(token_type)
+        scheme = _token_type(token_type)
+        # expires_in=0 means "already expired", not "no expiry".
+        expires_at = _expiry(expires_in)
+        self._token_type = scheme
         self._access_token = access_token
         self._refresh_token = refresh_token
-        # ``is not None`` (not truthiness) so expires_in=0 means "already
-        # expired" rather than "no expiry / never refresh".
-        self._expires_at = (
-            datetime.now(UTC) + timedelta(seconds=expires_in)
-            if expires_in is not None
-            else None
-        )
+        self._expires_at = expires_at
 
     def is_token_expired(self) -> bool:
         """Return True if the access token is expired or within the refresh window."""

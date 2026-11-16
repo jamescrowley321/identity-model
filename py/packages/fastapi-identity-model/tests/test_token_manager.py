@@ -178,6 +178,8 @@ async def test_refused_response_keeps_the_rotated_refresh_token(
         pytest.param([3600], id="list"),
         pytest.param(True, id="bool"),
         pytest.param(1e30, id="too-large"),
+        pytest.param(1e12, id="past-the-last-date"),
+        pytest.param(-1e12, id="before-the-first-date"),
     ],
 )
 async def test_unusable_expires_in_is_refused_and_keeps_the_rotated_refresh_token(
