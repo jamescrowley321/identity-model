@@ -16,6 +16,8 @@ from py_identity_model.aio import (
     AsyncHTTPClient,
     DiscoveryDocumentRequest,
     RefreshTokenRequest,
+    RefreshTokenResponse,
+    TokenErrorKind,
     get_discovery_document,
     refresh_token,
 )
@@ -31,7 +33,7 @@ class TokenManagerErrorKind(Enum):
     REFRESH_FAILED = "refresh_failed"
     """The refresh grant failed (``details["error"]`` holds the cause)."""
     MISSING_ACCESS_TOKEN = "missing_access_token"
-    """The refresh response has no ``access_token``."""
+    """The refresh response is a success with no ``access_token``."""
     UNSUPPORTED_TOKEN_TYPE = "unsupported_token_type"
     """The ``token_type`` is not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1)."""
 
@@ -82,6 +84,55 @@ def _token_type(value: object) -> AuthorizationScheme:
     if scheme is None:
         raise TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
     return scheme
+
+
+def _is_token(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _expiry(expires_in: float | None) -> datetime | None:
+    """When a token issued now with *expires_in* seconds to live expires."""
+    if expires_in is None:
+        return None
+    return datetime.now(UTC) + timedelta(seconds=expires_in)
+
+
+def _response_expiry(value: object) -> datetime | None:
+    """When a token response's access token expires, from its ``expires_in``.
+
+    Raises:
+        TokenManagerError: ``REFRESH_FAILED`` when the value is not a
+            lifetime in seconds (RFC 6749 §5.1) an expiry can be computed
+            from: not a number, negative, or past the last date.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+        try:
+            return _expiry(value)
+        except (OverflowError, ValueError):
+            pass
+    raise TokenManagerError(
+        TokenManagerErrorKind.REFRESH_FAILED, "expires_in is not a number of seconds"
+    )
+
+
+def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
+    """The error for an unsuccessful refresh *response*."""
+    rejected = response.rejected_token
+    if (
+        rejected is not None
+        and response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE
+    ):
+        # RFC 6749 §5.1 requires both members as non-empty strings.
+        if not _is_token(rejected.get("access_token")):
+            return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
+        if not _is_token(rejected.get("token_type")):
+            return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
+    return TokenManagerError(
+        TokenManagerErrorKind.REFRESH_FAILED,
+        response.error or "no token in response",
+    )
 
 
 class TokenManager:
@@ -146,7 +197,7 @@ class TokenManager:
         self,
         access_token: str,
         refresh_token: str | None = None,
-        expires_in: int | None = None,
+        expires_in: float | None = None,
         *,
         token_type: str | AuthorizationScheme,
     ) -> None:
@@ -164,16 +215,22 @@ class TokenManager:
                 not ``Bearer`` or ``DPoP`` (RFC 6749 §7.1: the token must not
                 be used). Nothing is stored.
         """
-        self._token_type = _token_type(token_type)
+        # expires_in=0 means "already expired", not "no expiry".
+        self._store(
+            access_token, refresh_token, _expiry(expires_in), _token_type(token_type)
+        )
+
+    def _store(
+        self,
+        access_token: str,
+        refresh_token: str | None,
+        expires_at: datetime | None,
+        token_type: AuthorizationScheme,
+    ) -> None:
+        self._token_type = token_type
         self._access_token = access_token
         self._refresh_token = refresh_token
-        # ``is not None`` (not truthiness) so expires_in=0 means "already
-        # expired" rather than "no expiry / never refresh".
-        self._expires_at = (
-            datetime.now(UTC) + timedelta(seconds=expires_in)
-            if expires_in is not None
-            else None
-        )
+        self._expires_at = expires_at
 
     def is_token_expired(self) -> bool:
         """Return True if the access token is expired or within the refresh window."""
@@ -228,29 +285,22 @@ class TokenManager:
                 http_client=self.http_client,
             )
 
-            if not response.is_successful or not response.token:
-                raise TokenManagerError(
-                    TokenManagerErrorKind.REFRESH_FAILED,
-                    response.error or "no token in response",
-                )
-
-            # Keep a rotated refresh token even when the access token is
-            # refused: the server may already have invalidated the old one.
-            refreshed = response.token.get("refresh_token") or self._refresh_token
-            new_access_token = response.token.get("access_token")
+            # Keep a rotated refresh token even when the response or its access
+            # token is refused: the server may already have invalidated the
+            # old one.
+            token = response.token if response.is_successful else None
+            issued = (token or response.rejected_token or {}).get("refresh_token")
+            refreshed = issued if _is_token(issued) else self._refresh_token
             try:
-                if not new_access_token:
-                    raise TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
-                token_type = _token_type(response.token.get("token_type"))
+                if token is None:
+                    raise _rejection(response)
+                new_access_token = token["access_token"]
+                token_type = _token_type(token["token_type"])
+                expires_at = _response_expiry(token.get("expires_in"))
             except TokenManagerError:
                 self._refresh_token = refreshed
                 raise
-            self.set_tokens(
-                access_token=new_access_token,
-                refresh_token=refreshed,
-                expires_in=response.token.get("expires_in"),
-                token_type=token_type,
-            )
+            self._store(new_access_token, refreshed, expires_at, token_type)
             return self._access_token
 
     @property
