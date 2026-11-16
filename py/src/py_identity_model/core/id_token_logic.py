@@ -405,9 +405,13 @@ def _check_nonce(claims: dict, nonce: str | RefreshNonce | None) -> None:
     else:
         expected = nonce
     token_nonce = claims.get("nonce")
-    if not isinstance(token_nonce, str) or not _hashes_equal(
-        token_nonce, expected, "'nonce'"
-    ):
+    try:
+        matches = isinstance(token_nonce, str) and _hashes_equal(
+            token_nonce, expected, "'nonce'"
+        )
+    except IdTokenValidationException as exc:
+        raise IdTokenNonceError(exc.message) from exc
+    if not matches:
         raise IdTokenNonceError(
             "ID token 'nonce' claim does not match the expected value"
         )

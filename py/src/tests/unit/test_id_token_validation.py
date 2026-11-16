@@ -676,18 +676,25 @@ class TestNonAsciiInputsFailClosed:
                 nonce=None,
             )
 
-    def test_non_ascii_expected_nonce_raises_id_token_exception(self):
-        # A non-ASCII expected nonce makes hmac.compare_digest raise TypeError;
-        # surface IdTokenValidationException instead of the bare TypeError.
-        claims = _valid_id_claims(nonce="n-abc")
-        with pytest.raises(IdTokenValidationException, match=r"nonce"):
+    @pytest.mark.parametrize(
+        ("token_nonce", "sent_nonce"), [("n-abc", "café"), ("café", "n-abc")]
+    )
+    def test_non_ascii_nonce_raises_nonce_error(self, token_nonce, sent_nonce):
+        # A non-ASCII operand makes hmac.compare_digest raise TypeError;
+        # surface the typed nonce error instead of the bare TypeError.
+        claims = _valid_id_claims(nonce=token_nonce)
+        with pytest.raises(IdTokenNonceError) as exc_info:
             validate_id_token_claims(
                 claims,
                 "RS256",
                 client_id=_AUDIENCE,
-                nonce="café",
+                nonce=sent_nonce,
                 now=_NOW,
             )
+        assert exc_info.value.message == (
+            "ID token 'nonce' comparison requires ASCII values"
+        )
+        assert exc_info.value.token_part == "payload"
 
 
 def _clear_sync_caches() -> None:
