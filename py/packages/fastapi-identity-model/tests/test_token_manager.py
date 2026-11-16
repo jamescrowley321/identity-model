@@ -347,9 +347,8 @@ def test_rejection_with_both_required_members_reports_the_library_error():
     )
 
 
-async def test_unexplained_rejection_keeps_the_rotated_refresh_token(
-    monkeypatch, token_endpoint
-):
+@pytest.mark.usefixtures("token_endpoint")
+async def test_unexplained_rejection_keeps_the_rotated_refresh_token(monkeypatch):
     rejected = RefreshTokenResponse(
         is_successful=False,
         error="expires_in must be a number",
