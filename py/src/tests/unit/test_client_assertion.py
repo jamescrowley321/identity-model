@@ -57,7 +57,11 @@ from py_identity_model.core.token_client_logic import (
 from py_identity_model.core.token_exchange_logic import (
     prepare_token_exchange_request_data,
 )
-from py_identity_model.exceptions import ConfigurationException, InvalidArgumentError
+from py_identity_model.exceptions import (
+    ConfigurationException,
+    InvalidArgumentError,
+    InvalidArgumentKind,
+)
 
 
 UUID_STRING_LENGTH = 36
@@ -352,36 +356,37 @@ class TestPrivateKeyJwtIssuer:
             PrivateKeyJwt(**without_issuer)
 
     @pytest.mark.parametrize(
-        "value",
+        ("value", "kind"),
         [
-            None,
-            "",
-            "   ",
-            f" {ISSUER}",
-            f"{ISSUER}\n",
-            [ISSUER],
-            (ISSUER,),
-            b"https://as.example.com",
-        ],
-        ids=[
-            "none",
-            "empty",
-            "whitespace",
-            "leading-space",
-            "trailing-newline",
-            "list",
-            "tuple",
-            "bytes",
+            pytest.param(None, InvalidArgumentKind.MISSING, id="none"),
+            pytest.param("", InvalidArgumentKind.MISSING, id="empty"),
+            pytest.param("   ", InvalidArgumentKind.MISSING, id="whitespace"),
+            pytest.param(
+                f" {ISSUER}", InvalidArgumentKind.INVALID_VALUE, id="leading-space"
+            ),
+            pytest.param(
+                f"{ISSUER}\n", InvalidArgumentKind.INVALID_VALUE, id="trailing-newline"
+            ),
+            pytest.param([ISSUER], InvalidArgumentKind.INVALID_TYPE, id="list"),
+            pytest.param((ISSUER,), InvalidArgumentKind.INVALID_TYPE, id="tuple"),
+            pytest.param(
+                b"https://as.example.com", InvalidArgumentKind.INVALID_TYPE, id="bytes"
+            ),
+            pytest.param(5, InvalidArgumentKind.INVALID_TYPE, id="int"),
         ],
     )
-    def test_blank_or_non_string_issuer_raises(self, value):
+    def test_blank_or_non_string_issuer_raises(self, value, kind):
         # aud is one exact, non-blank string (RFC 10070 §4, FAPI 2.0 SP §5.3.3.1).
         private_pem, _ = _ec_keypair()
         with pytest.raises(ConfigurationException) as exc_info:
             PrivateKeyJwt(private_key=private_pem, algorithm="ES256", issuer=value)
-        assert exc_info.value.message == (
+        error = exc_info.value
+        assert isinstance(error, InvalidArgumentError)
+        assert (error.argument, error.kind, error.message) == (
+            "issuer",
+            kind,
             "PrivateKeyJwt.issuer must be the authorization server's issuer "
-            f"identifier (RFC 10070 §4), got {value!r}"
+            f"identifier (RFC 10070 §4), got {value!r}",
         )
 
 
