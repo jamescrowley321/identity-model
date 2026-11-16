@@ -205,6 +205,16 @@ def provision(zitadel: Zitadel, issuer: str) -> dict[str, str]:
         "TEST_PKCE_PUBLIC_CLIENT_ID": pkce_public["clientId"],
         "TEST_PKCE_PUBLIC_REDIRECT_URI": redirect_uri,
         "TEST_DEVICE_CLIENT_ID": device["clientId"],
+        # Zitadel audiences an ID Token to every app in the project and to
+        # the project itself, not only to the client that asked for it.
+        "TEST_ID_TOKEN_TRUSTED_AUDIENCES": ",".join(
+            [
+                auth_code["clientId"],
+                pkce_public["clientId"],
+                device["clientId"],
+                project_id,
+            ]
+        ),
         "TEST_REDIRECT_URI": redirect_uri,
     }
 

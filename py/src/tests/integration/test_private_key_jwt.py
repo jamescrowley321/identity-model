@@ -228,6 +228,7 @@ class TestPrivateKeyJwtLive:
     def test_par_with_signed_request_object(
         self,
         provider_capabilities,
+        is_node_oidc_fixture,
         raw_discovery,
     ):
         """PAR accepts the authorization request as a signed request object.
@@ -236,7 +237,7 @@ class TestPrivateKeyJwtLive:
         authentication; the provider verifies the JWT with the client's
         registered key.
         """
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
         if "par" not in provider_capabilities:
             pytest.skip("Provider does not support PAR")
 
@@ -251,10 +252,11 @@ class TestPrivateKeyJwtLive:
     def test_par_with_request_object_signed_by_other_key_rejected(
         self,
         provider_capabilities,
+        is_node_oidc_fixture,
         raw_discovery,
     ):
         """A request object the client's registered key did not sign is refused."""
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
         if "par" not in provider_capabilities:
             pytest.skip("Provider does not support PAR")
 

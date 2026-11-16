@@ -7,8 +7,6 @@ form; the exact request bytes are pinned by the CC-003, INTR-003 and EXCH-001
 spec vectors. Skipped against any other provider.
 """
 
-from urllib.parse import urlparse
-
 import pytest
 
 from py_identity_model import (
@@ -27,17 +25,8 @@ POST_CLIENT_ID = "test-client-secret-post"
 POST_CLIENT_SECRET = "test-client-secret-post-secret"
 
 
-def _require_node_oidc(raw_discovery: dict) -> None:
-    """Skip unless the provider is the bundled node-oidc fixture.
-
-    node-oidc serves discovery at the host root on localhost; Keycloak also
-    runs locally but under ``/realms/<realm>`` and doesn't register this client.
-    """
-    parsed = urlparse(raw_discovery.get("issuer", ""))
-    if parsed.hostname not in ("localhost", "127.0.0.1") or parsed.path not in (
-        "",
-        "/",
-    ):
+def _require_node_oidc(is_node_oidc_fixture: bool) -> None:
+    if not is_node_oidc_fixture:
         pytest.skip("client_secret_post fixture client only registered in node-oidc")
 
 
@@ -57,8 +46,8 @@ def _request(
 class TestClientSecretPostLive:
     """A live provider accepts a client authenticated with client_secret_post."""
 
-    def test_client_secret_post_accepted(self, raw_discovery, token_endpoint):
-        _require_node_oidc(raw_discovery)
+    def test_client_secret_post_accepted(self, is_node_oidc_fixture, token_endpoint):
+        _require_node_oidc(is_node_oidc_fixture)
         response = request_client_credentials_token(
             _request(ClientAuthMethod.CLIENT_SECRET_POST, token_endpoint)
         )
@@ -68,9 +57,9 @@ class TestClientSecretPostLive:
 
     @pytest.mark.asyncio
     async def test_async_client_secret_post_accepted(
-        self, raw_discovery, token_endpoint
+        self, is_node_oidc_fixture, token_endpoint
     ):
-        _require_node_oidc(raw_discovery)
+        _require_node_oidc(is_node_oidc_fixture)
         response = await async_request_client_credentials_token(
             _request(ClientAuthMethod.CLIENT_SECRET_POST, token_endpoint)
         )
