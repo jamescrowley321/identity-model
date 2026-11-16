@@ -719,7 +719,7 @@ class PrivateKeyJwt:
             for client authentication (also FAPI 2.0 Security Profile
             §5.3.3.1).  ``None``, a non-string, an empty value, or one with
             leading or trailing whitespace raises
-            :class:`~py_identity_model.exceptions.ConfigurationException`.
+            :class:`~py_identity_model.exceptions.InvalidArgumentError`.
         lifetime: Assertion validity in seconds (default 300).
     """
 
@@ -733,15 +733,22 @@ class PrivateKeyJwt:
     issuer: str
 
     def __post_init__(self) -> None:
-        if (
-            not isinstance(self.issuer, str)
-            or not self.issuer
-            or self.issuer != self.issuer.strip()
-        ):
-            raise ConfigurationException(
-                "PrivateKeyJwt.issuer must be the authorization server's issuer "
-                f"identifier (RFC 10070 §4), got {self.issuer!r}"
-            )
+        if self.issuer is None:
+            kind = InvalidArgumentKind.MISSING
+        elif not isinstance(self.issuer, str):
+            kind = InvalidArgumentKind.INVALID_TYPE
+        elif not self.issuer.strip():
+            kind = InvalidArgumentKind.MISSING
+        elif self.issuer != self.issuer.strip():
+            kind = InvalidArgumentKind.INVALID_VALUE
+        else:
+            return
+        raise InvalidArgumentError(
+            "issuer",
+            kind,
+            "PrivateKeyJwt.issuer must be the authorization server's issuer "
+            f"identifier (RFC 10070 §4), got {self.issuer!r}",
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
