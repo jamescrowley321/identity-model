@@ -175,11 +175,11 @@ def get_config(env_file: str | None = None) -> dict:
         # Audiences the provider adds to an ID Token besides the client's own
         # (comma-separated); the RP must name them to accept the token.
         "TEST_ID_TOKEN_TRUSTED_AUDIENCES": [
-            audience
+            audience.strip()
             for audience in os.environ.get("TEST_ID_TOKEN_TRUSTED_AUDIENCES", "").split(
                 ","
             )
-            if audience
+            if audience.strip()
         ],
         # Opaque token client for introspection/revocation tests
         "TEST_OPAQUE_CLIENT_ID": os.environ.get("TEST_OPAQUE_CLIENT_ID", ""),
