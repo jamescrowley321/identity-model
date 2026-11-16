@@ -27,7 +27,6 @@ from collections import namedtuple
 import hashlib
 import hmac
 import time
-from urllib.parse import urlparse
 
 from cryptography.hazmat.primitives import serialization
 import httpx
@@ -326,22 +325,6 @@ def test_scopeless_access_token_marker_gate(mock_matrix):
 NODE_OIDC_AUDIENCE = "urn:test:api"
 
 
-def _is_node_oidc_fixture(raw_discovery: dict) -> bool:
-    """Whether the active provider is the bundled node-oidc-provider fixture.
-
-    The fixed ``urn:test:api`` audience this leg asserts on only exists in the
-    local node-oidc-provider; the remote matrix providers (Keycloak/Ory/Descope)
-    mint a different audience, so they must skip. node-oidc serves discovery at
-    the localhost host root — the check that distinguishes it from Keycloak,
-    which also runs on localhost but under ``/realms/<realm>`` (mirrors
-    ``test_rs_boot._is_node_oidc_fixture``).
-    """
-    parsed = urlparse(raw_discovery.get("issuer", ""))
-    is_local = parsed.hostname in ("localhost", "127.0.0.1")
-    at_host_root = parsed.path in ("", "/")
-    return is_local and at_host_root
-
-
 def _granted_scopes(access_token: str) -> list[str]:
     claims = jwt.decode(access_token, options={"verify_signature": False})
     raw = claims.get("scope") or claims.get("scp") or ""
@@ -355,8 +338,8 @@ def _granted_scopes(access_token: str) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def node_oidc_discovery_url(test_config, raw_discovery) -> str:
-    if not _is_node_oidc_fixture(raw_discovery):
+def node_oidc_discovery_url(test_config, is_node_oidc_fixture) -> str:
+    if not is_node_oidc_fixture:
         pytest.skip(
             "correctness-matrix real-issuer leg asserts node-oidc's "
             "urn:test:api audience; remote matrix providers mint different tokens"

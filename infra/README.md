@@ -11,6 +11,7 @@ providers catches provider-specific behavior a single fixture cannot.
 | [`node-oidc-provider`](https://github.com/panva/node-oidc-provider) | local compose | `http://localhost:9010` | [`node-oidc-provider/`](node-oidc-provider/) |
 | [Duende IdentityServer](https://duendesoftware.com/products/identityserver) | local compose | `http://localhost:9001` | [`identityserver/`](identityserver/) |
 | [Keycloak](https://www.keycloak.org/) | local compose | `http://localhost:8080/realms/py-identity-model` | [`keycloak/`](keycloak/) |
+| [Zitadel](https://zitadel.com/) | local compose | `http://localhost:9020` | [`zitadel/`](zitadel/) |
 | Ory Network | cloud | per project | CI secrets / ambient `TEST_*` env |
 | Descope | cloud | per project | `.env.descope` (repo root) |
 
@@ -29,6 +30,7 @@ make infra-down    # stop them
 # Or start exactly what you need:
 docker compose -f infra/docker-compose.yml up -d --build --wait node-oidc-provider
 docker compose -f infra/docker-compose.yml up -d --build --wait keycloak
+docker compose -f infra/docker-compose.yml up -d --build --wait zitadel-setup   # Zitadel + its provisioner
 docker compose -f infra/docker-compose.yml up -d --build --wait   # everything
 docker compose -f infra/docker-compose.yml down
 ```
@@ -36,10 +38,11 @@ docker compose -f infra/docker-compose.yml down
 Each provider is healthy once its `/.well-known/openid-configuration`
 responds (Compose `healthcheck`s gate `--wait`, so CI can't race a
 half-booted provider; the Keycloak probe additionally waits for the realm
-import to finish).
+import to finish, and `zitadel-setup` turns healthy only once Zitadel is
+provisioned).
 
 > All fixtures share one compose project, so every fixture-backed `make`
-> target's teardown (`test-integration-node-oidc`, `-keycloak`, `-go`, `-rust`,
+> target's teardown (`test-integration-node-oidc`, `-keycloak`, `-zitadel`, `-go`, `-rust`,
 > the `test-harness-*` targets that boot a provider) runs `docker compose down`
 > for the whole project —
 > including providers you started separately with `make infra-up`. Re-run
@@ -52,6 +55,9 @@ All suites read the shared `TEST_*` environment convention:
 - **Python** (`/py`, via the repo-root `Makefile`): `make test-integration-node-oidc` /
   `make test-integration-keycloak` source the per-provider profiles
   `.env.node-oidc` / `.env.keycloak` at the repo root.
+  `make test-integration-zitadel` copies its profile, `.env.zitadel`, out of
+  the `zitadel-setup` container first: Zitadel generates client IDs and
+  secrets, so that profile is not committed.
 - **Go** (`/go`): with no `TEST_*` env at all, `go test -tags=integration ./...`
   defaults to the node-oidc-provider profile (`:9010`). Source
   `.env.identityserver` (repo root) to run the same suite against
@@ -67,7 +73,9 @@ against both. `test-opaque` (opaque tokens for introspection/revocation),
 `test-device`, `test-token-exchange`, and `test-private-key-jwt` are
 **node-oidc-provider only**. Keycloak registers `py-identity-model-client`,
 `test-auth-code`, and `test-pkce-public` in the imported `py-identity-model`
-realm. Custom multi-tenant claims (`dct`, `tenants`) are injected by the
+realm. Zitadel is provisioned with `py-identity-model-client` (a service
+user), `test-auth-code`, `test-pkce-public`, and `test-device`; see
+[`zitadel/README.md`](zitadel/README.md). Custom multi-tenant claims (`dct`, `tenants`) are injected by the
 node-oidc fixture; see
 [`node-oidc-provider/provider.js`](node-oidc-provider/provider.js).
 

@@ -5,6 +5,7 @@ Due to the nature of the library, the tests are written as integration tests aga
 - **Descope** (optional)
 - **node-oidc-provider** (local Docker fixture, no credentials needed)
 - **Keycloak** (local Docker fixture, no credentials needed)
+- **Zitadel** (local Docker fixture, no credentials needed)
 - **Local identity server** (for development)
 
 All integration tests are provider-agnostic and should pass against any compliant OIDC provider.
@@ -183,11 +184,41 @@ provider does not advertise (or credentials that are not supplied) cause the
 relevant tests to **skip cleanly** rather than fail. Live back-channel logout
 capture, for example, skips unless a reachable receiver URL is configured.
 
+## Testing Against Zitadel
+
+Zitadel ships as a **local Docker fixture** — no cloud account or credentials
+required. See [`infra/zitadel/README.md`](../../../../infra/zitadel/README.md)
+for its clients, test user and capabilities.
+
+### Running Tests
+
+```bash
+make test-integration-zitadel
+```
+
+This target boots the fixture (`docker compose --build --wait zitadel-setup`,
+which gates on provisioning via the healthcheck), copies the generated
+`.env.zitadel` profile to the repo root, runs the integration suite with
+`--env-file=.env.zitadel`, and tears the fixture down afterwards.
+
+### Environment Configuration
+
+`.env.zitadel` is generated, not committed: Zitadel assigns client IDs and
+secrets when the fixture is provisioned. It points at
+`http://localhost:9020` and sets the same `TEST_*` variables as the other
+local profiles, plus `TEST_DEVICE_CLIENT_ID` — the device-flow client, since
+Zitadel's client-credentials client is a service user and cannot use the
+device grant. Providers that leave it unset run the device-flow tests with
+`TEST_CLIENT_ID`. It also sets `TEST_ID_TOKEN_TRUSTED_AUDIENCES`
+(comma-separated): Zitadel audiences an ID Token to every app in the
+project and to the project, and the client must name those to accept it.
+
 ## Shared Fixtures & the Go/Rust Suites
 
 All local Docker IdP fixtures live in one place — `infra/` — behind a single
 `infra/docker-compose.yml` (consolidated in CONS-1.4): node-oidc-provider
-(`:9010`), Duende IdentityServer (`:9001`), and Keycloak (`:8080`). Every
+(`:9010`), Duende IdentityServer (`:9001`), Keycloak (`:8080`), and Zitadel
+(`:9020`). Every
 language suite in the repo tests against the same providers:
 
 ```bash
@@ -210,7 +241,7 @@ prints a live capability matrix — grant types, PKCE, DPoP, PAR, token exchange
 introspection/revocation, and the logout/registration columns
 (`registration_endpoint`, `end_session_endpoint`, `backchannel_logout_supported`,
 `backchannel_logout_session_supported`). Use it to confirm which profiles a
-given provider (Keycloak, node-oidc, ORY, Descope) exercises live.
+given provider (Keycloak, Zitadel, node-oidc, ORY, Descope) exercises live.
 
 ## Testing Against Local Identity Server
 

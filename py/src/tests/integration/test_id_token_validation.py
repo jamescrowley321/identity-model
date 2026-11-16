@@ -134,6 +134,7 @@ class TestValidateIdTokenLive:
             id_token_flow["id_token"],
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             nonce=id_token_flow["nonce"],
         )
 
@@ -158,6 +159,7 @@ class TestValidateIdTokenLive:
                 id_token_flow["id_token"],
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce=id_token_flow["nonce"],
             )
 
@@ -175,6 +177,7 @@ class TestValidateIdTokenLive:
                 id_token,
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce=None,
             )
         assert exc_info.value.message == (
@@ -193,6 +196,7 @@ class TestValidateIdTokenLive:
             id_token,
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             nonce=id_token_flow["nonce"],
         )
         assert claims["nonce"] == id_token_flow["nonce"]
@@ -203,6 +207,7 @@ class TestValidateIdTokenLive:
                 id_token,
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce="not-the-nonce-we-sent",
             )
 
@@ -220,6 +225,7 @@ class TestValidateIdTokenLive:
             id_token,
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             max_age=id_token_flow["max_age"],
             nonce=id_token_flow["nonce"],
         )
@@ -246,6 +252,7 @@ class TestValidateIdTokenLive:
             id_token,
             config,
             disco_doc_address=disco,
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             access_token=access_token,
             access_token_issued_with_id_token=False,
             nonce=id_token_flow["nonce"],
@@ -261,6 +268,7 @@ class TestValidateIdTokenLive:
                     id_token,
                     config,
                     disco_doc_address=disco,
+                    trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                     access_token=access_token + "tampered",
                     access_token_issued_with_id_token=False,
                     nonce=id_token_flow["nonce"],
@@ -269,6 +277,7 @@ class TestValidateIdTokenLive:
                 id_token,
                 config,
                 disco_doc_address=disco,
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 access_token=access_token,
                 nonce=id_token_flow["nonce"],
             )
@@ -281,6 +290,7 @@ class TestValidateIdTokenLive:
                     id_token,
                     config,
                     disco_doc_address=disco,
+                    trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                     access_token=access_token,
                     nonce=id_token_flow["nonce"],
                 )

@@ -118,6 +118,7 @@ class TestLiveRefreshToken:
         discovery_document,
         test_config,
         provider_capabilities,
+        invalid_grant_error,
     ):
         """Invalid refresh token returns invalid_grant error."""
         if "dev_interactions" not in provider_capabilities:
@@ -135,7 +136,7 @@ class TestLiveRefreshToken:
         )
         assert response.is_successful is False
         assert response.error is not None
-        assert "invalid_grant" in response.error
+        assert invalid_grant_error in response.error
 
     def test_refresh_token_scope_downscope(
         self,
