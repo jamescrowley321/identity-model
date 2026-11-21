@@ -62,7 +62,7 @@ class TestRefreshToken:
         assert "scope=openid+profile" in body or "scope=openid%20profile" in body
 
     @respx.mock
-    def test_expired_refresh_token(self):
+    def test_refresh_http_error_reports_only_status(self) -> None:
         respx.post(TOKEN_URL).mock(
             return_value=httpx.Response(400, content=b'{"error": "invalid_grant"}')
         )
@@ -77,6 +77,7 @@ class TestRefreshToken:
         )
 
         assert response.is_successful is False
+        assert response.error == "Token refresh failed with status code: 400"
 
     @respx.mock
     def test_public_client_refresh(self):

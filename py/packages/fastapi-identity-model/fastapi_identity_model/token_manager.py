@@ -10,6 +10,7 @@ core library.
 import asyncio
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+import re
 
 from py_identity_model import AuthorizationScheme, PyIdentityModelException
 from py_identity_model.aio import (
@@ -136,10 +137,29 @@ def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
             return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
         if not _is_token(rejected.get("token_type")):
             return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
-    return TokenManagerError(
-        TokenManagerErrorKind.REFRESH_FAILED,
-        response.error or "no token in response",
-    )
+    error = response.error
+    prefix = "Token refresh failed with status code: "
+    if not error:
+        detail = "no token in response"
+    elif error.startswith(prefix):
+        # Older supported core releases append the raw response body here.
+        status = error[len(prefix) :].partition(".")[0]
+        detail = (
+            f"{prefix}{status}"
+            if re.fullmatch(r"[0-9]{3}", status)
+            else "Token refresh failed"
+        )
+    elif error.startswith("Network error during token refresh:"):
+        detail = "Network error during token refresh"
+    elif response.error_kind is TokenErrorKind.INVALID_TOKEN_RESPONSE and re.fullmatch(
+        r"Token response is not a JSON object: (?:str|int|float|bool|NoneType|list)",
+        error,
+    ):
+        # The JSON parser's type names are fixed; the rest may echo secrets.
+        detail = error
+    else:
+        detail = "Token refresh failed"
+    return TokenManagerError(TokenManagerErrorKind.REFRESH_FAILED, detail)
 
 
 class TokenManager:
