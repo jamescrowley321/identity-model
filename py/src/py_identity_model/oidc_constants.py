@@ -403,16 +403,6 @@ class ProtectedResourceErrors(Enum):
     INSUFFICIENT_SCOPE = "insufficient_scope"
 
 
-class EndpointAuthenticationMethods(Enum):
-    """OpenID Connect endpoint authentication methods."""
-
-    POST_BODY = "client_secret_post"
-    BASIC_AUTHENTICATION = "client_secret_basic"
-    PRIVATE_KEY_JWT = "private_key_jwt"
-    TLS_CLIENT_AUTH = "tls_client_auth"
-    SELF_SIGNED_TLS_CLIENT_AUTH = "self_signed_tls_client_auth"
-
-
 class AuthenticationMethods(Enum):
     """OpenID Connect authentication methods."""
 

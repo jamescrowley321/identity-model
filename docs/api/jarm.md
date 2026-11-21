@@ -8,7 +8,9 @@ encrypted response is rejected rather than silently accepted.
 
 `process_jarm_response` verifies the response JWT end to end — signing
 algorithm (default-deny: `none` and symmetric algorithms are refused, and the
-algorithm must be advertised by the AS), signature against the JWKS, and the
+algorithm must be in `algorithms`, or else in the AS-advertised
+`authorization_signing_alg_values_supported` and `DEFAULT_ALLOWED_ALGORITHMS`;
+an AS that advertises none gets `DEFAULT_ALLOWED_ALGORITHMS`), signature against the JWKS, and the
 `iss` / `aud` / `exp` claims (all three must be *present* as well as valid) —
 then returns the same `AuthorizeCallbackResponse` the plain callback parser
 produces, ready for `validate_authorize_callback_state`.
@@ -33,7 +35,7 @@ if is_jarm_response(callback_url):
 
 For `form_post.jwt`, the JWT arrives in the POST body rather than the URL —
 pass the raw JWT with `is_jwt=True`. To validate without any network I/O,
-supply `issuer`, `jwks`, and `algorithms` instead of `disco_doc_address`.
+supply `issuer` and `jwks` (and optionally `algorithms`) instead of `disco_doc_address`.
 
 Verification failures surface as the specific exception for what went wrong:
 `JarmValidationException` for a missing `response` parameter, a rejected

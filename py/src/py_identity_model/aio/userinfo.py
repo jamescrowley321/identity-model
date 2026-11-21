@@ -7,7 +7,7 @@ per OIDC Core 1.0 Section 5.3.
 
 import httpx
 
-from ..core.dpop import extract_dpop_nonce
+from ..core.dpop import extract_dpop_nonce, remember_dpop_nonce
 from ..core.error_handlers import handle_userinfo_error
 from ..core.models import UserInfoRequest, UserInfoResponse
 from ..core.userinfo_logic import (
@@ -30,7 +30,7 @@ async def _request_userinfo(
     Request UserInfo with retry logic.
 
     Automatically retries on 429 (rate limiting) and 5xx errors with
-    exponential backoff. Configuration is read from environment variables.
+    exponential backoff. Retry settings come from the client's HTTPConfig.
     """
     return await client.get(url, headers=headers)
 
@@ -45,7 +45,7 @@ async def get_userinfo(
     Args:
         request: UserInfo request with endpoint address and access token
         http_client: Optional managed HTTP client.  When ``None``, uses the
-            module-level singleton.
+            library default client.
 
     Returns:
         UserInfoResponse: Response with claims (JSON) or raw JWT string
@@ -61,11 +61,20 @@ async def get_userinfo(
         if request.dpop_key is not None:
             # RFC 9449 §8: honor a single ``use_dpop_nonce`` challenge by
             # re-minting the proof with the server nonce and retrying once.
+            remember_dpop_nonce(
+                request.dpop_key, request.address, response, resource_server=True
+            )
             nonce = extract_dpop_nonce(response)
             if nonce is not None:
                 await response.aclose()
                 headers = prepare_userinfo_headers(request, dpop_nonce=nonce)
                 response = await _request_userinfo(client, request.address, headers)
+                remember_dpop_nonce(
+                    request.dpop_key,
+                    request.address,
+                    response,
+                    resource_server=True,
+                )
         result = process_userinfo_response(response)
         return validate_userinfo_sub(result, request.expected_sub)
     except Exception as e:

@@ -60,7 +60,7 @@ HTTP_FORBIDDEN = 403
 EXPECTED_STATUS: dict[str, int] = {
     "valid": HTTP_OK,
     "valid_es256": HTTP_OK,
-    "cnf_bound": HTTP_OK,
+    "cnf_bound": HTTP_UNAUTHORIZED,
     "oversized": HTTP_OK,
     "multi_aud_untrusted": HTTP_OK,
     "id_as_access": HTTP_UNAUTHORIZED,
@@ -393,7 +393,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         users=16,
         gate="warm",
         notes="every class returns its correct status under contention, F-18 "
-        "uniform 401 body, F-07 reject, F-02 accepted-today, ZERO 500s",
+        "uniform 401 body, F-07 reject, F-02 reject, ZERO 500s",
     ),
     Scenario(
         id="S9",

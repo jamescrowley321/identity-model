@@ -8,19 +8,62 @@ from __future__ import annotations
 
 import math
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from ..exceptions import (
     ConfigurationException,
-    DiscoveryException,
     DiscoveryHTTPSRequiredError,
     DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+    DiscoveryValidationError,
+    ProtocolParameterError,
+    ProtocolParameterErrorReason,
 )
 from .discovery_policy import DiscoveryPolicy, is_loopback
+from .token_binding import TokenBinding
+
+
+REQUIRED_BINDING_TYPE_MESSAGE = "required_binding must be a TokenBinding"
+TOKEN_ISSUERS_ENTRIES_MESSAGE = (
+    "token_issuers must be a non-empty list of non-blank strings; omit it or "
+    "set it to None to check the discovery document's issuer"
+)
+TOKEN_ISSUERS_WITHOUT_DISCOVERY_MESSAGE = (
+    "token_issuers applies to discovery mode only; with perform_disco=False "
+    "list the accepted issuers in issuer"
+)
+TOKEN_ISSUERS_ONE_PROVIDER_MESSAGE = (
+    "token_issuers lists the issuer values of one provider, so allowed_issuers "
+    "must name exactly one discovery issuer when both are set; use one "
+    "configuration per provider"
+)
 
 
 if TYPE_CHECKING:
     from .models import TokenValidationConfig
+
+
+def validate_absolute_uri_without_fragment(value: str, parameter: str) -> None:
+    """Require *value* to be an absolute URI with no fragment component.
+
+    RFC 6749 §3.1.2 (``redirect_uri``) and RFC 8707 §2 / RFC 8693 §2.1
+    (``resource``): the value MUST be an absolute URI (RFC 3986 §4.3) and MUST
+    NOT include a fragment component. A query component is allowed.
+
+    Raises:
+        ProtocolParameterError: :attr:`ProtocolParameterErrorReason.NOT_ABSOLUTE_URI`
+            when *value* has no scheme, or
+            :attr:`ProtocolParameterErrorReason.URI_HAS_FRAGMENT` when it has a
+            fragment (even an empty one).
+    """
+    if not urlsplit(value).scheme:
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.NOT_ABSOLUTE_URI, parameter
+        )
+    if "#" in value:
+        raise ProtocolParameterError(
+            ProtocolParameterErrorReason.URI_HAS_FRAGMENT, parameter
+        )
 
 
 # ============================================================================
@@ -78,19 +121,34 @@ def validate_https_url(url: str, parameter_name: str) -> None:
         )
 
 
-def validate_required_parameters(response_data: dict) -> None:
-    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3"""
-    required_params = [
-        "issuer",
-        "response_types_supported",
-        "subject_types_supported",
-        "id_token_signing_alg_values_supported",
-    ]
+_REQUIRED_PARAMETERS = (
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "response_types_supported",
+    "subject_types_supported",
+    "id_token_signing_alg_values_supported",
+)
 
+
+def validate_required_parameters(response_data: dict) -> None:
+    """Validate required parameters per OpenID Connect Discovery 1.0 Section 3.
+
+    All seven REQUIRED fields are checked unconditionally. §3 exempts
+    ``token_endpoint`` when only the Implicit Flow is used; requiring it anyway
+    is library policy. A field whose value is falsy (absent, ``null``, ``""``,
+    ``[]``, ``false``, ``0`` or ``{}``) is missing, and every missing field is
+    reported in spec order.
+
+    Raises:
+        DiscoveryParseError: If the document is not a JSON object.
+        DiscoveryMissingFieldsError: If any required field is missing.
+    """
+    if not isinstance(response_data, dict):
+        raise DiscoveryParseError("Discovery document must be a JSON object")
     missing_params = [
-        param
-        for param in required_params
-        if param not in response_data or response_data[param] is None
+        param for param in _REQUIRED_PARAMETERS if not response_data.get(param)
     ]
 
     if missing_params:
@@ -105,7 +163,7 @@ def _validate_subject_types(subject_types: list) -> None:
     valid_subject_types = ["public", "pairwise"]
     for subject_type in subject_types:
         if subject_type not in valid_subject_types:
-            raise DiscoveryException(
+            raise DiscoveryValidationError(
                 f"Invalid subject type: {subject_type}. Must be 'public' or 'pairwise'",
             )
 
@@ -121,7 +179,7 @@ def _validate_response_type(response_type: str, valid_response_types: list) -> N
         components = response_type.split()
         valid_components = ["code", "id_token", "token"]
         if not all(comp in valid_components for comp in components):
-            raise DiscoveryException(
+            raise DiscoveryValidationError(
                 f"Invalid response type: {response_type}",
             )
 
@@ -151,6 +209,30 @@ def validate_parameter_values(response_data: dict) -> None:
 # ============================================================================
 # Token Validation Configuration
 # ============================================================================
+
+
+def _validate_token_issuers(token_validation_config: TokenValidationConfig) -> None:
+    """Reject a ``token_issuers`` that names no issuer or spans providers.
+
+    Raises:
+        ConfigurationException: If ``token_issuers`` is set and is not a
+            non-empty list of non-blank strings, is set without discovery, or
+            is set with an ``allowed_issuers`` of more or fewer than one entry.
+    """
+    token_issuers = token_validation_config.token_issuers
+    if token_issuers is None:
+        return
+    if (
+        not isinstance(token_issuers, list)
+        or not token_issuers
+        or not all(isinstance(i, str) and i.strip() for i in token_issuers)
+    ):
+        raise ConfigurationException(TOKEN_ISSUERS_ENTRIES_MESSAGE)
+    if not token_validation_config.perform_disco:
+        raise ConfigurationException(TOKEN_ISSUERS_WITHOUT_DISCOVERY_MESSAGE)
+    allowed_issuers = token_validation_config.allowed_issuers
+    if allowed_issuers is not None and len(allowed_issuers) != 1:
+        raise ConfigurationException(TOKEN_ISSUERS_ONE_PROVIDER_MESSAGE)
 
 
 def validate_token_config(
@@ -198,12 +280,17 @@ def validate_token_config(
                 "leeway must be a finite number",
             )
 
+    if not isinstance(token_validation_config.required_binding, TokenBinding):
+        raise ConfigurationException(REQUIRED_BINDING_TYPE_MESSAGE)
+
+    _validate_token_issuers(token_validation_config)
+
     if token_validation_config.perform_disco:
         return
 
-    if not token_validation_config.key and not token_validation_config.algorithms:
+    if not token_validation_config.key:
         raise ConfigurationException(
-            "TokenValidationConfig.key and TokenValidationConfig.algorithms are required if perform_disco is False",
+            "TokenValidationConfig.key is required if perform_disco is False",
         )
 
 

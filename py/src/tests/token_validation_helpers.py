@@ -6,6 +6,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt as pyjwt
 
+from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.trust_scope import TrustScope
+
 from .constants import ISSUER
 
 
@@ -29,6 +32,28 @@ DISCO_RESPONSE_WITH_JWKS = {
     **DISCO_RESPONSE_NO_JWKS,
     "jwks_uri": "https://example.com/jwks",
 }
+
+
+# The trust scope of the default client and of any client built from a
+# Config without a ca_bundle: the scope tests' cache entries are keyed under.
+DEFAULT_TRUST_SCOPE = TrustScope()
+
+
+def jwks_cache_key(
+    jwks_uri: str, scope: TrustScope = DEFAULT_TRUST_SCOPE
+) -> tuple[TrustScope, str]:
+    """The JWKS cache key for *jwks_uri* fetched under *scope*."""
+    return (scope, jwks_uri)
+
+
+def disco_cache_key(
+    address: str,
+    policy: DiscoveryPolicy | None = None,
+    scope: TrustScope = DEFAULT_TRUST_SCOPE,
+) -> tuple[TrustScope, str, tuple]:
+    """The discovery cache key for *address* under *policy* and *scope*."""
+    policy = policy if policy is not None else DiscoveryPolicy()
+    return (scope, address, policy.cache_key())
 
 
 def generate_rsa_keypair() -> tuple[dict, bytes]:

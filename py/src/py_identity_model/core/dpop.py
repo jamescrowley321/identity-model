@@ -8,37 +8,103 @@ hash computation for binding OAuth 2.0 tokens to a client's private key.
 from __future__ import annotations
 
 from base64 import urlsafe_b64encode
+from enum import StrEnum
 import hashlib
 import json
+import threading
 import time
 import types
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunparse
 import uuid
 
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
     PrivateFormat,
+    PublicFormat,
+    load_pem_private_key,
 )
 import jwt as pyjwt
+from jwt.algorithms import ECAlgorithm, OKPAlgorithm, RSAAlgorithm
+
+from ..exceptions import (
+    DPoPKeyError,
+    DPoPKeyErrorKind,
+    InvalidArgumentError,
+    InvalidArgumentKind,
+)
 
 
 if TYPE_CHECKING:
     import httpx
 
 
+class DPoPAlgorithm(StrEnum):
+    """Algorithms a client :class:`DPoPKey` can sign proofs with.
+
+    FAPI 2.0 (Security Profile §5.4.1) allows only ``ES256``, ``PS256`` and
+    ``EdDSA``. Verifying proofs uses ``DEFAULT_ALLOWED_ALGORITHMS``
+    (``dpop_verify``), not this set.
+    """
+
+    ES256 = "ES256"
+    ES384 = "ES384"
+    ES512 = "ES512"
+    RS256 = "RS256"
+    PS256 = "PS256"
+    EDDSA = "EdDSA"
+    """EdDSA with an Ed25519 key (RFC 8037 §3.1)."""
+
+
 # Mapping from JWT algorithm to EC curve (immutable to prevent curve confusion)
 _EC_CURVES: types.MappingProxyType[str, ec.EllipticCurve] = types.MappingProxyType(
     {
-        "ES256": ec.SECP256R1(),
-        "ES384": ec.SECP384R1(),
-        "ES512": ec.SECP521R1(),
+        DPoPAlgorithm.ES256: ec.SECP256R1(),
+        DPoPAlgorithm.ES384: ec.SECP384R1(),
+        DPoPAlgorithm.ES512: ec.SECP521R1(),
     }
 )
 
-_SUPPORTED_ALGORITHMS: frozenset[str] = frozenset({"ES256", "ES384", "ES512", "RS256"})
+# RSA keys smaller than this are refused, generated or loaded (RFC 7518 §3.3).
+_MIN_RSA_KEY_BITS = 2048
+
+_PrivateKey = ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey | ed25519.Ed25519PrivateKey
+
+# JWK private-key parsers per ``kty``.
+_JWK_PARSERS = types.MappingProxyType(
+    {"EC": ECAlgorithm, "OKP": OKPAlgorithm, "RSA": RSAAlgorithm}
+)
+
+
+def _parse_algorithm(algorithm: DPoPAlgorithm | str) -> DPoPAlgorithm:
+    try:
+        return DPoPAlgorithm(algorithm)
+    except ValueError:
+        msg = (
+            f"Unsupported DPoP algorithm: {algorithm}. "
+            f"Supported: {sorted(a.value for a in DPoPAlgorithm)}"
+        )
+        raise DPoPKeyError(DPoPKeyErrorKind.UNSUPPORTED_ALGORITHM, msg) from None
+
+
+def _check_key_fits(algorithm: DPoPAlgorithm, key: object) -> _PrivateKey:
+    """Return *key* if it is a private key *algorithm* can sign with."""
+    curve = _EC_CURVES.get(algorithm)
+    if curve is not None:
+        fits = (
+            isinstance(key, ec.EllipticCurvePrivateKey) and key.curve.name == curve.name
+        )
+    elif algorithm is DPoPAlgorithm.EDDSA:
+        fits = isinstance(key, ed25519.Ed25519PrivateKey)
+    else:
+        fits = isinstance(key, rsa.RSAPrivateKey) and key.key_size >= _MIN_RSA_KEY_BITS
+    if not fits:
+        msg = f"Key is not a private key {algorithm.value} can sign with"
+        raise DPoPKeyError(DPoPKeyErrorKind.KEY_ALGORITHM_MISMATCH, msg)
+    return key  # type: ignore[return-value]
 
 
 def _int_to_b64url(n: int, length: int) -> str:
@@ -49,35 +115,156 @@ def _int_to_b64url(n: int, length: int) -> str:
 class DPoPKey:
     """Manages a DPoP asymmetric key pair.
 
-    Generate via :func:`generate_dpop_key`.  The key pair is immutable
-    and thread-safe after construction.
+    Generate a new pair via :func:`generate_dpop_key`, or load a stored one
+    with :meth:`from_pem` or :meth:`from_jwk` so tokens bound to it stay
+    usable across restarts.  The key pair is immutable and thread-safe after
+    construction.
+
+    The key also remembers the latest ``DPoP-Nonce`` each server (origin) sent,
+    on any response, and the library's DPoP-bound requests put it in the next
+    proof to that server (RFC 9449 §8.2, §9). See :meth:`nonce_for`.
 
     Args:
-        algorithm: The signing algorithm (``"ES256"``, ``"RS256"``, etc.).
+        algorithm: The signing algorithm, as a :class:`DPoPAlgorithm` or its
+            string value.
+
+    Raises:
+        DPoPKeyError: If *algorithm* is not a :class:`DPoPAlgorithm`.
     """
 
-    __slots__ = ("_algorithm", "_private_key")
+    __slots__ = ("_algorithm", "_nonce_lock", "_nonces", "_private_key")
 
-    def __init__(self, algorithm: str = "ES256") -> None:
-        if algorithm not in _SUPPORTED_ALGORITHMS:
-            msg = (
-                f"Unsupported DPoP algorithm: {algorithm}. "
-                f"Supported: {sorted(_SUPPORTED_ALGORITHMS)}"
-            )
-            raise ValueError(msg)
+    _algorithm: DPoPAlgorithm
+    _private_key: _PrivateKey
+    _nonces: dict[tuple[bool, str, str | None, int | None], str]
+    _nonce_lock: threading.Lock
 
-        self._algorithm = algorithm
-        self._private_key: ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey
-
-        if algorithm in _EC_CURVES:
-            self._private_key = ec.generate_private_key(_EC_CURVES[algorithm])
+    def __init__(self, algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256) -> None:
+        self._init_nonces()
+        self._algorithm = _parse_algorithm(algorithm)
+        curve = _EC_CURVES.get(self._algorithm)
+        if curve is not None:
+            self._private_key = ec.generate_private_key(curve)
+        elif self._algorithm is DPoPAlgorithm.EDDSA:
+            self._private_key = ed25519.Ed25519PrivateKey.generate()
         else:
             self._private_key = rsa.generate_private_key(
-                public_exponent=65537, key_size=2048
+                public_exponent=65537, key_size=_MIN_RSA_KEY_BITS
             )
 
+    @classmethod
+    def _wrap(cls, algorithm: DPoPAlgorithm, private_key: object) -> DPoPKey:
+        key = cls.__new__(cls)
+        key._init_nonces()
+        key._private_key = _check_key_fits(algorithm, private_key)
+        key._algorithm = algorithm
+        return key
+
+    def _init_nonces(self) -> None:
+        self._nonces = {}
+        self._nonce_lock = threading.Lock()
+
+    def nonce_for(self, uri: str, *, resource_server: bool) -> str | None:
+        """The latest ``DPoP-Nonce`` the server at *uri*'s origin supplied.
+
+        RFC 9449 §8.2: the client MUST use a nonce the server supplied, also
+        on a ``200`` response, for all subsequent requests until the server
+        supplies a new one. Nonces are kept per origin (scheme, host, port)
+        and per role, so a resource server's nonce is never sent to the
+        authorization server, even on a shared origin, and one server's nonce
+        never reaches another (§9).
+
+        Args:
+            uri: The request URI.
+            resource_server: ``True`` for a resource request (e.g. UserInfo),
+                ``False`` for an authorization-server request (token, PAR).
+
+        Returns:
+            The nonce, or ``None`` when that server has supplied none.
+        """
+        with self._nonce_lock:
+            return self._nonces.get(_nonce_key(uri, resource_server))
+
+    def remember_nonce(self, uri: str, nonce: str, *, resource_server: bool) -> None:
+        """Record *nonce* as the latest ``DPoP-Nonce`` from *uri*'s server."""
+        with self._nonce_lock:
+            self._nonces[_nonce_key(uri, resource_server)] = nonce
+
+    @classmethod
+    def from_pem(
+        cls,
+        pem: bytes | str,
+        algorithm: DPoPAlgorithm | str,
+        password: bytes | None = None,
+    ) -> DPoPKey:
+        """Load a DPoP key from a PEM-encoded private key.
+
+        Args:
+            pem: The private key, PEM-encoded (PKCS#8 or traditional).
+            algorithm: The algorithm to sign proofs with. It must fit the key:
+                an EC key on that algorithm's curve, an Ed25519 key for
+                ``EdDSA``, or an RSA key of at least 2048 bits.
+            password: The PEM's password, if it is encrypted.
+
+        Raises:
+            DPoPKeyError: If *algorithm* is unsupported, the PEM cannot be
+                loaded, or the key does not fit *algorithm*.
+        """
+        parsed = _parse_algorithm(algorithm)
+        data = pem.encode() if isinstance(pem, str) else pem
+        try:
+            private_key = load_pem_private_key(data, password=password)
+        except (ValueError, TypeError, UnsupportedAlgorithm) as e:
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, f"Cannot load the DPoP private key: {e}"
+            ) from e
+        return cls._wrap(parsed, private_key)
+
+    @classmethod
+    def from_jwk(
+        cls, jwk: dict, algorithm: DPoPAlgorithm | str | None = None
+    ) -> DPoPKey:
+        """Load a DPoP key from a private JWK (``EC``, ``OKP`` or ``RSA``).
+
+        Args:
+            jwk: The private JWK, including its private members (``d``, and
+                for RSA the CRT members).
+            algorithm: The algorithm to sign proofs with. Defaults to the
+                JWK's ``alg`` member; one of the two is required.
+
+        Raises:
+            DPoPKeyError: If *jwk* is not a dict, no algorithm is given, it is
+                unsupported, the JWK is not a private key, or the key does
+                not fit the algorithm.
+        """
+        if not isinstance(jwk, dict):
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, "A DPoP JWK must be a dict"
+            )
+        alg = algorithm if algorithm is not None else jwk.get("alg")
+        if not isinstance(alg, str):
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.ALGORITHM_REQUIRED,
+                "A DPoP JWK needs an algorithm: pass one or set 'alg'",
+            )
+        parsed = _parse_algorithm(alg)
+        kty = jwk.get("kty")
+        parser = _JWK_PARSERS.get(kty) if isinstance(kty, str) else None
+        if parser is None:
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.UNSUPPORTED_KEY_TYPE,
+                f"Unsupported JWK kty for DPoP: {kty!r}",
+            )
+        try:
+            private_key = parser.from_jwk(json.dumps(jwk))
+        except (pyjwt.InvalidKeyError, ValueError, TypeError) as e:
+            raise DPoPKeyError(
+                DPoPKeyErrorKind.INVALID_KEY, f"Cannot load the DPoP JWK: {e}"
+            ) from e
+        return cls._wrap(parsed, private_key)
+
     @property
-    def algorithm(self) -> str:
+    def algorithm(self) -> DPoPAlgorithm:
         """The signing algorithm."""
         return self._algorithm
 
@@ -93,6 +280,15 @@ class DPoPKey:
         """Public key as a JWK dict suitable for the DPoP proof ``jwk`` header."""
         pub = self._private_key.public_key()
 
+        if isinstance(pub, ed25519.Ed25519PublicKey):
+            # RFC 8037 §2: octet key pair, x is the raw public key.
+            raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+            return {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
+            }
+
         if isinstance(pub, ec.EllipticCurvePublicKey):
             numbers = pub.public_numbers()
             _curve_names = {
@@ -102,7 +298,10 @@ class DPoPKey:
             }
             curve_name = _curve_names.get(pub.curve.name)
             if curve_name is None:
-                raise ValueError(f"Unsupported EC curve: {pub.curve.name}")
+                raise DPoPKeyError(
+                    DPoPKeyErrorKind.UNSUPPORTED_CURVE,
+                    f"Unsupported EC curve: {pub.curve.name}",
+                )
             key_size = (pub.curve.key_size + 7) // 8
             return {
                 "kty": "EC",
@@ -122,35 +321,72 @@ class DPoPKey:
     @property
     def jwk_thumbprint(self) -> str:
         """JWK Thumbprint (RFC 7638) for use as ``dpop_jkt`` parameter."""
-        jwk = self.public_jwk
-        # Per RFC 7638: lexicographically sorted required members
-        if jwk.get("kty") == "EC":
-            thumbprint_input = json.dumps(
-                {
-                    "crv": jwk["crv"],
-                    "kty": jwk["kty"],
-                    "x": jwk["x"],
-                    "y": jwk["y"],
-                },
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        else:
-            thumbprint_input = json.dumps(
-                {"e": jwk["e"], "kty": jwk["kty"], "n": jwk["n"]},
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-        digest = hashlib.sha256(thumbprint_input.encode("ascii")).digest()
-        return urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        return compute_jwk_thumbprint(self.public_jwk)
 
 
-def generate_dpop_key(algorithm: str = "ES256") -> DPoPKey:
+_SHA256_B64URL_LENGTH = 43
+
+# RFC 7638 §3.2 / RFC 8037 §2: the required members hashed for each key type,
+# in lexicographic order.
+_THUMBPRINT_MEMBERS: types.MappingProxyType[str, tuple[str, ...]] = (
+    types.MappingProxyType(
+        {
+            "EC": ("crv", "kty", "x", "y"),
+            "OKP": ("crv", "kty", "x"),
+            "RSA": ("e", "kty", "n"),
+        }
+    )
+)
+
+
+def compute_jwk_thumbprint(jwk: dict) -> str:
+    """Compute the RFC 7638 JWK SHA-256 thumbprint of a public key.
+
+    This is the value carried in ``cnf.jkt`` of a DPoP-bound access token
+    (RFC 9449 §6.1) and in the ``dpop_jkt`` authorization parameter (§10).
+
+    Args:
+        jwk: An ``EC``, ``OKP`` or ``RSA`` public JWK. Members outside the
+            required set (``kid``, ``alg``, ...) are ignored.
+
+    Returns:
+        The base64url-encoded (no padding) SHA-256 thumbprint.
+
+    Raises:
+        DPoPKeyError: If the key type is unsupported or a required member is
+            missing or not a string.
+    """
+    kty = jwk.get("kty")
+    members = _THUMBPRINT_MEMBERS.get(kty) if isinstance(kty, str) else None
+    if members is None:
+        raise DPoPKeyError(
+            DPoPKeyErrorKind.UNSUPPORTED_KEY_TYPE,
+            f"Unsupported JWK kty for thumbprint: {kty!r}",
+        )
+    required = {name: jwk.get(name) for name in members}
+    if not all(isinstance(value, str) and value for value in required.values()):
+        raise DPoPKeyError(
+            DPoPKeyErrorKind.MISSING_THUMBPRINT_MEMBERS,
+            f"JWK thumbprint needs string members {members}",
+        )
+    # RFC 7638 §3: lexicographically ordered members (_THUMBPRINT_MEMBERS lists
+    # them in that order), no whitespace.
+    thumbprint_input = json.dumps(required, separators=(",", ":"))
+    digest = hashlib.sha256(thumbprint_input.encode()).digest()
+    # A SHA-256 digest is 32 octets: 43 base64url characters plus one "=".
+    return urlsafe_b64encode(digest).decode()[:_SHA256_B64URL_LENGTH]
+
+
+def generate_dpop_key(
+    algorithm: DPoPAlgorithm | str = DPoPAlgorithm.ES256,
+) -> DPoPKey:
     """Generate a new DPoP key pair.
 
     Args:
         algorithm: Signing algorithm — ``"ES256"`` (default, recommended),
-            ``"ES384"``, ``"ES512"``, or ``"RS256"``.
+            ``"ES384"``, ``"ES512"``, ``"PS256"``, ``"EdDSA"`` (Ed25519,
+            RFC 8037) or ``"RS256"``.  FAPI 2.0 (Security Profile §5.4.1)
+            allows only ``"ES256"``, ``"PS256"`` and ``"EdDSA"``.
 
     Returns:
         A :class:`DPoPKey` with a fresh key pair.
@@ -171,14 +407,22 @@ def compute_ath(access_token: str) -> str:
         Base64url-encoded SHA-256 hash of the access token.
 
     Raises:
-        ValueError: If *access_token* is empty.
+        InvalidArgumentError: If *access_token* is empty.
     """
     if not access_token or not access_token.strip():
-        raise ValueError("access_token must not be empty")
+        raise InvalidArgumentError(
+            "access_token",
+            InvalidArgumentKind.MISSING,
+            "access_token must not be empty",
+        )
     try:
         token_bytes = access_token.encode("ascii")
     except UnicodeEncodeError:
-        raise ValueError("access_token must contain only ASCII characters") from None
+        raise InvalidArgumentError(
+            "access_token",
+            InvalidArgumentKind.INVALID_VALUE,
+            "access_token must contain only ASCII characters",
+        ) from None
     digest = hashlib.sha256(token_bytes).digest()
     return urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
@@ -205,17 +449,23 @@ def create_dpop_proof(
         The signed DPoP proof JWT string.
 
     Raises:
-        ValueError: If *method* or *uri* is empty, or *uri* is not absolute.
+        InvalidArgumentError: If *method* or *uri* is empty, or *uri* is not absolute.
     """
     if not method or not method.strip():
-        raise ValueError("method must not be empty")
+        raise InvalidArgumentError(
+            "method", InvalidArgumentKind.MISSING, "method must not be empty"
+        )
     if not uri or not uri.strip():
-        raise ValueError("uri must not be empty")
+        raise InvalidArgumentError(
+            "uri", InvalidArgumentKind.MISSING, "uri must not be empty"
+        )
 
     # RFC 9449 §4.2: htu must be an absolute HTTP URI without query or fragment
     parsed = urlparse(uri)
     if not parsed.scheme or not parsed.netloc:
-        raise ValueError("uri must be an absolute HTTP URI")
+        raise InvalidArgumentError(
+            "uri", InvalidArgumentKind.INVALID_VALUE, "uri must be an absolute HTTP URI"
+        )
     htu = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, "", ""))
 
     headers = {
@@ -260,14 +510,42 @@ def build_dpop_headers(
         Dict of HTTP headers to include in the request.
 
     Raises:
-        ValueError: If *proof* is empty.
+        InvalidArgumentError: If *proof* is empty.
     """
     if not proof or not proof.strip():
-        raise ValueError("proof must not be empty")
+        raise InvalidArgumentError(
+            "proof", InvalidArgumentKind.MISSING, "proof must not be empty"
+        )
     headers: dict[str, str] = {"DPoP": proof}
     if access_token and access_token.strip():
         headers["Authorization"] = f"DPoP {access_token}"
     return headers
+
+
+# The response header that carries a server nonce (RFC 9449 §8.1). HTTP header
+# names are case-insensitive.
+_DPOP_NONCE_HEADER = "DPoP-Nonce"
+
+
+def _nonce_key(
+    uri: str, resource_server: bool
+) -> tuple[bool, str, str | None, int | None]:
+    # urlsplit lowercases the scheme, and hostname is lowercased.
+    parts = urlsplit(uri)
+    return resource_server, parts.scheme, parts.hostname, parts.port
+
+
+def remember_dpop_nonce(
+    key: DPoPKey, uri: str, response: httpx.Response, *, resource_server: bool
+) -> None:
+    """Record a ``DPoP-Nonce`` header from *response* on *key* for *uri*'s server.
+
+    Any status counts: a server may supply the next nonce on a ``200``
+    response (RFC 9449 §8.2) or with a ``use_dpop_nonce`` error (§8, §9).
+    """
+    nonce = response.headers.get(_DPOP_NONCE_HEADER)
+    if nonce:
+        key.remember_nonce(uri, nonce, resource_server=resource_server)
 
 
 def extract_dpop_nonce(response: httpx.Response) -> str | None:
@@ -308,7 +586,9 @@ __all__ = [
     "DPoPKey",
     "build_dpop_headers",
     "compute_ath",
+    "compute_jwk_thumbprint",
     "create_dpop_proof",
     "extract_dpop_nonce",
     "generate_dpop_key",
+    "remember_dpop_nonce",
 ]

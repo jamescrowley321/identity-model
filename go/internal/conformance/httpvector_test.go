@@ -87,6 +87,12 @@ var httpAdapters = map[string]httpAdapter{
 	"userinfo":           runUserInfoVector,
 }
 
+// unimplementedHTTPCases are case ids Go does not implement yet, each with the
+// issue that tracks it. They are skipped by name, never silently.
+var unimplementedHTTPCases = map[string]string{
+	"INTR-007": "signed introspection responses (RFC 9701) are not implemented in Go (#1030)",
+}
+
 // TestHTTPVectors runs every HTTP vector in spec/vectors against the node-oidc
 // fixture. A file with HTTP vectors but no adapter fails, as does a case in an
 // adapted file that has no vectors.
@@ -133,6 +139,9 @@ func TestHTTPVectors(t *testing.T) {
 				}
 				base := fmt.Sprintf("%s/v/%s/%s/%s/%s", vectorOP, run, capability, tc.id, key)
 				t.Run(tc.id+"/"+key, func(t *testing.T) {
+					if reason, ok := unimplementedHTTPCases[tc.id]; ok {
+						t.Skip(reason)
+					}
 					defer checkRequests(t, label, base)
 					adapter(t, label, base, v)
 				})

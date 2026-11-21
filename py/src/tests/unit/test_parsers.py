@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,11 @@ from py_identity_model.core.parsers import (
     get_public_key_from_jwk,
     jwks_from_dict,
 )
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    AmbiguousKeyException,
+    KeyNotFoundException,
+    TokenValidationException,
+)
 
 
 class TestFindKeyByKid:
@@ -95,12 +100,29 @@ class TestFindKeyByKid:
             JsonWebKey(kty="RSA", kid="key2", alg="RS384", n="ghi", e="jkl"),
         ]
 
-        with pytest.raises(TokenValidationException) as exc_info:
+        with pytest.raises(AmbiguousKeyException) as exc_info:
             find_key_by_kid(None, keys)
 
         error_msg = str(exc_info.value)
         assert "no kid header" in error_msg.lower()
         assert "multiple signing keys" in error_msg.lower()
+        assert exc_info.value.details == {
+            "available_kids": ["key1", "key2"],
+            "key_count": 2,
+        }
+
+    def test_find_key_by_kid_unknown_kid_is_not_ambiguous(self):
+        """A kid that matches no key is key-not-found, not an ambiguous key."""
+        keys = [
+            JsonWebKey(kty="RSA", kid="key1", alg="RS256", n="abc", e="def"),
+            JsonWebKey(kty="RSA", kid="key2", alg="RS256", n="ghi", e="jkl"),
+        ]
+
+        with pytest.raises(TokenValidationException) as exc_info:
+            find_key_by_kid("unknown", keys)
+
+        assert not isinstance(exc_info.value, AmbiguousKeyException)
+        assert "No matching kid found" in str(exc_info.value)
 
     def test_find_key_by_kid_none_kid_filters_signing_keys(self):
         """When JWT has no kid, filter to use=sig keys and use single match."""
@@ -159,17 +181,66 @@ class TestFindKeyByKid:
         assert key_dict["kid"] == "ec-key"
         assert alg == "ES256"
 
-    def test_find_key_by_kid_none_kid_fallback_to_all_keys(self):
-        """When all keys have use=enc, fall back to all keys."""
+    def test_find_key_by_kid_shared_kid_selects_key_of_matching_type(self):
+        """RFC 7517 §4.5: keys of different kty may share a kid."""
+        okp = JsonWebKey(
+            kty="OKP", kid="shared", alg="EdDSA", use="sig", crv="Ed25519", x="o"
+        )
+        ec = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-256", x="x", y="y")
+
+        assert find_key_by_kid("shared", [okp, ec], jwt_alg="ES256") == (
+            ec.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_skips_key_declaring_other_alg(self):
+        es384 = JsonWebKey(
+            kty="EC", kid="shared", alg="ES384", use="sig", crv="P-384", x="a", y="b"
+        )
+        es256 = JsonWebKey(
+            kty="EC", kid="shared", alg="ES256", use="sig", crv="P-256", x="x", y="y"
+        )
+
+        assert find_key_by_kid("shared", [es384, es256], jwt_alg="ES256") == (
+            es256.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_skips_key_on_other_curve(self):
+        p384 = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-384", x="a", y="b")
+        p256 = JsonWebKey(kty="EC", kid="shared", use="sig", crv="P-256", x="x", y="y")
+
+        assert find_key_by_kid("shared", [p384, p256], jwt_alg="ES256") == (
+            p256.as_dict(),
+            "ES256",
+        )
+
+    def test_find_key_by_kid_shared_kid_non_string_alg_is_rejected(self):
         keys = [
-            JsonWebKey(
-                kty="RSA", kid="enc-key", alg="RSA-OAEP", use="enc", n="abc", e="def"
-            ),
+            JsonWebKey(kty="RSA", kid="shared", use="sig", n="abc", e="def"),
+            JsonWebKey(kty="RSA", kid="shared", use="sig", n="ghi", e="def"),
         ]
 
-        key_dict, _alg = find_key_by_kid(None, keys)
+        list_alg: Any = ["RS256"]
 
-        assert key_dict["kid"] == "enc-key"
+        with pytest.raises(TokenValidationException) as excinfo:
+            find_key_by_kid("shared", keys, jwt_alg=list_alg)
+
+        assert excinfo.value.message == "Invalid 'alg' header: expected a string"
+
+    def test_find_key_by_kid_shared_kid_without_usable_key_is_rejected(self):
+        okp = JsonWebKey(
+            kty="OKP", kid="shared", alg="EdDSA", use="sig", crv="Ed25519", x="o"
+        )
+        rsa = JsonWebKey(kty="RSA", kid="shared", use="sig", n="abc", e="def")
+
+        with pytest.raises(TokenValidationException) as excinfo:
+            find_key_by_kid("shared", [okp, rsa], jwt_alg="ES256")
+
+        assert excinfo.value.message == (
+            "Key type 'OKP' is incompatible with algorithm 'ES256' "
+            "(expected key type 'EC')"
+        )
 
     def test_find_key_by_kid_none_kid_uses_jwt_alg_as_default(self):
         """When single signing key has no alg, use jwt_alg as default."""
@@ -263,6 +334,79 @@ class TestNoKidSelectionWithUnusableKeys:
             match="Algorithm 'none' is not permitted",
         ):
             find_key_by_kid(None, [self.UNKNOWN_ALG, self.SIGNING], jwt_alg="none")
+
+
+class TestEncryptionKeysNeverVerify:
+    """A ``use: enc`` key is never selected to verify a signature (RFC 7517 §4.2).
+
+    Only keys whose ``use`` is absent or ``sig`` are signing keys, on the kid
+    and the kid-less path alike; with none left, resolution is key-not-found.
+    """
+
+    SIG = JsonWebKey(kty="RSA", kid="sig-key", use="sig", n="abc", e="AQAB")
+    NO_USE = JsonWebKey(kty="RSA", kid="no-use-key", n="ghi", e="AQAB")
+    ENC = JsonWebKey(kty="RSA", kid="enc-key", use="enc", n="def", e="AQAB")
+    ENC_2 = JsonWebKey(kty="RSA", kid="enc-key-2", use="enc", n="jkl", e="AQAB")
+
+    def test_kid_naming_enc_key_is_key_not_found(self):
+        with pytest.raises(KeyNotFoundException) as exc_info:
+            find_key_by_kid("enc-key", [self.SIG, self.ENC], jwt_alg="RS256")
+
+        assert exc_info.value.details == {
+            "kid": "enc-key",
+            "available_kids": ["sig-key"],
+        }
+
+    def test_kid_naming_signing_key_beside_enc_key_resolves(self):
+        key_dict, alg = find_key_by_kid(
+            "sig-key", [self.ENC, self.SIG], jwt_alg="RS256"
+        )
+
+        assert (key_dict, alg) == (self.SIG.as_dict(), "RS256")
+
+    def test_kid_naming_key_without_use_resolves(self):
+        key_dict, alg = find_key_by_kid("no-use-key", [self.NO_USE], jwt_alg="RS256")
+
+        assert (key_dict, alg) == (self.NO_USE.as_dict(), "RS256")
+
+    def test_unknown_kid_is_key_not_found(self):
+        with pytest.raises(KeyNotFoundException, match="No matching kid found"):
+            find_key_by_kid("ghost", [self.SIG], jwt_alg="RS256")
+
+    @pytest.mark.parametrize("jwt_alg", ["RS256", None], ids=["alg", "no-alg"])
+    def test_kidless_enc_only_set_is_key_not_found(self, jwt_alg):
+        with pytest.raises(KeyNotFoundException) as exc_info:
+            find_key_by_kid(None, [self.ENC, self.ENC_2], jwt_alg=jwt_alg)
+
+        assert not isinstance(exc_info.value, AmbiguousKeyException)
+        assert exc_info.value.details == {"kid": None, "available_kids": []}
+
+    def test_kidless_mixed_set_selects_signing_key(self):
+        key_dict, alg = find_key_by_kid(None, [self.ENC, self.SIG], jwt_alg="RS256")
+
+        assert (key_dict, alg) == (self.SIG.as_dict(), "RS256")
+
+    def test_deprecated_lookup_kid_naming_enc_key_is_key_not_found(self):
+        jwt = _create_jwt_with_kid("enc-key")
+
+        with (
+            pytest.warns(DeprecationWarning, match="get_public_key_from_jwk"),
+            pytest.raises(KeyNotFoundException),
+        ):
+            get_public_key_from_jwk(jwt, [self.SIG, self.ENC])
+
+    def test_deprecated_lookup_kidless_enc_only_set_is_key_not_found(self):
+        jwt = _create_jwt_without_kid()
+
+        with (
+            pytest.warns(DeprecationWarning, match="get_public_key_from_jwk"),
+            pytest.raises(KeyNotFoundException),
+        ):
+            get_public_key_from_jwk(jwt, [self.ENC])
+
+    def test_key_not_found_is_a_token_validation_error(self):
+        assert issubclass(KeyNotFoundException, TokenValidationException)
+        assert not issubclass(KeyNotFoundException, AmbiguousKeyException)
 
 
 class TestExtractKidFromJwt:
@@ -359,7 +503,7 @@ class TestGetPublicKeyFromJwk:
             JsonWebKey(kty="RSA", kid="key2", alg="RS256", n="ghi", e="jkl"),
         ]
 
-        with pytest.raises(TokenValidationException) as exc_info:
+        with pytest.raises(AmbiguousKeyException) as exc_info:
             get_public_key_from_jwk(jwt, keys)
 
         error_msg = str(exc_info.value)
@@ -399,18 +543,6 @@ class TestGetPublicKeyFromJwk:
 
         assert key.kid == "ec-key"
         assert key.alg == "ES256"
-
-    def test_get_public_key_no_kid_fallback_to_all_keys_rejects_alg_mismatch(self):
-        """When all keys have use=enc and alg doesn't match JWT, reject."""
-        jwt = _create_jwt_without_kid()
-        keys = [
-            JsonWebKey(
-                kty="RSA", kid="enc-key", alg="RSA-OAEP", use="enc", n="abc", e="def"
-            ),
-        ]
-
-        with pytest.raises(TokenValidationException, match="does not match"):
-            get_public_key_from_jwk(jwt, keys)
 
 
 class TestGetPublicKeyFromJwkSecurityFixes:

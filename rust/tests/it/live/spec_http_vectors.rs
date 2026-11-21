@@ -47,6 +47,12 @@ const ADAPTERS: &[&str] = &[
 /// Capabilities rs-identity-model does not implement; their vectors are
 /// skipped rather than failing as "no adapter".
 const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
+/// Cases rs-identity-model does not implement yet, with the issue that tracks
+/// each. They are skipped by id, never silently.
+const NOT_IMPLEMENTED_CASES: &[(&str, &str)] = &[
+    // Signed introspection responses (RFC 9701).
+    ("INTR-007", "#1030"),
+];
 
 #[test]
 fn implemented_http_capabilities_cannot_be_skipped() {
@@ -311,6 +317,12 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
                 assert!(msg.contains("missing the sub claim"), "{label}: {msg}");
             }
             other => panic!("{label}: expected missing sub, got {other:?}"),
+        },
+        "reject" if expect.error == "unverifiable_sub" => match result {
+            Err(IdentityError::Validation(msg)) => {
+                assert!(msg.contains("application/jwt"), "{label}: {msg}");
+            }
+            other => panic!("{label}: expected application/jwt rejection, got {other:?}"),
         },
         "reject" if !expect.error.is_empty() => {
             panic!("{label}: unknown expected error {:?}", expect.error)
@@ -600,7 +612,9 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
     let client = JwksClient::builder().allow_http(true).build();
     let uri = format!("{base}/jwks");
     let kid = v.input_str("kid").unwrap_or_default();
-    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`.
+    let alg = v.input_str("alg").unwrap_or_default();
+    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`;
+    // with neither it resolves a token header with no kid and `input.alg`.
     let mut kids = v
         .input
         .get("kids")
@@ -615,7 +629,10 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
             Some("fetch") => client.fetch(&uri).await.map(|set| set.keys),
             Some("resolve") => {
                 let kid = kids.next().unwrap_or(kid);
-                client.resolve_key(&uri, kid).await.map(|key| vec![key])
+                client
+                    .resolve_signing_key(&uri, kid, alg)
+                    .await
+                    .map(|key| vec![key])
             }
             Some("force_refresh") => client.force_refresh(&uri).await.map(|set| set.keys),
             other => panic!("unknown step {other:?}"),
@@ -639,7 +656,9 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
         }
         "reject" => match (expect.error.as_str(), result) {
             ("malformed", Err(IdentityError::Deserialization(_)))
-            | ("key_not_found", Err(IdentityError::KeyNotFound(_))) => {}
+            | ("key_not_found", Err(IdentityError::KeyNotFound(_)))
+            | ("ambiguous_key", Err(IdentityError::AmbiguousKey { .. }))
+            | ("key_alg_mismatch", Err(IdentityError::KeyAlgorithmMismatch { .. })) => {}
             ("empty_key_set", Err(IdentityError::Validation(msg))) => {
                 assert!(msg.contains("contains no keys"), "{label}: {msg}");
             }
@@ -737,6 +756,10 @@ async fn spec_http_vectors() {
             .unwrap_or_else(|| panic!("{}: no tests", file.display()));
         for case in cases {
             let id = case["id"].as_str().expect("case id");
+            if let Some((_, issue)) = NOT_IMPLEMENTED_CASES.iter().find(|(c, _)| *c == id) {
+                eprintln!("skipping {id}: not implemented in Rust ({issue})");
+                continue;
+            }
             let vectors = case["vectors"].as_array().cloned().unwrap_or_default();
             if ADAPTERS.contains(&capability) {
                 assert!(!vectors.is_empty(), "{id}: case has no vectors");

@@ -32,6 +32,7 @@ from cryptography.x509.oid import NameOID
 
 from py_identity_model import (
     CertificateBindingError,
+    ClientAuthMethod,
     ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
     MtlsClientAuth,
@@ -128,11 +129,11 @@ def mtls_token_request_example(token_endpoint: str, cert_path: str, key_path: st
     # Step 1: Build the mTLS authentication config from the cert/key file paths.
     #   - auth_method "tls_client_auth" (default) is the PKI/CA-issued variant;
     #     use "self_signed_tls_client_auth" for a self-registered certificate.
-    #   - certificate/private_key are filesystem paths to PEM files.
+    #   - certificate_path/private_key_path are filesystem paths to PEM files.
     mtls = MtlsClientAuth(
-        certificate=cert_path,
-        private_key=key_path,
-        auth_method="self_signed_tls_client_auth",
+        certificate_path=cert_path,
+        private_key_path=key_path,
+        auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 
     # Step 2: Attach the config to a token request. A client_secret is included

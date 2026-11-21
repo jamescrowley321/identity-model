@@ -41,12 +41,19 @@ from urllib.parse import parse_qsl, urlencode
 from fastapi import APIRouter, HTTPException, Request, status
 from starlette.responses import RedirectResponse
 
-from py_identity_model import PyIdentityModelException
+from py_identity_model import (
+    AuthorizationScheme,
+    ConfigurationException,
+    IdTokenNonceError,
+    NetworkException,
+    PyIdentityModelException,
+)
 from py_identity_model.aio import (
     AuthorizationCodeTokenRequest,
     DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
     TokenValidationConfig,
+    UserInfoErrorKind,
     UserInfoRequest,
     build_authorization_url,
     generate_pkce_pair,
@@ -54,12 +61,15 @@ from py_identity_model.aio import (
     get_userinfo,
     parse_authorize_callback_response,
     request_authorization_code_token,
+    validate_authorize_callback_issuer,
     validate_authorize_callback_state,
-    validate_token,
+    validate_id_token,
 )
 
 
 if TYPE_CHECKING:
+    from py_identity_model.aio import AsyncHTTPClient
+
     from .config import OIDCSettings
 
 
@@ -86,7 +96,7 @@ def oidc_public_paths(prefix: str = "") -> list[str]:
         app.add_middleware(
             TokenValidationMiddleware,
             discovery_url=settings.discovery_url,
-            audience=settings.audience,
+            audience=settings.expected_audience,
             excluded_paths=[
                 *settings.excluded_paths,
                 *oidc_public_paths(router_prefix),
@@ -143,9 +153,12 @@ def _expected_issuer(discovery_url: str) -> str:
     return base.rstrip("/")
 
 
-async def _discover(settings: OIDCSettings) -> DiscoveryDocumentResponse:
+async def _discover(
+    settings: OIDCSettings, http_client: AsyncHTTPClient | None
+) -> DiscoveryDocumentResponse:
     disco = await get_discovery_document(
         DiscoveryDocumentRequest(address=settings.discovery_url),
+        http_client=http_client,
     )
     if not disco.is_successful:
         # Log the provider's specific error for operators; return a generic
@@ -185,10 +198,13 @@ def _require_endpoint(value: str | None, name: str) -> str:
 
 
 async def _login(
-    request: Request, settings: OIDCSettings, session_key: str
+    request: Request,
+    settings: OIDCSettings,
+    session_key: str,
+    http_client: AsyncHTTPClient | None,
 ) -> RedirectResponse:
     _require_session(request)
-    disco = await _discover(settings)
+    disco = await _discover(settings, http_client)
     authorization_endpoint = _require_endpoint(
         disco.authorization_endpoint, "authorization_endpoint"
     )
@@ -218,6 +234,7 @@ async def _exchange_code(
     disco: DiscoveryDocumentResponse,
     code: str,
     code_verifier: str,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Exchange the authorization code and return the token dict."""
     token_endpoint = _require_endpoint(disco.token_endpoint, "token_endpoint")
@@ -230,6 +247,7 @@ async def _exchange_code(
             code_verifier=code_verifier,
             client_secret=settings.client_secret or None,
         ),
+        http_client=http_client,
     )
     if not tok.is_successful or not tok.token:
         logger.warning("Token exchange failed: %s", tok.error)
@@ -245,14 +263,17 @@ async def _validate_id_token(
     disco: DiscoveryDocumentResponse,
     id_token: str,
     expected_nonce: str,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Validate the ID token (signature/iss/aud/exp/required claims) and bind the nonce."""
     # Guard the issuer explicitly: a discovery doc missing ``issuer`` would
     # otherwise pass ``issuer=None`` and silently disable issuer verification.
     issuer = _require_endpoint(disco.issuer, "issuer")
     try:
-        claims = await validate_token(
-            jwt=id_token,
+        # validate_id_token, not validate_token: the access-token sender
+        # constraint (RFC 9449 §7, RFC 8705 §3) does not apply to ID Tokens.
+        claims = await validate_id_token(
+            id_token,
             token_validation_config=TokenValidationConfig(
                 perform_disco=True,
                 audience=settings.client_id,
@@ -260,53 +281,90 @@ async def _validate_id_token(
                 options={"verify_exp": True, "require": ["sub", "iat", "exp"]},
             ),
             disco_doc_address=settings.discovery_url,
+            http_client=http_client,
+            trusted_audiences=settings.trusted_audiences,
+            validate_azp=settings.validate_azp,
+            nonce=expected_nonce,
         )
+    except ConfigurationException:
+        # A misconfigured RP is a server fault, not a bad ID token: let it
+        # surface as a 500.
+        raise
     except PyIdentityModelException as exc:
-        logger.info("ID token validation failed: %s", exc)
+        if not isinstance(exc, NetworkException):
+            logger.info("ID token validation failed: %s", exc)
+            if isinstance(exc, IdTokenNonceError):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Nonce mismatch",
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="ID token validation failed",
+            ) from exc
+        logger.warning("Provider unreachable during ID token validation: %s", exc)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token validation failed",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Identity provider unavailable",
         ) from exc
 
-    # Nonce binding is the RP's responsibility — the library does not check it.
-    if claims.get("nonce") != expected_nonce:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Nonce mismatch",
-        )
     return claims
+
+
+def _is_bearer(token: dict) -> bool:
+    """Whether the token response issued a Bearer access token.
+
+    RFC 6749 §7.1: a client MUST NOT use an access token whose type it does
+    not understand; §5.1: ``token_type`` is case-insensitive. The router holds
+    no DPoP key, so it can present only a Bearer token.
+    """
+    token_type = token.get("token_type")
+    return (
+        isinstance(token_type, str)
+        and token_type.casefold() == AuthorizationScheme.BEARER.value.casefold()
+    )
 
 
 async def _fetch_userinfo(
     disco: DiscoveryDocumentResponse,
     access_token: str | None,
-    expected_sub: str | None,
+    expected_sub: str,
+    http_client: AsyncHTTPClient | None,
 ) -> dict:
     """Fetch UserInfo, enforcing the OIDC Core 5.3.2 ``sub`` match as a hard gate.
 
     An unavailable UserInfo endpoint (no endpoint, or a transient fetch
     failure) is tolerated — identity is anchored on the validated ID token.
-    But a *successful* fetch whose ``sub`` disagrees with the ID token is a
-    token-substitution signal and must abort the login, not be swallowed.
+    But a response with no ``sub``, or a ``sub`` that disagrees with the ID
+    token, is a token-substitution signal and must abort the login.
     """
     userinfo_endpoint = disco.userinfo_endpoint
     if not access_token or not userinfo_endpoint:
         return {}
-    # Fetch without expected_sub so is_successful reflects only the fetch;
-    # the sub comparison is enforced here so a mismatch fails the login.
     ui = await get_userinfo(
-        UserInfoRequest(address=userinfo_endpoint, token=access_token),
+        UserInfoRequest(
+            address=userinfo_endpoint, token=access_token, expected_sub=expected_sub
+        ),
+        http_client=http_client,
     )
-    if not ui.is_successful:
-        logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
-        return {}
-    claims = ui.claims or {}
-    if expected_sub is not None and claims.get("sub") != expected_sub:
+    if ui.error_kind is UserInfoErrorKind.MISSING_SUB:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="UserInfo response has no subject",
+        )
+    # A signed UserInfo (UNVERIFIABLE_SUB) cannot be checked here: fail closed.
+    if ui.error_kind in (
+        UserInfoErrorKind.SUB_MISMATCH,
+        UserInfoErrorKind.UNVERIFIABLE_SUB,
+    ) or (ui.is_successful and (ui.claims or {}).get("sub") != expected_sub):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="UserInfo subject does not match ID token subject",
         )
-    return claims
+    if not ui.is_successful:
+        logger.warning("UserInfo fetch failed, continuing on ID token: %s", ui.error)
+        return {}
+    return ui.claims or {}
 
 
 async def _callback(  # noqa: PLR0913  # request-scoped args + the router's build-time options
@@ -317,6 +375,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     *,
     store_tokens: bool,
     fetch_userinfo: bool,
+    http_client: AsyncHTTPClient | None,
 ) -> RedirectResponse:
     _require_session(request)
     # Pop the flow state so it is single-use: a failed or replayed callback
@@ -356,8 +415,25 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             detail="Authorization response missing code",
         )
 
-    disco = await _discover(settings)
-    token = await _exchange_code(settings, disco, cb.code, flow["code_verifier"])
+    disco = await _discover(settings, http_client)
+    # RFC 9207 §2.4: a present ``iss`` must equal the metadata issuer, and a
+    # provider that advertises the parameter must send it.
+    issuer_check = validate_authorize_callback_issuer(
+        cb,
+        disco.issuer,
+        iss_parameter_supported=(
+            disco.authorization_response_iss_parameter_supported is True
+        ),
+    )
+    if not issuer_check.is_valid:
+        logger.info("Authorization response issuer rejected: %s", issuer_check.result)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Authorization response issuer mismatch",
+        )
+    token = await _exchange_code(
+        settings, disco, cb.code, flow["code_verifier"], http_client
+    )
     id_token = token.get("id_token")
     access_token = token.get("access_token")
 
@@ -369,11 +445,19 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Provider did not return an ID token",
         )
-    claims = await _validate_id_token(settings, disco, id_token, flow["nonce"])
+    claims = await _validate_id_token(
+        settings, disco, id_token, flow["nonce"], http_client
+    )
 
     userinfo: dict = {}
-    if fetch_userinfo:
-        userinfo = await _fetch_userinfo(disco, access_token, claims.get("sub"))
+    if fetch_userinfo and access_token and not _is_bearer(token):
+        logger.warning(
+            "Skipping UserInfo: token_type %r is not Bearer", token.get("token_type")
+        )
+    elif fetch_userinfo:
+        userinfo = await _fetch_userinfo(
+            disco, access_token, claims.get("sub"), http_client
+        )
 
     session_data: dict = {
         "sub": claims.get("sub"),
@@ -383,6 +467,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     if store_tokens:
         session_data["tokens"] = {
             "access_token": access_token,
+            "token_type": token.get("token_type"),
             "refresh_token": token.get("refresh_token"),
             "id_token": id_token,
         }
@@ -400,6 +485,7 @@ def build_oidc_router(
     session_key: str = "oidc",
     store_tokens: bool = False,
     fetch_userinfo: bool = True,
+    http_client: AsyncHTTPClient | None = None,
 ) -> APIRouter:
     """Build an OIDC relying-party router.
 
@@ -412,6 +498,9 @@ def build_oidc_router(
             validation and anchor identity on the ID token claims alone —
             for providers without a usable UserInfo endpoint, or to avoid
             the extra round-trip per login.
+        http_client: Managed HTTP client for every provider call (discovery,
+            token, JWKS, UserInfo), built from your ``HTTPConfig``. ``None`` uses
+            the library default client.
 
     Returns:
         An ``APIRouter`` with ``/login``, ``/callback`` and ``/logout`` routes.
@@ -425,7 +514,7 @@ def build_oidc_router(
 
     @router.get("/login")
     async def login(request: Request) -> RedirectResponse:
-        return await _login(request, settings, session_key)
+        return await _login(request, settings, session_key, http_client)
 
     @router.get("/callback")
     async def callback(request: Request) -> RedirectResponse:
@@ -436,6 +525,7 @@ def build_oidc_router(
             str(request.url),
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
+            http_client=http_client,
         )
 
     @router.post("/callback")
@@ -457,6 +547,7 @@ def build_oidc_router(
             callback_url,
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
+            http_client=http_client,
         )
 
     @router.post("/logout")

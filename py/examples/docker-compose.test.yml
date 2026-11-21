@@ -30,6 +30,8 @@ services:
       - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
       - CLIENT_SECRET=${CLIENT_SECRET:-py-identity-model-secret}
       - TEST_CLIENT_SECRET=${TEST_CLIENT_SECRET:-test-secret}
+      # The issuer must be the address clients discover from (OIDC Discovery §4.3).
+      - IdentityServer__IssuerUri=https://identityserver
     volumes:
       - ./identity-server/Config.cs:/app/Config.cs:ro
       - ./identity-server/appsettings.json:/app/appsettings.json:ro
@@ -56,7 +58,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DISCOVERY_URL=https://identityserver:443/.well-known/openid-configuration
+      - DISCOVERY_URL=https://identityserver/.well-known/openid-configuration
       - AUDIENCE=py-identity-model
       - PYTHONUNBUFFERED=1
       - REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/dev/ca-cert.crt
@@ -84,7 +86,7 @@ services:
       dockerfile: examples/fastapi/Dockerfile.test
     container_name: examples-test-runner
     environment:
-      - DISCOVERY_URL=https://identityserver:443/.well-known/openid-configuration
+      - DISCOVERY_URL=https://identityserver/.well-known/openid-configuration
       - FASTAPI_URL=http://fastapi-app:8000
       - CLIENT_ID=py-identity-model-client
       - CLIENT_SECRET=${CLIENT_SECRET:-py-identity-model-secret}

@@ -15,6 +15,7 @@ The pure logic lives in ``core/jarm.py``; this module only performs I/O
 from ..core.authorize_response import AuthorizeCallbackResponse
 from ..core.discovery_policy import DiscoveryPolicy
 from ..core.jarm import (
+    advertised_jarm_algorithms,
     build_authorize_response_from_claims,
     decode_jarm_claims,
     extract_jarm_header,
@@ -50,23 +51,28 @@ def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline resolution in
 
     Two modes:
 
-    * **Offline** — when *issuer*, *jwks*, and *algorithms* are all supplied
-      (used by unit tests and callers holding a cached JWKS), no network I/O
-      happens.
+    * **Offline** — when *issuer* and *jwks* are supplied, and either
+      *algorithms* is supplied or *disco_doc_address* is not (``None``
+      *algorithms* then means ``DEFAULT_ALLOWED_ALGORITHMS``), no network
+      I/O happens.
     * **Discovery** — otherwise, fetch the discovery document from
       *disco_doc_address* (deriving ``issuer``, ``jwks_uri``, and, unless
       *algorithms* overrides it, ``authorization_signing_alg_values_supported``)
       and then fetch the JWKS.
     """
-    offline = issuer is not None and jwks is not None and algorithms is not None
+    offline = (
+        issuer is not None
+        and jwks is not None
+        and (algorithms is not None or disco_doc_address is None)
+    )
     if offline:
         validate_jwks_response(jwks)
         return issuer, algorithms, jwks
 
     if disco_doc_address is None:
         raise ConfigurationException(
-            "disco_doc_address is required for JARM processing unless issuer, "
-            "jwks, and algorithms are all supplied (offline mode)"
+            "disco_doc_address is required for JARM processing unless issuer "
+            "and jwks are supplied (offline mode)"
         )
 
     policy = DiscoveryPolicy(require_https=require_https)
@@ -82,7 +88,11 @@ def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline resolution in
             "Discovery document does not advertise an issuer; cannot validate JARM"
         )
     allowed_algs = (
-        algorithms or disco_doc_response.authorization_signing_alg_values_supported
+        algorithms
+        if algorithms is not None
+        else advertised_jarm_algorithms(
+            disco_doc_response.authorization_signing_alg_values_supported
+        )
     )
 
     jwks_uri = validate_jwks_uri(disco_doc_response)
@@ -115,13 +125,15 @@ def process_jarm_response(  # noqa: PLR0913  # JARM has both discovery and offli
             in the POST body).
         client_id: The RP's client identifier — the expected ``aud`` claim.
         disco_doc_address: The AS discovery document URL.  Required unless
-            *issuer*, *jwks*, and *algorithms* are all supplied (offline mode).
+            *issuer* and *jwks* are supplied (offline mode).
         issuer: Expected issuer.  In offline mode this is authoritative; in
             discovery mode it defaults to the discovery ``issuer``.
         jwks: Pre-fetched JWKS (offline mode).
         algorithms: Allowed signing algorithms.  In offline mode this is the
-            allowlist; in discovery mode it overrides the AS-advertised
+            allowlist (``None``: ``DEFAULT_ALLOWED_ALGORITHMS``); in discovery mode it overrides the AS-advertised
             ``authorization_signing_alg_values_supported`` when provided.
+            Advertised algorithms outside ``DEFAULT_ALLOWED_ALGORITHMS`` are
+            ignored; with neither, ``DEFAULT_ALLOWED_ALGORITHMS`` applies.
         require_https: Enforce HTTPS on discovery/JWKS fetches.
         leeway: Clock-skew tolerance in seconds for ``exp``.
         http_client: Optional managed HTTP client for discovery/JWKS fetches.

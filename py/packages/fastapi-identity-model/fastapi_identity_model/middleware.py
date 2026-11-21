@@ -1,8 +1,8 @@
 """
 FastAPI middleware for OAuth2/OIDC token validation.
 
-This module provides middleware components for validating Bearer tokens
-in FastAPI applications using py-identity-model.
+This module provides middleware components for validating Bearer and DPoP
+access tokens in FastAPI applications using py-identity-model.
 
 Scope: this middleware validates **HTTP** requests only. It extends Starlette's
 ``BaseHTTPMiddleware``, which forwards every non-HTTP ASGI scope (WebSocket,
@@ -12,31 +12,55 @@ with :func:`fastapi_identity_model.build_ws_authenticator` instead.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass, replace
+from enum import Enum, StrEnum
 import logging
+from urllib.parse import urlsplit
 
 from fastapi import Request, status  # type: ignore[attr-defined]
 from jwt import InvalidTokenError
+from starlette.datastructures import URL  # type: ignore[attr-defined]
 from starlette.middleware.base import (
     BaseHTTPMiddleware,  # type: ignore[attr-defined]
 )
+from starlette.requests import HTTPConnection
 from starlette.responses import (  # type: ignore[attr-defined]
     JSONResponse,
     Response,
 )
 
 from py_identity_model import (
+    AuthorizationScheme,
+    CertificateBindingError,
+    ConfigurationException,
+    DPoPErrorKind,
+    DPoPReplayCacheError,
+    DPoPValidationError,
     NetworkException,
     PyIdentityModelException,
+    TokenBinding,
+    TokenPresentation,
     TokenValidationConfig,
     to_principal,
 )
-from py_identity_model.aio import validate_token
+from py_identity_model.aio import (
+    AsyncHTTPClient,
+    AsyncValidationCache,
+    validate_token,
+)
+
+from .config import OIDCSettings
+from .options import AuthOptions, resolve_auth_options
 
 
 logger = logging.getLogger("fastapi_identity_model")
 
-# Expected number of parts in "Bearer <token>" authorization header
-_BEARER_HEADER_PART_COUNT = 2
+# Expected number of parts in "<scheme> <token>" authorization header
+_AUTHORIZATION_HEADER_PART_COUNT = 2
+
+# Authorization schemes accepted, keyed by their case-insensitive name
+# (RFC 9110 §11.1): Bearer (RFC 6750 §2.1) and DPoP (RFC 9449 §7.1).
+_SCHEMES = {scheme.value.lower(): scheme for scheme in AuthorizationScheme}
 
 # Claims that only ever appear in an ID token (OIDC Core 1.0 §2, §3.1.3.6).
 # Their presence means an ID token was presented where an access token is
@@ -62,26 +86,159 @@ _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS = ("scope", "scp")
 # logged server-side for operators, never returned to the caller.
 _GENERIC_401_DETAIL = "Invalid or unauthorized token"
 
-# Stable message prefixes the core library uses for discovery/JWKS *fetch*
-# failures (py_identity_model.core.error_handlers). The core wraps a failed
-# fetch in an unsuccessful response, so validate_token surfaces it as a
-# TokenValidationException — NOT a NetworkException — which would otherwise be
-# reported as a 401 "invalid token" for what is really a transient provider
-# outage. We match these prefixes to map such failures to 503 instead, so
-# callers back off and 5xx monitoring fires. This is a pragmatic bridge: the
-# clean fix is in py-identity-model (raise a NetworkException subtype from
-# validate_disco_response / validate_jwks_response), after which the
-# `except NetworkException` branch below handles it directly.
-_UPSTREAM_FETCH_FAILURE_PREFIXES = (
-    "Network error during discovery",
-    "Network error during JWKS",
-)
+
+class _ValidationFailure(Enum):
+    """How a token-validation failure is answered."""
+
+    UNAVAILABLE = "unavailable"
+    """The provider's discovery document or JWK Set could not be fetched
+    (``NetworkException``): HTTP 503, WebSocket close 1013."""
+    SERVER_ERROR = "server_error"
+    """An unusable replay cache (``DPoPReplayCacheError``) or a non-library
+    failure: HTTP 500, WebSocket close 1011."""
+    REJECTED = "rejected"
+    """The token, or the provider document it depends on, is invalid:
+    HTTP 401, WebSocket close 1008."""
 
 
-def _is_upstream_fetch_failure(exc: Exception) -> bool:
-    """Whether a library exception is a transient upstream fetch failure."""
-    message = str(exc)
-    return any(message.startswith(p) for p in _UPSTREAM_FETCH_FAILURE_PREFIXES)
+def _classify_validation_failure(exc: Exception) -> _ValidationFailure:
+    """How to answer *exc*, raised while validating a token. Decided by type.
+
+    Any other ``ConfigurationException`` is ``REJECTED``: discovery raises one
+    for a URL in the provider's document that fails a policy check, which is
+    the provider's data, not this server's setup. A malformed token PyJWT
+    rejects outside the library hierarchy (``InvalidTokenError``) is
+    ``REJECTED``.
+    """
+    if isinstance(exc, NetworkException):
+        return _ValidationFailure.UNAVAILABLE
+    if isinstance(exc, DPoPReplayCacheError):
+        return _ValidationFailure.SERVER_ERROR
+    if isinstance(exc, (PyIdentityModelException, InvalidTokenError)):
+        return _ValidationFailure.REJECTED
+    return _ValidationFailure.SERVER_ERROR
+
+
+def _log_rejection(message: str, exc: Exception) -> None:
+    """Log a rejected token. A ``ConfigurationException`` may be this
+    server's own setup (an HTTPS-policy failure on its discovery URL, an empty
+    algorithm list), so it is logged at warning level with its traceback for
+    alerting; any other rejection is a bad token, logged at info level."""
+    if isinstance(exc, ConfigurationException):
+        logger.warning(message, exc, exc_info=exc)
+    else:
+        logger.info(message, exc)
+
+
+# RFC 6750 §3: a Bearer challenge MUST carry at least one auth-param; this
+# realm is the one sent when nothing else would be.
+DEFAULT_REALM = "api"
+
+
+class BearerError(StrEnum):
+    """The ``error`` auth-param of a challenge (RFC 6750 §3.1)."""
+
+    INVALID_REQUEST = "invalid_request"
+    """The ``Authorization`` header names a supported scheme but is malformed
+    (sent with ``400``)."""
+    INVALID_TOKEN = "invalid_token"
+    """The access token is expired, revoked, malformed or otherwise invalid."""
+    INSUFFICIENT_SCOPE = "insufficient_scope"
+    """The token is valid but does not grant access to the resource (``403``)."""
+
+
+@dataclass(frozen=True)
+class AuthChallenge:
+    """Builds the ``WWW-Authenticate`` header (RFC 6750 §3, RFC 9449 §7.1).
+
+    The middleware stores the challenge for the current request on
+    ``request.state.auth_challenge`` so the dependencies answer with the same
+    scheme and parameters.
+    """
+
+    scheme: AuthorizationScheme = AuthorizationScheme.BEARER
+    realm: str | None = None
+    dpop_algs: tuple[str, ...] = ()
+
+    def header(self, *, error: str | None = None, scope: str | None = None) -> str:
+        """The header value, with *error* and *scope* auth-params when given.
+
+        A ``DPoP`` challenge always carries ``algs``. A ``Bearer`` challenge
+        that would have no auth-param carries ``realm`` (``DEFAULT_REALM``
+        unless one is configured).
+        """
+        params = []
+        if self.realm is not None:
+            params.append(f'realm="{self.realm}"')
+        if error is not None:
+            params.append(f'error="{error}"')
+        if scope is not None:
+            params.append(f'scope="{scope}"')
+        if self.scheme is AuthorizationScheme.DPOP:
+            params.append(f'algs="{" ".join(self.dpop_algs)}"')
+        if not params:
+            params.append(f'realm="{DEFAULT_REALM}"')
+        return f"{self.scheme.value} {', '.join(params)}"
+
+
+def parse_authorization(header: str) -> tuple[AuthorizationScheme, str] | None:
+    """The scheme and token of an ``Authorization`` header, or ``None`` when it
+    is not ``Bearer <token>`` or ``DPoP <token>`` (case-insensitive scheme)."""
+    parts = header.split()
+    scheme = _SCHEMES.get(parts[0].lower()) if parts else None
+    if len(parts) != _AUTHORIZATION_HEADER_PART_COUNT or scheme is None:
+        return None
+    return scheme, parts[1]
+
+
+def request_uri(url: URL, scope: dict, expected_origin: str | None = None) -> str:
+    """The request URI as the client sent it, for the DPoP ``htu`` check.
+
+    Starlette builds ``url`` from the percent-decoded ASGI ``path``, so
+    ``/files/a%20b`` reads as ``/files/a b`` and an encoded ``%3F`` or ``%23``
+    turns into a query or fragment delimiter. The proof covers the path as
+    sent (RFC 9449 §4.3), which is the ASGI ``raw_path``.
+
+    With *expected_origin* (``scheme://host[:port]``) the scheme and authority
+    are that origin rather than the request's ``Host`` header.
+    """
+    if expected_origin is not None:
+        origin = urlsplit(expected_origin)
+        url = url.replace(scheme=origin.scheme, netloc=origin.netloc)
+    raw_path = scope.get("raw_path")
+    if not raw_path:
+        return str(url)
+    return str(url.replace(path=raw_path.decode("latin-1")))
+
+
+def presentation(
+    connection: HTTPConnection,
+    options: AuthOptions,
+    *,
+    scheme: AuthorizationScheme,
+    method: str,
+    url: URL | None = None,
+) -> TokenPresentation:
+    """The :class:`TokenPresentation` for *connection* under *options*.
+
+    Shared by the HTTP middleware and the WebSocket authenticator. *url*
+    overrides ``connection.url`` (the WebSocket handshake's ``http(s)`` form).
+    """
+    return TokenPresentation(
+        scheme=scheme,
+        method=method,
+        url=request_uri(
+            url if url is not None else connection.url,
+            connection.scope,
+            options.expected_origin,
+        ),
+        dpop_proof=connection.headers.get("DPoP"),
+        client_certificate=(
+            options.client_certificate(connection)
+            if options.client_certificate
+            else None
+        ),
+    )
 
 
 def evaluate_token_type(
@@ -119,8 +276,10 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
     Args:
         app: The FastAPI application
-        discovery_url: The OpenID Connect discovery document URL
-        audience: Expected audience claim in the token. Required — a ``None``
+        discovery_url: The OpenID Connect discovery document URL. Defaults to
+            ``settings.discovery_url``; required without ``settings``.
+        audience: Expected audience claim in the token. Defaults to
+            ``settings.expected_audience``. Required — a ``None``
             audience does not enforce ``aud`` for tokens that omit the claim,
             which on a shared multi-tenant issuer accepts tokens minted for
             other clients.
@@ -130,7 +289,8 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             nested route under an excluded prefix is not silently exposed). To
             exclude a whole subtree, append ``/*`` to the entry: ``/docs/*``
             excludes ``/docs`` and every path beneath it. Pass ``[]`` to
-            exclude nothing. When omitted, defaults to ``/docs``,
+            exclude nothing. When omitted, defaults to
+            ``settings.excluded_paths``, or without ``settings`` to ``/docs``,
             ``/docs/oauth2-redirect`` (the Swagger OAuth2 redirect),
             ``/openapi.json``, ``/health``.
         custom_claims_validator: Optional custom function to validate additional claims
@@ -149,12 +309,34 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             tokens never do); ``scp`` covers the Azure AD convention. Override for
             an OP whose access tokens signal type differently. Ignored when
             ``require_access_token_marker`` is ``False``.
+        http_client: Managed HTTP client for discovery and JWKS, built from
+            your ``HTTPConfig`` (timeout, retries, TLS, JWKS size limits). ``None``
+            uses the library default client.
+        cache: The :class:`~py_identity_model.aio.AsyncValidationCache` that
+            holds this middleware's discovery document, keys and kid-miss
+            cooldown; its ``CacheConfig`` sets the cache TTLs, size and cooldown.
+            ``None`` uses the library default cache.
+        settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
+            ``discovery_url``, ``audience`` and ``excluded_paths`` when those
+            are not passed, and the binding options (``required_binding``,
+            ``client_certificate_header``, ``expected_origin``) when
+            ``options`` is not passed.
+        options: :class:`~fastapi_identity_model.AuthOptions` (binding, DPoP,
+            client certificate, expected origin). Pass the same instance to
+            :func:`~fastapi_identity_model.build_ws_authenticator`. Takes
+            precedence over ``settings``, but must not drop a
+            ``required_binding`` or ``expected_origin`` that ``settings`` sets.
+            ``None`` uses ``AuthOptions.from_settings(settings)``, or the
+            defaults without ``settings``. DPoP proofs are checked against
+            ``request.url`` unless ``expected_origin`` is set; behind a proxy,
+            run Starlette's proxy-headers handling so it is the URI the client
+            addressed.
     """
 
-    def __init__(  # noqa: PLR0913  # opt-in F-07 marker config adds two optional params
+    def __init__(
         self,
         app,
-        discovery_url: str,
+        discovery_url: str | None = None,
         audience: str | None = None,
         excluded_paths: list[str] | None = None,
         custom_claims_validator: Callable | None = None,
@@ -162,8 +344,22 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
         access_token_marker_claims: tuple[
             str, ...
         ] = _DEFAULT_ACCESS_TOKEN_MARKER_CLAIMS,
+        *,
+        http_client: AsyncHTTPClient | None = None,
+        cache: AsyncValidationCache | None = None,
+        settings: OIDCSettings | None = None,
+        options: AuthOptions | None = None,
     ):
         super().__init__(app)
+        if settings is not None:
+            discovery_url = discovery_url or settings.discovery_url
+            audience = audience or settings.expected_audience
+            if excluded_paths is None:
+                excluded_paths = list(settings.excluded_paths)
+        if not discovery_url:
+            raise ValueError(
+                "TokenValidationMiddleware requires a discovery_url or settings."
+            )
         if not audience:
             raise ValueError(
                 "TokenValidationMiddleware requires a non-empty 'audience'; a "
@@ -189,6 +385,27 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             else ["/docs", "/docs/oauth2-redirect", "/openapi.json", "/health"]
         )
         self.custom_claims_validator = custom_claims_validator
+        self.http_client = http_client
+        self.cache = cache
+        self.options = resolve_auth_options(settings, options)
+        # The scheme a client must use; RFC 9449 §7.1 challenges a DPoP-only
+        # resource with ``DPoP``.
+        self._challenge = AuthChallenge(
+            scheme=(
+                AuthorizationScheme.DPOP
+                if self.options.required_binding is TokenBinding.DPOP
+                else AuthorizationScheme.BEARER
+            ),
+            realm=self.options.realm,
+            dpop_algs=tuple(self.options.dpop.accepted_algorithms),
+        )
+
+    def _challenge_for(self, scheme: AuthorizationScheme) -> AuthChallenge:
+        """The challenge for a request that used *scheme*: ``DPoP`` when the
+        request did or the resource requires it, else ``Bearer``."""
+        if scheme is AuthorizationScheme.DPOP:
+            return replace(self._challenge, scheme=scheme)
+        return self._challenge
 
     def _is_excluded(self, path: str) -> bool:
         """Whether *path* is excluded from token validation.
@@ -219,25 +436,61 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 return True
         return False
 
-    @staticmethod
-    def _unauthorized(detail: str) -> JSONResponse:
+    def _unauthorized(
+        self,
+        detail: str,
+        *,
+        scheme: AuthorizationScheme = AuthorizationScheme.BEARER,
+        error: str | None = None,
+        status_code: int = status.HTTP_401_UNAUTHORIZED,
+    ) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=status_code,
             content={"detail": detail},
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={
+                "WWW-Authenticate": self._challenge_for(scheme).header(error=error)
+            },
         )
 
-    def _extract_bearer_token(self, request: Request) -> str | JSONResponse:
-        """Return the bearer token, or an error ``JSONResponse`` if absent/malformed."""
+    def _extract_token(
+        self, request: Request
+    ) -> tuple[AuthorizationScheme, str] | JSONResponse:
+        """Return the scheme and access token, or an error ``JSONResponse``."""
         authorization = request.headers.get("Authorization")
         if not authorization:
             return self._unauthorized("Missing Authorization header")
-        parts = authorization.split()
-        if len(parts) != _BEARER_HEADER_PART_COUNT or parts[0].lower() != "bearer":
+        credentials = parse_authorization(authorization)
+        if credentials is None:
+            # RFC 6750 §3.1: a supported scheme with a malformed credential is
+            # invalid_request (400); an unsupported scheme gets no error code.
+            parts = authorization.split()
+            scheme = _SCHEMES.get(parts[0].lower()) if parts else None
+            if scheme is not None:
+                return self._unauthorized(
+                    "Invalid Authorization header format. Expected: Bearer "
+                    "<token> or DPoP <token>",
+                    scheme=scheme,
+                    error=BearerError.INVALID_REQUEST,
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
             return self._unauthorized(
-                "Invalid Authorization header format. Expected: Bearer <token>"
+                "Invalid Authorization header format. Expected: Bearer <token> "
+                "or DPoP <token>"
             )
-        return parts[1]
+        scheme, token = credentials
+        # RFC 9449 §4.3 check 1: at most one DPoP header.
+        if len(request.headers.getlist("DPoP")) > 1:
+            return self._unauthorized(
+                _GENERIC_401_DETAIL,
+                scheme=AuthorizationScheme.DPOP,
+                error=DPoPErrorKind.MALFORMED.oauth_error,
+            )
+        return scheme, token
+
+    def _presentation(
+        self, request: Request, scheme: AuthorizationScheme
+    ) -> TokenPresentation:
+        return presentation(request, self.options, scheme=scheme, method=request.method)
 
     def _wrong_token_type_error(self, claims: dict) -> str | None:
         """A 401 detail if *claims* are the wrong token type for a resource
@@ -260,7 +513,9 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             access_token_marker_claims=self.access_token_marker_claims,
         )
 
-    async def _authenticate(self, request: Request, token: str) -> JSONResponse | None:
+    async def _authenticate(
+        self, request: Request, scheme: AuthorizationScheme, token: str
+    ) -> JSONResponse | None:
         """Validate *token* and attach claims; return an error response or None."""
         try:
             claims = await validate_token(
@@ -269,65 +524,84 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                     perform_disco=True,
                     audience=self.audience,
                     claims_validator=self.custom_claims_validator,
+                    required_binding=self.options.required_binding,
+                    dpop=self.options.dpop,
                 ),
                 disco_doc_address=self.discovery_url,
+                http_client=self.http_client,
+                cache=self.cache,
+                presentation=self._presentation(request, scheme),
             )
             # Reject an ID token presented as an access token (token-type
             # confusion at the resource server).
             wrong_type = self._wrong_token_type_error(claims)
             if wrong_type is not None:
-                return self._unauthorized(wrong_type)
+                return self._unauthorized(
+                    wrong_type, scheme=scheme, error=BearerError.INVALID_TOKEN
+                )
             request.state.user = to_principal(claims)
             request.state.claims = claims
             request.state.token = token
             return None
-        except PyIdentityModelException as e:
+        except Exception as e:
+            return self._rejection(e, scheme)
+
+    def _rejection(self, e: Exception, scheme: AuthorizationScheme) -> JSONResponse:
+        """The response for a token-validation failure *e* (called while it is
+        being handled, so ``logger.exception`` records the traceback)."""
+        if isinstance(e, DPoPValidationError):
+            # RFC 9449 §7.1: challenge with the DPoP scheme and the error code
+            # (invalid_token / invalid_dpop_proof). The body stays generic (F-18).
+            logger.info("DPoP binding rejected: %s", e.kind.value)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL,
+                scheme=AuthorizationScheme.DPOP,
+                error=e.kind.oauth_error,
+            )
+        if isinstance(e, CertificateBindingError):
+            logger.info("Certificate binding rejected: %s", e.kind.value)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL, scheme=scheme, error=BearerError.INVALID_TOKEN
+            )
+        failure = _classify_validation_failure(e)
+        if failure is _ValidationFailure.UNAVAILABLE:
             # A provider outage is a transient server fault, not an auth
             # decision: surface 503 so callers retry instead of treating it as a
-            # bad token. This covers both a real NetworkException (a
-            # PyIdentityModelException subclass — the clean path if the core
-            # raises one) and a discovery/JWKS fetch failure the core currently
-            # surfaces as a TokenValidationException (_UPSTREAM_FETCH_FAILURE_
-            # PREFIXES). Checked here rather than a separate `except
-            # NetworkException` block so both share one 503 path.
-            if isinstance(e, NetworkException) or _is_upstream_fetch_failure(e):
-                logger.exception("Upstream fetch failure during token validation")
-                return JSONResponse(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    content={"detail": "Authentication temporarily unavailable"},
-                )
-            # Uniform 401 body — do NOT echo the stage-specific cause
-            # (signature/audience/expiry), which would form a CWE-209 oracle
-            # (F-18). Log the real cause server-side for operators.
-            logger.info("Token rejected during validation: %s", e)
-            return self._unauthorized(_GENERIC_401_DETAIL)
-        except InvalidTokenError as e:
-            # A malformed/undecodable token (e.g. raw pyjwt DecodeError from
-            # header parsing during key lookup) is a client error, not a 500 —
-            # and returns the same generic body as any other rejection so the
-            # response can't distinguish "malformed" from "invalid".
-            logger.info("Malformed token rejected: %s", e)
-            return self._unauthorized(_GENERIC_401_DETAIL)
-        except Exception:
-            # A genuinely unexpected (non-library) failure is a server fault,
-            # not an auth decision. Surface a 500 without leaking internals.
-            logger.exception("Unexpected error during token validation")
+            # bad token.
+            logger.exception("Upstream fetch failure during token validation")
             return JSONResponse(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                content={"detail": "Internal server error during authentication"},
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"detail": "Authentication temporarily unavailable"},
             )
+        if failure is _ValidationFailure.REJECTED:
+            # Uniform 401 body — do NOT echo the stage-specific cause
+            # (signature/audience/expiry/malformed), which would form a CWE-209
+            # oracle (F-18). Log the real cause server-side for operators.
+            _log_rejection("Token rejected during validation: %s", e)
+            return self._unauthorized(
+                _GENERIC_401_DETAIL, scheme=scheme, error=BearerError.INVALID_TOKEN
+            )
+        # An unusable replay cache or a non-library failure is a server fault,
+        # not an auth decision. Surface a 500 without leaking internals.
+        logger.exception("Unexpected error during token validation")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error during authentication"},
+        )
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request and validate the token if required."""
+        request.state.auth_challenge = self._challenge
         # CORS preflight carries no Authorization; excluded paths skip auth.
         if request.method == "OPTIONS" or self._is_excluded(request.url.path):
             return await call_next(request)
 
-        token = self._extract_bearer_token(request)
-        if isinstance(token, JSONResponse):
-            return token
+        credentials = self._extract_token(request)
+        if isinstance(credentials, JSONResponse):
+            return credentials
+        request.state.auth_challenge = self._challenge_for(credentials[0])
 
-        auth_error = await self._authenticate(request, token)
+        auth_error = await self._authenticate(request, *credentials)
         if auth_error is not None:
             return auth_error
 

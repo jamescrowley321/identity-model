@@ -192,7 +192,7 @@ test-harness-rs: ## Boot the RS (uvicorn) against node-oidc and run the TH-1.2 r
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Booting fastapi-identity-model RS under uvicorn (real HTTP)..."
-	$(UVPY) pytest src/tests/integration/test_rs_boot.py -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests/integration/test_rs_boot.py src/tests/integration/test_rs_dpop_live.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
@@ -405,6 +405,13 @@ conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package r
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-config-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-config-rp-latest.json --verbose
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-form-post-basic-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-form-post-basic-rp-latest.json --verbose
 	@echo "fastapi-identity-model conformance regression complete. Results in conformance/results/"
+
+.PHONY: conformance-test-dynamic-logout
+conformance-test-dynamic-logout: conformance-up ## Run the Dynamic RP and logout RP plans against the local suite
+	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --output conformance/results/dynamic-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --output conformance/results/rpinitiated-logout-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --output conformance/results/backchannel-logout-rp-latest.json --verbose
+	@echo "Dynamic and logout conformance tests complete. Results in conformance/results/"
 
 .PHONY: conformance-test-harness
 conformance-test-harness: ## Run conformance harness unit tests (parser + callback)

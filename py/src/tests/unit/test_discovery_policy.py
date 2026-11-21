@@ -1,11 +1,11 @@
-"""Unit tests for DiscoveryPolicy and DiscoveryEndpoint."""
+"""Unit tests for DiscoveryPolicy and discovery_document_url."""
 
 import pytest
 
 from py_identity_model import DiscoveryPolicy
 from py_identity_model.core.discovery_policy import (
+    discovery_document_url,
     is_loopback,
-    parse_discovery_url,
     resolve_discovery_policy,
     validate_url_scheme,
 )
@@ -18,7 +18,7 @@ from py_identity_model.core.validators import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    DiscoveryException,
+    DiscoveryValidationError,
 )
 
 
@@ -49,54 +49,68 @@ class TestIsLoopback:
 
 
 @pytest.mark.unit
-class TestParseDiscoveryUrl:
-    def test_base_url(self):
-        result = parse_discovery_url("https://auth.example.com")
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
-        assert result.authority == "https://auth.example.com"
+class TestDiscoveryDocumentUrl:
+    """OpenID Connect Discovery 1.0 §4.1 issuer-to-URL derivation."""
 
-    def test_full_wellknown_url(self):
-        result = parse_discovery_url(
-            "https://auth.example.com/.well-known/openid-configuration"
-        )
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
-        assert result.authority == "https://auth.example.com"
+    @pytest.mark.parametrize(
+        ("issuer", "expected"),
+        [
+            (
+                "https://auth.example.com",
+                "https://auth.example.com/.well-known/openid-configuration",
+            ),
+            (
+                "https://auth.example.com/",
+                "https://auth.example.com/.well-known/openid-configuration",
+            ),
+            (
+                "https://auth.example.com/issuer1",
+                "https://auth.example.com/issuer1/.well-known/openid-configuration",
+            ),
+            (
+                "https://auth.example.com/issuer1/",
+                "https://auth.example.com/issuer1/.well-known/openid-configuration",
+            ),
+            (
+                "http://localhost:8080",
+                "http://localhost:8080/.well-known/openid-configuration",
+            ),
+        ],
+    )
+    def test_appends_well_known_path(self, issuer, expected):
+        assert discovery_document_url(issuer) == expected
 
-    def test_with_path(self):
-        result = parse_discovery_url("https://auth.example.com/tenant1")
-        assert "/.well-known/openid-configuration" in result.url
-        assert result.authority == "https://auth.example.com"
-
-    def test_empty_url(self):
-        with pytest.raises(ConfigurationException, match="empty"):
-            parse_discovery_url("")
-
-    def test_no_scheme(self):
-        with pytest.raises(ConfigurationException, match="scheme"):
-            parse_discovery_url("auth.example.com")
-
-    def test_no_host(self):
-        with pytest.raises(ConfigurationException, match="host"):
-            parse_discovery_url("https://")
-
-    def test_trailing_slash(self):
-        result = parse_discovery_url("https://auth.example.com/")
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
-
-    def test_query_string_rejected(self):
-        """URLs with query strings are rejected (WARN-8)."""
-        with pytest.raises(ConfigurationException, match="query or fragment"):
-            parse_discovery_url("https://auth.example.com?evil=1")
-
-    def test_fragment_rejected(self):
-        """URLs with fragments are rejected (WARN-8)."""
-        with pytest.raises(ConfigurationException, match="query or fragment"):
-            parse_discovery_url("https://auth.example.com#fragment")
-
-    def test_non_http_scheme_rejected(self):
-        """Non-HTTP(S) schemes are rejected."""
-        with pytest.raises(ConfigurationException, match="HTTP or HTTPS"):
-            parse_discovery_url("ftp://evil.com")
+    @pytest.mark.parametrize(
+        ("issuer", "message"),
+        [
+            ("", r"^Issuer cannot be empty$"),
+            ("auth.example.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("ftp://user:secret@evil.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("https://", r"^Issuer must include a host$"),
+            ("https://:443", r"^Issuer must include a host$"),
+            ("https://user@", r"^Issuer must include a host$"),
+            ("https://[op.example", r"^Issuer is not a valid URL$"),
+            (" https://auth.example.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com\n", r"^Issuer is not a valid URL$"),
+            ("https://auth.ex\tample.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com/\x00", r"^Issuer is not a valid URL$"),
+            (
+                "https://auth.example.com?evil=1",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://auth.example.com#fragment",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://auth.example.com/.well-known/openid-configuration",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+        ],
+    )
+    def test_rejects_non_issuer(self, issuer, message):
+        with pytest.raises(ConfigurationException, match=message):
+            discovery_document_url(issuer)
 
 
 @pytest.mark.unit
@@ -223,7 +237,7 @@ class TestValidateEndpointAuthority:
     def test_mismatched_authority_raises(self):
         """Endpoint from different authority than issuer is rejected."""
         policy = DiscoveryPolicy(validate_endpoints=True)
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://evil.com/token",
                 "token_endpoint",
@@ -263,7 +277,7 @@ class TestValidateEndpointAuthority:
             validate_endpoints=True,
             additional_endpoint_base_addresses=["https://cdn.example.com"],
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://attacker.com/keys",
                 "jwks_uri",
@@ -291,7 +305,7 @@ class TestValidateEndpointAuthority:
             validate_endpoints=True,
             authority="https://gateway.example.com",
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
                 "https://auth.example.com/token",
                 "token_endpoint",
@@ -318,7 +332,7 @@ class TestValidateEndpointAuthority:
         """Empty issuer with no authority constraint raises DiscoveryException."""
         policy = DiscoveryPolicy(validate_endpoints=True)
         with pytest.raises(
-            DiscoveryException, match="no authority constraint available"
+            DiscoveryValidationError, match="no authority constraint available"
         ):
             _validate_endpoint_authority(
                 "https://anything.com/keys",
@@ -378,7 +392,6 @@ class TestDiscoveryPolicyCacheKey:
             {"allow_http_on_loopback": False},
             {"validate_issuer": False},
             {"validate_endpoints": False},
-            {"require_key_set": False},
             {"additional_endpoint_base_addresses": ["https://cdn.example"]},
             {"authority": "https://auth.example"},
             {"allow_loopback_endpoints": True},

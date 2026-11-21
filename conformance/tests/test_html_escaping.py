@@ -28,6 +28,13 @@ from unittest.mock import patch
 import app as harness_app
 from fastapi.testclient import TestClient
 
+from py_identity_model import (
+    DiscoveryErrorKind,
+    JwksResponse,
+    UserInfoErrorKind,
+    UserInfoResponse,
+)
+
 # Importing the real exception class so the harness's `except` clause matches.
 from py_identity_model.exceptions import TokenValidationException
 
@@ -39,6 +46,9 @@ HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_BAD_GATEWAY = 502
 EXPECTED_KEY_VALUE_ESCAPES = 2
+# The callback prefetches the OP JWKS before UserInfo; these JSON-UserInfo tests
+# never use it.
+_JWKS_UNUSED = JwksResponse(is_successful=False, error="unused")
 
 
 def _make_session(state: str = "test-state", nonce: str = "match-nonce"):
@@ -72,11 +82,6 @@ class _Disco:
     end_session_endpoint = "https://op.example.com/end-session"
 
 
-class _DiscoEndpoint:
-    url = "https://op.example.com"
-    authority = "https://op.example.com"
-
-
 class _TokenRespOk:
     is_successful = True
     token: ClassVar[dict[str, str]] = {
@@ -98,6 +103,7 @@ class TestDiscoveryFailedEscaping:
         class _FailedDisco:
             is_successful = False
             error = XSS_PAYLOAD
+            error_kind = DiscoveryErrorKind.NETWORK_ERROR
 
         with patch.object(
             harness_app, "get_discovery_document", return_value=_FailedDisco()
@@ -126,7 +132,9 @@ class TestIdTokenValidationFailedEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -135,7 +143,7 @@ class TestIdTokenValidationFailedEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 side_effect=TokenValidationException(XSS_PAYLOAD),
             ),
         ):
@@ -164,11 +172,15 @@ class TestUserInfoValidationFailedEscaping:
             is_successful = False
             claims = None
             error = XSS_PAYLOAD
+            error_kind = UserInfoErrorKind.SUB_MISMATCH
+            unverified_jwt = None
 
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -177,13 +189,14 @@ class TestUserInfoValidationFailedEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": "user-1",
                     "iss": _Disco.issuer,
                     "nonce": "match-nonce",
                 },
             ),
+            patch.object(harness_app, "get_jwks", return_value=_JWKS_UNUSED),
             patch.object(harness_app, "get_userinfo", return_value=_UserInfoFail()),
         ):
             client = TestClient(harness_app.app)
@@ -212,15 +225,12 @@ class TestSuccessBodyClaimEscaping:
     def test_userinfo_claim_value_escapes_script_payload(self) -> None:
         _make_session(state="state-success", nonce="match-nonce")
 
-        class _UserInfoResp:
-            is_successful = True
-            claims: ClassVar[dict[str, str]] = {XSS_PAYLOAD: XSS_PAYLOAD}
-            error = None
-
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -229,14 +239,22 @@ class TestSuccessBodyClaimEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": "user-1",
                     "iss": _Disco.issuer,
                     "nonce": "match-nonce",
                 },
             ),
-            patch.object(harness_app, "get_userinfo", return_value=_UserInfoResp()),
+            patch.object(harness_app, "get_jwks", return_value=_JWKS_UNUSED),
+            patch.object(
+                harness_app,
+                "get_userinfo",
+                return_value=UserInfoResponse(
+                    is_successful=True,
+                    claims={"sub": "user-1", XSS_PAYLOAD: XSS_PAYLOAD},
+                ),
+            ),
         ):
             client = TestClient(harness_app.app)
             response = client.get(
@@ -262,7 +280,9 @@ class TestSuccessBodyClaimEscaping:
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
             patch.object(
-                harness_app, "parse_discovery_url", return_value=_DiscoEndpoint()
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
             ),
             patch.object(
                 harness_app,
@@ -271,19 +291,20 @@ class TestSuccessBodyClaimEscaping:
             ),
             patch.object(
                 harness_app,
-                "validate_token",
+                "validate_id_token",
                 return_value={
                     "sub": QUOTE_PAYLOAD,
                     "iss": _Disco.issuer,
                     "nonce": "match-nonce",
                 },
             ),
+            patch.object(harness_app, "get_jwks", return_value=_JWKS_UNUSED),
             patch.object(
                 harness_app,
                 "get_userinfo",
-                return_value=type(
-                    "_Empty", (), {"is_successful": True, "claims": {}, "error": None}
-                )(),
+                return_value=UserInfoResponse(
+                    is_successful=True, claims={"sub": QUOTE_PAYLOAD}
+                ),
             ),
         ):
             client = TestClient(harness_app.app)

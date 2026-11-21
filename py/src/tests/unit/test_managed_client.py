@@ -1,14 +1,40 @@
 """Unit tests for managed HTTP client classes (sync and async)."""
 
+import certifi
 import httpx
 import pytest
 
+from py_identity_model import HTTPConfig
 from py_identity_model.aio.managed_client import AsyncHTTPClient
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.sync.managed_client import HTTPClient
+from py_identity_model.sync.validation_cache import ValidationCache
 
 
 # Custom timeout value for testing (seconds)
 CUSTOM_TIMEOUT = 60.0
+# Timeout of a caller-built httpx client that the wrapper must not override
+WRAPPED_CLIENT_TIMEOUT = 5.0
+
+
+@pytest.fixture
+def recorded_client_kwargs(monkeypatch) -> list[dict]:
+    """Record the keyword arguments of every httpx.Client/AsyncClient built."""
+    recorded: list[dict] = []
+
+    class RecordingClient(httpx.Client):
+        def __init__(self, **kwargs):
+            recorded.append(kwargs)
+            super().__init__(**kwargs)
+
+    class RecordingAsyncClient(httpx.AsyncClient):
+        def __init__(self, **kwargs):
+            recorded.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(httpx, "Client", RecordingClient)
+    monkeypatch.setattr(httpx, "AsyncClient", RecordingAsyncClient)
+    return recorded
 
 
 @pytest.mark.unit
@@ -54,14 +80,26 @@ class TestHTTPClient:
         assert not raw.is_closed
         raw.close()
 
+    def test_default_config(self):
+        client = HTTPClient()
+        assert client.config == HTTPConfig()
+        client.close()
+
     def test_custom_timeout(self):
-        client = HTTPClient(timeout=CUSTOM_TIMEOUT)
+        client = HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT))
         assert client.client.timeout.connect == CUSTOM_TIMEOUT
         client.close()
 
-    def test_custom_verify_false(self):
-        client = HTTPClient(verify=False)
+    def test_custom_ca_bundle(self, recorded_client_kwargs):
+        ca_bundle = certifi.where()
+        client = HTTPClient(config=HTTPConfig(ca_bundle=ca_bundle))
         assert isinstance(client.client, httpx.Client)
+        assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [ca_bundle]
+        client.close()
+
+    def test_default_verifies_tls(self, recorded_client_kwargs):
+        client = HTTPClient()
+        assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [True]
         client.close()
 
     def test_access_after_close_raises(self):
@@ -75,17 +113,24 @@ class TestHTTPClient:
         client.close()
         client.close()  # Should not raise
 
-    def test_reject_timeout_with_existing_client(self):
-        raw = httpx.Client()
-        with pytest.raises(ValueError, match="cannot be specified"):
-            HTTPClient(client=raw, timeout=5.0)
+    def test_wrapped_client_keeps_its_own_timeout(self):
+        raw = httpx.Client(timeout=WRAPPED_CLIENT_TIMEOUT)
+        config = HTTPConfig(http_timeout=CUSTOM_TIMEOUT)
+        client = HTTPClient(client=raw, config=config)
+        assert client.client.timeout.connect == WRAPPED_CLIENT_TIMEOUT
+        assert client.config is config
+        client.close()
         raw.close()
 
-    def test_reject_verify_with_existing_client(self):
-        raw = httpx.Client()
-        with pytest.raises(ValueError, match="cannot be specified"):
-            HTTPClient(client=raw, verify=False)
-        raw.close()
+    def test_client_holds_no_validation_cache(self):
+        """Caches live on a ValidationCache, never on the transport (#953)."""
+        with HTTPClient() as client:
+            assert not hasattr(client, "caches")
+            assert [
+                name
+                for name, value in vars(client).items()
+                if isinstance(value, ValidationCache)
+            ] == []
 
     def test_unowned_close_blocks_further_access(self):
         raw = httpx.Client()
@@ -140,13 +185,23 @@ class TestAsyncHTTPClient:
         assert not raw.is_closed
         await raw.aclose()
 
+    def test_default_config(self):
+        client = AsyncHTTPClient()
+        assert client.config == HTTPConfig()
+
     def test_custom_timeout(self):
-        client = AsyncHTTPClient(timeout=CUSTOM_TIMEOUT)
+        client = AsyncHTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT))
         assert client.client.timeout.connect == CUSTOM_TIMEOUT
 
-    def test_custom_verify_false(self):
-        client = AsyncHTTPClient(verify=False)
+    def test_custom_ca_bundle(self, recorded_client_kwargs):
+        ca_bundle = certifi.where()
+        client = AsyncHTTPClient(config=HTTPConfig(ca_bundle=ca_bundle))
         assert isinstance(client.client, httpx.AsyncClient)
+        assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [ca_bundle]
+
+    def test_default_verifies_tls(self, recorded_client_kwargs):
+        AsyncHTTPClient()
+        assert [kwargs["verify"] for kwargs in recorded_client_kwargs] == [True]
 
     @pytest.mark.asyncio
     async def test_access_after_close_raises(self):
@@ -161,15 +216,23 @@ class TestAsyncHTTPClient:
         await client.close()
         await client.close()  # Should not raise
 
-    def test_reject_timeout_with_existing_client(self):
-        raw = httpx.AsyncClient()
-        with pytest.raises(ValueError, match="cannot be specified"):
-            AsyncHTTPClient(client=raw, timeout=5.0)
+    def test_wrapped_client_keeps_its_own_timeout(self):
+        raw = httpx.AsyncClient(timeout=WRAPPED_CLIENT_TIMEOUT)
+        config = HTTPConfig(http_timeout=CUSTOM_TIMEOUT)
+        client = AsyncHTTPClient(client=raw, config=config)
+        assert client.client.timeout.connect == WRAPPED_CLIENT_TIMEOUT
+        assert client.config is config
 
-    def test_reject_verify_with_existing_client(self):
-        raw = httpx.AsyncClient()
-        with pytest.raises(ValueError, match="cannot be specified"):
-            AsyncHTTPClient(client=raw, verify=False)
+    @pytest.mark.asyncio
+    async def test_client_holds_no_validation_cache(self):
+        """Caches live on an AsyncValidationCache, never on the transport (#953)."""
+        async with AsyncHTTPClient() as client:
+            assert not hasattr(client, "caches")
+            assert [
+                name
+                for name, value in vars(client).items()
+                if isinstance(value, AsyncValidationCache)
+            ] == []
 
     @pytest.mark.asyncio
     async def test_unowned_close_blocks_further_access(self):

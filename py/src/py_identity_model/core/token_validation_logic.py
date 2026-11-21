@@ -7,19 +7,89 @@ implementations to reduce code duplication.
 
 import inspect
 
-from ..core.jwt_helpers import decode_and_validate_jwt
+from jwt import PyJWTError
+
+from ..core.jwt_helpers import (
+    decode_and_validate_jwt,
+)
+from ..core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 from ..core.models import (
     DiscoveryDocumentResponse,
+    DiscoveryErrorKind,
+    JwksErrorKind,
     JwksResponse,
     TokenValidationConfig,
 )
+from ..core.parsers import extract_jwt_header_fields
 from ..exceptions import (
     ConfigurationException,
+    DiscoveryException,
+    DiscoveryHTTPSRequiredError,
+    DiscoveryIssuerMismatchError,
+    DiscoveryMissingFieldsError,
+    DiscoveryParseError,
+    DiscoveryValidationError,
     InvalidIssuerException,
+    JwksException,
+    JwksValidationError,
+    PyIdentityModelException,
+    SignatureVerificationException,
     TokenValidationException,
 )
 from ..logging_config import logger
 from ..logging_utils import redact_token
+
+
+_DISCOVERY_FAILURE_TYPES: dict[DiscoveryErrorKind, type[PyIdentityModelException]] = {
+    DiscoveryErrorKind.INVALID_JSON: DiscoveryParseError,
+    DiscoveryErrorKind.INVALID_DOCUMENT: DiscoveryValidationError,
+    DiscoveryErrorKind.HTTPS_REQUIRED: DiscoveryHTTPSRequiredError,
+    DiscoveryErrorKind.INVALID_CONFIGURATION: ConfigurationException,
+}
+
+
+def discovery_failure(
+    disco_doc_response: DiscoveryDocumentResponse,
+) -> PyIdentityModelException:
+    """The typed exception for a failed discovery response.
+
+    The response's ``error_kind`` picks the type:
+
+    - ``UNEXPECTED_STATUS``, ``NETWORK_ERROR``, ``UNEXPECTED_ERROR`` (or no
+      kind): :class:`DiscoveryException`, a ``NetworkException`` carrying the
+      ``status_code``. The provider is unavailable.
+    - ``INVALID_JSON``: :class:`DiscoveryParseError`.
+    - ``MISSING_FIELDS``: :class:`DiscoveryMissingFieldsError`.
+    - ``ISSUER_MISMATCH``: :class:`DiscoveryIssuerMismatchError`.
+    - ``INVALID_DOCUMENT``: :class:`DiscoveryValidationError`.
+    - ``HTTPS_REQUIRED``: :class:`DiscoveryHTTPSRequiredError`.
+    - ``INVALID_CONFIGURATION``: :class:`ConfigurationException`.
+    """
+    kind = disco_doc_response.error_kind
+    message = disco_doc_response.error or "Discovery document request failed"
+    if kind is DiscoveryErrorKind.MISSING_FIELDS:
+        return DiscoveryMissingFieldsError(message, disco_doc_response.missing_fields)
+    if kind is DiscoveryErrorKind.ISSUER_MISMATCH:
+        return DiscoveryIssuerMismatchError(
+            disco_doc_response.requested_issuer or "",
+            disco_doc_response.returned_issuer or "",
+        )
+    exception_type = _DISCOVERY_FAILURE_TYPES.get(kind) if kind is not None else None
+    if exception_type is None:
+        return DiscoveryException(message, status_code=disco_doc_response.status_code)
+    return exception_type(message)
+
+
+#: What :func:`validate_disco_response`, :func:`validate_jwks_uri` and
+#: :func:`validate_jwks_response` raise for a provider that is unavailable or
+#: serves an invalid document. Request functions that fetch discovery after
+#: their own request (signed introspection) let these propagate unchanged.
+DISCOVERY_AND_JWKS_FAILURES: tuple[type[PyIdentityModelException], ...] = (
+    DiscoveryException,
+    DiscoveryValidationError,
+    JwksException,
+    JwksValidationError,
+)
 
 
 def validate_disco_response(
@@ -32,12 +102,14 @@ def validate_disco_response(
         disco_doc_response: Discovery document response to validate
 
     Raises:
-        TokenValidationException: If discovery response is not successful
+        DiscoveryException: If the document could not be fetched (a
+            ``NetworkException``).
+        DiscoveryValidationError: If the fetched document is invalid.
+        ConfigurationException: If a URL or policy check failed.
     """
     if not disco_doc_response.is_successful:
-        error_msg = disco_doc_response.error or "Discovery document request failed"
-        logger.error(f"Discovery failed: {error_msg}")
-        raise TokenValidationException(error_msg)
+        logger.error(f"Discovery failed: {disco_doc_response.error}")
+        raise discovery_failure(disco_doc_response)
 
 
 def validate_jwks_uri(
@@ -52,11 +124,31 @@ def validate_jwks_uri(
         The non-empty jwks_uri string.
 
     Raises:
-        ConfigurationException: If jwks_uri is missing or empty.
+        DiscoveryMissingFieldsError: If jwks_uri is missing or empty.
     """
     if not disco_doc_response.jwks_uri:
-        raise ConfigurationException("Discovery document missing jwks_uri")
+        raise DiscoveryMissingFieldsError(
+            "Discovery document missing jwks_uri", ("jwks_uri",)
+        )
     return disco_doc_response.jwks_uri
+
+
+def jwks_failure(jwks_response: JwksResponse) -> PyIdentityModelException:
+    """The typed exception for a failed JWKS response.
+
+    ``INVALID_JSON`` and ``INVALID_DOCUMENT`` give
+    :class:`JwksValidationError`; ``INVALID_CONFIGURATION`` gives
+    :class:`ConfigurationException`; any other kind (or none) gives
+    :class:`JwksException`, a ``NetworkException`` carrying the
+    ``status_code``.
+    """
+    kind = jwks_response.error_kind
+    message = jwks_response.error or "JWKS request failed"
+    if kind in (JwksErrorKind.INVALID_JSON, JwksErrorKind.INVALID_DOCUMENT):
+        return JwksValidationError(message)
+    if kind is JwksErrorKind.INVALID_CONFIGURATION:
+        return ConfigurationException(message)
+    return JwksException(message, status_code=jwks_response.status_code)
 
 
 def validate_jwks_response(jwks_response: JwksResponse) -> None:
@@ -67,17 +159,43 @@ def validate_jwks_response(jwks_response: JwksResponse) -> None:
         jwks_response: JWKS response to validate
 
     Raises:
-        TokenValidationException: If JWKS response is not successful or has no keys
+        JwksException: If the JWK Set could not be fetched (a
+            ``NetworkException``).
+        JwksValidationError: If the fetched JWK Set is unusable or has no
+            keys.
+        ConfigurationException: If the JWKS URL failed a URL or policy check.
     """
     if not jwks_response.is_successful:
-        error_msg = jwks_response.error or "JWKS request failed"
-        logger.error(f"JWKS fetch failed: {error_msg}")
-        raise TokenValidationException(error_msg)
+        logger.error(f"JWKS fetch failed: {jwks_response.error}")
+        raise jwks_failure(jwks_response)
 
     if not jwks_response.keys:
         error_msg = "No keys available in JWKS response"
         logger.error(error_msg)
-        raise TokenValidationException(error_msg)
+        raise JwksValidationError(error_msg)
+
+
+def keep_signature_verdict_on_failed_refresh(jwks_response: JwksResponse) -> None:
+    """Raise the signature failure if the retry's JWKS refresh failed.
+
+    The token already failed verification with the cached keys, so an
+    unavailable JWKS endpoint does not change the verdict: it stays a
+    :class:`SignatureVerificationException`, with the fetch failure as its
+    cause, rather than becoming a provider outage.
+    """
+    if not jwks_response.is_successful:
+        logger.warning(
+            f"JWKS refresh failed after a signature failure: {jwks_response.error}"
+        )
+        raise SignatureVerificationException(
+            "Signature verification failed; JWKS refresh failed"
+        ) from jwks_failure(jwks_response)
+
+
+_EMPTY_ALGORITHMS_MESSAGE = (
+    "TokenValidationConfig.algorithms must not be empty; "
+    "None allows DEFAULT_ALLOWED_ALGORITHMS"
+)
 
 
 def validate_config_for_manual_validation(
@@ -86,20 +204,67 @@ def validate_config_for_manual_validation(
     """
     Validate token configuration for manual validation (non-discovery mode).
 
+    ``algorithms=None`` is valid: the token's ``alg`` must then be in
+    ``DEFAULT_ALLOWED_ALGORITHMS``, as in discovery mode.
+
     Args:
         token_validation_config: Token validation configuration
 
     Raises:
-        ConfigurationException: If required configuration is missing
+        ConfigurationException: If the key is missing or ``algorithms`` is an
+            empty list
     """
     if not token_validation_config.key:
         raise ConfigurationException(
             "TokenValidationConfig.key is required",
         )
-    if not token_validation_config.algorithms:
-        raise ConfigurationException(
-            "TokenValidationConfig.algorithms is required",
+    _reject_empty_algorithms(token_validation_config)
+
+
+def _reject_empty_algorithms(token_validation_config: TokenValidationConfig) -> None:
+    if token_validation_config.algorithms is not None and (
+        not token_validation_config.algorithms
+    ):
+        raise ConfigurationException(_EMPTY_ALGORITHMS_MESSAGE)
+
+
+def _require_allowed_alg(alg: object, allowed: list[str]) -> str:
+    """Return *alg* if it is one of *allowed*; raise otherwise."""
+    if not isinstance(alg, str) or alg not in allowed:
+        raise TokenValidationException(
+            f"Algorithm '{alg}' is not in the allowed algorithms",
+            token_part="header",
+            details={"alg": alg, "allowed": list(allowed)},
         )
+    return alg
+
+
+def resolve_algorithms(
+    jwt: str,
+    algorithms: list[str] | None,
+) -> list[str]:
+    """Return the algorithms to verify *jwt* with.
+
+    An explicit list is returned unchanged. ``None`` pins verification to the
+    token's header ``alg``, which must be in ``DEFAULT_ALLOWED_ALGORITHMS``.
+    That set has no HMAC algorithm, so a public key is never used as an HMAC
+    secret (RFC 8725 §2.1).
+
+    Raises:
+        TokenValidationException: If *algorithms* is ``None`` and the header
+            cannot be read or its ``alg`` is not in the default set.
+    """
+    if algorithms is not None:
+        return algorithms
+    try:
+        _, alg = extract_jwt_header_fields(jwt)
+    except PyJWTError as exc:
+        raise TokenValidationException(
+            f"Invalid token: {exc!s}",
+            token_part="header",
+            details={"error": str(exc)},
+        ) from exc
+    return [_require_allowed_alg(alg, sorted(DEFAULT_ALLOWED_ALGORITHMS))]
 
 
 def _enforce_allowed_issuers(
@@ -142,30 +307,64 @@ def _enforce_allowed_issuers(
             )
 
 
+def _require_discovery_issuer_listed(
+    discovery_issuer: str | list[str],
+    token_issuers: list[str],
+) -> None:
+    """Refuse a discovery document whose issuer ``token_issuers`` does not name.
+
+    ``token_issuers`` says which ``iss`` values one provider's keys may sign.
+    Without this, a caller that builds the discovery address from the token's
+    ``iss`` would accept a token signed by any provider's keys and carrying a
+    listed ``iss``.
+
+    Raises:
+        InvalidIssuerException: If the discovery issuer is not in
+            *token_issuers*.
+    """
+    if discovery_issuer not in token_issuers:
+        raise InvalidIssuerException(
+            "The discovery document's issuer is not in token_issuers; add it, "
+            "or pin it as the single entry of allowed_issuers",
+            details={
+                "issuer": discovery_issuer,
+                "token_issuers": sorted(token_issuers),
+            },
+        )
+
+
 def decode_with_config(
     jwt: str,
     token_validation_config: TokenValidationConfig,
     issuer: str | list[str] | None = None,
+    *,
+    accept_token_issuers: bool = False,
 ) -> dict:
     """
     Decode and validate JWT using the token validation configuration.
 
     Args:
         jwt: The JWT token to decode
-        token_validation_config: Token validation configuration with key and algorithms set
+        token_validation_config: Token validation configuration with a key set.
+            ``algorithms=None`` means ``DEFAULT_ALLOWED_ALGORITHMS``.
         issuer: Optional issuer override (from discovery document)
+        accept_token_issuers: With a discovery issuer, check ``iss`` against
+            ``token_validation_config.token_issuers`` when that is set,
+            instead of the discovery issuer. For access tokens only: an ID
+            Token or Logout Token must carry the OP's own issuer (OIDC Core
+            §3.1.3.7 step 2, Back-Channel Logout 1.0 §2.6).
 
     Returns:
         dict: Decoded token claims
 
     Raises:
         TokenValidationException: If token validation fails
-        ConfigurationException: If key or algorithms are missing
+        ConfigurationException: If the key is missing or ``algorithms`` is an
+            empty list
     """
-    if not token_validation_config.key or not token_validation_config.algorithms:
-        raise ConfigurationException(
-            "Token validation configuration must have key and algorithms set"
-        )
+    if not token_validation_config.key:
+        raise ConfigurationException("Token validation configuration must have a key")
+    _reject_empty_algorithms(token_validation_config)
 
     # Warn when discovery issuer overrides a user-supplied multi-issuer list
     if issuer is not None and isinstance(token_validation_config.issuer, list):
@@ -173,6 +372,12 @@ def decode_with_config(
             "Discovery issuer overrides configured multi-issuer list; "
             "multi-issuer is not supported in discovery mode"
         )
+
+    token_issuers = (
+        token_validation_config.token_issuers
+        if issuer is not None and accept_token_issuers
+        else None
+    )
 
     # Multi-tenant issuer pinning (OPT-IN): only when the caller sets
     # allowed_issuers. When it is None (the default) this is skipped entirely and
@@ -188,13 +393,22 @@ def decode_with_config(
         _enforce_allowed_issuers(
             effective_issuer, token_validation_config.allowed_issuers
         )
+    elif issuer is not None and token_issuers:
+        _require_discovery_issuer_listed(issuer, token_issuers)
+
+    if token_issuers is not None:
+        expected_issuer: str | list[str] | None = token_issuers
+    elif issuer is not None:
+        expected_issuer = issuer
+    else:
+        expected_issuer = token_validation_config.issuer
 
     return decode_and_validate_jwt(
         jwt=jwt,
         key=token_validation_config.key,
-        algorithms=token_validation_config.algorithms,
+        algorithms=resolve_algorithms(jwt, token_validation_config.algorithms),
         audience=token_validation_config.audience,
-        issuer=issuer if issuer is not None else token_validation_config.issuer,
+        issuer=expected_issuer,
         options=token_validation_config.options,
         leeway=token_validation_config.leeway,
         subject=token_validation_config.subject,
@@ -291,19 +505,19 @@ def build_resolved_config(
         A new TokenValidationConfig with the resolved key and algorithm.
 
     Raises:
-        TokenValidationException: If the caller set ``algorithms`` and the
-            resolved algorithm is not in it.
+        TokenValidationException: If the resolved algorithm is not in the
+            caller's ``algorithms``, or in ``DEFAULT_ALLOWED_ALGORITHMS`` when
+            ``algorithms`` is ``None``.
     """
     # The resolved alg equals the JWT header alg whenever the header carries
     # one (find_key_by_kid rejects a key whose alg differs), and decode pins
     # verification to [alg], so this membership check gates the header alg.
-    allowed = original_config.algorithms
-    if allowed is not None and alg not in allowed:
-        raise TokenValidationException(
-            f"Algorithm '{alg}' is not in the allowed algorithms",
-            token_part="header",
-            details={"alg": alg, "allowed": list(allowed)},
-        )
+    _require_allowed_alg(
+        alg,
+        sorted(DEFAULT_ALLOWED_ALGORITHMS)
+        if original_config.algorithms is None
+        else original_config.algorithms,
+    )
     return TokenValidationConfig(
         perform_disco=original_config.perform_disco,
         key=key_dict,
@@ -318,9 +532,12 @@ def build_resolved_config(
         # Propagate the issuer allowlist so the disco/retry paths (which validate
         # via this resolved config) still enforce issuer pinning.
         allowed_issuers=original_config.allowed_issuers,
+        token_issuers=original_config.token_issuers,
         # Preserve the injected discovery policy so a resolved config stays a
         # faithful copy of the caller's config.
         discovery_policy=original_config.discovery_policy,
+        required_binding=original_config.required_binding,
+        dpop=original_config.dpop,
     )
 
 
@@ -355,10 +572,15 @@ def log_validation_success(decoded_token: dict) -> None:
 
 
 __all__ = [
+    "DISCOVERY_AND_JWKS_FAILURES",
     "build_resolved_config",
     "decode_with_config",
+    "discovery_failure",
+    "jwks_failure",
+    "keep_signature_verdict_on_failed_refresh",
     "log_validation_start",
     "log_validation_success",
+    "resolve_algorithms",
     "validate_async_claims",
     "validate_claims",
     "validate_config_for_manual_validation",

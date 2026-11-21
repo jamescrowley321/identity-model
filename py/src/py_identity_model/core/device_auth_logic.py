@@ -11,15 +11,14 @@ import httpx
 
 from ..logging_config import logger
 from ..logging_utils import redact_url
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from .client_auth import apply_client_auth
+from .error_handlers import raise_configuration_error
 from .models import (
     DeviceAuthorizationRequest,
     DeviceAuthorizationResponse,
     DeviceTokenRequest,
     DeviceTokenResponse,
 )
-from .mtls import apply_mtls_client_auth
 
 
 # RFC 8628 Section 3.5: error codes during token polling
@@ -71,21 +70,9 @@ def prepare_device_auth_request_data(
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret:
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
+    auth = apply_client_auth(
+        params, request, client_secret=request.client_secret or None
+    )
 
     return params, headers, auth
 
@@ -159,6 +146,7 @@ def process_device_auth_response(
 
 def handle_device_auth_error(e: Exception) -> DeviceAuthorizationResponse:
     """Handle errors during device authorization requests."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during device authorization: {e!s}"
         logger.error(error_msg, exc_info=True)
@@ -195,21 +183,9 @@ def prepare_device_token_request_data(
 
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret:
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
+    auth = apply_client_auth(
+        params, request, client_secret=request.client_secret or None
+    )
 
     return params, headers, auth
 
@@ -300,6 +276,7 @@ def process_device_token_response(
 
 def handle_device_token_error(e: Exception) -> DeviceTokenResponse:
     """Handle errors during device token polling."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during device token poll: {e!s}"
         logger.error(error_msg, exc_info=True)

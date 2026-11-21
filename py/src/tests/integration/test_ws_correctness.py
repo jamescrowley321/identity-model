@@ -60,12 +60,15 @@ WS_REJECTED_CLASSES = [
     "unknown_kid",
     "wrong_alg",
     "alg_none",
+    "cnf_bound",
 ]
 
 # Validly signed access tokens the library accepts — these connect over WS.
 # ``id_as_access`` is deliberately NOT here: the library accepts it but the F-07
 # type guard rejects it (proven in test_ws_id_token_as_access_rejected).
-WS_ACCEPTED_CLASSES = {"valid", "cnf_bound", "oversized", "multi_aud_untrusted"}
+# ``cnf_bound`` is not here either: a bound token presented as a bearer is
+# rejected (RFC 9449 §7.2), so it is in WS_REJECTED_CLASSES.
+WS_ACCEPTED_CLASSES = {"valid", "oversized", "multi_aud_untrusted"}
 
 # A pre-accept WebSocket close(1008 policy violation) is delivered to the client
 # as an HTTP 403 denial response (ASGI WebSocket Denial Response extension).

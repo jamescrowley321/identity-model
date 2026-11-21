@@ -46,6 +46,15 @@ requires — resolvable as
 - `examples/token-exchange`: delegation is now requested with the explicit
   `-delegate` flag rather than inferred from a non-empty `ACTOR_TOKEN`, so an
   empty `ACTOR_TOKEN` fails loudly instead of downgrading to impersonation.
+- **BREAKING** `pkg/idtoken`: an ID Token whose `aud` contains any value other
+  than the client_id is now rejected with a `*ProfileError` of reason
+  `ReasonUntrustedAudience` (`untrusted_audience`), per OIDC Core 1.0 §3.1.3.7
+  step 3. List the additional audiences the client trusts with the new
+  `WithTrustedAudiences` option; it only adds trusted values and cannot turn
+  the check off. The check runs after `sub` and before the `azp` rules, so a
+  multiple-audience token with an untrusted audience now reports
+  `untrusted_audience` rather than `azp_required_multi_aud`. Without
+  `WithClientID` or `WithTrustedAudiences`, any `aud` value is untrusted.
 
 ## go/v0.3.0 (2026-09-05)
 

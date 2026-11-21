@@ -25,7 +25,9 @@ from py_identity_model.core.token_validation_logic import (
 from py_identity_model.core.validators import validate_token_config
 from py_identity_model.exceptions import (
     ConfigurationException,
-    TokenValidationException,
+    DiscoveryException,
+    JwksException,
+    JwksValidationError,
 )
 
 
@@ -50,7 +52,7 @@ class TestValidateDiscoResponse:
             is_successful=False,
             error="Discovery failed",
         )
-        with pytest.raises(TokenValidationException, match="Discovery failed"):
+        with pytest.raises(DiscoveryException, match="Discovery failed"):
             validate_disco_response(response)
 
     def test_validate_disco_response_no_error_message(self):
@@ -59,7 +61,7 @@ class TestValidateDiscoResponse:
             is_successful=False,
         )
         with pytest.raises(
-            TokenValidationException,
+            DiscoveryException,
             match="Discovery document request failed",
         ):
             validate_disco_response(response)
@@ -91,7 +93,7 @@ class TestValidateJwksResponse:
             is_successful=False,
             error="JWKS fetch failed",
         )
-        with pytest.raises(TokenValidationException, match="JWKS fetch failed"):
+        with pytest.raises(JwksException, match="JWKS fetch failed"):
             validate_jwks_response(response)
 
     def test_validate_jwks_response_no_error_message(self):
@@ -99,7 +101,7 @@ class TestValidateJwksResponse:
         response = JwksResponse(
             is_successful=False,
         )
-        with pytest.raises(TokenValidationException, match="JWKS request failed"):
+        with pytest.raises(JwksException, match="JWKS request failed"):
             validate_jwks_response(response)
 
     def test_validate_jwks_response_no_keys(self):
@@ -109,7 +111,7 @@ class TestValidateJwksResponse:
             keys=[],
         )
         with pytest.raises(
-            TokenValidationException,
+            JwksValidationError,
             match="No keys available in JWKS response",
         ):
             validate_jwks_response(response)
@@ -130,17 +132,26 @@ class TestValidateConfigForManualValidation:
         ):
             validate_config_for_manual_validation(config)
 
-    def test_validate_config_missing_algorithms(self):
-        """Test config validation with missing algorithms."""
+    def test_validate_config_none_algorithms_accepted(self):
+        """``algorithms=None`` means DEFAULT_ALLOWED_ALGORITHMS in manual mode too."""
         config = TokenValidationConfig(
             perform_disco=False,
             key={"kty": "RSA", "n": "test", "e": "AQAB"},
         )
-        with pytest.raises(
-            ConfigurationException,
-            match=r"TokenValidationConfig\.algorithms is required",
-        ):
+        validate_config_for_manual_validation(config)
+
+    def test_validate_config_empty_algorithms_rejected(self):
+        config = TokenValidationConfig(
+            perform_disco=False,
+            key={"kty": "RSA", "n": "test", "e": "AQAB"},
+            algorithms=[],
+        )
+        with pytest.raises(ConfigurationException) as exc_info:
             validate_config_for_manual_validation(config)
+        assert exc_info.value.message == (
+            "TokenValidationConfig.algorithms must not be empty; "
+            "None allows DEFAULT_ALLOWED_ALGORITHMS"
+        )
 
     def test_validate_config_valid(self):
         """Test config validation with valid config."""
@@ -184,7 +195,7 @@ class TestValidateTokenConfig:
         """S2: Infinite leeway must be rejected."""
         config = TokenValidationConfig(perform_disco=True, leeway=math.inf)
         with pytest.raises(
-            ConfigurationException, match="leeway must be a finite number"
+            ConfigurationException, match=r"^leeway must be a finite number$"
         ):
             validate_token_config(config)
 
@@ -192,7 +203,7 @@ class TestValidateTokenConfig:
         """S2: NaN leeway must be rejected."""
         config = TokenValidationConfig(perform_disco=True, leeway=math.nan)
         with pytest.raises(
-            ConfigurationException, match="leeway must be a finite number"
+            ConfigurationException, match=r"^leeway must be a finite number$"
         ):
             validate_token_config(config)
 
@@ -264,20 +275,17 @@ class TestDecodeWithConfig:
         )
         with pytest.raises(
             ConfigurationException,
-            match="Token validation configuration must have key and algorithms set",
+            match="Token validation configuration must have a key",
         ):
             decode_with_config("fake.jwt.token", config)
 
-    def test_decode_with_config_missing_algorithms(self):
-        """Test decode with missing algorithms."""
+    def test_decode_with_config_empty_algorithms(self):
         config = TokenValidationConfig(
             perform_disco=False,
             key={"kty": "RSA", "n": "test", "e": "AQAB"},
+            algorithms=[],
         )
-        with pytest.raises(
-            ConfigurationException,
-            match="Token validation configuration must have key and algorithms set",
-        ):
+        with pytest.raises(ConfigurationException, match="must not be empty"):
             decode_with_config("fake.jwt.token", config)
 
     def test_empty_string_issuer_not_replaced_by_config(self):

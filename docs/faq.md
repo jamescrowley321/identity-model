@@ -222,8 +222,15 @@ Yes, you can use py-identity-model in Lambda functions behind API Gateway to val
 
 ### Can I validate tokens from multiple issuers?
 
-Yes. `TokenValidationConfig` accepts a list of issuers via `issuer` /
-`allowed_issuers` — see [Token Validation](api/token-validation.md).
+Yes. Which setting depends on the mode:
+
+- Discovery mode, one provider that issues several issuer values: list them
+  in `token_issuers`.
+- Discovery mode, several providers: use one `TokenValidationConfig` per
+  provider, and `allowed_issuers` to pin which discovery documents you trust.
+- Manual mode (`perform_disco=False`): list them in `issuer`.
+
+See [Token Validation](api/token-validation.md#issuers).
 
 ## Development Questions
 

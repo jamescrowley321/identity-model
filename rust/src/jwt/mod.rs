@@ -3,7 +3,9 @@
 //! [`validate_token`] verifies a compact-serialized JWT against an
 //! already-resolved [`JsonWebKey`]; [`validate_token_with_jwks`] resolves the
 //! signing key from a [`JwksClient`] by the token's `kid` — forcing one JWKS
-//! refresh on a miss (JWKS-004) — before delegating to it. Both reject the
+//! refresh on a miss (JWKS-004), or narrowing the set to a single key when
+//! there is no `kid` (JWKS-009), never using a `use` `enc` key (JWKS-011) —
+//! before delegating to it. Both reject the
 //! unsecured `none` algorithm before any cryptographic work (JWT-003) and
 //! restrict acceptance to an asymmetric algorithm allowlist to defeat
 //! algorithm-confusion attacks. Behaviour is proven against the cross-language
@@ -36,6 +38,7 @@
 mod claims;
 mod claims_validation;
 mod id_token;
+mod key_strength;
 mod options;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,6 +61,8 @@ pub use id_token::{
     IdTokenValidationOptions, IdTokenValidationOptionsBuilder, validate_id_token,
     validate_id_token_claims,
 };
+use key_strength::check_key_strength;
+pub use key_strength::{MIN_EC_KEY_BITS, MIN_RSA_KEY_BITS};
 pub use options::{DEFAULT_ALLOWED_ALGORITHMS, ValidationOptions, ValidationOptionsBuilder};
 
 /// The subset of the JWS protected header inspected before any cryptographic
@@ -88,7 +93,9 @@ struct JoseHeader {
 ///
 /// [`IdentityError::Validation`] for a malformed token, a rejected/unsupported
 /// algorithm, a signature that does not verify, or a claim that fails its rule;
-/// [`IdentityError::Deserialization`] for a payload that is not a JSON object.
+/// [`IdentityError::WeakKey`] for an RSA key under 2048 bits or an EC key under
+/// 224 bits; [`IdentityError::Deserialization`] for a payload that is not a JSON
+/// object.
 pub fn validate_token(
     token: &str,
     key: &JsonWebKey,
@@ -98,6 +105,9 @@ pub fn validate_token(
     let header = parse_header(token)?;
     let alg = check_algorithm(&header, options)?;
 
+    // RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies
+    // (JWT-014).
+    check_key_strength(key)?;
     let decoding_key = decoding_key_for(key)?;
 
     // Disable jsonwebtoken's built-in claim checks: we verify only the signature
@@ -137,15 +147,23 @@ pub fn validate_token(
 ///
 /// The `none` algorithm is rejected and the header `alg` is checked against the
 /// allowlist before the key is resolved, so a `none`/disallowed token never
-/// triggers a JWKS fetch. Key resolution forces one JWKS refresh and retries if
-/// the `kid` is not cached (JWKS-004), supporting key rotation, before delegating
-/// to [`validate_token`].
+/// triggers a JWKS fetch. Only signing keys (`use` `sig` or absent, RFC 7517
+/// §4.2) verify; a `use` `enc` key never does (JWKS-011). Key resolution forces
+/// one JWKS refresh and retries if no cached signing key has the `kid`
+/// (JWKS-004), supporting key rotation, before delegating to
+/// [`validate_token`]. A token with no `kid` is verified by the single signing
+/// key left after narrowing by `alg` and `kty`, with no refresh (JWKS-009, see
+/// [`JwksClient::resolve_signing_key`]).
 ///
 /// # Errors
 ///
-/// [`IdentityError::KeyNotFound`] when no key matches the token's `kid` even
-/// after a refresh; otherwise the errors of [`validate_token`] and
-/// [`JwksClient::resolve_key`].
+/// [`IdentityError::KeyNotFound`] when no signing key matches the token's `kid`
+/// even after a refresh, or the token has no `kid` and the set holds no signing
+/// key; [`IdentityError::AmbiguousKey`] when the token has no `kid`
+/// and more than one key could verify it; [`IdentityError::KeyAlgorithmMismatch`]
+/// when the resolved key declares an `alg` other than the token's (JWKS-010);
+/// otherwise the errors of
+/// [`validate_token`] and [`JwksClient::resolve_signing_key`].
 pub async fn validate_token_with_jwks(
     token: &str,
     jwks: &JwksClient,
@@ -158,9 +176,14 @@ pub async fn validate_token_with_jwks(
     // untrusted `none`/disallowed token cannot drive an outbound JWKS fetch.
     check_algorithm(&header, options)?;
 
-    // JWT-001/010: resolve the verification key by kid, forcing one JWKS refresh
-    // and retry if the kid is not cached (RFC 7517 §4.5).
-    let key = jwks.resolve_key(jwks_uri, &header.kid).await?;
+    // JWT-001/010: resolve the verification key among the signing keys (a
+    // `use` `enc` key never verifies, RFC 7517 §4.2) by kid, forcing one JWKS
+    // refresh and retry if no cached signing key has the kid (RFC 7517 §4.5).
+    // With no kid, the single signing key left after narrowing by alg and kty
+    // is used, with no refresh; more than one is `AmbiguousKey` (JWKS-009).
+    let key = jwks
+        .resolve_signing_key(jwks_uri, &header.kid, &header.alg)
+        .await?;
     validate_token(token, &key, options)
 }
 
@@ -245,6 +268,7 @@ fn algorithm_from_str(alg: &str) -> Result<Algorithm> {
         "PS512" => Algorithm::PS512,
         "ES256" => Algorithm::ES256,
         "ES384" => Algorithm::ES384,
+        "EdDSA" => Algorithm::EdDSA,
         _ => {
             return Err(IdentityError::Validation(format!(
                 "unsupported or disallowed algorithm {alg:?}"
@@ -263,6 +287,13 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
             .map_err(|e| IdentityError::Validation(format!("convert RSA key {:?}: {e}", key.kid))),
         "EC" => DecodingKey::from_ec_components(&key.x, &key.y)
             .map_err(|e| IdentityError::Validation(format!("convert EC key {:?}: {e}", key.kid))),
+        // jsonwebtoken's EdDSA verifier is Ed25519 only (RFC 8037 §2).
+        "OKP" if key.crv == "Ed25519" => DecodingKey::from_ed_components(&key.x)
+            .map_err(|e| IdentityError::Validation(format!("convert OKP key {:?}: {e}", key.kid))),
+        "OKP" => Err(IdentityError::Validation(format!(
+            "convert OKP key {:?}: unsupported curve {:?}",
+            key.kid, key.crv
+        ))),
         other => Err(IdentityError::Validation(format!(
             "unsupported key type {other:?}"
         ))),
@@ -460,34 +491,360 @@ mod tests {
         validate_token(&token, &public_key(), &opts).expect("within skew passes");
     }
 
-    // OIDC Core §3.1.3.7 end-to-end: a multi-audience token missing azp is
-    // rejected after a successful signature verification, and the same token
-    // with the correct azp validates.
+    // End-to-end through signature verification: base `validate_token` checks
+    // the expected audience and ignores azp, so an access token issued to a
+    // resource server on behalf of a SPA validates. azp is enforced only by the
+    // ID-token profile (OIDC Core 1.0 §3.1.3.7 steps 4-6), matching Python and Go.
     #[test]
-    fn enforces_azp_for_multi_audience_end_to_end() {
+    fn validate_token_ignores_azp_on_access_token() {
         let n = now();
         let opts = ValidationOptions::builder()
             .issuer(TEST_ISSUER)
-            .audience(TEST_AUDIENCE)
+            .audience("api")
             .build();
 
-        let no_azp = mint(json!({
+        let token = mint(json!({
             "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
+            "sub": "user-1",
+            "aud": ["api", "https://idp.example/userinfo"],
+            "azp": "spa-client",
             "exp": n + 3600,
             "iat": n - 5,
         }));
-        let err = validate_token(&no_azp, &public_key(), &opts)
-            .expect_err("multi-aud without azp rejected");
-        assert!(err.to_string().contains("azp"), "{err}");
+        let validated = validate_token(&token, &public_key(), &opts)
+            .expect("access token with foreign azp validates");
+        assert_eq!(validated.authorized_party.as_deref(), Some("spa-client"));
+        assert_eq!(validated.subject.as_deref(), Some("user-1"));
+    }
 
-        let with_azp = mint(json!({
-            "iss": TEST_ISSUER,
-            "aud": [TEST_AUDIENCE, "other-rp"],
-            "azp": TEST_AUDIENCE,
-            "exp": n + 3600,
-            "iat": n - 5,
-        }));
-        validate_token(&with_azp, &public_key(), &opts).expect("multi-aud with correct azp passes");
+    /// Mints an RS256 token with no `kid` header carrying `claims`.
+    fn mint_without_kid(claims: Value) -> String {
+        let header = Header::new(Algorithm::RS256);
+        jsonwebtoken::encode(&header, &claims, &signing_key()).expect("sign token")
+    }
+
+    /// Serves `keys` (merged into a JWK Set) at `/jwks` and returns the server
+    /// and its `jwks_uri`.
+    async fn serve_jwks(keys: Vec<Value>) -> (wiremock::MockServer, String) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": keys })))
+            .mount(&server)
+            .await;
+        let uri = format!("{}/jwks", server.uri());
+        (server, uri)
+    }
+
+    fn fixture_jwk() -> Value {
+        let set: Value = serde_json::from_slice(&read_fixture("jwks.json")).expect("jwks fixture");
+        set["keys"][0].clone()
+    }
+
+    fn kidless_claims() -> Value {
+        let n = now();
+        json!({ "iss": TEST_ISSUER, "sub": "user-1", "aud": TEST_AUDIENCE, "exp": n + 3600, "iat": n - 5 })
+    }
+
+    // JWKS-009: a token with no kid verifies against the single key in the set,
+    // which has a kid of its own, with no forced refresh.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_uses_single_key() {
+        let (server, uri) = serve_jwks(vec![fixture_jwk()]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        let claims =
+            validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+                .await
+                .expect("kid-less token verifies");
+
+        assert_eq!(claims.subject.as_deref(), Some("user-1"));
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no forced refresh"
+        );
+    }
+
+    // JWKS-009: with no kid, an RS256 token is verified by the RSA key of an
+    // {EC, RSA} set rather than the first key.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_narrows_by_kty() {
+        let ec = json!({"kty":"EC","kid":"ec-sig-key","use":"sig","crv":"P-256",
+            "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+            "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"});
+        let (_server, uri) = serve_jwks(vec![ec, fixture_jwk()]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+            .await
+            .expect("RSA key selected");
+    }
+
+    // JWKS-009: with no kid and two RSA signing keys the key is ambiguous, a
+    // typed error distinct from KeyNotFound, with no forced refresh.
+    #[tokio::test]
+    async fn validate_with_jwks_without_kid_ambiguous() {
+        let mut other = fixture_jwk();
+        other["kid"] = json!("other-key");
+        let (server, uri) = serve_jwks(vec![fixture_jwk(), other]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        let err =
+            validate_token_with_jwks(&mint_without_kid(kidless_claims()), &client, &uri, &opts)
+                .await
+                .expect_err("ambiguous");
+
+        assert!(
+            matches!(&err, IdentityError::AmbiguousKey { count: 2, .. }),
+            "expected AmbiguousKey, got {err:?}"
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no forced refresh"
+        );
+    }
+
+    // JWKS-010: a correctly signed RS256 token is rejected when the key that
+    // verifies it declares RS384, whether the token names it by kid or not.
+    #[tokio::test]
+    async fn validate_with_jwks_rejects_key_declaring_other_alg() {
+        let mut rs384 = fixture_jwk();
+        rs384["alg"] = json!("RS384");
+        let (_server, uri) = serve_jwks(vec![rs384]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        for token in [mint(kidless_claims()), mint_without_kid(kidless_claims())] {
+            let err = validate_token_with_jwks(&token, &client, &uri, &opts)
+                .await
+                .expect_err("key declares RS384");
+            assert!(
+                matches!(&err, IdentityError::KeyAlgorithmMismatch { key_alg, alg, .. }
+                    if key_alg == "RS384" && alg == "RS256"),
+                "expected KeyAlgorithmMismatch, got {err:?}"
+            );
+        }
+    }
+
+    /// The fixture JWK with `kid`, from the shared validation JWKS.
+    fn fixture_key(kid: &str) -> JsonWebKey {
+        let set = JsonWebKeySet::parse(&read_fixture("jwks.json")).expect("parse jwks fixture");
+        set.resolve_key(kid).expect("fixture key").clone()
+    }
+
+    // #952: the default allowlist gains EdDSA (ES512 stays out: jsonwebtoken
+    // has no P-521).
+    #[test]
+    fn default_allowlist_includes_eddsa() {
+        assert_eq!(
+            DEFAULT_ALLOWED_ALGORITHMS,
+            &[
+                "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA"
+            ]
+        );
+    }
+
+    // JWT-015: an Ed25519 token verifies under the default allowlist.
+    #[test]
+    fn accepts_eddsa_token_under_default_allowlist() {
+        let key = EncodingKey::from_ed_der(&read_fixture("ed25519-signing-key.pkcs8.der"));
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.kid = Some("ed25519-key-1".to_string());
+        let n = now();
+        let claims = json!({ "iss": TEST_ISSUER, "sub": "ed-user", "exp": n + 3600, "iat": n });
+        let token = jsonwebtoken::encode(&header, &claims, &key).expect("sign EdDSA");
+
+        let validated = validate_token(
+            &token,
+            &fixture_key("ed25519-key-1"),
+            &ValidationOptions::new(),
+        )
+        .expect("valid EdDSA token");
+        assert_eq!(validated.subject.as_deref(), Some("ed-user"));
+    }
+
+    // An OKP key on a curve jsonwebtoken can't verify (Ed448) is a key
+    // conversion error, not a silent Ed25519 verification.
+    #[test]
+    fn rejects_okp_key_on_unsupported_curve() {
+        let mut key = fixture_key("ed25519-key-1");
+        key.crv = "Ed448".to_string();
+        let err = decoding_key_for(&key).expect_err("Ed448 unsupported");
+        assert!(err.to_string().contains("convert OKP key"), "{err}");
+    }
+
+    // JWT-014: a token whose key is below the strength floor fails with the
+    // typed WeakKey error.
+    #[test]
+    fn rejects_weak_keys() {
+        for (fixture, kid, kty, bits, min_bits) in [
+            (
+                "weak-rsa-1024-token.txt",
+                "weak-rsa-1024",
+                "RSA",
+                1024,
+                MIN_RSA_KEY_BITS,
+            ),
+            (
+                "weak-ec-p192-token.txt",
+                "weak-ec-p192",
+                "EC",
+                192,
+                MIN_EC_KEY_BITS,
+            ),
+        ] {
+            let token = String::from_utf8(read_fixture(fixture)).expect("utf8 token");
+            let err = validate_token(token.trim(), &fixture_key(kid), &ValidationOptions::new())
+                .expect_err("weak key rejected");
+            assert!(
+                matches!(&err, IdentityError::WeakKey { kid: k, kty: t, bits: b, min_bits: m }
+                    if k == kid && t == kty && *b == bits && *m == min_bits),
+                "{fixture}: expected WeakKey, got {err:?}"
+            );
+        }
+    }
+
+    // JWT-014: a weak key resolved through a JWKS client is a typed WeakKey,
+    // not a kid miss: the set is fetched once and not refreshed.
+    #[tokio::test]
+    async fn validate_with_jwks_rejects_weak_key_without_refresh() {
+        let set: Value = serde_json::from_slice(&read_fixture("jwks.json")).expect("jwks fixture");
+        let keys = set["keys"].as_array().expect("keys array").clone();
+        for (fixture, kid, kty) in [
+            ("weak-rsa-1024-token.txt", "weak-rsa-1024", "RSA"),
+            ("weak-ec-p192-token.txt", "weak-ec-p192", "EC"),
+        ] {
+            let (server, uri) = serve_jwks(keys.clone()).await;
+            let client = JwksClient::builder().allow_http(true).build();
+            let token = String::from_utf8(read_fixture(fixture)).expect("utf8 token");
+
+            let err = validate_token_with_jwks(&token, &client, &uri, &ValidationOptions::new())
+                .await
+                .expect_err("weak key rejected");
+
+            assert!(
+                matches!(&err, IdentityError::WeakKey { kid: k, kty: t, .. } if k == kid && t == kty),
+                "{fixture}: expected WeakKey, got {err:?}"
+            );
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                1,
+                "{fixture}: a weak key is not a kid miss"
+            );
+        }
+    }
+
+    // A padded spelling of a weak modulus never verifies: the floor and key
+    // conversion share one strict base64url decoding (CWE-326).
+    #[test]
+    fn padded_weak_modulus_never_verifies() {
+        let mut key = fixture_key("weak-rsa-1024");
+        key.n.push('=');
+        let token = String::from_utf8(read_fixture("weak-rsa-1024-token.txt")).expect("utf8 token");
+
+        let err = validate_token(token.trim(), &key, &ValidationOptions::new())
+            .expect_err("padded weak modulus rejected");
+
+        assert!(
+            matches!(
+                err,
+                IdentityError::Validation(_) | IdentityError::WeakKey { .. }
+            ),
+            "{err:?}"
+        );
+    }
+
+    // Empty key material isn't a weak key: it is left to key conversion, as in
+    // Python and Go.
+    #[test]
+    fn empty_key_material_is_not_a_weak_key() {
+        let token = String::from_utf8(read_fixture("weak-rsa-1024-token.txt")).expect("utf8 token");
+        let mut key = fixture_key("weak-rsa-1024");
+        key.n.clear();
+        assert!(check_key_strength(&key).is_ok());
+        let err = validate_token(token.trim(), &key, &ValidationOptions::new())
+            .expect_err("empty modulus rejected");
+        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+
+        let mut key = fixture_key("weak-ec-p192");
+        key.x.clear();
+        assert!(check_key_strength(&key).is_ok());
+    }
+
+    #[test]
+    fn minimum_key_bits_match_the_specs() {
+        assert_eq!((MIN_RSA_KEY_BITS, MIN_EC_KEY_BITS), (2048, 224));
+    }
+
+    /// A key of `kty` whose `n` (RSA) or `x`/`y` (EC) is `material`.
+    fn sized_key(kty: &str, material: &[u8]) -> JsonWebKey {
+        let encoded = URL_SAFE_NO_PAD.encode(material);
+        let fields = match kty {
+            "RSA" => json!({ "kty": "RSA", "kid": "k", "n": encoded, "e": "AQAB" }),
+            "EC" => json!({ "kty": "EC", "kid": "k", "crv": "P-x", "x": encoded, "y": encoded }),
+            other => json!({ "kty": other, "kid": "k", "crv": "Ed25519", "x": encoded }),
+        };
+        serde_json::from_value(fields).expect("jwk")
+    }
+
+    /// A big-endian modulus of exactly `bits` bits, left-padded to `size` octets.
+    fn modulus(bits: usize, size: usize) -> Vec<u8> {
+        let mut n = vec![0u8; size];
+        let top = size - bits.div_ceil(8);
+        n[top] = 1 << ((bits - 1) % 8);
+        n
+    }
+
+    #[test]
+    fn key_strength_measures_rsa_modulus_and_ec_coordinate() {
+        // Octet counts don't decide RSA: a leading zero octet is ignored, and a
+        // 2047-bit modulus in 256 octets is weak.
+        assert!(check_key_strength(&sized_key("RSA", &modulus(2048, 256))).is_ok());
+        assert!(check_key_strength(&sized_key("RSA", &modulus(2048, 257))).is_ok());
+        let err = check_key_strength(&sized_key("RSA", &modulus(2047, 256))).expect_err("weak");
+        assert!(
+            matches!(
+                err,
+                IdentityError::WeakKey {
+                    bits: 2047,
+                    min_bits: MIN_RSA_KEY_BITS,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        let err = check_key_strength(&sized_key("RSA", &modulus(2047, 257))).expect_err("weak");
+        assert!(
+            matches!(err, IdentityError::WeakKey { bits: 2047, .. }),
+            "leading zero octets don't count: {err:?}"
+        );
+
+        assert!(check_key_strength(&sized_key("EC", &[1u8; 28])).is_ok());
+        assert!(check_key_strength(&sized_key("EC", &[1u8; 66])).is_ok());
+        let err = check_key_strength(&sized_key("EC", &[1u8; 24])).expect_err("weak");
+        assert!(
+            matches!(
+                err,
+                IdentityError::WeakKey {
+                    bits: 192,
+                    min_bits: MIN_EC_KEY_BITS,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+
+        // OKP is fixed-size; material that doesn't decode is left to conversion.
+        assert!(check_key_strength(&sized_key("OKP", &[1u8; 1])).is_ok());
+        let mut undecodable = sized_key("RSA", &[1u8; 8]);
+        undecodable.n = "!!".to_string();
+        assert!(check_key_strength(&undecodable).is_ok());
     }
 }

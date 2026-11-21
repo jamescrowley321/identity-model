@@ -15,6 +15,7 @@ import pytest
 
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import validate_token
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import PyIdentityModelException
 
@@ -50,6 +51,11 @@ def _validation_config() -> TokenValidationConfig:
 
 
 async def _validate(mock: MockOP, token: str) -> dict:
+    """Validate *token* as a cold resource server: a fresh client and cache.
+
+    A fresh cache per call means no discovery/JWKS entry or kid-miss cooldown
+    carries over between calls (or from the process default cache).
+    """
     client = _client(mock)
     try:
         return await validate_token(
@@ -57,6 +63,7 @@ async def _validate(mock: MockOP, token: str) -> dict:
             _validation_config(),
             disco_doc_address=mock.discovery_url,
             http_client=client,
+            cache=AsyncValidationCache(),
         )
     finally:
         await client.close()
@@ -123,6 +130,7 @@ async def test_valid_token_validates_end_to_end() -> None:
         "unknown_kid",
         "wrong_alg",
         "alg_none",
+        "cnf_bound",
     ],
 )
 async def test_forged_tokens_are_rejected(name: str) -> None:
@@ -133,7 +141,7 @@ async def test_forged_tokens_are_rejected(name: str) -> None:
         await _validate(mock, forged.jwt)
 
 
-@pytest.mark.parametrize("name", ["id_as_access", "cnf_bound", "oversized"])
+@pytest.mark.parametrize("name", ["id_as_access", "oversized"])
 async def test_library_accepted_classes_are_signature_valid(name: str) -> None:
     # These are validly signed for the audience — the library ACCEPTS them.
     # Only the RS access-token marker / require_scope layer (F-07/F-02) rejects

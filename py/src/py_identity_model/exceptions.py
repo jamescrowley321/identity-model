@@ -7,6 +7,13 @@ that can occur during OAuth 2.0 and OpenID Connect operations.
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from .core.client_auth_method import ClientAuthMethod
+
 
 class PyIdentityModelException(Exception):
     """Base exception for all py-identity-model errors."""
@@ -78,6 +85,79 @@ class InvalidIssuerException(TokenValidationException):
         super().__init__(message, token_part="payload", details=details)
 
 
+class KeyNotFoundException(TokenValidationException):
+    """Raised when no signing key in the JWK Set can verify a token.
+
+    Only keys whose ``use`` is absent or ``sig`` are signing keys
+    (RFC 7517 §4.2); a ``use: enc`` key is never used to verify a signature.
+    Raised for a ``kid`` that names no signing key, after the forced JWKS
+    refresh a kid miss triggers, and for a token with no ``kid`` when the set
+    holds no signing key. ``details["kid"]`` is the header ``kid`` (``None``
+    when absent) and ``details["available_kids"]`` the signing keys' ids.
+    """
+
+    def __init__(self, message: str, kid: str | None, available_kids: list):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"kid": kid, "available_kids": available_kids},
+        )
+
+
+class AmbiguousKeyException(TokenValidationException):
+    """Raised when a token with no ``kid`` matches more than one JWK.
+
+    With no ``kid`` in the JOSE header, only signing keys (``use`` absent or
+    ``sig``, RFC 7517 §4.2) are candidates; they are narrowed to keys whose
+    ``alg`` is absent or equals the header ``alg`` (§4.4) and whose ``kty``
+    matches it, each of those two steps applied only when it leaves a key.
+    More than one key left means the verification key cannot be chosen. This
+    is distinct from :class:`KeyNotFoundException`, raised when no signing
+    key matches.
+    ``details["available_kids"]`` lists the remaining keys' ids and
+    ``details["key_count"]`` their number.
+    """
+
+    def __init__(self, message: str, available_kids: list, key_count: int):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"available_kids": available_kids, "key_count": key_count},
+        )
+
+
+class KeyAlgorithmMismatchException(TokenValidationException):
+    """Raised when the key chosen to verify a token declares another ``alg``.
+
+    A JWK that declares ``alg`` is meant for that algorithm only
+    (RFC 7517 §4.4), so a token whose header ``alg`` differs is not verified
+    with it, whether the key was found by ``kid`` or selected without one.
+    ``details`` carries the key's ``kid`` and ``key_alg`` and the token's
+    ``jwt_alg``.
+    """
+
+
+class WeakKeyException(TokenValidationException):
+    """Raised when the key chosen to verify a token is below the strength floor.
+
+    An RSA key needs a modulus of at least 2048 bits (RFC 7518 §3.3, §3.5) and
+    an EC key a coordinate of at least 224 bits (FAPI 2.0 Security Profile
+    §5.4.1). OKP keys have a fixed size and no floor. The key is not skipped:
+    choosing it and finding it too weak fails validation, with no JWK Set
+    refresh. ``details`` holds the key's ``kid`` (``None`` when absent),
+    ``kty``, its size in ``bits`` and the ``min_bits`` it needed.
+    """
+
+    def __init__(
+        self, message: str, kid: str | None, kty: str, bits: int, min_bits: int
+    ):
+        super().__init__(
+            message,
+            token_part="header",
+            details={"kid": kid, "kty": kty, "bits": bits, "min_bits": min_bits},
+        )
+
+
 class LogoutTokenValidationException(TokenValidationException):
     """Raised when Back-Channel Logout token validation fails.
 
@@ -91,7 +171,7 @@ class IdTokenValidationException(TokenValidationException):
     """Raised when OpenID Connect ID Token profile validation fails.
 
     Covers the ID-Token-specific rules from OpenID Connect Core 1.0 §3.1.3.7
-    and §3.3.2.11 (required ``sub``, the ``azp`` authorized-party rules,
+    and §3.3.2.11 (required ``sub``, the opt-in ``azp`` authorized-party rules,
     ``nonce`` binding, ``auth_time``/``max_age`` freshness, and the
     ``at_hash``/``c_hash`` token/code binding) that sit on top of standard JWT
     validation.
@@ -102,6 +182,59 @@ class IdTokenValidationException(TokenValidationException):
     callers using the idiomatic ``except TokenValidationException`` fail
     **closed** on it. As a sibling it would escape that handler and fail open.
     """
+
+
+class UntrustedAudienceException(IdTokenValidationException):
+    """Raised when an ID Token carries an audience the client does not trust.
+
+    OpenID Connect Core 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if
+    it contains additional audiences not trusted by the Client. The trusted
+    set is the client's ``client_id`` plus any caller-supplied
+    ``trusted_audiences``. ``details["untrusted_audiences"]`` lists the
+    rejected values.
+    """
+
+    def __init__(self, message: str, untrusted_audiences: list):
+        super().__init__(
+            message,
+            token_part="payload",
+            details={"untrusted_audiences": untrusted_audiences},
+        )
+
+
+class IdTokenRequiredClaim(Enum):
+    """An ID Token claim OpenID Connect Core 1.0 §2 marks REQUIRED and that
+    standard JWT validation does not itself require."""
+
+    EXP = "exp"
+    """Expiration time (§2; checked in §3.1.3.7 step 9)."""
+    IAT = "iat"
+    """Issued-at time (§2)."""
+
+
+class IdTokenMissingClaimError(IdTokenValidationException):
+    """Raised when an ID Token lacks a claim OpenID Connect Core 1.0 §2 marks
+    REQUIRED. ``claim`` says which one; ``details["claim"]`` carries its name.
+    """
+
+    def __init__(self, claim: IdTokenRequiredClaim) -> None:
+        self.claim = claim
+        super().__init__(
+            f"ID token missing required '{claim.value}' claim",
+            token_part="payload",
+            details={"claim": claim.value},
+        )
+
+
+class IdTokenNonceError(IdTokenValidationException):
+    """Raised when an ID Token's ``nonce`` is not the one the client sent.
+
+    OpenID Connect Core 1.0 §2 and §3.1.3.7 step 11: the claim is absent or
+    differs from the nonce sent, or is present when none was sent.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, token_part="payload")
 
 
 class LogoutStateValidationException(ValidationException):
@@ -135,13 +268,53 @@ class JarmValidationException(AuthorizeCallbackException):
     """
 
 
+class CertificateBindingErrorKind(Enum):
+    """Why a certificate-bound access token was rejected (RFC 8705 §3)."""
+
+    NOT_BOUND = "not_bound"
+    """The token has no ``cnf`` claim with a string ``x5t#S256`` thumbprint,
+    but a certificate binding was required or checked."""
+    INVALID_THUMBPRINT = "invalid_thumbprint"
+    """``cnf["x5t#S256"]`` is not a base64url thumbprint (non-ASCII)."""
+    MISMATCH = "mismatch"
+    """``cnf["x5t#S256"]`` does not match the presented client certificate."""
+    CERTIFICATE_REQUIRED = "certificate_required"
+    """No client certificate was presented, but the token is certificate-bound
+    or ``required_binding`` is ``mtls``."""
+    INVALID_CERTIFICATE = "invalid_certificate"
+    """The presented client certificate is not valid PEM or DER X.509."""
+
+
+_CERTIFICATE_BINDING_MESSAGES = {
+    CertificateBindingErrorKind.NOT_BOUND: (
+        "Access token is not certificate-bound: no 'cnf' claim with an "
+        "'x5t#S256' thumbprint (RFC 8705 §3.1)"
+    ),
+    CertificateBindingErrorKind.INVALID_THUMBPRINT: (
+        "Access token 'cnf[x5t#S256]' is not a valid base64url thumbprint "
+        "(RFC 8705 §3.1)"
+    ),
+    CertificateBindingErrorKind.MISMATCH: (
+        "Certificate binding mismatch: token 'cnf[x5t#S256]' does not match the "
+        "presented client certificate (RFC 8705 §3)"
+    ),
+    CertificateBindingErrorKind.CERTIFICATE_REQUIRED: (
+        "No client certificate was presented for a certificate-bound access "
+        "token or required_binding=mtls (RFC 8705 §3)"
+    ),
+    CertificateBindingErrorKind.INVALID_CERTIFICATE: (
+        "Client certificate is not valid PEM or DER X.509 content (RFC 8705 §3)"
+    ),
+}
+
+
 class CertificateBindingError(TokenValidationException):
     """Raised when mTLS certificate-bound access token validation fails.
 
     Covers the RFC 8705 §3 confirmation-method check: the token's
     ``cnf["x5t#S256"]`` thumbprint must match the client certificate
-    presented at the TLS layer. Absent ``cnf``/``x5t#S256`` or a thumbprint
-    mismatch raises this error.
+    presented at the TLS layer. ``kind`` says which rule failed; the message
+    is fixed per kind.
 
     Subclasses ``TokenValidationException`` (not ``ValidationException``
     directly): a certificate-binding failure is a token-validation failure,
@@ -150,8 +323,13 @@ class CertificateBindingError(TokenValidationException):
     fail open — the exact replay it is meant to stop.
     """
 
-    def __init__(self, message: str, details: dict | None = None):
-        super().__init__(message, token_part="payload", details=details)
+    def __init__(self, kind: CertificateBindingErrorKind) -> None:
+        self.kind = kind
+        super().__init__(
+            _CERTIFICATE_BINDING_MESSAGES[kind],
+            token_part="payload",
+            details={"kind": kind.value},
+        )
 
 
 class NetworkException(PyIdentityModelException):
@@ -179,14 +357,29 @@ class NetworkException(PyIdentityModelException):
 
 
 class DiscoveryException(NetworkException):
-    """Raised when discovery document cannot be fetched or parsed."""
+    """Raised when the discovery document cannot be fetched.
+
+    A transport failure, a non-success HTTP status (``status_code``) or an
+    unclassified failure during the fetch: the provider is unavailable, so
+    retrying later may succeed. A document that was fetched but is invalid
+    raises :class:`DiscoveryValidationError` instead.
+    """
 
 
-class DiscoveryParseError(DiscoveryException):
-    """The discovery response could not be decoded as JSON."""
+class DiscoveryValidationError(ValidationException):
+    """Raised when a fetched discovery document fails validation.
+
+    The document is wrong, not unavailable: retrying returns the same
+    document. A ``ValidationException``, never a ``NetworkException``, so a
+    retry policy keyed on ``NetworkException`` does not retry it.
+    """
 
 
-class DiscoveryMissingFieldsError(DiscoveryException):
+class DiscoveryParseError(DiscoveryValidationError):
+    """The discovery response could not be decoded as a JSON object."""
+
+
+class DiscoveryMissingFieldsError(DiscoveryValidationError):
     """Discovery validation rejected these missing fields."""
 
     def __init__(self, message: str, fields: tuple[str, ...]) -> None:
@@ -194,8 +387,33 @@ class DiscoveryMissingFieldsError(DiscoveryException):
         self.fields = fields
 
 
+class DiscoveryIssuerMismatchError(DiscoveryValidationError):
+    """The document's issuer differs from the requested issuer."""
+
+    def __init__(self, requested: str, returned: str) -> None:
+        super().__init__(
+            f"Discovery document issuer {returned!r} does not match "
+            f"the requested issuer {requested!r}"
+        )
+        self.requested = requested
+        self.returned = returned
+
+
 class JwksException(NetworkException):
-    """Raised when JWKS cannot be fetched or parsed."""
+    """Raised when the JWK Set cannot be fetched.
+
+    A transport failure, a non-success HTTP status (``status_code``) or an
+    unclassified failure during the fetch. A JWK Set that was fetched but is
+    unusable raises :class:`JwksValidationError` instead.
+    """
+
+
+class JwksValidationError(ValidationException):
+    """Raised when a fetched JWK Set is unusable.
+
+    Too large, the wrong content type, not JSON, or with no usable key. A
+    ``ValidationException``, never a ``NetworkException``.
+    """
 
 
 class TokenRequestException(NetworkException):
@@ -212,6 +430,264 @@ class ConfigurationException(PyIdentityModelException):
 
 class DiscoveryHTTPSRequiredError(ConfigurationException):
     """A discovery URL violates the HTTPS requirement."""
+
+
+class DPoPReplayCacheError(ConfigurationException):
+    """A DPoP replay cache cannot be used as configured.
+
+    An async cache on a sync path, or a cache whose ``check_and_store`` does
+    not return a ``DPoPReplayCheck``. A server fault, not a token defect.
+    """
+
+
+class AzpRequiresClientIdError(ConfigurationException):
+    """``validate_azp`` was enabled without a ``client_id`` to compare against.
+
+    OIDC Core 1.0 §3.1.3.7 step 5 compares a present ``azp`` with the
+    client's own ``client_id``; with none configured the check cannot run as
+    asked, so it is a caller misconfiguration rather than a token defect.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "validate_azp requires a client_id (the token validation audience) "
+            "to compare 'azp' against"
+        )
+
+
+class ClientAuthMethodErrorReason(Enum):
+    """Why a client authentication choice is invalid."""
+
+    MISSING_CREDENTIAL = "missing_credential"
+    """The chosen method's credential is not set on the request."""
+
+    MTLS_METHOD_MISMATCH = "mtls_method_mismatch"
+    """The chosen mTLS method differs from the request's ``mtls.auth_method``."""
+
+    NOT_AN_MTLS_METHOD = "not_an_mtls_method"
+    """``MtlsClientAuth.auth_method`` is not an RFC 8705 §2 method."""
+
+    NOT_A_CLIENT_AUTH_METHOD = "not_a_client_auth_method"
+    """The value is not a :class:`ClientAuthMethod` member (for example the
+    string ``"tls_client_auth"``); ``method`` holds the value passed."""
+
+
+class ClientAuthMethodError(ConfigurationException):
+    """A client authentication method can't be applied as configured.
+
+    Raised before any request is sent, so a misconfigured client never falls
+    back to a different method than the one it asked for.
+
+    Attributes:
+        reason: Which rule was broken.
+        method: The method involved.
+        credential: The request field that is missing or conflicting
+            (``client_secret``, ``private_key_jwt`` or ``mtls``), if any.
+    """
+
+    def __init__(
+        self,
+        reason: ClientAuthMethodErrorReason,
+        method: ClientAuthMethod | object,
+        credential: str | None = None,
+    ) -> None:
+        self.reason = reason
+        self.method = method
+        self.credential = credential
+        name = getattr(method, "value", method)
+        messages = {
+            ClientAuthMethodErrorReason.MISSING_CREDENTIAL: (
+                f"client_auth_method {name!r} requires {credential}"
+            ),
+            ClientAuthMethodErrorReason.MTLS_METHOD_MISMATCH: (
+                f"client_auth_method {name!r} does not match mtls.auth_method"
+            ),
+            ClientAuthMethodErrorReason.NOT_AN_MTLS_METHOD: (
+                f"{name!r} is not an mTLS client authentication method "
+                "(use tls_client_auth or self_signed_tls_client_auth)"
+            ),
+            ClientAuthMethodErrorReason.NOT_A_CLIENT_AUTH_METHOD: (
+                f"auth_method must be a ClientAuthMethod, got {method!r} "
+                f"({type(method).__name__})"
+            ),
+        }
+        super().__init__(messages[reason])
+
+
+class InvalidArgumentKind(Enum):
+    """Why an argument was refused, set on :attr:`InvalidArgumentError.kind`."""
+
+    MISSING = "missing"
+    """A required argument is absent or empty."""
+    INVALID_TYPE = "invalid_type"
+    """The argument has the wrong type."""
+    INVALID_VALUE = "invalid_value"
+    """The argument is out of range or malformed."""
+    CONFLICT = "conflict"
+    """The argument cannot be combined with another one that was given."""
+
+
+class InvalidArgumentError(ConfigurationException):
+    """An argument to a library function or options class is invalid.
+
+    Raised before any request is sent or token is checked: it is a
+    programming error, not a protocol outcome.
+
+    Attributes:
+        argument: The parameter that was refused.
+        kind: Why it was refused.
+    """
+
+    def __init__(self, argument: str, kind: InvalidArgumentKind, message: str) -> None:
+        super().__init__(message)
+        self.argument = argument
+        self.kind = kind
+
+
+class DPoPKeyErrorKind(Enum):
+    """Why a DPoP key could not be used, set on :attr:`DPoPKeyError.kind`."""
+
+    UNSUPPORTED_ALGORITHM = "unsupported_algorithm"
+    """The algorithm is not a :class:`DPoPAlgorithm`."""
+    ALGORITHM_REQUIRED = "algorithm_required"
+    """A JWK has no ``alg`` and no algorithm was passed."""
+    UNSUPPORTED_KEY_TYPE = "unsupported_key_type"
+    """The JWK ``kty`` is not ``EC``, ``OKP`` or ``RSA``."""
+    INVALID_KEY = "invalid_key"
+    """The PEM or JWK could not be loaded as a private key."""
+    KEY_ALGORITHM_MISMATCH = "key_algorithm_mismatch"
+    """The key cannot sign with the algorithm (wrong type, curve or size)."""
+    UNSUPPORTED_CURVE = "unsupported_curve"
+    """The EC key's curve has no JWK name."""
+    MISSING_THUMBPRINT_MEMBERS = "missing_thumbprint_members"
+    """A JWK lacks a string member the RFC 7638 thumbprint needs."""
+
+
+class DPoPKeyError(ConfigurationException):
+    """A DPoP key cannot be loaded, used or thumbprinted.
+
+    Attributes:
+        kind: Why the key was refused.
+    """
+
+    def __init__(self, kind: DPoPKeyErrorKind, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+class WeakSigningKeyError(ConfigurationException):
+    """A key the library was asked to sign with is below the strength floor.
+
+    The floor is the one verification keys meet (``WeakKeyException``): an RSA
+    key needs at least 2048 bits (RFC 7518 §3.3, §3.5). Raised before anything
+    is signed.
+
+    Attributes:
+        kty: The key type (``"RSA"``).
+        bits: The key's size in bits.
+        min_bits: The size it needed.
+    """
+
+    def __init__(self, kty: str, bits: int, min_bits: int) -> None:
+        self.kty = kty
+        self.bits = bits
+        self.min_bits = min_bits
+        super().__init__(
+            f"{kty} signing key is {bits} bits; at least {min_bits} required",
+            details={"kty": kty, "bits": bits, "min_bits": min_bits},
+        )
+
+
+class RequestObjectErrorKind(Enum):
+    """Why a JAR request object or authorization URL can't be built."""
+
+    FORBIDDEN_CLAIM = "forbidden_claim"
+    """``extra_claims`` holds ``request`` or ``request_uri``, which RFC 9101 §4
+    forbids inside a request object."""
+    NOT_A_JWT = "not_a_jwt"
+    """The request object is not a signed JWT whose claims can be read."""
+    ENCRYPTED = "encrypted"
+    """The request object is a compact JWE, so its ``client_id`` can't be
+    read."""
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """The request object's ``client_id`` is absent or differs from the
+    authorization request's ``client_id`` (RFC 9101 §5)."""
+
+
+_REQUEST_OBJECT_MESSAGES = {
+    RequestObjectErrorKind.FORBIDDEN_CLAIM: (
+        "request and request_uri must not be included in a request object (RFC 9101 §4)"
+    ),
+    RequestObjectErrorKind.NOT_A_JWT: "request object is not a signed JWT",
+    RequestObjectErrorKind.ENCRYPTED: (
+        "request object is encrypted; its client_id can't be checked"
+    ),
+    RequestObjectErrorKind.CLIENT_ID_MISMATCH: (
+        "request object client_id does not match the authorization request "
+        "client_id (RFC 9101 §5)"
+    ),
+}
+
+
+class RequestObjectError(ConfigurationException):
+    """A JAR request object (RFC 9101) can't be built or sent as given.
+
+    ``kind`` says which rule was broken; the message is fixed per kind.
+    """
+
+    def __init__(self, kind: RequestObjectErrorKind) -> None:
+        self.kind = kind
+        super().__init__(_REQUEST_OBJECT_MESSAGES[kind], details={"kind": kind.value})
+
+
+class ProtocolParameterErrorReason(Enum):
+    """Which OAuth request-parameter MUST a request breaks."""
+
+    NOT_ABSOLUTE_URI = "not_absolute_uri"
+    """A ``redirect_uri`` or ``resource`` has no scheme (RFC 6749 §3.1.2,
+    RFC 8707 §2)."""
+
+    URI_HAS_FRAGMENT = "uri_has_fragment"
+    """A ``redirect_uri`` or ``resource`` has a fragment component (RFC 6749
+    §3.1.2, RFC 8707 §2)."""
+
+    CLIENT_ID_MISMATCH = "client_id_mismatch"
+    """A client update's ``extra_metadata`` names a ``client_id`` other than
+    the client's own (RFC 7592 §2.2)."""
+
+    PKCE_REQUIRED = "pkce_required"
+    """A public client redeems an authorization code without a
+    ``code_verifier`` (RFC 9700 §2.1.1)."""
+
+
+class ProtocolParameterError(ConfigurationException):
+    """A request parameter breaks a protocol MUST.
+
+    Raised before any request is sent.
+
+    Attributes:
+        reason: Which rule was broken.
+        parameter: The request parameter involved.
+    """
+
+    def __init__(self, reason: ProtocolParameterErrorReason, parameter: str) -> None:
+        self.reason = reason
+        self.parameter = parameter
+        messages = {
+            ProtocolParameterErrorReason.NOT_ABSOLUTE_URI: (
+                f"{parameter} must be an absolute URI"
+            ),
+            ProtocolParameterErrorReason.URI_HAS_FRAGMENT: (
+                f"{parameter} must not include a fragment component"
+            ),
+            ProtocolParameterErrorReason.CLIENT_ID_MISMATCH: (
+                f"{parameter} client_id must equal the request's client_id"
+            ),
+            ProtocolParameterErrorReason.PKCE_REQUIRED: (
+                f"a public client must send a {parameter} (PKCE)"
+            ),
+        }
+        super().__init__(messages[reason])
 
 
 class FailedResponseAccessError(PyIdentityModelException):
@@ -240,27 +716,48 @@ class SuccessfulResponseAccessError(PyIdentityModelException):
 
 
 __all__ = [
+    "AmbiguousKeyException",
     "AuthorizeCallbackException",
+    "AzpRequiresClientIdError",
     "CertificateBindingError",
+    "ClientAuthMethodError",
+    "ClientAuthMethodErrorReason",
     "ConfigurationException",
+    "DPoPKeyError",
+    "DPoPKeyErrorKind",
     "DiscoveryException",
     "DiscoveryHTTPSRequiredError",
+    "DiscoveryIssuerMismatchError",
     "DiscoveryMissingFieldsError",
     "DiscoveryParseError",
+    "DiscoveryValidationError",
     "FailedResponseAccessError",
     "IdTokenValidationException",
+    "InvalidArgumentError",
+    "InvalidArgumentKind",
     "InvalidAudienceException",
     "InvalidIssuerException",
+    "JarmValidationException",
     "JwksException",
+    "JwksValidationError",
+    "KeyAlgorithmMismatchException",
+    "KeyNotFoundException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
     "NetworkException",
+    "ProtocolParameterError",
+    "ProtocolParameterErrorReason",
     "PyIdentityModelException",
+    "RequestObjectError",
+    "RequestObjectErrorKind",
     "SignatureVerificationException",
     "SuccessfulResponseAccessError",
     "TokenExpiredException",
     "TokenRequestException",
     "TokenValidationException",
+    "UntrustedAudienceException",
     "UserInfoException",
     "ValidationException",
+    "WeakKeyException",
+    "WeakSigningKeyError",
 ]

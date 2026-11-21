@@ -48,6 +48,7 @@ MIN_EXPECTED_CALL_COUNT = 2
 JWKS_URL = "https://example.com/.well-known/jwks"
 TOKEN_URL = "https://example.com/token"
 USERINFO_URL = "https://example.com/userinfo"
+SUB = "user123"
 
 DISCO_JSON = {
     "issuer": "https://example.com",
@@ -112,11 +113,13 @@ class TestSyncDI:
     @respx.mock
     def test_userinfo_with_injected_client(self):
         respx.get(USERINFO_URL).mock(
-            return_value=httpx.Response(200, json={"sub": "user123"})
+            return_value=httpx.Response(200, json={"sub": SUB})
         )
         with HTTPClient() as client:
             response = sync_get_userinfo(
-                UserInfoRequest(address=USERINFO_URL, token="bearer_token"),
+                UserInfoRequest(
+                    address=USERINFO_URL, token="bearer_token", expected_sub=SUB
+                ),
                 http_client=client,
             )
         assert response.is_successful
@@ -228,11 +231,13 @@ class TestAsyncDI:
     @respx.mock
     async def test_userinfo_with_injected_client(self):
         respx.get(USERINFO_URL).mock(
-            return_value=httpx.Response(200, json={"sub": "user123"})
+            return_value=httpx.Response(200, json={"sub": SUB})
         )
         async with AsyncHTTPClient() as client:
             response = await aio_get_userinfo(
-                UserInfoRequest(address=USERINFO_URL, token="bearer_token"),
+                UserInfoRequest(
+                    address=USERINFO_URL, token="bearer_token", expected_sub=SUB
+                ),
                 http_client=client,
             )
         assert response.is_successful

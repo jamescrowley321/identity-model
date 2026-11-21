@@ -16,8 +16,10 @@ import uuid
 
 import jwt as pyjwt
 
+from ..exceptions import InvalidArgumentError, InvalidArgumentKind
 from ..oidc_constants import ClientAssertionTypes, TokenRequest
 from .jwt_signing import validate_signing_algorithm
+from .key_strength import enforce_signing_key_strength
 
 
 if TYPE_CHECKING:
@@ -44,13 +46,15 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
     claims follow RFC 7523 Section 3 / OpenID Connect Core 1.0 Section 9:
 
     - ``iss`` and ``sub`` are both the client identifier.
-    - ``aud`` is the authorization server (token endpoint URL or issuer).
+    - ``aud`` is the authorization server's issuer identifier, never the
+      token endpoint URL (RFC 10070 §4).
     - ``jti`` is a unique identifier (uuid4) to prevent replay.
     - ``iat`` / ``exp`` bound the assertion to a short lifetime.
 
     Args:
         client_id: Client identifier; becomes the ``iss`` and ``sub`` claims.
-        audience: Authorization server identifier; becomes the ``aud`` claim.
+        audience: The authorization server's issuer identifier; becomes the
+            ``aud`` claim.
         private_key: PEM-encoded private key for signing (``bytes`` or ``str``).
         algorithm: Asymmetric signing algorithm (default ``"PS256"``).
             FAPI 2.0 requires ``PS256`` or ``ES256``.
@@ -61,9 +65,11 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         The signed client assertion JWT.
 
     Raises:
-        ValueError: If a required parameter is empty, *algorithm* is not a
+        InvalidArgumentError: If a required parameter is empty, *algorithm* is not a
             supported asymmetric signing algorithm, *lifetime* is not
             positive, or *kid* is an empty string.
+        WeakSigningKeyError: If *private_key* is an RSA key under 2048 bits
+            (RFC 7518 §3.3, §3.5).
     """
     for name, value in (
         ("client_id", client_id),
@@ -73,7 +79,9 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
         # Reject whitespace-only string values: they are truthy but would be
         # signed into ``iss``/``sub``/``aud`` and rejected opaquely by the AS.
         if not value or (isinstance(value, str) and not value.strip()):
-            raise ValueError(f"{name} must not be empty")
+            raise InvalidArgumentError(
+                name, InvalidArgumentKind.MISSING, f"{name} must not be empty"
+            )
 
     validate_signing_algorithm(algorithm, context="client assertion")
 
@@ -81,13 +89,20 @@ def build_client_assertion(  # noqa: PLR0913  # RFC 7523 assertion params are al
     # lifetime at or below the leeway yields an assertion already expired at
     # mint time. Require a lifetime that clears the skew window.
     if lifetime <= _CLOCK_SKEW_LEEWAY_SECONDS:
-        raise ValueError(
+        raise InvalidArgumentError(
+            "lifetime",
+            InvalidArgumentKind.INVALID_VALUE,
             f"lifetime must be greater than the {_CLOCK_SKEW_LEEWAY_SECONDS}s "
-            f"clock-skew leeway, got {lifetime}"
+            f"clock-skew leeway, got {lifetime}",
         )
 
     if kid is not None and not kid.strip():
-        raise ValueError("kid must be non-empty when provided")
+        raise InvalidArgumentError(
+            "kid", InvalidArgumentKind.MISSING, "kid must be non-empty when provided"
+        )
+
+    # RFC 7518 §3.3 / §3.5: RSA keys of 2048 bits or larger.
+    enforce_signing_key_strength(private_key, algorithm)
 
     issued_at = int(time.time()) - _CLOCK_SKEW_LEEWAY_SECONDS
     claims = {
@@ -112,26 +127,23 @@ def apply_private_key_jwt(
     config: PrivateKeyJwt,
     *,
     client_id: str,
-    default_audience: str,
 ) -> None:
     """Inject a ``private_key_jwt`` client assertion into *params* in place.
 
     Adds ``client_id``, ``client_assertion_type``, and ``client_assertion`` to
     the request body per RFC 7523 Section 2.2.  ``client_id`` is included
     alongside the assertion (RFC 7521 Section 4.2); it identifies the same
-    client as the assertion's ``sub``.  The assertion ``aud`` defaults to
-    *default_audience* (the request ``address``) and may be overridden via
-    :attr:`PrivateKeyJwt.audience`.
+    client as the assertion's ``sub``.  The assertion's sole ``aud`` is
+    :attr:`PrivateKeyJwt.issuer`, a single string (RFC 10070 §4).
 
     Args:
         params: Request body parameters to mutate in place.
         config: The ``private_key_jwt`` authentication parameters.
         client_id: The client identifier.
-        default_audience: Audience to use when ``config.audience`` is ``None``.
     """
     assertion = build_client_assertion(
         client_id=client_id,
-        audience=config.audience or default_audience,
+        audience=config.issuer,
         private_key=config.private_key,
         algorithm=config.algorithm,
         kid=config.kid,

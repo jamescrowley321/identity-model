@@ -121,7 +121,7 @@ fn rejection_surfaces_structured_reason() {
 
 // Regression through the real pipeline: a genuinely signed token whose `aud` is
 // JSON null is rejected by require_claims(["aud"]). With no expected audience the
-// standard aud/azp checks are skipped, so the token passes signature/iss/exp and
+// standard aud check is skipped, so the token passes signature/iss/exp and
 // only the injected validator rejects it — proving the aud:null fail-open is
 // closed end-to-end (not just in a unit).
 #[test]

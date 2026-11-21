@@ -56,17 +56,34 @@ func Validate(ctx context.Context, rawToken string, keySet *jwks.JSONWebKeySet, 
 		return nil, &UnsupportedAlgorithmError{Alg: header.Alg}
 	}
 
-	// JWT-001/010: resolve the verification key by kid, forcing one JWKS refresh
-	// and retry if the kid is not cached (RFC 7515 §4.1, RFC 7517 §4.5). A
-	// genuine miss surfaces the descriptive jwks key-not-found error.
-	key, err := keySet.ResolveKeyWithRefresh(ctx, header.Kid)
+	// JWT-001/010: resolve the verification key among the signing keys (a use
+	// "enc" key never verifies, RFC 7517 §4.2) by kid, forcing one JWKS refresh
+	// and retry if no cached signing key has the kid (RFC 7515 §4.1, RFC 7517
+	// §4.5). A genuine miss surfaces the descriptive jwks key-not-found error.
+	// With no kid, the single signing key left after narrowing by alg and kty
+	// is used, with no refresh; more than one is a jwks ambiguous-key error
+	// (JWKS-009) and none is key-not-found. Either
+	// way, a key declaring an alg other than the header alg is a jwks
+	// key-alg-mismatch error (JWKS-010).
+	key, err := keySet.ResolveSigningKey(ctx, header.Kid, header.Alg)
 	if err != nil {
+		return nil, err
+	}
+
+	// RFC 7518 §3.3 / FAPI 2.0 SP §5.4.1: a weak RSA or EC key never verifies
+	// (JWT-014). An EC key is first measured on the JWK, so the rule holds for
+	// curves go-jose can't convert; the converted key is then measured, so the
+	// floor applies to the key that actually verifies.
+	if err := checkKeyStrength(key); err != nil {
 		return nil, err
 	}
 
 	pub, err := toPublicKey(key)
 	if err != nil {
 		return nil, &KeyConversionError{Kid: header.Kid, Err: err}
+	}
+	if err := checkConvertedKeyStrength(key, pub); err != nil {
+		return nil, err
 	}
 
 	// JWT-001/009: parse and verify the signature. ParseSigned re-enforces the
@@ -135,6 +152,8 @@ func toPublicKey(k *jwks.JSONWebKey) (crypto.PublicKey, error) {
 		fields["n"], fields["e"] = k.N, k.E
 	case "EC":
 		fields["crv"], fields["x"], fields["y"] = k.Crv, k.X, k.Y
+	case "OKP":
+		fields["crv"], fields["x"] = k.Crv, k.X
 	default:
 		return nil, fmt.Errorf("unsupported key type %q", k.Kty)
 	}

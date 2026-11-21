@@ -110,8 +110,8 @@ def _config_for(
 
     ``audience`` is the RP's ``client_id`` and no ``verify_aud``-disabling
     options are supplied, so the standard path enforces the ``aud`` check (an ID
-    Token MUST be audienced to the RP) and feeds ``client_id`` into the
-    ID-Token profile's ``azp`` rules.
+    Token MUST be audienced to the RP) and makes ``client_id`` the trusted
+    audience of the ID-Token profile.
     """
     return TokenValidationConfig(
         perform_disco=True,
@@ -134,6 +134,8 @@ class TestValidateIdTokenLive:
             id_token_flow["id_token"],
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+            nonce=id_token_flow["nonce"],
         )
 
         # Signature/iss/aud/exp are enforced inside validate_id_token; assert the
@@ -157,7 +159,30 @@ class TestValidateIdTokenLive:
                 id_token_flow["id_token"],
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+                nonce=id_token_flow["nonce"],
             )
+
+    def test_nonce_not_sent_rejects_token_nonce(
+        self, id_token_flow, test_config, issuer, require_https
+    ):
+        """``nonce=None`` (none sent) rejects a live ID Token that carries one (§2)."""
+        id_token = id_token_flow["id_token"]
+        if "nonce" not in _decode_unverified(id_token):
+            pytest.skip("OP did not echo the requested nonce into the ID Token")
+        config = _config_for(id_token_flow["client_id"], issuer, require_https)
+
+        with pytest.raises(IdTokenValidationException) as exc_info:
+            validate_id_token(
+                id_token,
+                config,
+                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+                nonce=None,
+            )
+        assert exc_info.value.message == (
+            "ID token carries a 'nonce' claim but no nonce was sent"
+        )
 
     def test_nonce_binding(self, id_token_flow, test_config, issuer, require_https):
         """The live ID Token binds to the nonce sent on the authorization request."""
@@ -171,6 +196,7 @@ class TestValidateIdTokenLive:
             id_token,
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             nonce=id_token_flow["nonce"],
         )
         assert claims["nonce"] == id_token_flow["nonce"]
@@ -181,6 +207,7 @@ class TestValidateIdTokenLive:
                 id_token,
                 config,
                 disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce="not-the-nonce-we-sent",
             )
 
@@ -198,39 +225,72 @@ class TestValidateIdTokenLive:
             id_token,
             config,
             disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             max_age=id_token_flow["max_age"],
+            nonce=id_token_flow["nonce"],
         )
         assert isinstance(claims["auth_time"], int)
 
-    def test_at_hash_binding_when_present(
+    def test_at_hash_binding_for_token_endpoint_id_token(
         self, id_token_flow, test_config, issuer, require_https
     ):
-        """When the OP mints an at_hash, it binds to the issued access token."""
-        id_token = id_token_flow["id_token"]
-        if "at_hash" not in _decode_unverified(id_token):
-            pytest.skip(
-                "OP's code-flow ID Token carries no at_hash (emitted only for "
-                "authorization-endpoint responses) — at_hash binding not exercised here"
-            )
-        access_token = id_token_flow["access_token"]
-        assert access_token, (
-            "ID Token carried an at_hash but the flow returned no access_token"
-        )
-        config = _config_for(id_token_flow["client_id"], issuer, require_https)
+        """A code-flow (token-endpoint) ID Token binds at_hash only if present.
 
-        # Correct access token passes.
+        §3.1.3.6 makes at_hash OPTIONAL here, so the caller marks the access
+        token as not issued with the ID Token: an OP that omits at_hash is then
+        accepted, one that mints it must bind the issued access token. By
+        default at_hash is REQUIRED (§3.2.2.10, §3.3.2.11).
+        """
+        id_token = id_token_flow["id_token"]
+        access_token = id_token_flow["access_token"]
+        assert access_token, "the code flow returned no access_token"
+        config = _config_for(id_token_flow["client_id"], issuer, require_https)
+        disco = test_config["TEST_DISCO_ADDRESS"]
+
+        # The issued access token passes, with or without an at_hash.
         validate_id_token(
             id_token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            disco_doc_address=disco,
+            trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             access_token=access_token,
+            access_token_issued_with_id_token=False,
+            nonce=id_token_flow["nonce"],
         )
 
-        # A tampered access token is rejected by the at_hash check.
-        with pytest.raises(IdTokenValidationException):
+        if "at_hash" in _decode_unverified(id_token):
+            # A present at_hash must bind: a tampered access token is rejected,
+            # and requiring presence changes nothing.
+            with pytest.raises(
+                IdTokenValidationException, match=r"'at_hash' claim does not match"
+            ):
+                validate_id_token(
+                    id_token,
+                    config,
+                    disco_doc_address=disco,
+                    trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+                    access_token=access_token + "tampered",
+                    access_token_issued_with_id_token=False,
+                    nonce=id_token_flow["nonce"],
+                )
             validate_id_token(
                 id_token,
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
-                access_token=access_token + "tampered",
+                disco_doc_address=disco,
+                trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+                access_token=access_token,
+                nonce=id_token_flow["nonce"],
             )
+        else:
+            # No at_hash: nothing binds, so only the default presence rule rejects.
+            with pytest.raises(
+                IdTokenValidationException, match=r"missing required 'at_hash'"
+            ):
+                validate_id_token(
+                    id_token,
+                    config,
+                    disco_doc_address=disco,
+                    trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
+                    access_token=access_token,
+                    nonce=id_token_flow["nonce"],
+                )

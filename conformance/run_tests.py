@@ -11,6 +11,7 @@ import argparse
 import base64
 from dataclasses import dataclass
 from email.message import Message
+from enum import StrEnum
 from html.parser import HTMLParser
 import json
 import logging
@@ -87,6 +88,53 @@ class TestResult:
     status: str  # PASSED, WARNING, FAILED, REVIEW, SKIPPED, INTERRUPTED
     log_url: str = ""
     detail: str = ""
+
+
+class Expectation(StrEnum):
+    """What the RP harness must have recorded for a module to pass.
+
+    ``ACCEPT``: the harness completed the flow (result ``status: success``).
+    ``REJECT``: the harness refused the flow (result ``status: error``) for one
+    of the module's listed reason classes.
+    ``NONE``: the module records no harness verdict (a declared-unsupported
+    module the runner never drives, or one satisfied by registration alone);
+    the suite's verdict stands on its own.
+    """
+
+    ACCEPT = "accept"
+    REJECT = "reject"
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class ModuleExpectation:
+    """One module's entry in the expected-module manifest."""
+
+    expect: Expectation
+    reasons: frozenset[str] = frozenset()
+    # Non-PASSED suite statuses (SKIPPED / WARNING) this module may end in,
+    # each mapped to the reason it is acceptable.
+    allowed_statuses: tuple[tuple[str, str], ...] = ()
+
+    def allows(self, status: str) -> bool:
+        return any(allowed == status for allowed, _ in self.allowed_statuses)
+
+
+@dataclass(frozen=True)
+class RPEvidence:
+    """What the RP harness reported for one module.
+
+    ``recorded`` is the harness's ``/results/{test_id}`` body (``None`` when it
+    recorded nothing). ``crashes`` lists RP responses that show the harness
+    failed rather than decided: an HTTP 5xx other than its deliberate 502, or a
+    transport error talking to it.
+    """
+
+    recorded: dict | None
+    crashes: tuple[str, ...] = ()
+    # What the harness recorded after each earlier flow of a multi-flow
+    # module (key rotation), before the last flow overwrote it.
+    earlier: tuple[dict | None, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -322,27 +370,23 @@ LOGOUT_PROFILES = frozenset(
     }
 )
 
-# RP-Initiated Logout modules that must be driven WITHOUT a ``state`` on the
-# logout request (state is optional per RP-Initiated Logout 1.0 §2). The rest
-# send a state and verify the OP echoes it back unchanged.
-NO_STATE_LOGOUT_TESTS = frozenset(
-    {
-        "oidcc-client-test-rp-init-logout-no-state",
-    }
+# Modules for an OPTIONAL feature the library does not support, with the reason.
+# The RP declares non-support rather than driving a doomed flow: the module is
+# recorded SKIPPED with the reason and never sent to the suite. This is a
+# declared non-support for OIDF certification, not a masked failure.
+_NO_WEBFINGER = (
+    "py-identity-model does not implement WebFinger issuer discovery (OpenID "
+    "Connect Discovery 1.0 §2, which is OPTIONAL); it takes the issuer as input"
 )
-
-# Modules for an OPTIONAL feature the library deliberately does not support, so
-# the RP declares non-support rather than driving a doomed flow.
-# request-uri-signed-none requires an UNSIGNED (alg=none) request object, but
-# py-identity-model excludes ``none`` from SUPPORTED_SIGNING_ALGORITHMS by design
-# (unsigned request objects are a security downgrade). This is a legitimate
-# declared non-support for OIDF certification, not a masked failure — recorded
-# SKIPPED with the reason and never sent to the suite.
-DECLARED_UNSUPPORTED_TESTS = frozenset(
-    {
-        "oidcc-client-test-request-uri-signed-none",
-    }
-)
+DECLARED_UNSUPPORTED_TESTS = {
+    # An unsigned (alg=none) request object is a security downgrade.
+    "oidcc-client-test-request-uri-signed-none": (
+        "py-identity-model does not create unsigned (alg=none) request objects "
+        "(SUPPORTED_SIGNING_ALGORITHMS excludes 'none' by design)"
+    ),
+    "oidcc-client-test-discovery-webfinger-acct": _NO_WEBFINGER,
+    "oidcc-client-test-discovery-webfinger-url": _NO_WEBFINGER,
+}
 
 
 def _get_test_type(test_name: str) -> str:
@@ -359,13 +403,47 @@ def _get_test_type(test_name: str) -> str:
     return "auth_full"
 
 
+# The harness answers a flow it deliberately refused (discovery failure, issuer
+# mismatch, missing endpoint) with 502 and records the refusal. Any other 5xx
+# from the RP is the harness failing, not the RP deciding.
+HARNESS_REJECTION_STATUS = 502
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    return parsed.scheme, parsed.hostname or "", parsed.port
+
+
+def _rp_crashes(responses: list[httpx.Response], rp_base_url: str) -> list[str]:
+    """RP responses in a driven flow that show the harness crashed."""
+    rp_origin = _origin(rp_base_url)
+    return [
+        f"RP returned HTTP {r.status_code} at {r.url.path}"
+        for r in responses
+        if _origin(str(r.url)) == rp_origin
+        and r.status_code >= httpx.codes.INTERNAL_SERVER_ERROR
+        and r.status_code != HARNESS_REJECTION_STATUS
+    ]
+
+
+def _rp_transport_crash(exc: httpx.HTTPError, rp_base_url: str) -> list[str]:
+    """A transport error is a crash when the failed request targeted the RP."""
+    try:
+        url = str(exc.request.url)
+    except RuntimeError:
+        return []
+    if _origin(url) != _origin(rp_base_url):
+        return []
+    return [f"RP request failed at {urlparse(url).path}: {exc}"]
+
+
 def drive_rp_discover(
     rp_base_url: str,
     issuer: str,
     test_id: str,
     test_name: str = "",
     profile: str = "",
-) -> None:
+) -> list[str]:
     """Hit the RP's /discover endpoint to fetch discovery without starting an auth flow.
 
     Used for Config RP discovery-only tests where the suite only needs to
@@ -387,6 +465,8 @@ def drive_rp_discover(
             )
         except httpx.HTTPError as exc:
             logger.warning("RP discover HTTP error (may be expected): %s", exc)
+            return _rp_transport_crash(exc, rp_base_url)
+    return _rp_crashes([response], rp_base_url)
 
 
 def drive_rp_register(
@@ -394,27 +474,28 @@ def drive_rp_register(
     issuer: str,
     test_name: str = "",
     profile: str = "",
-) -> str | None:
+) -> tuple[str | None, list[str]]:
     """Register the RP dynamically (RFC 7591) for a Dynamic RP test module.
 
     The Dynamic RP plan has no pre-configured client, so the RP must register
     itself with each per-test OP before the auth flow. Returns the issued
     client_id (which the runner passes to /authorize; the RP fills the matching
     secret from its remembered registration), or None if registration did not
-    complete.
+    complete, together with the harness crashes seen (see :func:`_rp_crashes`).
     """
     params = {"issuer": issuer, "test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0) as client:
         try:
             response = client.get(f"{rp_base_url}/register", params=params)
-            if response.is_success:
-                client_id = response.json().get("client_id")
-                logger.info("RP registered dynamically: client_id=%s", client_id)
-                return client_id
-            logger.warning("RP register returned status=%d", response.status_code)
         except httpx.HTTPError as exc:
             logger.warning("RP register HTTP error (may be expected): %s", exc)
-    return None
+            return None, _rp_transport_crash(exc, rp_base_url)
+    if response.is_success:
+        client_id = response.json().get("client_id")
+        logger.info("RP registered dynamically: client_id=%s", client_id)
+        return client_id, []
+    logger.warning("RP register returned status=%d", response.status_code)
+    return None, _rp_crashes([response], rp_base_url)
 
 
 class _FormPostParser(HTMLParser):
@@ -465,7 +546,8 @@ def drive_rp_authorize(
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
-) -> None:
+    signed_request: bool = False,
+) -> list[str]:
     """Hit the RP's /authorize endpoint to start an auth flow.
 
     The RP will redirect to the conformance suite's OP, which handles
@@ -475,6 +557,8 @@ def drive_rp_authorize(
     In form_post mode, the OP returns an HTML page with a self-submitting
     form instead of a redirect. We detect this and POST the form data
     to the callback URL ourselves.
+
+    Returns the harness crashes seen along the way (see :func:`_rp_crashes`).
     """
     params = {
         "issuer": issuer,
@@ -489,12 +573,15 @@ def drive_rp_authorize(
         "fapi2": str(fapi2).lower(),
         "jarm": str(jarm).lower(),
         "mtls": str(mtls).lower(),
+        "signed_request": str(signed_request).lower(),
     }
 
     # Follow all redirects through the full auth flow
+    seen: list[httpx.Response] = []
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/authorize", params=params)
+            seen.extend([*response.history, response])
             logger.info(
                 "RP flow completed: status=%d, url=%s",
                 response.status_code,
@@ -521,6 +608,7 @@ def drive_rp_authorize(
                         len(fields),
                     )
                     post_response = client.post(resolved_action, data=fields)
+                    seen.extend([*post_response.history, post_response])
                     if post_response.is_error:
                         logger.warning(
                             "Form post callback failed: status=%d, url=%s",
@@ -539,6 +627,11 @@ def drive_rp_authorize(
             # form_post handler regresses the resolution, we'd rather log
             # and continue than crash the runner process uncaught.
             logger.warning("RP flow HTTP error (may be expected): %s", exc)
+            crashes = _rp_crashes(seen, rp_base_url)
+            if isinstance(exc, httpx.HTTPError):
+                crashes += _rp_transport_crash(exc, rp_base_url)
+            return crashes
+    return _rp_crashes(seen, rp_base_url)
 
 
 def drive_rp_logout(
@@ -547,10 +640,9 @@ def drive_rp_logout(
     client_id: str,
     client_secret: str,
     test_id: str,
-    send_state: bool = True,
     test_name: str = "",
     profile: str = "",
-) -> None:
+) -> list[str]:
     """Drive a login followed by an RP-Initiated Logout for a logout profile.
 
     Both logout profiles (RP-Initiated and Back-Channel) start the same way: the
@@ -565,11 +657,11 @@ def drive_rp_logout(
     request — that is a server-to-server call the RP handles on its own, so no
     extra driving is needed here.
 
-    ``send_state=False`` tells the RP to omit ``state`` from the logout request
-    (the -no-state module); the default sends a state and expects it echoed.
+    The RP always sends a ``state`` on the logout request and checks the value
+    the OP returns.
     """
     # Step 1: log in so the RP has an id_token_hint + end_session endpoint.
-    drive_rp_authorize(
+    crashes = drive_rp_authorize(
         rp_base_url=rp_base_url,
         issuer=issuer,
         client_id=client_id,
@@ -580,11 +672,7 @@ def drive_rp_logout(
     )
 
     # Step 2: initiate RP-Initiated Logout and follow the redirect chain.
-    params = {
-        "test_name": test_name,
-        "profile": profile,
-        "send_state": str(send_state).lower(),
-    }
+    params = {"test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/logout", params=params)
@@ -595,6 +683,10 @@ def drive_rp_logout(
             )
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
             logger.warning("RP logout HTTP error (may be expected): %s", exc)
+            if isinstance(exc, httpx.HTTPError):
+                crashes += _rp_transport_crash(exc, rp_base_url)
+            return crashes
+    return crashes + _rp_crashes([*response.history, response], rp_base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -636,9 +728,18 @@ def _fetch_rp_jwks(rp_base_url: str, path: str = "/fapi2-jwks") -> dict:
     return jwks
 
 
-def _b64u_uint(value: int) -> str:
-    """base64url-encode an unsigned integer as a JWK field (RFC 7518 §6)."""
-    raw = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
+# Octets in a P-256 coordinate or private value (RFC 7518 §6.2.1.2, §6.2.2.1).
+P256_OCTETS = 32
+
+
+def _b64u_p256(value: int) -> str:
+    """base64url-encode a P-256 coordinate or private value at full width.
+
+    RFC 7518 §6.2.1.2: the octet string MUST be the full size of a coordinate
+    for the curve. A value with a leading zero byte encoded shorter is refused
+    by the RP ("Coords should be 32 bytes"), which failed a whole plan.
+    """
+    raw = value.to_bytes(P256_OCTETS, "big")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
@@ -663,11 +764,195 @@ def _generate_server_signing_jwks() -> dict:
         "use": "sig",
         "alg": "ES256",
         "kid": "py-idm-conformance-server-es256",
-        "x": _b64u_uint(public.x),
-        "y": _b64u_uint(public.y),
-        "d": _b64u_uint(numbers.private_value),
+        "x": _b64u_p256(public.x),
+        "y": _b64u_p256(public.y),
+        "d": _b64u_p256(numbers.private_value),
     }
     return {"keys": [private_jwk]}
+
+
+# ---------------------------------------------------------------------------
+# Expected-module manifest and per-module verdict
+# ---------------------------------------------------------------------------
+
+MANIFEST_PATH = Path(__file__).parent / "expected_modules.json"
+
+# Suite statuses a module may end in only when its manifest entry allows them.
+ALLOWLISTABLE_STATUSES = frozenset({"SKIPPED", "WARNING"})
+
+HARNESS_SUCCESS = "success"
+HARNESS_ERROR = "error"
+# The harness saw a rejection it could not tie to a flow after the module's
+# flow had succeeded; the module's outcome is unknown, so it fails.
+HARNESS_CONFLICT = "conflict"
+
+
+class ManifestError(Exception):
+    """The expected-module manifest is malformed or has no entry for a plan."""
+
+
+def _parse_module_expectation(plan: str, name: str, raw: dict) -> ModuleExpectation:
+    where = f"{plan}/{name}"
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{where}: entry must be an object")
+    unknown = set(raw) - {"expect", "reasons", "allow"}
+    if unknown:
+        raise ManifestError(f"{where}: unknown keys {sorted(unknown)}")
+    try:
+        expect = Expectation(raw.get("expect"))
+    except ValueError as exc:
+        raise ManifestError(f"{where}: invalid expect {raw.get('expect')!r}") from exc
+    raw_reasons = raw.get("reasons", [])
+    if not isinstance(raw_reasons, list) or not all(
+        isinstance(reason, str) for reason in raw_reasons
+    ):
+        raise ManifestError(f"{where}: reasons must be a list of strings")
+    reasons = frozenset(raw_reasons)
+    if expect is Expectation.REJECT and not reasons:
+        raise ManifestError(f"{where}: a reject module must list its reasons")
+    if expect is not Expectation.REJECT and reasons:
+        raise ManifestError(f"{where}: only reject modules take reasons")
+    allow = raw.get("allow", {})
+    if not isinstance(allow, dict):
+        raise ManifestError(f"{where}: allow must be an object")
+    for status, why in allow.items():
+        if status not in ALLOWLISTABLE_STATUSES:
+            raise ManifestError(f"{where}: {status!r} cannot be allowlisted")
+        if not isinstance(why, str) or not why.strip():
+            raise ManifestError(f"{where}: allowlisted {status} needs a reason")
+    return ModuleExpectation(
+        expect=expect,
+        reasons=reasons,
+        allowed_statuses=tuple(sorted(allow.items())),
+    )
+
+
+def load_manifest(
+    plan: str, path: Path = MANIFEST_PATH
+) -> dict[str, ModuleExpectation]:
+    """Load the expected modules for ``plan`` from the manifest file."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ManifestError(f"cannot read manifest {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestError(f"manifest {path} must be an object")
+    if plan not in data:
+        raise ManifestError(f"no expected-module manifest for plan {plan!r}")
+    if not isinstance(data[plan], dict):
+        raise ManifestError(f"manifest for plan {plan!r} must be an object")
+    return {
+        name: _parse_module_expectation(plan, name, raw)
+        for name, raw in data[plan].items()
+    }
+
+
+def check_plan_modules(
+    test_names: list[str], manifest: dict[str, ModuleExpectation]
+) -> list[str]:
+    """Compare the plan's modules with the manifest; return every mismatch."""
+    problems = []
+    duplicates = sorted({n for n in test_names if test_names.count(n) > 1})
+    if duplicates:
+        problems.append(f"modules listed more than once: {', '.join(duplicates)}")
+    missing = sorted(set(manifest) - set(test_names))
+    if missing:
+        problems.append(f"expected modules missing from plan: {', '.join(missing)}")
+    unexpected = sorted(set(test_names) - set(manifest))
+    if unexpected:
+        problems.append(f"unexpected modules in plan: {', '.join(unexpected)}")
+    return problems
+
+
+def _suite_status(info: dict) -> str:
+    """Map the suite's ``/api/info`` body to a module status.
+
+    A FINISHED module with no ``result`` has no verdict, so it is FAILED.
+    """
+    status = info.get("status") or "UNKNOWN"
+    if status != "FINISHED":
+        return status
+    return info.get("result") or "FAILED"
+
+
+def _reason_class(error: object) -> str:
+    """The reason class of a harness error: the text before the first colon."""
+    return str(error or "").split(":", 1)[0].strip()
+
+
+def assess_module(
+    suite_status: str,
+    expectation: ModuleExpectation,
+    evidence: RPEvidence,
+) -> tuple[str, str]:
+    """Combine the suite's verdict with the RP harness evidence.
+
+    Returns ``(status, detail)``. A passing suite status is downgraded to FAILED
+    when the status is SKIPPED/WARNING but not allowlisted for the module, the
+    harness crashed, or the harness did not record the outcome the manifest
+    expects (a completed flow, or a rejection for one of the listed reasons).
+    """
+    if suite_status not in PASSING_STATUSES:
+        return suite_status, ""
+    if suite_status != "PASSED" and not expectation.allows(suite_status):
+        return (
+            "FAILED",
+            f"suite status {suite_status} is not allowlisted for this module",
+        )
+    if evidence.crashes:
+        return "FAILED", "harness crashed: " + "; ".join(evidence.crashes)
+    recorded = evidence.recorded
+    if recorded is not None and recorded.get("status") == HARNESS_CONFLICT:
+        return (
+            "FAILED",
+            f"harness recorded conflicting outcomes: {recorded.get('error')!r}",
+        )
+    if expectation.expect is Expectation.NONE:
+        return suite_status, ""
+    if recorded is None:
+        return "FAILED", "harness recorded no result for this module"
+    outcome = recorded.get("status")
+    if expectation.expect is Expectation.ACCEPT:
+        for previous in evidence.earlier:
+            if (previous or {}).get("status") != HARNESS_SUCCESS:
+                return (
+                    "FAILED",
+                    "expected the RP to accept every flow; an earlier flow recorded "
+                    f"{(previous or {}).get('error')!r}",
+                )
+        if outcome != HARNESS_SUCCESS:
+            return (
+                "FAILED",
+                f"expected the RP to accept; harness recorded {recorded.get('error')!r}",
+            )
+        return suite_status, ""
+    if outcome != HARNESS_ERROR:
+        return "FAILED", "expected the RP to reject; harness recorded no rejection"
+    reason = _reason_class(recorded.get("error"))
+    if reason not in expectation.reasons:
+        return (
+            "FAILED",
+            f"RP rejected for {reason!r}, expected one of {sorted(expectation.reasons)}",
+        )
+    return suite_status, ""
+
+
+def _fetch_rp_result(rp_base_url: str, module_id: str) -> dict | None:
+    """The harness's recorded result for ``module_id`` (None if none)."""
+    try:
+        with httpx.Client(verify=False, timeout=10.0) as client:
+            response = client.get(f"{rp_base_url}/results/{module_id}")
+    except httpx.HTTPError as exc:
+        logger.warning("Could not fetch RP result for %s: %s", module_id, exc)
+        return None
+    if response.status_code != httpx.codes.OK:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("RP result for %s is not JSON", module_id)
+        return None
+    return body if isinstance(body, dict) else None
 
 
 def run_test_module(
@@ -677,11 +962,13 @@ def run_test_module(
     rp_base_url: str,
     client_id: str,
     client_secret: str,
+    expectation: ModuleExpectation,
     profile: str = "",
     dynamic: bool = False,
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
+    signed_request: bool = False,
 ) -> TestResult:
     """Execute a single conformance test module."""
     logger.info("=" * 60)
@@ -690,17 +977,14 @@ def run_test_module(
 
     # Declared non-support: record SKIPPED without touching the suite.
     if test_name in DECLARED_UNSUPPORTED_TESTS:
-        reason = (
-            "declared unsupported: py-identity-model does not create unsigned "
-            "(alg=none) request objects (SUPPORTED_SIGNING_ALGORITHMS excludes "
-            "'none' by design)"
-        )
+        reason = f"declared unsupported: {DECLARED_UNSUPPORTED_TESTS[test_name]}"
         logger.info("[SKIP] %s — %s", test_name, reason)
+        status, problem = assess_module("SKIPPED", expectation, RPEvidence(None))
         return TestResult(
             test_name=test_name,
             test_id="",
-            status="SKIPPED",
-            detail=reason,
+            status=status,
+            detail=problem or reason,
         )
 
     # Clear RP caches before each test to avoid stale JWKS/discovery
@@ -748,19 +1032,19 @@ def run_test_module(
 
     # Drive the RP based on the test type
     test_type = _get_test_type(test_name)
+    earlier: list[dict | None] = []
     logger.info("Test type: %s", test_type)
 
     if profile in LOGOUT_PROFILES:
         # Logout profiles: log in, then drive an RP-Initiated Logout. For the
         # Back-Channel profile the OP posts a Logout Token to the RP's
         # /backchannel-logout on its own while processing the end-session.
-        drive_rp_logout(
+        crashes = drive_rp_logout(
             rp_base_url=rp_base_url,
             issuer=issuer,
             client_id=client_id,
             client_secret=client_secret,
             test_id=module_id,
-            send_state=test_name not in NO_STATE_LOGOUT_TESTS,
             test_name=test_name,
             profile=profile,
         )
@@ -772,8 +1056,9 @@ def run_test_module(
         # from its registration). Discovery/webfinger modules need neither and
         # keep their normal flow.
         register_only = dynamic and test_name in DYNAMIC_REGISTER_ONLY_TESTS
+        crashes: list[str] = []
         if dynamic and (register_only or test_name in DYNAMIC_AUTH_TESTS):
-            registered_id = drive_rp_register(
+            registered_id, crashes = drive_rp_register(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_name=test_name,
@@ -792,7 +1077,7 @@ def run_test_module(
             pass
         elif test_type == "discovery_only":
             # Discovery-only tests: just fetch discovery, no auth flow
-            drive_rp_discover(
+            crashes += drive_rp_discover(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_id=module_id,
@@ -804,7 +1089,7 @@ def run_test_module(
             # The client is registered once (above) and reused across both flows;
             # the OP rotates its signing keys between them.
             logger.info("Driving first auth flow...")
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -816,11 +1101,13 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
+            earlier.append(_fetch_rp_result(rp_base_url, module_id))
             # Wait briefly for the suite to rotate keys
             time.sleep(1)
             logger.info("Driving second auth flow...")
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -832,10 +1119,11 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
         else:
             # Standard auth flow (with optional userinfo skip)
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -848,22 +1136,30 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
 
     # Poll until the test finishes
     logger.info("Polling test status...")
     result_info = suite.poll_until_done(module_id)
-    status = result_info.get("status", "UNKNOWN")
-    result = result_info.get("result", status)
-
-    # Map status to final result
-    final_status = (result if result else "PASSED") if status == "FINISHED" else status
+    suite_status = _suite_status(result_info)
+    evidence = RPEvidence(
+        _fetch_rp_result(rp_base_url, module_id), tuple(crashes), tuple(earlier)
+    )
+    recorded = evidence.recorded or {}
+    logger.info(
+        "RP evidence: status=%s error=%s crashes=%s",
+        recorded.get("status"),
+        recorded.get("error"),
+        list(evidence.crashes),
+    )
+    final_status, problem = assess_module(suite_status, expectation, evidence)
 
     log_url = f"{suite.base_url}/log-detail.html?log={module_id}"
-    detail = ""
+    detail = problem
 
     # Fetch logs for failed tests
-    if final_status in ("FAILED", "WARNING", "REVIEW"):
+    if not problem and final_status in ("FAILED", "WARNING", "REVIEW"):
         try:
             logs = suite.get_test_log(module_id)
             # Extract failure messages
@@ -906,8 +1202,11 @@ def run_plan(
     token: str | None = None,
     publish: str = "",
     profile: str = "",
+    only_module: str | None = None,
 ) -> tuple[str, list[TestResult]]:
-    """Run all tests in a conformance test plan.
+    """Run the tests in a conformance test plan.
+
+    With ``only_module`` set, only modules whose name contains it run.
 
     Returns a tuple of (plan_id, results).
     """
@@ -919,6 +1218,7 @@ def run_plan(
     fapi2 = bool(config.get("fapi2", False))
     jarm = bool(config.get("jarm", False))
     mtls = bool(config.get("mtls", False))
+    signed_request = bool(config.get("signed_request", False))
 
     logger.info("Plan: %s (%s)", plan_name, alias)
     logger.info("Variant: %s", variant)
@@ -1005,6 +1305,23 @@ def run_plan(
         logger.error("No test modules found in plan")
         sys.exit(1)
 
+    try:
+        manifest = load_manifest(profile)
+    except ManifestError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+    problems = check_plan_modules(test_names, manifest)
+    if problems:
+        for problem in problems:
+            logger.error("Module manifest mismatch: %s", problem)
+        sys.exit(1)
+
+    try:
+        test_names = _select_modules(test_names, only_module)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     logger.info("Tests to run: %s", ", ".join(test_names))
 
     # Client credentials from plan config
@@ -1026,21 +1343,43 @@ def run_plan(
             rp_base_url=rp_base_url,
             client_id=client_id,
             client_secret=client_secret,
+            expectation=manifest[test_name],
             profile=profile,
             dynamic=is_dynamic,
             fapi2=fapi2,
             jarm=jarm,
             mtls=mtls,
+            signed_request=signed_request,
         )
         results.append(result)
 
     return plan_id, results
 
 
+def _select_modules(test_names: list[str], only_module: str | None) -> list[str]:
+    """Keep the plan's modules whose name contains ``only_module``.
+
+    ``None`` keeps every module. A filter that is empty or matches nothing
+    raises ``ValueError`` so a typo cannot pass as an empty, green run.
+    """
+    if only_module is None:
+        return test_names
+    if not only_module:
+        raise ValueError("--only-module must not be empty")
+    selected = [name for name in test_names if only_module in name]
+    if not selected:
+        raise ValueError(
+            f"--only-module {only_module!r} matches no module in the plan: "
+            + ", ".join(test_names)
+        )
+    return selected
+
+
 # Statuses that count as a clean, submission-worthy outcome. Everything else —
 # FAILED/INTERRUPTED/TIMEOUT, REVIEW (needs a human), and any unknown status —
-# must keep an export from being treated as passing evidence. SKIPPED is fine
-# (e.g. the expected idtoken-sig-none skip); WARNING is an accepted pass.
+# must keep an export from being treated as passing evidence. SKIPPED and
+# WARNING pass only for modules whose manifest entry allowlists them
+# (assess_module downgrades the rest to FAILED).
 PASSING_STATUSES = frozenset({"PASSED", "WARNING", "SKIPPED"})
 
 
@@ -1258,6 +1597,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--only-module",
+        default=None,
+        help=(
+            "Run only the plan's test modules whose name contains this substring "
+            "(e.g. invalid-alternate-alg). Not allowed with --export-zip or "
+            "--rp-logs-zip: a partial plan is not certification evidence."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -1278,6 +1626,12 @@ def main() -> None:
             "local run mint your own token in the suite UI and set it:\n"
             "  export CONFORMANCE_TOKEN=<your-token>",
             args.suite_url,
+        )
+        sys.exit(1)
+
+    if args.only_module is not None and (args.export_zip or args.rp_logs_zip):
+        logger.error(
+            "--only-module cannot be combined with --export-zip or --rp-logs-zip"
         )
         sys.exit(1)
 
@@ -1312,6 +1666,7 @@ def main() -> None:
         token=env_token or None,
         publish=publish_value,
         profile=args.plan,
+        only_module=args.only_module,
     )
 
     all_ok = print_summary(results)
