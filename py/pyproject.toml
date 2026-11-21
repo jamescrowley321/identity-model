@@ -9,6 +9,7 @@ authors = [{ name = "jamescrowley321", email = "jamescrowley151@gmail.com" }]
 requires-python = ">=3.12"
 readme = "README.md"
 classifiers = [
+    "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
@@ -87,7 +88,7 @@ match = "main"
 
 [tool.semantic_release.branches.other]
 match = ".*"
-prerelease_token = "rc"
+prerelease_token = "a"
 prerelease = true
 
 [tool.semantic_release.changelog]

@@ -205,11 +205,11 @@ jobs:
   # pyproject.toml). Runs AFTER the core release job so the two pipelines never
   # push to main concurrently. When it cuts a version, the PAT-pushed
   # fastapi-identity-model-v* tag triggers release-fastapi.yml, which builds
-  # and publishes to PyPI via trusted publishing. Main-only: the package config
-  # has no prerelease branch group, so other branches must not run it.
+  # and publishes to PyPI via trusted publishing. Stable releases come from
+  # main; release/v5 uses the package's alpha prerelease branch group.
   release-fastapi-version:
     needs: release
-    if: ${{ (github.event.inputs.branch || github.ref_name) == 'main' }}
+    if: ${{ (github.event.inputs.branch || github.ref_name) == 'main' || (github.event.inputs.branch || github.ref_name) == 'release/v5' }}
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-release-fastapi-${{ github.ref_name }}
@@ -222,12 +222,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: main
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Sync with commits pushed by the core release job
-        run: git pull --ff-only origin main
+        run: git pull --ff-only origin "${{ github.event.inputs.branch || github.ref_name }}"
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
