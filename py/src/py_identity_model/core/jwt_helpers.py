@@ -9,10 +9,13 @@ from jwt.exceptions import (
     ExpiredSignatureError,
     InvalidAlgorithmError,
     InvalidAudienceError,
+    InvalidIssuedAtError,
     InvalidIssuerError,
     InvalidKeyError,
     InvalidSignatureError,
+    InvalidSubjectError,
     InvalidTokenError,
+    MissingRequiredClaimError,
     PyJWKError,
 )
 
@@ -23,6 +26,7 @@ from ..exceptions import (
     KeyAlgorithmMismatchException,
     SignatureVerificationException,
     TokenExpiredException,
+    TokenValidationErrorKind,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -251,6 +255,28 @@ def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
     return decode(jwt, pyjwk, **kwargs)
 
 
+_REQUIRED_CLAIM_KINDS = {
+    "iss": TokenValidationErrorKind.ISSUER,
+    "aud": TokenValidationErrorKind.AUDIENCE,
+    "sub": TokenValidationErrorKind.SUBJECT,
+    "exp": TokenValidationErrorKind.EXPIRATION,
+    "iat": TokenValidationErrorKind.ISSUED_AT,
+}
+
+
+def _invalid_token_kind(e: InvalidTokenError) -> TokenValidationErrorKind:
+    kind = TokenValidationErrorKind.UNCLASSIFIED
+    if isinstance(e, MissingRequiredClaimError):
+        kind = _REQUIRED_CLAIM_KINDS.get(e.claim, kind)
+    elif isinstance(e, InvalidIssuedAtError):
+        kind = TokenValidationErrorKind.ISSUED_AT
+    elif isinstance(e, InvalidSubjectError):
+        kind = TokenValidationErrorKind.SUBJECT
+    elif isinstance(e, InvalidAlgorithmError):
+        kind = TokenValidationErrorKind.ALGORITHM
+    return kind
+
+
 def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requires these params
     jwt: str,
     key: dict | JsonWebKey,
@@ -322,6 +348,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         if subject is not None and decoded.get("sub") != subject:
             raise TokenValidationException(
                 "Invalid subject: token sub does not match expected value",
+                validation_kind=TokenValidationErrorKind.SUBJECT,
                 token_part="payload",
             )
 
@@ -355,6 +382,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         logger.error(f"Key cannot verify the token: {e!s}")
         raise TokenValidationException(
             "Key cannot verify the token",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
             token_part="header",
             details={"error": str(e)},
         ) from e
@@ -362,6 +390,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         logger.error(f"Invalid token: {e!s}")
         raise TokenValidationException(
             f"Invalid token: {e!s}",
+            validation_kind=_invalid_token_kind(e),
             details={"error": str(e)},
         ) from e
 

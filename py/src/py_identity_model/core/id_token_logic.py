@@ -46,6 +46,7 @@ from ..exceptions import (
     IdTokenNonceError,
     IdTokenRequiredClaim,
     IdTokenValidationException,
+    TokenValidationErrorKind,
     UntrustedAudienceException,
 )
 from .jwt_helpers import reject_blank_issuer_entries
@@ -79,6 +80,7 @@ def _hash_for_alg(alg: str | None):
     if not alg:
         raise IdTokenValidationException(
             "ID token header 'alg' is required to validate at_hash/c_hash",
+            validation_kind=TokenValidationErrorKind.ALGORITHM,
             token_part="header",
         )
     normalized = alg.strip()
@@ -95,6 +97,7 @@ def _hash_for_alg(alg: str | None):
         return hashlib.sha512
     raise IdTokenValidationException(
         f"Unsupported ID token 'alg' {alg!r} for at_hash/c_hash validation",
+        validation_kind=TokenValidationErrorKind.ALGORITHM,
         token_part="header",
     )
 
@@ -210,7 +213,9 @@ def _reject_untrusted_audiences(
     untrusted = find_untrusted_audiences(claims, client_id, trusted_audiences)
     if untrusted is None:
         raise IdTokenValidationException(
-            "ID token missing required 'aud' claim", token_part="payload"
+            "ID token missing required 'aud' claim",
+            token_part="payload",
+            validation_kind=TokenValidationErrorKind.AUDIENCE,
         )
     if untrusted:
         raise UntrustedAudienceException(
@@ -314,10 +319,10 @@ def _validate_azp(claims: dict, client_id: str) -> None:
         )
 
 
-# The value each §3.3.2.11 hash claim binds to: (input name, error wording).
+# The value each §3.3.2.11 hash claim binds to: (input name, error wording, kind).
 _HASH_BINDINGS = {
-    "at_hash": ("access_token", "the access token"),
-    "c_hash": ("code", "the authorization code"),
+    "at_hash": ("access_token", "the access token", TokenValidationErrorKind.AT_HASH),
+    "c_hash": ("code", "the authorization code", TokenValidationErrorKind.C_HASH),
 }
 
 
@@ -336,20 +341,32 @@ def _validate_hash_binding(
     has to match, whatever its type. Presence is checked before the hash is
     computed, so an absent, unrequired claim never consults ``alg``.
     """
-    value_field, subject = _HASH_BINDINGS[claim]
+    value_field, subject, kind = _HASH_BINDINGS[claim]
     if claim not in claims:
         if required:
             raise IdTokenValidationException(
                 f"ID token missing required '{claim}' claim for {subject} "
                 "issued with it",
                 token_part="payload",
+                validation_kind=kind,
             )
         return
-    expected = _left_half_hash(value, header_alg, value_field)
-    actual = claims[claim]
-    if not isinstance(actual, str) or not _hashes_equal(actual, expected, f"'{claim}'"):
+    try:
+        expected = _left_half_hash(value, header_alg, value_field)
+        actual = claims[claim]
+        matches = isinstance(actual, str) and _hashes_equal(
+            actual, expected, f"'{claim}'"
+        )
+    except IdTokenValidationException as exc:
+        if exc.validation_kind is TokenValidationErrorKind.ALGORITHM:
+            raise
+        raise IdTokenValidationException(
+            exc.message, token_part=exc.token_part, validation_kind=kind
+        ) from exc
+    if not matches:
         raise IdTokenValidationException(
             f"ID token '{claim}' claim does not match {subject}",
+            validation_kind=kind,
             token_part="payload",
         )
 
@@ -522,6 +539,7 @@ def validate_id_token_claims(  # noqa: PLR0913  # OIDC §3.1.3.7/§3.3.2.11 knob
     if not claims.get("sub"):
         raise IdTokenValidationException(
             "ID token missing required 'sub' claim",
+            validation_kind=TokenValidationErrorKind.SUBJECT,
             token_part="payload",
         )
 

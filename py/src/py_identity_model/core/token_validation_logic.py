@@ -34,6 +34,7 @@ from ..exceptions import (
     JwksValidationError,
     PyIdentityModelException,
     SignatureVerificationException,
+    TokenValidationErrorKind,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -235,6 +236,11 @@ def _require_allowed_alg(alg: object, allowed: list[str]) -> str:
             f"Algorithm '{alg}' is not in the allowed algorithms",
             token_part="header",
             details={"alg": alg, "allowed": list(allowed)},
+            validation_kind=(
+                TokenValidationErrorKind.ALGORITHM_NONE
+                if isinstance(alg, str) and alg.lower() == "none"
+                else TokenValidationErrorKind.ALGORITHM
+            ),
         )
     return alg
 

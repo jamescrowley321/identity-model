@@ -11,13 +11,16 @@ wrappers agree.
 """
 
 import base64
+from dataclasses import replace
 import hashlib
 import time
 
 import httpx
+import jwt as pyjwt
 import pytest
 import respx
 
+from py_identity_model import ValidationCache
 from py_identity_model.aio.id_token import validate_id_token as aio_validate_id_token
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache as aio_clear_discovery_cache,
@@ -1873,3 +1876,87 @@ class TestEmptyNonceArgument:
             )
         assert exc_info.value.message == _EMPTY_NONCE
         assert respx.calls.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("claim", "value", "reason"),
+    [
+        ("iss", "https://wrong.example", "invalid_issuer"),
+        ("iss", None, "invalid_issuer"),
+        ("aud", "wrong-client", "invalid_audience"),
+        ("aud", [_AUDIENCE, "wrong-client"], "invalid_audience"),
+        ("aud", None, "invalid_audience"),
+        ("exp", 1, "invalid_expiration"),
+        ("exp", None, "invalid_expiration"),
+        ("iat", "not-a-time", "invalid_issued_at"),
+        ("iat", None, "invalid_issued_at"),
+        ("sub", None, "invalid_subject"),
+        ("nonce", "wrong-nonce", "nonce_mismatch"),
+        ("nonce", None, "nonce_mismatch"),
+        ("at_hash", "wrong-hash", "invalid_at_hash"),
+        ("c_hash", "wrong-hash", "invalid_c_hash"),
+    ],
+)
+def test_validate_id_token_reports_typed_rejection(rsa_keypair, claim, value, reason):
+    key, pem = rsa_keypair
+    claims = _valid_id_claims(nonce="expected-nonce")
+    if value is None:
+        claims.pop(claim, None)
+    else:
+        claims[claim] = value
+    token = sign_jwt(pem, claims, headers={})
+    config = TokenValidationConfig(
+        perform_disco=False,
+        key=key,
+        audience=_AUDIENCE,
+        issuer=_ISSUER,
+        options={"require": ["sub", "iat", "exp"]},
+    )
+    with pytest.raises(TokenValidationException) as caught:
+        validate_id_token(
+            token,
+            config,
+            nonce="expected-nonce",
+            access_token="at" if claim == "at_hash" else None,
+            code="code" if claim == "c_hash" else None,
+        )
+    assert caught.value.validation_kind.value == reason
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        ("wrong_signature", "invalid_signature"),
+        ("wrong_key_type", "key_selection"),
+        ("disallowed_algorithm", "invalid_algorithm"),
+        ("unsigned", "alg_none"),
+    ],
+)
+@respx.mock
+def test_discovery_id_token_distinguishes_header_and_signature_rejections(
+    rsa_keypair, failure, reason
+):
+    key, pem = rsa_keypair
+    config = _config()
+    claims = _valid_id_claims()
+    if failure == "unsigned":
+        token = pyjwt.encode(claims, "", algorithm="none")
+    else:
+        if failure == "wrong_signature":
+            _, pem = generate_rsa_keypair()
+        elif failure == "wrong_key_type":
+            key = {"kty": "OKP", "kid": key["kid"], "crv": "Ed25519", "x": "AA"}
+        elif failure == "disallowed_algorithm":
+            config = replace(config, algorithms=["PS256", "ES256", "EdDSA"])
+        token = sign_jwt(pem, claims, headers={"kid": key["kid"]})
+    _mock_disco_and_jwks(key)
+
+    with pytest.raises(TokenValidationException) as caught:
+        validate_id_token(
+            token,
+            config,
+            disco_doc_address=DISCO_URL,
+            nonce=None,
+            cache=ValidationCache(),
+        )
+    assert caught.value.validation_kind.value == reason

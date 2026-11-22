@@ -14,6 +14,7 @@ from ..exceptions import (
     AmbiguousKeyException,
     KeyAlgorithmMismatchException,
     KeyNotFoundException,
+    TokenValidationErrorKind,
     TokenValidationException,
 )
 from ..logging_config import logger
@@ -55,6 +56,7 @@ def _reject_non_string_alg(jwt_alg: object) -> None:
     if jwt_alg is not None and not isinstance(jwt_alg, str):
         raise TokenValidationException(
             "Invalid 'alg' header: expected a string",
+            validation_kind=TokenValidationErrorKind.ALGORITHM,
             token_part="header",
             details={"alg_type": type(jwt_alg).__name__},
         )
@@ -85,6 +87,7 @@ def _validate_key_alg_consistency(
     if jwt_alg.lower() == "none":
         raise TokenValidationException(
             "Algorithm 'none' is not permitted for signed-token validation",
+            validation_kind=TokenValidationErrorKind.ALGORITHM_NONE,
             token_part="header",
             details={"kid": key.kid, "alg": jwt_alg},
         )
@@ -94,6 +97,7 @@ def _validate_key_alg_consistency(
         raise TokenValidationException(
             f"Key type '{key.kty}' is incompatible with algorithm '{jwt_alg}' "
             f"(expected key type '{expected_kty}')",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
             token_part="header",
             details={"kid": key.kid, "kty": key.kty, "alg": jwt_alg},
         )
@@ -227,6 +231,7 @@ def _no_kid_candidates(
     if jwt_alg and jwt_alg.lower() == "none":
         raise TokenValidationException(
             "Algorithm 'none' is not permitted for signed-token validation",
+            validation_kind=TokenValidationErrorKind.ALGORITHM_NONE,
             token_part="header",
             details={"alg": jwt_alg},
         )
@@ -328,7 +333,10 @@ def find_key_by_kid(
         TokenValidationException: If no keys are available
     """
     if not keys:
-        raise TokenValidationException("No keys available in JWKS response")
+        raise TokenValidationException(
+            "No keys available in JWKS response",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
+        )
 
     if kid == "":
         kid = None
