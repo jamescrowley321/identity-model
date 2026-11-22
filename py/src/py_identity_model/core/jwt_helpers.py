@@ -7,6 +7,7 @@ This module contains JWT-related operations used by both sync and async implemen
 from jwt import PyJWK, decode, get_unverified_header
 from jwt.exceptions import (
     ExpiredSignatureError,
+    ImmatureSignatureError,
     InvalidAlgorithmError,
     InvalidAudienceError,
     InvalidIssuedAtError,
@@ -269,6 +270,9 @@ def _invalid_token_kind(e: InvalidTokenError) -> TokenValidationErrorKind:
     if isinstance(e, MissingRequiredClaimError):
         kind = _REQUIRED_CLAIM_KINDS.get(e.claim, kind)
     elif isinstance(e, InvalidIssuedAtError):
+        kind = TokenValidationErrorKind.ISSUED_AT
+    elif isinstance(e, ImmatureSignatureError):
+        # A future iat/nbf: the token is not yet valid, still the iat family.
         kind = TokenValidationErrorKind.ISSUED_AT
     elif isinstance(e, InvalidSubjectError):
         kind = TokenValidationErrorKind.SUBJECT

@@ -1890,6 +1890,8 @@ class TestEmptyNonceArgument:
         ("exp", None, "invalid_expiration"),
         ("iat", "not-a-time", "invalid_issued_at"),
         ("iat", None, "invalid_issued_at"),
+        # A future iat is PyJWT's ImmatureSignatureError: still the iat family.
+        ("iat", 4102444800, "invalid_issued_at"),
         ("sub", None, "invalid_subject"),
         ("nonce", "wrong-nonce", "nonce_mismatch"),
         ("nonce", None, "nonce_mismatch"),
