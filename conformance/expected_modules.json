@@ -6,25 +6,25 @@
     "oidcc-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "oidcc-client-test-missing-sub": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_subject"
       ]
     },
     "oidcc-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "oidcc-client-test-missing-iat": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issued_at"
       ]
     },
     "oidcc-client-test-kid-absent-single-jwks": {
@@ -33,7 +33,7 @@
     "oidcc-client-test-kid-absent-multiple-jwks": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "key_selection"
       ]
     },
     "oidcc-client-test-idtoken-sig-rs256": {
@@ -51,7 +51,7 @@
     "oidcc-client-test-invalid-sig-rs256": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_signature"
       ]
     },
     "oidcc-client-test-userinfo-invalid-sub": {
@@ -80,25 +80,25 @@
     "oidcc-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "oidcc-client-test-missing-sub": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_subject"
       ]
     },
     "oidcc-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "oidcc-client-test-missing-iat": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issued_at"
       ]
     },
     "oidcc-client-test-kid-absent-single-jwks": {
@@ -107,7 +107,7 @@
     "oidcc-client-test-kid-absent-multiple-jwks": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "key_selection"
       ]
     },
     "oidcc-client-test-idtoken-sig-rs256": {
@@ -125,7 +125,7 @@
     "oidcc-client-test-invalid-sig-rs256": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_signature"
       ]
     },
     "oidcc-client-test-userinfo-invalid-sub": {
@@ -183,25 +183,25 @@
     "oidcc-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "oidcc-client-test-missing-sub": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_subject"
       ]
     },
     "oidcc-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "oidcc-client-test-missing-iat": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issued_at"
       ]
     },
     "oidcc-client-test-kid-absent-single-jwks": {
@@ -210,7 +210,7 @@
     "oidcc-client-test-kid-absent-multiple-jwks": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "key_selection"
       ]
     },
     "oidcc-client-test-idtoken-sig-rs256": {
@@ -219,7 +219,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -228,7 +228,7 @@
     "oidcc-client-test-invalid-sig-rs256": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_signature"
       ]
     },
     "oidcc-client-test-userinfo-invalid-sub": {
@@ -257,25 +257,25 @@
     "oidcc-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "oidcc-client-test-missing-sub": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_subject"
       ]
     },
     "oidcc-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "oidcc-client-test-missing-iat": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issued_at"
       ]
     },
     "oidcc-client-test-kid-absent-single-jwks": {
@@ -284,7 +284,7 @@
     "oidcc-client-test-kid-absent-multiple-jwks": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "key_selection"
       ]
     },
     "oidcc-client-test-idtoken-sig-rs256": {
@@ -293,7 +293,7 @@
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -302,7 +302,7 @@
     "oidcc-client-test-invalid-sig-rs256": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_signature"
       ]
     },
     "oidcc-client-test-userinfo-invalid-sub": {
@@ -334,14 +334,13 @@
     "oidcc-client-test-discovery-issuer-mismatch": {
       "expect": "reject",
       "reasons": [
-        "discovery_failed",
         "issuer_mismatch"
       ]
     },
     "oidcc-client-test-idtoken-sig-none": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "alg_none"
       ],
       "allow": {
         "SKIPPED": "The suite marks this module SKIPPED when the RP does not accept an unsigned (alg=none) ID Token; py-identity-model never accepts alg=none by design."
@@ -367,19 +366,19 @@
     "fapi2-security-profile-final-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
@@ -391,31 +390,31 @@
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_algorithm"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-expired-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-valid-aud-as-array": {
@@ -486,19 +485,19 @@
     "fapi2-security-profile-final-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
@@ -510,31 +509,31 @@
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_algorithm"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-expired-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-valid-aud-as-array": {
@@ -599,19 +598,19 @@
     "fapi2-security-profile-final-client-test-invalid-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-secondary-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-null-alg": {
@@ -623,31 +622,31 @@
     "fapi2-security-profile-final-client-test-invalid-alternate-alg": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_algorithm"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-expired-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-exp": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_expiration"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-aud": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_audience"
       ]
     },
     "fapi2-security-profile-final-client-test-invalid-missing-iss": {
       "expect": "reject",
       "reasons": [
-        "id_token_validation"
+        "invalid_issuer"
       ]
     },
     "fapi2-security-profile-final-client-test-valid-aud-as-array": {

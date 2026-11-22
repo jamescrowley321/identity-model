@@ -72,8 +72,8 @@ from py_identity_model import (
     request_authorization_code_token,
     resolve_mtls_endpoint,
     validate_authorize_callback_state,
-    validate_logout_token,
     validate_id_token,
+    validate_logout_token,
     validate_post_logout_state,
     validate_token,
 )
@@ -83,11 +83,11 @@ from py_identity_model.core.parsers import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    IdTokenNonceError,
     JarmValidationException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
     PyIdentityModelException,
+    TokenValidationErrorKind,
     TokenValidationException,
 )
 from py_identity_model.sync.token_validation import (
@@ -1635,9 +1635,16 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             )
         except PyIdentityModelException as exc:
             # Discovery and JWKS failures raise their own types; record them
-            # like any other validation failure.
+            # like any other validation failure. Only
+            # TokenValidationException carries a typed kind; anything else
+            # (a network or configuration failure) stays unclassified.
+            kind = (
+                exc.validation_kind
+                if isinstance(exc, TokenValidationException)
+                else TokenValidationErrorKind.UNCLASSIFIED
+            )
             session.result["status"] = "error"
-            session.result["error"] = f"{_id_token_rejection_class(exc)}: {exc.message}"
+            session.result["error"] = f"{kind.value}: {exc.message}"
             logger.error("REJECTED: id_token validation failed: %s", exc.message)
             _store_test_result(session)
             return HTMLResponse(
@@ -1939,21 +1946,6 @@ def get_result(test_id: str) -> JSONResponse:
         session = test_results[test_id]
         return JSONResponse(content=session.result)
     return JSONResponse(status_code=404, content={"error": "not_found"})
-
-
-def _id_token_rejection_class(exc: TokenValidationException) -> str:
-    """Reason class for a rejected ID Token.
-
-    A token refused for ``alg=none`` or for its ``nonce`` gets its own class,
-    so the ``idtoken-sig-none`` and nonce modules can require that exact
-    refusal.
-    """
-    if isinstance(exc, IdTokenNonceError):
-        return "nonce_mismatch"
-    alg = (exc.details or {}).get("alg")
-    if isinstance(alg, str) and alg.lower() == "none":
-        return "alg_none"
-    return "id_token_validation"
 
 
 def _discovery_policy(*, mtls: bool) -> DiscoveryPolicy:
