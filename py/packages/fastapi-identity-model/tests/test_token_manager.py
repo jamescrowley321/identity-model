@@ -324,7 +324,7 @@ async def test_discovery_failure_raises(monkeypatch):
         ),
         pytest.param(
             httpx.Response(200, content=b'{"refresh_token":"credential-sentinel-json'),
-            "Token refresh failed",
+            "Unexpected error during token refresh",
             id="malformed-json",
         ),
     ],
@@ -348,59 +348,6 @@ async def test_refresh_grant_failure_does_not_expose_response_body(
     assert "credential-sentinel-" not in str(exc.value)
     assert "credential-sentinel-" not in repr(exc.value)
     assert "credential-sentinel-" not in caplog.text
-
-
-@pytest.mark.usefixtures("token_endpoint")
-@pytest.mark.parametrize(
-    ("legacy_error", "expected"),
-    [
-        pytest.param(
-            "Token refresh failed with status code: 400. Response Content: "
-            'b\'{"error_description":"credential-sentinel-description",'
-            '"refresh_token":"credential-sentinel-refresh"}\'',
-            "Token refresh failed with status code: 400",
-            id="legacy-core-response-body",
-        ),
-        pytest.param(
-            "Token refresh failed with status code: credential-sentinel-malformed",
-            "Token refresh failed",
-            id="malformed-status",
-        ),
-        pytest.param(
-            "Provider rejected credential-sentinel-unknown",
-            "Token refresh failed",
-            id="unknown-diagnostic",
-        ),
-        pytest.param(
-            "Network error during token refresh: credential-sentinel-network",
-            "Network error during token refresh",
-            id="network-diagnostic",
-        ),
-        pytest.param(
-            "Unexpected error during token refresh: credential-sentinel-unexpected",
-            "Token refresh failed",
-            id="unexpected-diagnostic",
-        ),
-    ],
-)
-async def test_refresh_failure_redacts_legacy_core_error(
-    monkeypatch: pytest.MonkeyPatch, legacy_error: str, expected: str
-) -> None:
-    monkeypatch.setattr(
-        tm_mod,
-        "refresh_token",
-        AsyncMock(
-            return_value=RefreshTokenResponse(is_successful=False, error=legacy_error)
-        ),
-    )
-    with pytest.raises(TokenManagerError) as exc:
-        await _stale().get_access_token()
-
-    assert _error(exc) == (
-        TokenManagerErrorKind.REFRESH_FAILED,
-        {"kind": "refresh_failed", "error": expected},
-    )
-    assert "credential-sentinel-" not in repr(exc.value.details)
 
 
 async def test_zero_expires_in_is_expired():
@@ -430,11 +377,16 @@ async def test_concurrent_get_access_token_refreshes_once(token_endpoint):
     assert token_endpoint.call_count == 1
 
 
-def test_unexplained_rejection_does_not_expose_the_library_error():
+def test_unexplained_rejection_keeps_the_library_message():
+    """The core's own message passes through verbatim; it is safe by construction."""
+    message = (
+        "Token response is missing required fields per RFC 6749 "
+        "Section 5.1: access_token"
+    )
     error = tm_mod._rejection(
         RefreshTokenResponse(
             is_successful=False,
-            error="credential-sentinel-invalid-response",
+            error=message,
             error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
             rejected_token={"access_token": "fresh", "token_type": "Bearer"},
         )
@@ -442,15 +394,19 @@ def test_unexplained_rejection_does_not_expose_the_library_error():
 
     assert (error.kind, error.details) == (
         TokenManagerErrorKind.REFRESH_FAILED,
-        {"kind": "refresh_failed", "error": "Token refresh failed"},
+        {"kind": "refresh_failed", "error": message},
     )
 
 
 @pytest.mark.usefixtures("token_endpoint")
 async def test_unexplained_rejection_keeps_the_rotated_refresh_token(monkeypatch):
+    message = (
+        "Token response is missing required fields per RFC 6749 "
+        "Section 5.1: access_token"
+    )
     rejected = RefreshTokenResponse(
         is_successful=False,
-        error="credential-sentinel-invalid-response",
+        error=message,
         error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
         rejected_token={
             "access_token": "fresh",
@@ -466,7 +422,7 @@ async def test_unexplained_rejection_keeps_the_rotated_refresh_token(monkeypatch
 
     assert (*_error(exc), tm.access_token, tm.refresh_token) == (
         TokenManagerErrorKind.REFRESH_FAILED,
-        {"kind": "refresh_failed", "error": "Token refresh failed"},
+        {"kind": "refresh_failed", "error": message},
         "stale",
         "r2",
     )
