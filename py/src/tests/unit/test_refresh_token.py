@@ -150,8 +150,8 @@ class TestRefreshToken:
         )
 
         assert response.is_successful is False
-        assert response.error is not None
-        assert "Connection refused" in response.error
+        # The exception detail is logged server-side, never returned (#1182).
+        assert response.error == "Network error during token refresh"
 
 
 SECRET_TOKEN = {

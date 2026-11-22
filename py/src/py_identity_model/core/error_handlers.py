@@ -224,16 +224,23 @@ def handle_auth_code_token_error(
 
 
 def handle_refresh_token_error(e: Exception) -> RefreshTokenResponse:
-    """Handle errors during refresh token requests."""
+    """Handle errors during refresh token requests.
+
+    The returned error message is a fixed string. The exception may quote
+    response data, so its detail is logged server-side only; it never
+    reaches ``RefreshTokenResponse.error`` (issue #1182).
+    """
     raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
-        error_msg = f"Network error during token refresh: {e!s}"
-        logger.error(error_msg, exc_info=True)
-        return RefreshTokenResponse(is_successful=False, error=error_msg)
+        logger.error("Network error during token refresh", exc_info=True)
+        return RefreshTokenResponse(
+            is_successful=False, error="Network error during token refresh"
+        )
 
-    error_msg = f"Unexpected error during token refresh: {e!s}"
-    logger.error(error_msg, exc_info=True)
-    return RefreshTokenResponse(is_successful=False, error=error_msg)
+    logger.error("Unexpected error during token refresh", exc_info=True)
+    return RefreshTokenResponse(
+        is_successful=False, error="Unexpected error during token refresh"
+    )
 
 
 def handle_introspection_error(

@@ -118,9 +118,8 @@ class TestLiveRefreshToken:
         discovery_document,
         test_config,
         provider_capabilities,
-        invalid_grant_error,
     ):
-        """Invalid refresh token returns invalid_grant error."""
+        """Invalid refresh token is refused without echoing the error body."""
         if "dev_interactions" not in provider_capabilities:
             pytest.skip("Provider does not support devInteractions")
         if "refresh_token" not in provider_capabilities:
@@ -135,8 +134,9 @@ class TestLiveRefreshToken:
             )
         )
         assert response.is_successful is False
-        assert response.error is not None
-        assert invalid_grant_error in response.error
+        # The error body (error, error_description) may echo secrets, so the
+        # message reports the status code only (#1182).
+        assert response.error == "Token refresh failed with status code: 400"
 
     def test_refresh_token_scope_downscope(
         self,
