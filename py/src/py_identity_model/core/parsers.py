@@ -5,7 +5,6 @@ This module contains parsing logic used by both sync and async implementations.
 """
 
 import base64
-import binascii
 import copy
 import dataclasses
 import json
@@ -121,7 +120,7 @@ def _header_kid(headers: dict) -> str | None:
     return None if kid == "" else kid
 
 
-_JWS_SEGMENT_NAMES = ("header", "payload", "signature")
+_JWS_SEGMENT_COUNT = 3
 
 
 def _malformed(reason: str, token_part: str | None) -> MalformedTokenException:
@@ -145,18 +144,19 @@ def _decode_segment(segment: str, name: str) -> bytes:
             segment.translate(_BASE64URL_TO_BASE64) + "=" * (-len(segment) % 4),
             validate=True,
         )
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:
+        # binascii.Error, or a ValueError for a non-ASCII segment.
         raise _malformed(f"{name} is not valid base64url", name) from exc
 
 
-def _decode_json_object(raw: bytes, name: str) -> dict:
+def _decode_json_object(raw: bytes, name: str) -> None:
+    """Check that *raw* is a UTF-8 JSON object."""
     try:
         value = json.loads(raw.decode("utf-8"))
     except (ValueError, RecursionError) as exc:
         raise _malformed(f"{name} is not valid JSON", name) from exc
     if not isinstance(value, dict):
         raise _malformed(f"{name} is not a JSON object", name)
-    return value
 
 
 def check_compact_jws(jwt: str) -> None:
@@ -171,14 +171,17 @@ def check_compact_jws(jwt: str) -> None:
     if not isinstance(jwt, str):
         raise _malformed("token is not a string", None)
     segments = jwt.split(".")
-    if len(segments) != len(_JWS_SEGMENT_NAMES):
-        raise _malformed(f"compact JWS must have 3 segments, got {len(segments)}", None)
-    header, payload, _signature = (
-        _decode_segment(segment, name)
-        for segment, name in zip(segments, _JWS_SEGMENT_NAMES, strict=True)
-    )
-    _decode_json_object(header, "header")
-    _decode_json_object(payload, "payload")
+    if len(segments) != _JWS_SEGMENT_COUNT:
+        raise _malformed(
+            f"compact JWS must have {_JWS_SEGMENT_COUNT} segments, got {len(segments)}",
+            None,
+        )
+    header, payload, signature = segments
+    header_bytes = _decode_segment(header, "header")
+    payload_bytes = _decode_segment(payload, "payload")
+    _decode_segment(signature, "signature")
+    _decode_json_object(header_bytes, "header")
+    _decode_json_object(payload_bytes, "payload")
 
 
 def _unverified_header(jwt: str) -> dict:
