@@ -47,9 +47,14 @@ func MintToken(spec TokenSpec, keys FixtureKeys, now time.Time) (string, error) 
 		return "", err
 	}
 
+	typ := spec.HeaderTyp
+	if typ == "" {
+		typ = "JWT"
+	}
+
 	signer, err := jose.NewSigner(
 		jose.SigningKey{Algorithm: jose.SignatureAlgorithm(alg), Key: signingKey},
-		(&jose.SignerOptions{}).WithType("JWT"),
+		(&jose.SignerOptions{}).WithType(jose.ContentType(typ)),
 	)
 	if err != nil {
 		return "", fmt.Errorf("new signer: %w", err)
