@@ -152,7 +152,7 @@ def _decode_segment(segment: str, name: str) -> bytes:
 def _decode_json_object(raw: bytes, name: str) -> None:
     """Check that *raw* is a UTF-8 JSON object."""
     try:
-        value = json.loads(raw.decode("utf-8"))
+        value = json.loads(raw.decode())
     except (ValueError, RecursionError) as exc:
         raise _malformed(f"{name} is not valid JSON", name) from exc
     if not isinstance(value, dict):

@@ -65,6 +65,14 @@ CASES = [
         binascii.Error,
     ),
     (
+        # Without strict decoding the "*" would be skipped and "e30" decoded.
+        "header-skippable-char",
+        f"e30**.{PAYLOAD}.{SIGNATURE}",
+        "header is not valid base64url",
+        "header",
+        binascii.Error,
+    ),
+    (
         "header-bad-length",
         f"a.{PAYLOAD}.{SIGNATURE}",
         "header is not valid base64url",
