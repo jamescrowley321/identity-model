@@ -117,6 +117,13 @@ SHAPES = [
         "signature",
         binascii.Error,
     ),
+    Shape("payload-padded", lambda: _with_segment(_PAYLOAD, "e30="), "payload", None),
+    Shape(
+        "signature-standard-base64",
+        lambda: _with_segment(_SIGNATURE, "ab+/"),
+        "signature",
+        None,
+    ),
     Shape(
         "header-not-json",
         lambda: _with_segment(_HEADER, _b64(b"not json")),

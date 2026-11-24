@@ -132,11 +132,18 @@ def _malformed(reason: str, token_part: str | None) -> MalformedTokenException:
     )
 
 
+_NOT_UNPADDED_BASE64URL = frozenset("+/=")
+_BASE64URL_TO_BASE64 = str.maketrans("-_", "+/")
+
+
 def _decode_segment(segment: str, name: str) -> bytes:
     """Decode one base64url segment, unpadded (RFC 7515 §2)."""
+    if not _NOT_UNPADDED_BASE64URL.isdisjoint(segment):
+        raise _malformed(f"{name} is not unpadded base64url", name)
     try:
         return base64.b64decode(
-            segment + "=" * (-len(segment) % 4), altchars=b"-_", validate=True
+            segment.translate(_BASE64URL_TO_BASE64) + "=" * (-len(segment) % 4),
+            validate=True,
         )
     except (binascii.Error, ValueError) as exc:
         raise _malformed(f"{name} is not valid base64url", name) from exc
