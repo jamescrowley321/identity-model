@@ -251,6 +251,29 @@ test("rewrites both fixture placeholder origins", async (t) => {
   });
 });
 
+test("serves the RFC 8414 metadata location of a vector base URL", async (t) => {
+  const metadata = "/.well-known/oauth-authorization-server";
+  const { base, issuer, check } = await start(t, {
+    vector: {
+      ...basic,
+      http: { [metadata]: response("hosts.json") },
+      expect_request: { path: metadata, method: "GET" },
+    },
+  });
+  const res = await fetch(issuer + metadata + base.slice(issuer.length));
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { issuer: base, jwks_uri: base + "/jwks" });
+  assert.deepEqual(await check(), { ok: true, diffs: [] });
+});
+
+test("RFC 8414 metadata paths outside a vector pass through", async (t) => {
+  const { issuer } = await start(t);
+  assert.equal(
+    await (await fetch(issuer + "/.well-known/oauth-authorization-server/v/run")).text(),
+    "real provider",
+  );
+});
+
 for (const [fixture, status] of [
   ["missing.json", 404],
   ["../vectors/sample.json", 500],
