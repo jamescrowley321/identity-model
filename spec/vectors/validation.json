@@ -346,6 +346,46 @@
           "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
         }
       ]
+    },
+    {
+      "id": "JWT-017",
+      "title": "Reject a token that is not a well-formed compact JWS",
+      "given": "A token without three segments, with a segment that is not base64url, or with a header or payload that is not JSON",
+      "when": "The token is validated",
+      "then": "Validation is rejected with the library's malformed-token error, never an error type from an underlying JOSE or JSON decoder",
+      "references": ["RFC 7515 §7.1", "RFC 7519 §7.2"],
+      "vectors": [
+        {
+          "name": "not-three-segments",
+          "token": {"static": "validation/malformed-one-segment-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "malformed"}
+        },
+        {
+          "name": "header-not-base64url",
+          "token": {"static": "validation/malformed-header-base64-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "malformed"}
+        },
+        {
+          "name": "header-not-json",
+          "token": {"static": "validation/malformed-header-json-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "malformed"}
+        },
+        {
+          "name": "payload-not-json-validly-signed",
+          "token": {"static": "validation/malformed-payload-json-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "malformed"}
+        },
+        {
+          "name": "signature-not-base64url",
+          "token": {"static": "validation/malformed-signature-base64-token.txt"},
+          "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "reject", "error": "malformed"}
+        }
+      ]
     }
   ]
 }
