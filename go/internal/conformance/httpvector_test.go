@@ -91,6 +91,7 @@ var httpAdapters = map[string]httpAdapter{
 // issue that tracks it. They are skipped by name, never silently.
 var unimplementedHTTPCases = map[string]string{
 	"INTR-007": "signed introspection responses (RFC 9701) are not implemented in Go (#1030)",
+	"DISC-013": "the RFC 8414 metadata location is not implemented in Go (#1155)",
 }
 
 // TestHTTPVectors runs every HTTP vector in spec/vectors against the node-oidc

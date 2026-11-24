@@ -37,6 +37,15 @@ func runDiscoveryVector(t *testing.T, label, base string, v HTTPVector) {
 	if ttl, ok := v.Input["cache_ttl_seconds"].(float64); ok {
 		opts = append(opts, discovery.WithCacheTTL(time.Duration(ttl)*specSecond))
 	}
+	// The configured issuer is the base URL plus input.issuer_suffix. Go builds
+	// only the default OIDC location; DISC-013 (RFC 8414) is skipped by id.
+	issuer := base
+	if suffix, ok := v.Input["issuer_suffix"].(string); ok {
+		issuer += suffix
+	}
+	if loc, ok := v.Input["location"].(string); ok && loc != "openid_configuration" {
+		t.Fatalf("%s: unsupported location %q", label, loc)
+	}
 	offsets := []any{0.0}
 	if at, ok := v.Input["calls_at_seconds"].([]any); ok {
 		offsets = at
@@ -49,7 +58,7 @@ func runDiscoveryVector(t *testing.T, label, base string, v HTTPVector) {
 	start := time.Now()
 	for _, at := range offsets {
 		time.Sleep(time.Until(start.Add(time.Duration(at.(float64)) * specSecond)))
-		if cfg, err = discovery.FetchConfiguration(context.Background(), base, opts...); err != nil {
+		if cfg, err = discovery.FetchConfiguration(context.Background(), issuer, opts...); err != nil {
 			break
 		}
 	}

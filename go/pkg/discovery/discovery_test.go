@@ -434,16 +434,55 @@ func TestFetchConfiguration_WithTimeout(t *testing.T) {
 	}
 }
 
-// Trailing slashes on the issuer must not change the resolved endpoint or the
-// issuer-match comparison.
+// A terminating "/" on the issuer is removed when building the endpoint
+// (§4.1), but the issuer match is exact (§4.3): a trailing-slash-only
+// difference in either direction is a mismatch.
 func TestFetchConfiguration_TrailingSlash(t *testing.T) {
-	freshCache(t)
-	srv, _ := newServer(t, http.StatusOK, nil)
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(validDocFor(srv.URL))
-	})
-	if _, err := FetchConfiguration(context.Background(), srv.URL+"/", WithInsecureAllowHTTP()); err != nil {
-		t.Errorf("trailing-slash issuer: %v", err)
+	cases := []struct {
+		name       string
+		configured string
+		returned   string
+		wantErr    bool
+	}{
+		{name: "both with slash", configured: "/", returned: "/"},
+		{name: "returned with slash", configured: "", returned: "/", wantErr: true},
+		{name: "configured with slash", configured: "/", returned: "", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			freshCache(t)
+			var (
+				mu    sync.Mutex
+				paths []string
+			)
+			srv, _ := newServer(t, http.StatusOK, nil)
+			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths = append(paths, r.URL.Path)
+				mu.Unlock()
+				_, _ = w.Write(validDocFor(srv.URL + tc.returned))
+			})
+			_, err := FetchConfiguration(context.Background(), srv.URL+tc.configured, WithInsecureAllowHTTP())
+			mu.Lock()
+			defer mu.Unlock()
+			if !slices.Equal(paths, []string{wellKnownPath}) {
+				t.Errorf("requested paths = %v, want [%s]", paths, wellKnownPath)
+			}
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("exact match: %v", err)
+				}
+				return
+			}
+			var mismatch *IssuerMismatchError
+			if !errors.As(err, &mismatch) {
+				t.Fatalf("err = %v, want *IssuerMismatchError", err)
+			}
+			want := IssuerMismatchError{Requested: srv.URL + tc.configured, Returned: srv.URL + tc.returned}
+			if *mismatch != want {
+				t.Errorf("mismatch = %+v, want %+v", *mismatch, want)
+			}
+		})
 	}
 }
 
