@@ -107,13 +107,21 @@ def test_default_allowed_header_alg_is_accepted():
     assert resolve_algorithms(_header_only_jwt("RS256"), None) == ["RS256"]
 
 
-def test_header_alg_outside_defaults_is_an_algorithm_rejection():
+@pytest.mark.parametrize(
+    ("alg", "kind"),
+    [
+        pytest.param("HS256", TokenValidationErrorKind.ALGORITHM, id="hs256"),
+        pytest.param("none", TokenValidationErrorKind.ALGORITHM_NONE, id="none"),
+        pytest.param("None", TokenValidationErrorKind.ALGORITHM_NONE, id="mixed-case"),
+    ],
+)
+def test_header_alg_outside_defaults_is_rejected_with_its_kind(alg, kind):
     with pytest.raises(TokenValidationException) as exc_info:
-        resolve_algorithms(_header_only_jwt("HS256"), None)
+        resolve_algorithms(_header_only_jwt(alg), None)
 
     assert _contract(exc_info.value) == {
         "type": TokenValidationException,
-        "validation_kind": TokenValidationErrorKind.ALGORITHM,
-        "message": "Algorithm 'HS256' is not in the allowed algorithms",
+        "validation_kind": kind,
+        "message": f"Algorithm '{alg}' is not in the allowed algorithms",
         "token_part": "header",
     }
