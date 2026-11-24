@@ -32,7 +32,7 @@ from py_identity_model import (
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 _ACCESS_CLAIMS = {"sub": "u1", "scope": "read"}
 
 
@@ -54,7 +54,7 @@ def _authenticator(monkeypatch, *, returns=None, raises=None, **kwargs):
         return dict(returns)
 
     monkeypatch.setattr(ws, "validate_token", fake_validate_token)
-    return build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid", **kwargs)
+    return build_ws_authenticator(issuer=ISSUER, audience="cid", **kwargs)
 
 
 async def test_valid_token_via_query_param(monkeypatch):
@@ -92,7 +92,7 @@ async def test_malformed_authorization_header_does_not_fall_through(monkeypatch)
         return dict(_ACCESS_CLAIMS)
 
     monkeypatch.setattr(ws, "validate_token", fake_validate_token)
-    auth = build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid")
+    auth = build_ws_authenticator(issuer=ISSUER, audience="cid")
     sock = _FakeWebSocket(
         headers={"Authorization": "Token abc"}, query_params={"access_token": "good"}
     )
@@ -219,16 +219,14 @@ async def test_custom_query_param(monkeypatch):
 
 
 async def test_threads_config_into_validate_token(monkeypatch):
-    # The authenticator must thread audience, discovery URL, perform_disco AND
+    # The authenticator must thread audience, issuer, perform_disco AND
     # the injected custom_claims_validator into TokenValidationConfig — a
     # regression dropping any of these would otherwise pass silently.
     captured = {}
 
-    async def capturing_validate_token(
-        *, token_validation_config, disco_doc_address, **_
-    ):
+    async def capturing_validate_token(*, token_validation_config, issuer, **_):
         captured["cfg"] = token_validation_config
-        captured["disco"] = disco_doc_address
+        captured["issuer"] = issuer
         return dict(_ACCESS_CLAIMS)
 
     monkeypatch.setattr(ws, "validate_token", capturing_validate_token)
@@ -237,7 +235,7 @@ async def test_threads_config_into_validate_token(monkeypatch):
         return None
 
     auth = build_ws_authenticator(
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         custom_claims_validator=my_validator,
     )
@@ -247,7 +245,7 @@ async def test_threads_config_into_validate_token(monkeypatch):
     assert cfg.audience == "cid"
     assert cfg.perform_disco is True
     assert cfg.claims_validator is my_validator
-    assert captured["disco"] == DISCOVERY_URL
+    assert captured["issuer"] == ISSUER
 
 
 async def test_to_principal_failure_closes_internal_error(monkeypatch):
@@ -266,13 +264,13 @@ async def test_to_principal_failure_closes_internal_error(monkeypatch):
 
 def test_empty_audience_raises():
     with pytest.raises(ValueError, match="audience"):
-        build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="")
+        build_ws_authenticator(issuer=ISSUER, audience="")
 
 
 def test_require_marker_with_empty_claims_raises():
     with pytest.raises(ValueError, match="access_token_marker_claims"):
         build_ws_authenticator(
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience="cid",
             require_access_token_marker=True,
             access_token_marker_claims=(),

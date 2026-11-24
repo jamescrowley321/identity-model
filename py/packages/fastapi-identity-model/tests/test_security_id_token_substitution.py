@@ -32,7 +32,7 @@ import fastapi_identity_model.middleware as mw
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 
 # A valid code-flow ID token: correct iss/sig/aud, but NONE of the ID-token-only
 # marker claims the negative guard keys on, and no access-token marker either.
@@ -49,7 +49,7 @@ def _app(monkeypatch, validate, **mw_kwargs) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health"],
         **mw_kwargs,

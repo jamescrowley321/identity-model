@@ -98,7 +98,7 @@ def oidc_public_paths(prefix: str = "") -> list[str]:
         app.include_router(build_oidc_router(settings), prefix=router_prefix)
         app.add_middleware(
             TokenValidationMiddleware,
-            discovery_url=settings.discovery_url,
+            issuer=settings.issuer,
             audience=settings.expected_audience,
             excluded_paths=[
                 *settings.excluded_paths,
@@ -145,15 +145,11 @@ def _require_session(request: Request) -> None:
         )
 
 
-_WELL_KNOWN_SUFFIX = "/.well-known/openid-configuration"
-
-
-def _expected_issuer(discovery_url: str) -> str:
-    """Issuer implied by the discovery URL (OIDC Discovery 1.0 §4.1)."""
-    base = discovery_url.rstrip("/")
-    if base.endswith(_WELL_KNOWN_SUFFIX):
-        base = base[: -len(_WELL_KNOWN_SUFFIX)]
-    return base.rstrip("/")
+# Discovery failures caused by the configured issuer or the provider's
+# document disagreeing with it, rather than by the provider being unreachable.
+_DISCOVERY_CONFIGURATION_ERRORS = frozenset(
+    {DiscoveryErrorKind.ISSUER_MISMATCH, DiscoveryErrorKind.INVALID_CONFIGURATION}
+)
 
 
 def _error_kind_headers(
@@ -168,38 +164,26 @@ async def _discover(
     settings: OIDCSettings, http_client: AsyncHTTPClient | None, expose_error_kind: bool
 ) -> DiscoveryDocumentResponse:
     disco = await get_discovery_document(
-        DiscoveryDocumentRequest(address=settings.discovery_url),
+        DiscoveryDocumentRequest(issuer=settings.issuer),
         http_client=http_client,
     )
     if not disco.is_successful:
         # Log the provider's specific error for operators; return a generic
         # detail so the callback endpoint cannot be probed for upstream
         # internals (mirrors the resource-server middleware's F-18 posture).
+        # The library compares the document's issuer with the configured
+        # issuer exactly (OIDC Discovery 1.0 §4.3) and rejects an issuer that
+        # is itself a discovery URL.
         logger.warning("OIDC discovery failed: %s", disco.error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Identity provider discovery failed",
+            detail=(
+                "Identity provider configuration error"
+                if disco.error_kind in _DISCOVERY_CONFIGURATION_ERRORS
+                else "Identity provider discovery failed"
+            ),
             headers=_error_kind_headers(
                 expose_error_kind, disco.error_kind if expose_error_kind else None
-            ),
-        )
-    # OIDC Discovery 1.0 §4.3: the document's issuer MUST match the URL the
-    # document was retrieved from (issuer mix-up defense). The library only
-    # validates the issuer's *format*; the equality check is the RP's job.
-    # Trailing slashes are normalized — issuer "https://op/" serves its
-    # document at "https://op/.well-known/openid-configuration".
-    expected = _expected_issuer(settings.discovery_url)
-    if (disco.issuer or "").rstrip("/") != expected:
-        logger.warning(
-            "Discovery document issuer mismatch: expected %r, got %r",
-            expected,
-            disco.issuer,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Identity provider configuration error",
-            headers=_error_kind_headers(
-                expose_error_kind, DiscoveryErrorKind.ISSUER_MISMATCH
             ),
         )
     return disco
@@ -278,16 +262,12 @@ async def _exchange_code(
 
 async def _validate_id_token(  # noqa: PLR0913  # includes router diagnostics option
     settings: OIDCSettings,
-    disco: DiscoveryDocumentResponse,
     id_token: str,
     expected_nonce: str,
     http_client: AsyncHTTPClient | None,
     expose_error_kind: bool,
 ) -> dict:
     """Validate the ID token (signature/iss/aud/exp/required claims) and bind the nonce."""
-    # Guard the issuer explicitly: a discovery doc missing ``issuer`` would
-    # otherwise pass ``issuer=None`` and silently disable issuer verification.
-    issuer = _require_endpoint(disco.issuer, "issuer")
     try:
         # validate_id_token, not validate_token: the access-token sender
         # constraint (RFC 9449 §7, RFC 8705 §3) does not apply to ID Tokens.
@@ -296,10 +276,10 @@ async def _validate_id_token(  # noqa: PLR0913  # includes router diagnostics op
             token_validation_config=TokenValidationConfig(
                 perform_disco=True,
                 audience=settings.client_id,
-                issuer=issuer,
+                issuer=settings.issuer,
                 options={"verify_exp": True, "require": ["sub", "iat", "exp"]},
             ),
-            disco_doc_address=settings.discovery_url,
+            issuer=settings.issuer,
             http_client=http_client,
             trusted_audiences=settings.trusted_audiences,
             validate_azp=settings.validate_azp,
@@ -448,7 +428,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     # provider that advertises the parameter must send it.
     issuer_check = validate_authorize_callback_issuer(
         cb,
-        disco.issuer,
+        settings.issuer,
         iss_parameter_supported=(
             disco.authorization_response_iss_parameter_supported is True
         ),
@@ -474,7 +454,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             detail="Provider did not return an ID token",
         )
     claims = await _validate_id_token(
-        settings, disco, id_token, flow["nonce"], http_client, expose_error_kind
+        settings, id_token, flow["nonce"], http_client, expose_error_kind
     )
 
     userinfo: dict = {}

@@ -23,7 +23,7 @@ non-oracle 401); the specific cause is logged server-side.
 
     app = FastAPI()
     ws_auth = build_ws_authenticator(
-        discovery_url="https://op/.well-known/openid-configuration",
+        issuer="https://op.example.com",
         audience="my-api",
     )
 
@@ -111,7 +111,7 @@ def _extract_ws_token(
 
 
 def build_ws_authenticator(
-    discovery_url: str | None = None,
+    issuer: str | None = None,
     audience: str | None = None,
     *,
     query_param: str = "access_token",
@@ -129,8 +129,8 @@ def build_ws_authenticator(
     HTTP middleware cannot reach (issue #598).
 
     Args:
-        discovery_url: The OpenID Connect discovery document URL. Defaults to
-            ``settings.discovery_url``; required without ``settings``.
+        issuer: The provider's issuer identifier. Defaults to
+            ``settings.issuer``; required without ``settings``.
         audience: Expected ``aud`` claim. Defaults to ``settings.expected_audience``.
             Required — a ``None`` audience does
             not enforce ``aud`` for tokens that omit it, which on a shared
@@ -150,7 +150,7 @@ def build_ws_authenticator(
             the discovery document, keys and kid-miss cooldown. ``None`` uses
             the library default cache.
         settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
-            ``discovery_url`` and ``audience`` when not passed, and the binding
+            ``issuer`` and ``audience`` when not passed, and the binding
             options when ``options`` is not passed. See
             :class:`TokenValidationMiddleware`.
         options: :class:`~fastapi_identity_model.AuthOptions`, the same
@@ -182,10 +182,10 @@ def build_ws_authenticator(
         do not rely on the code being distinguishable browser-side.
     """
     if settings is not None:
-        discovery_url = discovery_url or settings.discovery_url
+        issuer = issuer or settings.issuer
         audience = audience or settings.expected_audience
-    if not discovery_url:
-        raise ValueError("build_ws_authenticator requires a discovery_url or settings.")
+    if not issuer:
+        raise ValueError("build_ws_authenticator requires an issuer or settings.")
     if not audience:
         raise ValueError(
             "build_ws_authenticator requires a non-empty 'audience'; a "
@@ -220,7 +220,7 @@ def build_ws_authenticator(
                     required_binding=auth_options.required_binding,
                     dpop=auth_options.dpop,
                 ),
-                disco_doc_address=discovery_url,
+                issuer=issuer,
                 http_client=http_client,
                 cache=cache,
                 presentation=presentation(

@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 
 def test_audience_defaults_to_client_id():
     s = OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration",
+        issuer="https://op",
         client_id="cid",
         redirect_uri="http://localhost/cb",
     )
@@ -29,7 +29,7 @@ def test_audience_defaults_to_client_id():
 
 def test_explicit_audience_preserved():
     s = OIDCSettings(
-        discovery_url="d",
+        issuer="https://op",
         client_id="cid",
         redirect_uri="r",
         audience_override="api://resource",
@@ -37,25 +37,25 @@ def test_explicit_audience_preserved():
     assert s.expected_audience == "api://resource"
 
 
-@pytest.mark.parametrize(("discovery_url", "client_id"), [("", "cid"), ("d", "")])
-def test_empty_required_fields_rejected(discovery_url, client_id):
+@pytest.mark.parametrize(("issuer", "client_id"), [("", "cid"), ("https://op", "")])
+def test_empty_required_fields_rejected(issuer, client_id):
     with pytest.raises(ValueError, match="non-empty"):
-        OIDCSettings(discovery_url=discovery_url, client_id=client_id)
+        OIDCSettings(issuer=issuer, client_id=client_id)
 
 
 def test_required_binding_string_is_coerced_to_token_binding():
-    s = OIDCSettings(discovery_url="d", client_id="cid", required_binding="dpop")
+    s = OIDCSettings(issuer="https://op", client_id="cid", required_binding="dpop")
     assert s.required_binding is TokenBinding.DPOP
 
 
 def test_unknown_required_binding_string_is_rejected():
     with pytest.raises(ValueError, match="'bearer' is not a valid TokenBinding"):
-        OIDCSettings(discovery_url="d", client_id="cid", required_binding="bearer")
+        OIDCSettings(issuer="https://op", client_id="cid", required_binding="bearer")
 
 
 def test_client_secret_not_in_repr():
     s = OIDCSettings(
-        discovery_url="https://op.example.com/.well-known/openid-configuration",
+        issuer="https://op.example.com",
         client_id="cid",
         client_secret="s3cr3t",
     )
@@ -65,7 +65,7 @@ def test_client_secret_not_in_repr():
 
 def test_token_manager_repr_omits_secrets():
     manager = TokenManager(
-        discovery_url="https://op.example.com/.well-known/openid-configuration",
+        issuer="https://op.example.com",
         client_id="cid",
         client_secret="s3cr3t",
     )
@@ -76,34 +76,34 @@ def test_token_manager_repr_omits_secrets():
 
 
 def test_trusted_audiences_default_to_none_trusted():
-    s = OIDCSettings(discovery_url="d", client_id="cid")
+    s = OIDCSettings(issuer="https://op", client_id="cid")
     assert (s.trusted_audiences, s.validate_azp) == ([], False)
 
 
 def test_trusted_audiences_tuple_is_stored_as_list():
     audiences: Any = ("urn:a",)
-    s = OIDCSettings(discovery_url="d", client_id="cid", trusted_audiences=audiences)
+    s = OIDCSettings(issuer="https://op", client_id="cid", trusted_audiences=audiences)
     assert s.trusted_audiences == ["urn:a"]
 
 
 @pytest.mark.parametrize("audiences", ["urn:api", None, {"urn:api"}])
 def test_trusted_audiences_must_be_a_list(audiences):
     with pytest.raises(ValueError, match="trusted_audiences must be a list of strings"):
-        OIDCSettings(discovery_url="d", client_id="cid", trusted_audiences=audiences)
+        OIDCSettings(issuer="https://op", client_id="cid", trusted_audiences=audiences)
 
 
 @pytest.mark.parametrize("entry", ["", 7, None])
 def test_trusted_audiences_entries_must_be_non_empty_strings(entry):
     with pytest.raises(ValueError, match="trusted_audiences entries"):
         OIDCSettings(
-            discovery_url="d", client_id="cid", trusted_audiences=["urn:a", entry]
+            issuer="https://op", client_id="cid", trusted_audiences=["urn:a", entry]
         )
 
 
 @pytest.mark.parametrize("value", ["false", 1, None])
 def test_validate_azp_must_be_a_bool(value):
     with pytest.raises(ValueError, match="validate_azp must be a bool"):
-        OIDCSettings(discovery_url="d", client_id="cid", validate_azp=value)
+        OIDCSettings(issuer="https://op", client_id="cid", validate_azp=value)
 
 
 @pytest.mark.parametrize("cls", [OIDCSettings, AuthOptions], ids=lambda c: c.__name__)
@@ -118,9 +118,7 @@ def test_settings_types_are_frozen_and_keyword_only(cls):
 
 
 def test_settings_replace_revalidates():
-    s = OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration", client_id="cid"
-    )
+    s = OIDCSettings(issuer="https://op", client_id="cid")
     with pytest.raises(dataclasses.FrozenInstanceError):
         s.audience_override = "api"  # type: ignore[misc]
     with pytest.raises(
@@ -138,15 +136,13 @@ def test_auth_options_replace_keeps_shared_replay_cache():
 
 
 def test_replace_client_id_moves_the_default_audience():
-    s = OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration", client_id="app-a"
-    )
+    s = OIDCSettings(issuer="https://op", client_id="app-a")
     assert dataclasses.replace(s, client_id="app-b").expected_audience == "app-b"
 
 
 def test_explicit_audience_survives_replace():
     s = OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration",
+        issuer="https://op",
         client_id="app-a",
         audience_override="api://resource",
     )
@@ -156,17 +152,24 @@ def test_explicit_audience_survives_replace():
 
 
 def test_no_audience_attribute_so_4x_reads_fail_loudly():
-    s = OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration", client_id="cid"
-    )
+    s = OIDCSettings(issuer="https://op", client_id="cid")
     with pytest.raises(AttributeError, match=r"'audience'"):
         _ = s.audience  # type: ignore[attr-defined]
     with pytest.raises(TypeError, match=r"'audience'"):
         OIDCSettings(  # type: ignore[call-arg]
-            discovery_url="https://op/.well-known/openid-configuration",
+            issuer="https://op",
             client_id="cid",
             audience="api",
         )
+
+
+def test_discovery_url_keyword_is_not_accepted():
+    legacy = {
+        "discovery_url": "https://op/.well-known/openid-configuration",
+        "client_id": "cid",
+    }
+    with pytest.raises(TypeError, match=r"'discovery_url'"):
+        OIDCSettings(**legacy)
 
 
 @pytest.mark.parametrize("override", ["", 123])
@@ -176,7 +179,7 @@ def test_empty_or_non_string_audience_override_rejected(override):
         match=r"^audience_override must be a non-empty string or None; got ",
     ):
         OIDCSettings(
-            discovery_url="https://op/.well-known/openid-configuration",
+            issuer="https://op",
             client_id="cid",
             audience_override=override,
         )

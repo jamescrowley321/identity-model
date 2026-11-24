@@ -56,7 +56,6 @@ from py_identity_model.core import process_local
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
 ISSUER = "https://op"
 AUDIENCE = "urn:api"
 URL = "http://testserver/me"
@@ -147,7 +146,7 @@ def client(monkeypatch, public_jwk):
         app = FastAPI()
         app.add_middleware(
             TokenValidationMiddleware,
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience=AUDIENCE,
             excluded_paths=[],
             options=AuthOptions(
@@ -555,7 +554,7 @@ def ws_authenticate(monkeypatch, public_jwk):
 
     async def _authenticate(headers=(), query_params=None, raw_path=None, **options):
         auth = build_ws_authenticator(
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience=AUDIENCE,
             options=AuthOptions(
                 dpop=DPoPVerificationOptions(replay_cache=InMemoryDPoPReplayCache()),
@@ -704,7 +703,7 @@ def oidc_env(monkeypatch):
         "EXCLUDED_PATHS",
     ):
         monkeypatch.delenv(f"OIDC_{name}", raising=False)
-    monkeypatch.setenv("OIDC_DISCOVERY_URL", DISCOVERY_URL)
+    monkeypatch.setenv("OIDC_ISSUER", ISSUER)
     monkeypatch.setenv("OIDC_CLIENT_ID", AUDIENCE)
     return monkeypatch
 
@@ -766,9 +765,9 @@ class TestSettingsWiring:
     async def test_entry_points_without_options_share_a_replay_cache(
         self, raw_client, raw_ws_authenticate, token, caplog
     ):
-        # Built separately with only discovery_url=: a handshake proof
+        # Built separately with only issuer=: a handshake proof
         # (htm=GET) replayed on an HTTP GET is still refused.
-        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        common = {"issuer": ISSUER, "audience": AUDIENCE}
         key = generate_dpop_key()
         bound = token({"jkt": key.jwk_thumbprint})
         headers = _dpop_headers(bound, key)
@@ -799,7 +798,7 @@ class TestSettingsWiring:
                 return True
 
         options = AuthOptions(dpop=DPoPVerificationOptions(replay_cache=BoolCache()))
-        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        common = {"issuer": ISSUER, "audience": AUDIENCE}
         key = generate_dpop_key()
         bound = token({"jkt": key.jwk_thumbprint})
 
@@ -827,7 +826,7 @@ class TestSettingsWiring:
 
         monkeypatch.setattr(mw, "validate_token", bad_discovery)
 
-        async with raw_client(discovery_url=DISCOVERY_URL, audience=AUDIENCE) as c:
+        async with raw_client(issuer=ISSUER, audience=AUDIENCE) as c:
             resp = await c.get("/me", headers={"Authorization": "Bearer t"})
 
         assert (resp.status_code, resp.json()) == (401, GENERIC_BODY)
@@ -932,11 +931,11 @@ class TestSettingsWiring:
         middleware = TokenValidationMiddleware(FastAPI(), settings=settings)
 
         assert (
-            middleware.discovery_url,
+            middleware.issuer,
             middleware.audience,
             middleware.excluded_paths,
             middleware.options,
-        ) == (DISCOVERY_URL, AUDIENCE, ["/live"], AuthOptions())
+        ) == (ISSUER, AUDIENCE, ["/live"], AuthOptions())
 
     @pytest.mark.usefixtures("oidc_env")
     def test_explicit_arguments_win_over_settings(self):
@@ -944,22 +943,22 @@ class TestSettingsWiring:
 
         middleware = TokenValidationMiddleware(
             FastAPI(),
-            discovery_url="https://other/.well-known/openid-configuration",
+            issuer="https://other",
             audience="urn:other",
             excluded_paths=[],
             settings=settings,
         )
 
         assert (
-            middleware.discovery_url,
+            middleware.issuer,
             middleware.audience,
             middleware.excluded_paths,
-        ) == ("https://other/.well-known/openid-configuration", "urn:other", [])
+        ) == ("https://other", "urn:other", [])
 
-    def test_discovery_url_required_without_settings(self):
-        with pytest.raises(ValueError, match="discovery_url"):
+    def test_issuer_required_without_settings(self):
+        with pytest.raises(ValueError, match="issuer"):
             TokenValidationMiddleware(FastAPI(), audience=AUDIENCE)
-        with pytest.raises(ValueError, match="discovery_url"):
+        with pytest.raises(ValueError, match="issuer"):
             build_ws_authenticator(audience=AUDIENCE)
 
     def test_options_dropping_settings_binding_rejected(self, oidc_env):
@@ -1065,7 +1064,7 @@ class TestSharedOptions:
         ws_proof = create_dpop_proof(
             key, "GET", "https://api.example.com/ws", access_token=bound
         )
-        common = {"discovery_url": DISCOVERY_URL, "audience": AUDIENCE}
+        common = {"issuer": ISSUER, "audience": AUDIENCE}
 
         async with raw_client(options=options, **common) as c:
             http_ok = await c.get("/me", headers=http_headers)
@@ -1168,7 +1167,7 @@ class TestExpectedOrigin:
         headers = _dpop_headers(bound, key, url="http://evil.example/me")
         headers["Host"] = "evil.example"
 
-        async with raw_client(discovery_url=DISCOVERY_URL, audience=AUDIENCE) as c:
+        async with raw_client(issuer=ISSUER, audience=AUDIENCE) as c:
             resp = await c.get("/me", headers=headers)
 
         assert (resp.status_code, resp.json()) == (200, {"sub": "user"})
@@ -1180,9 +1179,7 @@ class TestExpectedOrigin:
         headers["Host"] = "evil.example"
         options = AuthOptions(expected_origin="https://api.example.com")
 
-        async with raw_client(
-            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
-        ) as c:
+        async with raw_client(issuer=ISSUER, audience=AUDIENCE, options=options) as c:
             resp = await c.get("/me", headers=headers)
 
         assert _rejected(resp) == (401, INVALID_PROOF_DPOP, GENERIC_BODY)
@@ -1195,9 +1192,7 @@ class TestExpectedOrigin:
         headers = _dpop_headers(bound, key, url="https://api.example.com/me?x=1")
         options = AuthOptions(expected_origin="https://api.example.com")
 
-        async with raw_client(
-            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
-        ) as c:
+        async with raw_client(issuer=ISSUER, audience=AUDIENCE, options=options) as c:
             resp = await c.get("/me?x=1", headers=headers)
 
         assert (resp.status_code, resp.json()) == (200, {"sub": "user"})
@@ -1207,9 +1202,7 @@ class TestExpectedOrigin:
         bound = token({"jkt": key.jwk_thumbprint})
         options = AuthOptions(expected_origin="https://api.example.com")
 
-        async with raw_client(
-            discovery_url=DISCOVERY_URL, audience=AUDIENCE, options=options
-        ) as c:
+        async with raw_client(issuer=ISSUER, audience=AUDIENCE, options=options) as c:
             resp = await c.get("/me", headers=_dpop_headers(bound, key))
 
         assert _rejected(resp) == (401, INVALID_PROOF_DPOP, GENERIC_BODY)
@@ -1224,7 +1217,7 @@ class TestExpectedOrigin:
         with pytest.raises(WebSocketException) as exc:
             await raw_ws_authenticate(
                 [("Authorization", f"DPoP {bound}"), ("DPoP", proof)],
-                discovery_url=DISCOVERY_URL,
+                issuer=ISSUER,
                 audience=AUDIENCE,
                 options=AuthOptions(expected_origin="https://api.example.com"),
             )
@@ -1293,14 +1286,14 @@ class TestExpectedOrigin:
     def test_invalid_certificate_header_name_rejected(self, header):
         with pytest.raises(ValueError, match="client_certificate_header"):
             OIDCSettings(
-                discovery_url=DISCOVERY_URL,
+                issuer=ISSUER,
                 client_id=AUDIENCE,
                 client_certificate_header=header,
             )
 
     def test_token_character_certificate_header_name_accepted(self):
         settings = OIDCSettings(
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             client_id=AUDIENCE,
             client_certificate_header="x_ssl.client~cert",
         )
@@ -1309,7 +1302,7 @@ class TestExpectedOrigin:
     def test_invalid_settings_origin_rejected(self):
         with pytest.raises(ValueError, match="expected_origin"):
             OIDCSettings(
-                discovery_url=DISCOVERY_URL,
+                issuer=ISSUER,
                 client_id=AUDIENCE,
                 expected_origin="https://api.example.com/v1",
             )

@@ -34,10 +34,7 @@ Token = Annotated[str, Depends(get_token)]
 
 # Descope Configuration
 DESCOPE_PROJECT_ID = os.getenv("DESCOPE_PROJECT_ID", "")
-DISCOVERY_URL = os.getenv(
-    "DISCOVERY_URL",
-    f"https://api.descope.com/{DESCOPE_PROJECT_ID}/.well-known/openid-configuration",
-)
+ISSUER = os.getenv("ISSUER", f"https://api.descope.com/{DESCOPE_PROJECT_ID}")
 AUDIENCE = os.getenv("AUDIENCE", DESCOPE_PROJECT_ID)
 
 # Create FastAPI app
@@ -50,7 +47,7 @@ app = FastAPI(
 # Add token validation middleware
 app.add_middleware(
     TokenValidationMiddleware,
-    discovery_url=DISCOVERY_URL,
+    issuer=ISSUER,
     audience=AUDIENCE,
     excluded_paths=["/", "/health", "/docs", "/openapi.json"],
 )
@@ -63,7 +60,7 @@ async def root():
     return {
         "message": "Descope FastAPI Example",
         "descope_project_id": DESCOPE_PROJECT_ID,
-        "discovery_url": DISCOVERY_URL,
+        "issuer": ISSUER,
         "docs": "/docs",
         "authentication": "Bearer token required for protected endpoints",
     }
@@ -288,7 +285,7 @@ async def http_exception_handler(_request, exc):
 if __name__ == "__main__":
     print("🚀 Starting Descope FastAPI application...")
     print(f"📍 Descope Project ID: {DESCOPE_PROJECT_ID}")
-    print(f"📍 Discovery URL: {DISCOVERY_URL}")
+    print(f"📍 Issuer: {ISSUER}")
     print(f"🎯 Expected Audience: {AUDIENCE}")
     print("\n💡 To get a token, configure a Descope OAuth application")
     print("   and use client credentials flow")

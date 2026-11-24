@@ -22,7 +22,7 @@ from py_identity_model.core.token_binding import check_token_binding
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 
 
 def _app(monkeypatch, validate) -> FastAPI:
@@ -30,7 +30,7 @@ def _app(monkeypatch, validate) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health"],
     )

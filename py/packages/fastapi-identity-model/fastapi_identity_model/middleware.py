@@ -276,8 +276,8 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
 
     Args:
         app: The FastAPI application
-        discovery_url: The OpenID Connect discovery document URL. Defaults to
-            ``settings.discovery_url``; required without ``settings``.
+        issuer: The provider's issuer identifier. Defaults to
+            ``settings.issuer``; required without ``settings``.
         audience: Expected audience claim in the token. Defaults to
             ``settings.expected_audience``. Required — a ``None``
             audience does not enforce ``aud`` for tokens that omit the claim,
@@ -317,7 +317,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
             cooldown; its ``CacheConfig`` sets the cache TTLs, size and cooldown.
             ``None`` uses the library default cache.
         settings: :class:`~fastapi_identity_model.OIDCSettings` supplying
-            ``discovery_url``, ``audience`` and ``excluded_paths`` when those
+            ``issuer``, ``audience`` and ``excluded_paths`` when those
             are not passed, and the binding options (``required_binding``,
             ``client_certificate_header``, ``expected_origin``) when
             ``options`` is not passed.
@@ -336,7 +336,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        discovery_url: str | None = None,
+        issuer: str | None = None,
         audience: str | None = None,
         excluded_paths: list[str] | None = None,
         custom_claims_validator: Callable | None = None,
@@ -352,13 +352,13 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
         if settings is not None:
-            discovery_url = discovery_url or settings.discovery_url
+            issuer = issuer or settings.issuer
             audience = audience or settings.expected_audience
             if excluded_paths is None:
                 excluded_paths = list(settings.excluded_paths)
-        if not discovery_url:
+        if not issuer:
             raise ValueError(
-                "TokenValidationMiddleware requires a discovery_url or settings."
+                "TokenValidationMiddleware requires an issuer or settings."
             )
         if not audience:
             raise ValueError(
@@ -373,7 +373,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                 "require_access_token_marker=True needs a non-empty "
                 "access_token_marker_claims; an empty set rejects every token."
             )
-        self.discovery_url = discovery_url
+        self.issuer = issuer
         self.audience = audience
         self.require_access_token_marker = require_access_token_marker
         self.access_token_marker_claims = access_token_marker_claims
@@ -527,7 +527,7 @@ class TokenValidationMiddleware(BaseHTTPMiddleware):
                     required_binding=self.options.required_binding,
                     dpop=self.options.dpop,
                 ),
-                disco_doc_address=self.discovery_url,
+                issuer=self.issuer,
                 http_client=self.http_client,
                 cache=self.cache,
                 presentation=self._presentation(request, scheme),

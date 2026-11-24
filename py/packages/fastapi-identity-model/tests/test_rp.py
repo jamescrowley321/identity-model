@@ -33,6 +33,7 @@ from py_identity_model import (
     UserInfoErrorKind,
     UserInfoResponse,
 )
+from py_identity_model.aio import AsyncHTTPClient
 from py_identity_model.aio import validate_id_token as avalidate_id_token
 from py_identity_model.core.response_processors import parse_userinfo_response
 
@@ -40,7 +41,7 @@ from py_identity_model.core.response_processors import parse_userinfo_response
 pytestmark = pytest.mark.unit
 
 SETTINGS = OIDCSettings(
-    discovery_url="https://op/.well-known/openid-configuration",
+    issuer="https://op",
     client_id="cid",
     redirect_uri="http://localhost:8000/auth/callback",
 )
@@ -216,7 +217,14 @@ async def test_callback_missing_code(monkeypatch):
 
 
 async def test_login_discovery_failure(monkeypatch, caplog):
-    _patch(monkeypatch, disco=SimpleNamespace(is_successful=False, error="down"))
+    _patch(
+        monkeypatch,
+        disco=SimpleNamespace(
+            is_successful=False,
+            error="down",
+            error_kind=DiscoveryErrorKind.NETWORK_ERROR,
+        ),
+    )
     with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
         async with _client(_app()) as client:
             resp = await client.get("/auth/login")
@@ -228,27 +236,87 @@ async def test_login_discovery_failure(monkeypatch, caplog):
     assert "down" in caplog.text
 
 
-async def test_login_rejects_discovery_issuer_mismatch(monkeypatch, caplog):
-    # OIDC Discovery 1.0 §4.3: a document whose issuer does not match the
-    # URL it was retrieved from must be rejected (issuer mix-up defense).
-    mismatched = SimpleNamespace(
-        is_successful=True,
-        error=None,
-        authorization_endpoint="https://op/authorize",
-        token_endpoint="https://op/token",
-        userinfo_endpoint="https://op/userinfo",
-        issuer="https://op/INVALID",
-    )
-    _patch(monkeypatch, disco=mismatched)
-    with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
-        async with _client(_app()) as client:
+_DISCOVERY_DOCUMENT_URL = "https://op/.well-known/openid-configuration"
+
+
+def _discovery_document(issuer: str) -> dict:
+    return {
+        "issuer": issuer,
+        "authorization_endpoint": "https://op/authorize",
+        "token_endpoint": "https://op/token",
+        "userinfo_endpoint": "https://op/userinfo",
+        "jwks_uri": "https://op/jwks",
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+    }
+
+
+async def _login_with_real_discovery(
+    settings: OIDCSettings, document: dict
+) -> tuple[httpx.Response, list[str]]:
+    """GET /auth/login with the library's discovery against a stub provider."""
+    requested: list[str] = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if str(request.url) == _DISCOVERY_DOCUMENT_URL:
+            return httpx.Response(200, json=document)
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as inner:
+        app = FastAPI()
+        app.add_middleware(SessionMiddleware, secret_key="test-secret")
+        app.include_router(
+            build_oidc_router(settings, http_client=AsyncHTTPClient(inner)),
+            prefix="/auth",
+        )
+        async with _client(app) as client:
             resp = await client.get("/auth/login")
-    assert resp.status_code == 502
+    return resp, requested
+
+
+async def test_login_discovers_from_the_configured_issuer():
+    resp, requested = await _login_with_real_discovery(
+        SETTINGS, _discovery_document("https://op")
+    )
+    assert (resp.status_code, requested) == (302, [_DISCOVERY_DOCUMENT_URL])
+    assert resp.headers["location"].startswith("https://op/authorize")
+
+
+@pytest.mark.parametrize(
+    "document_issuer",
+    [
+        pytest.param("https://op/", id="trailing-slash"),
+        pytest.param("https://op/INVALID", id="different-path"),
+    ],
+)
+async def test_login_rejects_discovery_issuer_mismatch(caplog, document_issuer):
+    # OIDC Discovery 1.0 §4.3: the document's issuer must be identical to the
+    # configured issuer (issuer mix-up defense); no trailing-slash tolerance.
+    with caplog.at_level(logging.WARNING, logger="fastapi_identity_model"):
+        resp, _ = await _login_with_real_discovery(
+            SETTINGS, _discovery_document(document_issuer)
+        )
     # The mismatched issuer value is not reflected to the client (#601)...
-    assert resp.json()["detail"] == "Identity provider configuration error"
-    assert "INVALID" not in resp.json()["detail"]
-    # ...but the expected/got pair is logged for operators.
-    assert "INVALID" in caplog.text
+    assert (resp.status_code, resp.json()) == (
+        502,
+        {"detail": "Identity provider configuration error"},
+    )
+    # ...but it is logged for operators.
+    assert document_issuer in caplog.text
+
+
+async def test_login_rejects_a_discovery_url_configured_as_the_issuer():
+    settings = replace(SETTINGS, issuer=_DISCOVERY_DOCUMENT_URL)
+    resp, requested = await _login_with_real_discovery(
+        settings, _discovery_document("https://op")
+    )
+    assert (resp.status_code, resp.json(), requested) == (
+        502,
+        {"detail": "Identity provider configuration error"},
+        [],
+    )
 
 
 async def test_fetch_userinfo_disabled_skips_userinfo(monkeypatch):
@@ -485,7 +553,7 @@ def _composed_app(excluded_paths) -> FastAPI:
     app.include_router(build_oidc_router(SETTINGS), prefix="/auth")
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=SETTINGS.discovery_url,
+        issuer=SETTINGS.issuer,
         audience=SETTINGS.expected_audience,
         excluded_paths=excluded_paths,
     )
@@ -569,7 +637,7 @@ def real_id_token_validation(monkeypatch, id_token_key):
         config = replace(
             token_validation_config, perform_disco=False, key=jwk, algorithms=["RS256"]
         )
-        kwargs.pop("disco_doc_address")
+        kwargs.pop("issuer")
         return await avalidate_id_token(id_token, config, **kwargs)
 
     monkeypatch.setattr(rp, "validate_id_token", _validate)

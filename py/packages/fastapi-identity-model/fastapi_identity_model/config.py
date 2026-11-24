@@ -41,7 +41,10 @@ class OIDCSettings:
     """Configuration shared by the RP login router and the resource-server middleware.
 
     Attributes:
-        discovery_url: OpenID Connect discovery document URL of the provider.
+        issuer: The provider's issuer identifier (e.g.
+            ``https://auth.example.com``), compared exactly with the discovery
+            document's ``issuer`` and the tokens' ``iss``. The discovery
+            document is fetched from the issuer's well-known location.
         client_id: OAuth2 client identifier.
         redirect_uri: Absolute callback URL registered with the provider
             (must match the router's ``/callback`` route). Only required for the
@@ -87,7 +90,7 @@ class OIDCSettings:
             client that also lists yours in ``aud`` logs in.
     """
 
-    discovery_url: str
+    issuer: str
     client_id: str
     redirect_uri: str = ""
     client_secret: str | None = field(default=None, repr=False)
@@ -129,7 +132,7 @@ class OIDCSettings:
                 self, "expected_origin", normalize_origin(self.expected_origin)
             )
         # Validate required fields are non-empty.
-        for name in ("discovery_url", "client_id"):
+        for name in ("issuer", "client_id"):
             if not getattr(self, name):
                 raise ValueError(f"OIDCSettings requires a non-empty {name}")
         override = self.audience_override

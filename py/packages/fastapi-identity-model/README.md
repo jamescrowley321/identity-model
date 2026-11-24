@@ -28,13 +28,13 @@ from fastapi_identity_model import (
 )
 
 settings = OIDCSettings(
-    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    issuer="https://op.example.com",
     client_id="<client_id>",
 )
 app = FastAPI()
 app.add_middleware(
     TokenValidationMiddleware,
-    discovery_url=settings.discovery_url,
+    issuer=settings.issuer,
     audience=settings.expected_audience,
     excluded_paths=settings.excluded_paths,
 )
@@ -47,6 +47,12 @@ async def me(user = Depends(get_current_user)):
 async def data():
     return {"data": "protected"}
 ```
+
+`issuer` is the provider's issuer identifier, not its discovery URL. The
+discovery document is fetched from `<issuer>/.well-known/openid-configuration`,
+and its `issuer` and each token's `iss` must equal the configured value
+exactly (`https://op.example.com` and `https://op.example.com/` are different
+issuers). A value ending with `/.well-known/...` is a configuration error.
 
 The middleware validates the token (signature, issuer, audience, expiry) via
 `py-identity-model` and attaches a `ClaimsPrincipal` to `request.state.user`.
@@ -72,7 +78,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi_identity_model import OIDCSettings, build_oidc_router
 
 settings = OIDCSettings(
-    discovery_url="https://api.descope.com/v1/apps/<project_id>/.well-known/openid-configuration",
+    issuer="https://api.descope.com/v1/apps/<project_id>",
     client_id="<client_id>",
     redirect_uri="http://localhost:8000/auth/callback",
     scope="openid profile email",
@@ -132,11 +138,11 @@ or build it from the environment with the optional helper:
 ```python
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
 
-settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
-settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
+settings = oidc_settings_from_env()        # OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_REDIRECT_URI, ...
+settings = oidc_settings_from_env("APP_")  # APP_ISSUER, APP_CLIENT_ID, ...
 ```
 
-`DISCOVERY_URL` and `CLIENT_ID` are required. `EXCLUDED_PATHS` and
+`ISSUER` and `CLIENT_ID` are required. `EXCLUDED_PATHS` and
 `TRUSTED_AUDIENCES` are comma-separated lists; an empty `TRUSTED_AUDIENCES`
 entry raises `ValueError`. `VALIDATE_AZP` is `true` or `false`. Every other variable (`REDIRECT_URI`, `CLIENT_SECRET`,
 `SCOPE`, `AUDIENCE`, `POST_LOGIN_REDIRECT`, `POST_LOGOUT_REDIRECT`) falls back
@@ -164,7 +170,7 @@ http_client = AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0))
 cache = AsyncValidationCache(config=CacheConfig(jwks_cache_ttl=900.0))
 app.add_middleware(
     TokenValidationMiddleware,
-    discovery_url=settings.discovery_url,
+    issuer=settings.issuer,
     audience=settings.expected_audience,
     http_client=http_client,
     cache=cache,
@@ -180,7 +186,7 @@ lifespan). A cache holds no connections and needs no closing.
 ```python
 from fastapi_identity_model import TokenManager
 
-tm = TokenManager(discovery_url=..., client_id=..., client_secret=...)
+tm = TokenManager(issuer=..., client_id=..., client_secret=...)
 tm.set_tokens(
     access_token=..., refresh_token=..., expires_in=3600, token_type="Bearer"
 )

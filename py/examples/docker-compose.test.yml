@@ -58,7 +58,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DISCOVERY_URL=https://identityserver/.well-known/openid-configuration
+      - ISSUER=https://identityserver
       - AUDIENCE=py-identity-model
       - PYTHONUNBUFFERED=1
       - REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/dev/ca-cert.crt
@@ -86,7 +86,7 @@ services:
       dockerfile: examples/fastapi/Dockerfile.test
     container_name: examples-test-runner
     environment:
-      - DISCOVERY_URL=https://identityserver/.well-known/openid-configuration
+      - ISSUER=https://identityserver
       - FASTAPI_URL=http://fastapi-app:8000
       - CLIENT_ID=py-identity-model-client
       - CLIENT_SECRET=${CLIENT_SECRET:-py-identity-model-secret}

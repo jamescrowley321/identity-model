@@ -28,10 +28,7 @@ HTTP_SERVER_ERROR_THRESHOLD = 500
 
 # Configuration from environment
 DESCOPE_PROJECT_ID = os.getenv("DESCOPE_PROJECT_ID", "")
-DISCOVERY_URL = os.getenv(
-    "DISCOVERY_URL",
-    f"https://api.descope.com/{DESCOPE_PROJECT_ID}/.well-known/openid-configuration",
-)
+ISSUER = os.getenv("ISSUER", f"https://api.descope.com/{DESCOPE_PROJECT_ID}")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
 CLIENT_ID = os.getenv("CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
@@ -56,11 +53,11 @@ def _create_auth_headers(token: str) -> dict:
 
 def get_access_token() -> str | None:
     """Get an access token from Descope using client credentials."""
-    print(f"🔍 Getting discovery document from {DISCOVERY_URL}")
+    print(f"🔍 Getting discovery document for {ISSUER}")
 
     try:
         # Get discovery document using py-identity-model
-        disco_request = DiscoveryDocumentRequest(address=DISCOVERY_URL)
+        disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
         disco_response = get_discovery_document(disco_request)
 
         if not disco_response.is_successful:
@@ -347,7 +344,7 @@ def main():
     print("🚀 Starting Descope FastAPI Integration Tests")
     print(f"📍 FastAPI URL: {FASTAPI_URL}")
     print(f"📍 Descope Project ID: {DESCOPE_PROJECT_ID}")
-    print(f"📍 Discovery URL: {DISCOVERY_URL}")
+    print(f"📍 Issuer: {ISSUER}")
 
     # Wait for FastAPI service to be ready
     if not wait_for_service(f"{FASTAPI_URL}/health"):
