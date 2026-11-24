@@ -31,17 +31,56 @@ def _workflow(name: str) -> dict:
     return yaml.safe_load((_WORKFLOWS / name).read_text())
 
 
-@pytest.mark.parametrize("config_path", [_CORE_CONFIG, _FASTAPI_CONFIG])
-def test_python_packages_use_alpha_prereleases_and_classifiers(config_path) -> None:
+@pytest.mark.parametrize(
+    ("config_path", "expected_branches"),
+    [
+        (
+            _CORE_CONFIG,
+            {
+                "main": {"match": "main"},
+                "other": {"match": ".*", "prerelease_token": "a", "prerelease": True},
+            },
+        ),
+        (
+            _FASTAPI_CONFIG,
+            {
+                "main": {"match": "main"},
+                "v5": {
+                    "match": "^release/v5$",
+                    "prerelease_token": "a",
+                    "prerelease": True,
+                },
+            },
+        ),
+    ],
+)
+def test_python_packages_use_alpha_prereleases_and_classifiers(
+    config_path, expected_branches
+) -> None:
     config = _toml(config_path)
-    prerelease_branch = config["tool"]["semantic_release"]["branches"]["other"]
 
-    assert prerelease_branch == {
-        "match": ".*",
-        "prerelease_token": "a",
-        "prerelease": True,
-    }
+    assert config["tool"]["semantic_release"]["branches"] == expected_branches
     assert _ALPHA_CLASSIFIER in config["project"]["classifiers"]
+
+
+@pytest.mark.parametrize(
+    ("branch", "expected_group"),
+    [
+        ("main", "main"),
+        ("release/v5", "v5"),
+        ("feature/x", None),
+        ("release/v50", None),
+    ],
+)
+def test_fastapi_versions_only_main_and_release_v5(branch, expected_group) -> None:
+    branches = _toml(_FASTAPI_CONFIG)["tool"]["semantic_release"]["branches"]
+    # PSR picks the first group whose `match` regex re.match-es the branch.
+    matched = next(
+        (name for name, group in branches.items() if re.match(group["match"], branch)),
+        None,
+    )
+
+    assert matched == expected_group
 
 
 def test_fastapi_alpha_can_install_the_core_alpha() -> None:
@@ -89,8 +128,37 @@ def test_fastapi_versions_the_selected_main_or_release_v5_branch() -> None:
         for step in fastapi_job["steps"]
         if step.get("name") == "Sync with commits pushed by the core release job"
     )
-    assert _SELECTED_RELEASE_BRANCH in sync["run"]
-    assert "origin main" not in sync["run"]
+    assert sync["env"] == {"BRANCH": _SELECTED_RELEASE_BRANCH}
+    assert sync["run"] == 'git pull --ff-only origin "$BRANCH"'
+    assert fastapi_job["concurrency"]["group"] == (
+        "${{ github.workflow }}-release-fastapi-" + _SELECTED_RELEASE_BRANCH
+    )
+
+
+def test_core_release_gates_on_the_selected_branch() -> None:
+    jobs = _workflow("release.yml")["jobs"]
+
+    assert jobs["conformance"]["with"] == {"ref": _SELECTED_RELEASE_BRANCH}
+    assert jobs["release"]["concurrency"]["group"] == (
+        "${{ github.workflow }}-release-" + _SELECTED_RELEASE_BRANCH
+    )
+    for step in jobs["release"]["steps"]:
+        assert "inputs.branch" not in step.get("run", ""), step.get("name")
+
+
+def test_conformance_checks_out_the_called_ref() -> None:
+    workflow = _workflow("conformance.yml")
+    checkouts = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        if "checkout" in step.get("uses", "")
+    ]
+
+    assert workflow[True]["workflow_call"]["inputs"]["ref"]["type"] == "string"
+    assert checkouts
+    for checkout in checkouts:
+        assert checkout["with"]["ref"] == "${{ inputs.ref || github.ref }}"
 
 
 @pytest.mark.parametrize(

@@ -44,12 +44,14 @@ jobs:
   # which is why conformance.yml no longer needs its own push-to-main trigger.
   conformance:
     uses: ./.github/workflows/conformance.yml
+    with:
+      ref: ${{ github.event.inputs.branch || github.ref_name }}
 
   release:
     needs: [ci, conformance]
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ github.workflow }}-release-${{ github.ref_name }}
+      group: ${{ github.workflow }}-release-${{ github.event.inputs.branch || github.ref_name }}
       cancel-in-progress: false
 
     permissions:
@@ -76,8 +78,9 @@ jobs:
 
       - name: Determine branch name
         id: branch
+        env:
+          BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
         run: |
-          BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
           echo "name=$BRANCH" >> $GITHUB_OUTPUT
           if [[ "$BRANCH" == "main" ]]; then
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
@@ -178,12 +181,14 @@ jobs:
 
       - name: Release Summary
         if: steps.release.outputs.released == 'true'
+        env:
+          BRANCH: ${{ steps.branch.outputs.name }}
         run: |
           echo "## Release Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ steps.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ steps.release.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** ${{ steps.branch.outputs.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** $BRANCH" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ steps.branch.outputs.is_prerelease }}" == "true" ]]; then
             echo "This is a **prerelease** version." >> $GITHUB_STEP_SUMMARY
@@ -212,7 +217,7 @@ jobs:
     if: ${{ (github.event.inputs.branch || github.ref_name) == 'main' || (github.event.inputs.branch || github.ref_name) == 'release/v5' }}
     runs-on: ubuntu-latest
     concurrency:
-      group: ${{ github.workflow }}-release-fastapi-${{ github.ref_name }}
+      group: ${{ github.workflow }}-release-fastapi-${{ github.event.inputs.branch || github.ref_name }}
       cancel-in-progress: false
 
     permissions:
@@ -227,7 +232,9 @@ jobs:
           token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Sync with commits pushed by the core release job
-        run: git pull --ff-only origin "${{ github.event.inputs.branch || github.ref_name }}"
+        env:
+          BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+        run: git pull --ff-only origin "$BRANCH"
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
