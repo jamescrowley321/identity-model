@@ -2,7 +2,7 @@
   "capability": "validation",
   "spec": "RFC 7519 (JWT), RFC 7515 (JWS), OIDC Core 1.0 §3.1.3.7",
   "spec_url": "https://www.rfc-editor.org/rfc/rfc7519",
-  "notes": "Vectors are language-neutral: `error` values are canonical codes (malformed, alg_none, unsupported_alg, signature, key_conversion, weak_key, claim_validation) that each language executor maps to its own error type. Time claims (exp/nbf/iat) are duration strings relative to options.now so minted tokens stay fresh. Expected outcomes follow the behaviour of the OIDF-certified py-identity-model reference. A vector with no `allowed_algorithms` runs under each library's default allowlist: RS256/384/512, PS256/384/512, ES256/384/512 and EdDSA (Rust omits ES512).",
+  "notes": "Vectors are language-neutral: `error` values are canonical codes (malformed, alg_none, unsupported_alg, signature, key_conversion, weak_key, claim_validation, token_type) that each language executor maps to its own error type. Time claims (exp/nbf/iat) are duration strings relative to options.now so minted tokens stay fresh. `header_typ` sets the JWS typ header (default JWT). Expected outcomes follow the behaviour of the OIDF-certified py-identity-model reference. A vector with no `allowed_algorithms` runs under each library's default allowlist: RS256/384/512, PS256/384/512, ES256/384/512 and EdDSA (Rust omits ES512).",
   "tests": [
     {
       "id": "JWT-001",
@@ -278,6 +278,71 @@
             "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
           },
           "options": {"now": "2023-11-14T22:13:20Z"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
+        }
+      ]
+    },
+    {
+      "id": "JWT-016",
+      "title": "Reject a JWT whose typ names another kind as an access token",
+      "given": "A signed JWT from the expected issuer for the expected audience whose typ header names another JWT kind (token-introspection+jwt, logout+jwt, secevent+jwt, dpop+jwt, oauth-authz-req+jwt, client-authentication+jwt)",
+      "when": "The token is validated as an access token",
+      "then": "Validation is rejected with a token-type error, comparing typ case-insensitively and with or without the application/ prefix; typ at+jwt, JWT or none is accepted",
+      "references": ["RFC 9701 §8.1", "RFC 7515 §4.1.9", "RFC 9068 §2.1", "OpenID Connect Back-Channel Logout 1.0 §2.4"],
+      "vectors": [
+        {
+          "name": "introspection-response-rejected",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "header_typ": "token-introspection+jwt",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
+          "expect": {"outcome": "reject", "error": "token_type"}
+        },
+        {
+          "name": "logout-token-rejected",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "header_typ": "logout+jwt",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
+          "expect": {"outcome": "reject", "error": "token_type"}
+        },
+        {
+          "name": "media-type-form-rejected",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "header_typ": "Application/Logout+JWT",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
+          "expect": {"outcome": "reject", "error": "token_type"}
+        },
+        {
+          "name": "at-jwt-accepted",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "header_typ": "at+jwt",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
+          "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
+        },
+        {
+          "name": "jwt-accepted",
+          "token": {
+            "signing_key": "fixture",
+            "alg": "RS256",
+            "header_typ": "JWT",
+            "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client", "exp": "1h", "nbf": "-1m", "iat": "-1m"}
+          },
+          "options": {"now": "2023-11-14T22:13:20Z", "expected_issuer": "https://issuer.example.com", "expected_audience": "test-client"},
           "expect": {"outcome": "accept", "claims": {"iss": "https://issuer.example.com", "sub": "user-123", "aud": "test-client"}}
         }
       ]

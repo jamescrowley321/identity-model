@@ -45,7 +45,7 @@ output and forms the Python parametrize id (`<id>-<name>`) that known gaps are k
 
 ### Executable vectors
 
-A case becomes machine-checkable by adding `vectors`. Expected outcomes use **canonical, language-neutral** codes — `malformed`, `alg_none`, `unsupported_alg`, `signature`, `key_conversion`, `weak_key`, `claim_validation` — that each runner maps to its own error type, so the expected result lives in the shared spec rather than in per-language test code. Time-based claims (`exp`/`nbf`/`iat`) are duration strings resolved against `options.now` at run time, so minted tokens stay fresh.
+A case becomes machine-checkable by adding `vectors`. Expected outcomes use **canonical, language-neutral** codes — `malformed`, `alg_none`, `unsupported_alg`, `signature`, `key_conversion`, `weak_key`, `claim_validation`, `token_type` — that each runner maps to its own error type, so the expected result lives in the shared spec rather than in per-language test code. Time-based claims (`exp`/`nbf`/`iat`) are duration strings resolved against `options.now` at run time, so minted tokens stay fresh.
 
 ```json
 {
@@ -71,7 +71,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 |------------|-----------------|----------|
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
 | JWKS | `vectors/jwks.json` (JWKS-001..011) — **executable vectors** | `test-fixtures/jwks/` |
-| Validation | `vectors/validation.json` (JWT-001..015) — **executable vectors** | `test-fixtures/validation/` |
+| Validation | `vectors/validation.json` (JWT-001..016) — **executable vectors** | `test-fixtures/validation/` |
 | ID Token | `vectors/id-token.json` (IDT-001..014) — **executable vectors** | `test-fixtures/validation/` |
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007, UI-009) — **executable vectors** | `test-fixtures/userinfo/` |

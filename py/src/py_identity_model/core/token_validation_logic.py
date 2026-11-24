@@ -7,7 +7,7 @@ implementations to reduce code duplication.
 
 import inspect
 
-from jwt import PyJWTError
+from jwt import PyJWTError, get_unverified_header
 
 from ..core.jwt_helpers import (
     decode_and_validate_jwt,
@@ -22,6 +22,8 @@ from ..core.models import (
 )
 from ..core.parsers import extract_jwt_header_fields
 from ..exceptions import (
+    AccessTokenTypeError,
+    AccessTokenTypeErrorKind,
     ConfigurationException,
     DiscoveryException,
     DiscoveryHTTPSRequiredError,
@@ -331,6 +333,36 @@ def _require_discovery_issuer_listed(
                 "token_issuers": sorted(token_issuers),
             },
         )
+
+
+_MEDIA_TYPE_PREFIX = "application/"
+
+
+def reject_non_access_token_type(jwt: str) -> None:
+    """Reject a JWT whose ``typ`` header names a kind other than an access token.
+
+    RFC 9701 §8.1: resource servers "MUST therefore check the typ JWT header
+    value of received JWT-encoded access tokens". The ``typ`` values of
+    :class:`AccessTokenTypeErrorKind` are rejected, compared case-insensitively
+    and with or without the ``application/`` prefix (RFC 7515 §4.1.9). Any
+    other ``typ``, such as ``at+jwt`` or ``JWT``, or none, passes. A header
+    that cannot be read passes here and fails when the token is decoded.
+
+    Raises:
+        AccessTokenTypeError: If ``typ`` names another JWT kind.
+    """
+    try:
+        typ = get_unverified_header(jwt).get("typ")
+    except PyJWTError:
+        return
+    if not isinstance(typ, str):
+        return
+    media_type = typ.lower().removeprefix(_MEDIA_TYPE_PREFIX)
+    try:
+        kind = AccessTokenTypeErrorKind(media_type)
+    except ValueError:
+        return
+    raise AccessTokenTypeError(kind)
 
 
 def decode_with_config(

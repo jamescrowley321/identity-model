@@ -44,6 +44,7 @@ from ..core.token_validation_logic import (
     keep_signature_verdict_on_failed_refresh,
     log_validation_start,
     log_validation_success,
+    reject_non_access_token_type,
     validate_claims,
     validate_config_for_manual_validation,
     validate_disco_response,
@@ -496,13 +497,15 @@ def validate_token(
     Raises:
         TokenValidationException: If token validation fails, including
             ``DPoPValidationError`` / ``CertificateBindingError`` when the
-            sender constraint does not hold
+            sender constraint does not hold, and ``AccessTokenTypeError``
+            when the ``typ`` header names another JWT kind (RFC 9701 §8.1)
         ConfigurationException: If configuration is invalid
         RuntimeError: If *http_client* has been closed
     """
     # Fail on a bad config or a missing presentation before any network I/O.
     validate_token_config(token_validation_config)
     require_presentation(token_validation_config, presentation)
+    reject_non_access_token_type(jwt)
     claims = _validate_jwt_without_binding(
         jwt,
         token_validation_config,

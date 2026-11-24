@@ -332,6 +332,46 @@ class CertificateBindingError(TokenValidationException):
         )
 
 
+class AccessTokenTypeErrorKind(Enum):
+    """The JWT kind a ``typ`` header names that is not an access token.
+
+    Each value is the ``typ`` header value, without the ``application/``
+    prefix.
+    """
+
+    TOKEN_INTROSPECTION = "token-introspection+jwt"
+    """A signed token introspection response (RFC 9701 §5)."""
+    LOGOUT = "logout+jwt"
+    """A Logout Token (OpenID Connect Back-Channel Logout 1.0 §2.4)."""
+    SECURITY_EVENT = "secevent+jwt"
+    """A Security Event Token (RFC 8417 §2.3)."""
+    DPOP_PROOF = "dpop+jwt"
+    """A DPoP proof (RFC 9449 §4.2)."""
+    AUTHORIZATION_REQUEST = "oauth-authz-req+jwt"
+    """A request object (RFC 9101 §10.8)."""
+    CLIENT_AUTHENTICATION = "client-authentication+jwt"
+    """A client authentication assertion (draft-ietf-oauth-rfc7523bis)."""
+
+
+class AccessTokenTypeError(TokenValidationException):
+    """Raised when ``validate_token`` gets a JWT whose ``typ`` names another kind.
+
+    A resource server "MUST therefore check the typ JWT header value of
+    received JWT-encoded access tokens" (RFC 9701 §8.1), so that a signed
+    introspection response, a Logout Token or another JWT the same issuer
+    signed for the same audience is not accepted as an access token. ``kind``
+    says which JWT kind the ``typ`` named.
+    """
+
+    def __init__(self, kind: AccessTokenTypeErrorKind) -> None:
+        self.kind = kind
+        super().__init__(
+            f"JWT typ '{kind.value}' is not an access token (RFC 9701 §8.1)",
+            token_part="header",
+            details={"typ": kind.value},
+        )
+
+
 class NetworkException(PyIdentityModelException):
     """Raised when network operations fail."""
 
@@ -716,6 +756,8 @@ class SuccessfulResponseAccessError(PyIdentityModelException):
 
 
 __all__ = [
+    "AccessTokenTypeError",
+    "AccessTokenTypeErrorKind",
     "AmbiguousKeyException",
     "AuthorizeCallbackException",
     "AzpRequiresClientIdError",
