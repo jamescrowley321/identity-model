@@ -42,6 +42,7 @@ import jwt as pyjwt
 import pytest
 
 from py_identity_model.core.models import TokenValidationConfig
+from py_identity_model.core.parsers import extract_jwt_header_fields
 from py_identity_model.core.token_validation_logic import (
     build_resolved_config,
     decode_with_config,
@@ -52,6 +53,7 @@ from py_identity_model.exceptions import (
     AccessTokenTypeError,
     InvalidAudienceException,
     InvalidIssuerException,
+    MalformedTokenException,
     PyIdentityModelException,
     SignatureVerificationException,
     TokenExpiredException,
@@ -156,15 +158,18 @@ def _resolve_verification_key(token: str) -> tuple[dict, str]:
     Returns the raw JWK and the algorithm the library resolves for it: the
     key's ``alg``, else the header ``alg`` (``find_key_by_kid``). The raw JWK is
     used rather than a parsed ``JsonWebKey``, whose curve allowlist would refuse
-    the P-192 key of JWT-014 before the strength floor sees it.
+    the P-192 key of JWT-014 before the strength floor sees it. The header is
+    read with the library's own parser, as discovery mode does, so a malformed
+    token (JWT-016) is rejected here with the library's exception.
     """
-    header = pyjwt.get_unverified_header(token)
-    kid = header.get("kid")
+    kid, header_alg = extract_jwt_header_fields(token)
     key = next(
         (k for k in _PUBLIC_JWKS["keys"] if k.get("kid") == kid),
         _PUBLIC_JWKS["keys"][0],
     )
-    return key, key.get("alg") or header["alg"]
+    alg = key.get("alg") or header_alg
+    assert isinstance(alg, str), f"no alg for kid {kid!r}"
+    return key, alg
 
 
 def _nonce_validator(expected_nonce: str):
@@ -267,7 +272,11 @@ def _assert_canonical_reject(err: PyIdentityModelException, expect: dict) -> Non
         assert isinstance(err, WeakKeyException), (
             f"weak_key rejection surfaced as {type(err).__name__}: {message}"
         )
-    elif code in ("alg_none", "unsupported_alg", "malformed", "key_conversion"):
+    elif code == "malformed":
+        assert type(err) is MalformedTokenException, (
+            f"malformed rejection surfaced as {type(err).__name__}: {message}"
+        )
+    elif code in ("alg_none", "unsupported_alg", "key_conversion"):
         # py-identity-model surfaces these pre-claim failures as the base
         # TokenValidationException (exact type — the claim-specific and
         # signature exceptions are subclasses and must NOT match).

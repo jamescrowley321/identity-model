@@ -4,16 +4,20 @@ Parsing functions for py-identity-model.
 This module contains parsing logic used by both sync and async implementations.
 """
 
+import base64
+import binascii
 import copy
 import dataclasses
+import json
 import warnings
 
-from jwt import get_unverified_header
+from jwt import PyJWTError, get_unverified_header
 
 from ..exceptions import (
     AmbiguousKeyException,
     KeyAlgorithmMismatchException,
     KeyNotFoundException,
+    MalformedTokenException,
     TokenValidationErrorKind,
     TokenValidationException,
 )
@@ -117,6 +121,74 @@ def _header_kid(headers: dict) -> str | None:
     return None if kid == "" else kid
 
 
+_JWS_SEGMENT_NAMES = ("header", "payload", "signature")
+
+
+def _malformed(reason: str, token_part: str | None) -> MalformedTokenException:
+    return MalformedTokenException(
+        f"Invalid token: {reason}",
+        token_part=token_part,
+        details={"error": reason},
+    )
+
+
+def _decode_segment(segment: str, name: str) -> bytes:
+    """Decode one base64url segment, unpadded (RFC 7515 §2)."""
+    try:
+        return base64.b64decode(
+            segment + "=" * (-len(segment) % 4), altchars=b"-_", validate=True
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise _malformed(f"{name} is not valid base64url", name) from exc
+
+
+def _decode_json_object(raw: bytes, name: str) -> dict:
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
+        raise _malformed(f"{name} is not valid JSON", name) from exc
+    if not isinstance(value, dict):
+        raise _malformed(f"{name} is not a JSON object", name)
+    return value
+
+
+def check_compact_jws(jwt: str) -> None:
+    """Check that *jwt* is a well-formed compact JWS (RFC 7515 §7.1).
+
+    The token must have three segments, each valid unpadded base64url, and a
+    header and payload that are JSON objects. The signature is not verified.
+
+    Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS.
+    """
+    if not isinstance(jwt, str):
+        raise _malformed("token is not a string", None)
+    segments = jwt.split(".")
+    if len(segments) != len(_JWS_SEGMENT_NAMES):
+        raise _malformed(f"compact JWS must have 3 segments, got {len(segments)}", None)
+    header, payload, _signature = (
+        _decode_segment(segment, name)
+        for segment, name in zip(segments, _JWS_SEGMENT_NAMES, strict=True)
+    )
+    _decode_json_object(header, "header")
+    _decode_json_object(payload, "payload")
+
+
+def _unverified_header(jwt: str) -> dict:
+    """Return the unverified JOSE header of a well-formed compact JWS.
+
+    Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS
+            or its header fails PyJWT's header checks (``kid`` or ``crit`` of
+            the wrong type).
+    """
+    check_compact_jws(jwt)
+    try:
+        return get_unverified_header(jwt)
+    except PyJWTError as exc:
+        raise _malformed(str(exc), "header") from exc
+
+
 def extract_kid_from_jwt(jwt: str) -> str | None:
     """
     Extract the 'kid' (key ID) from a JWT header without verification.
@@ -126,8 +198,11 @@ def extract_kid_from_jwt(jwt: str) -> str | None:
 
     Returns:
         str | None: The key ID from the JWT header, or None if absent or empty
+
+    Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
     """
-    return _header_kid(get_unverified_header(jwt))
+    return _header_kid(_unverified_header(jwt))
 
 
 def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
@@ -140,8 +215,11 @@ def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
     Returns:
         tuple: (kid, alg) — either may be None if not present; an empty
         ``kid`` is returned as None
+
+    Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
     """
-    headers = get_unverified_header(jwt)
+    headers = _unverified_header(jwt)
     return _header_kid(headers), headers.get("alg")
 
 
@@ -401,7 +479,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
         stacklevel=2,
     )
 
-    headers = get_unverified_header(jwt)
+    headers = _unverified_header(jwt)
     kid = _header_kid(headers)
     logger.debug(f"Looking for key with kid: {kid}")
 
@@ -445,6 +523,7 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
 
 
 __all__ = [
+    "check_compact_jws",
     "extract_jwt_header_fields",
     "extract_kid_from_jwt",
     "find_key_by_kid",
