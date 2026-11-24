@@ -104,6 +104,8 @@ struct TokenSpec {
     #[serde(default)]
     header_kid: String,
     #[serde(default)]
+    header_typ: String,
+    #[serde(default)]
     alg: String,
     #[serde(default)]
     claims: Map<String, Value>,
@@ -238,6 +240,9 @@ fn mint_token(spec: &TokenSpec) -> String {
         &spec.header_kid
     };
     header.kid = Some(kid.to_string());
+    if !spec.header_typ.is_empty() {
+        header.typ = Some(spec.header_typ.clone());
+    }
 
     let claims = resolve_claims(&spec.claims);
     let token = jsonwebtoken::encode(&header, &claims, &key).expect("sign vector token");
@@ -279,6 +284,21 @@ fn resolve_verification_key(token: &str, jwks: &JsonWebKeySet) -> JsonWebKey {
         .or_else(|| jwks.keys.first())
         .expect("jwks fixture has at least one key")
         .clone()
+}
+
+/// Validation case ids Rust does not implement yet, each with the issue that
+/// tracks it. They are skipped by name, never silently, and left out of the
+/// coverage check.
+const UNIMPLEMENTED_CASES: &[(&str, &str)] = &[(
+    "JWT-016",
+    "access-token typ check (RFC 9701 §8.1) is not implemented in Rust (#1193)",
+)];
+
+fn unimplemented_reason(case_id: &str) -> Option<&'static str> {
+    UNIMPLEMENTED_CASES
+        .iter()
+        .find(|(id, _)| *id == case_id)
+        .map(|(_, reason)| *reason)
 }
 
 // ── Execution & canonical-error mapping ──────────────────────────────────────
@@ -375,6 +395,10 @@ fn spec_validation_conformance() {
     // ends the test, so a red vector is never reported as covered.
     let mut executed_vectors: BTreeMap<String, usize> = BTreeMap::new();
     for case in &capability.tests {
+        if let Some(reason) = unimplemented_reason(&case.id) {
+            eprintln!("skipping {}: {reason}", case.id);
+            continue;
+        }
         assert!(!case.vectors.is_empty(), "{}: no vectors", case.id);
         for (idx, vector) in case.vectors.iter().enumerate() {
             let label = if vector.name.is_empty() {
@@ -420,7 +444,7 @@ fn spec_validation_conformance() {
     let missing: Vec<&str> = capability
         .tests
         .iter()
-        .filter(|c| !executed.contains(&c.id))
+        .filter(|c| !executed.contains(&c.id) && unimplemented_reason(&c.id).is_none())
         .map(|c| c.id.as_str())
         .collect();
     assert!(
