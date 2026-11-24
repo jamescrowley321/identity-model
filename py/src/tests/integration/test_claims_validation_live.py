@@ -50,7 +50,7 @@ async def _validate(op, token, validator) -> dict:
     return await validate_token(
         jwt=token,
         token_validation_config=_config(op, validator),
-        disco_doc_address=op.discovery_url,
+        issuer=op.issuer,
     )
 
 

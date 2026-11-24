@@ -12,8 +12,8 @@ the issuer, `aud` is the `client_id`, and it has an `iat`. `claims` is then the
 JWT's `token_introspection` object, and `jwt_claims` holds the other verified
 claims of the JWT (`iss`, `aud`, `iat`, ...).
 
-With `discovery_address`, the issuer, keys and allowed algorithms come from
-the discovery document. The keys are fetched through the validation cache
+With only `issuer`, the keys and allowed algorithms come from the issuer's
+discovery document, whose `issuer` must equal it exactly. The keys are fetched through the validation cache
 (`cache=`, default: the default cache), and a `kid` the cached keys don't have
 triggers one refresh, so key rotation is picked up as it is by
 `validate_token`:
@@ -31,15 +31,16 @@ response = introspect_token(
         token=access_token,
         client_id="my-api",
         client_secret=client_secret,
-        signed_response=SignedIntrospectionOptions(discovery_address=disco_address),
+        signed_response=SignedIntrospectionOptions(issuer=ISSUER),
     )
 )
 if response.is_successful and response.claims["active"]:
     ...
 ```
 
-Alternatively pass fixed `issuer` and `jwks` (for example from `get_jwks`).
-Those keys are never refreshed.
+Alternatively pass fixed `jwks` (for example from `get_jwks`) alongside
+`issuer`. Those keys are never refreshed, and `discovery_policy` cannot be
+combined with them.
 
 With no `algorithms`, a response must use an algorithm the discovery document
 advertises in `introspection_signing_alg_values_supported` that is also in

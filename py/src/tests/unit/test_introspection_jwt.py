@@ -33,6 +33,7 @@ from py_identity_model.exceptions import (
     DiscoveryHTTPSRequiredError,
     DiscoveryIssuerMismatchError,
     InvalidArgumentError,
+    InvalidArgumentKind,
 )
 from py_identity_model.sync.introspection import introspect_token
 
@@ -297,35 +298,40 @@ class TestSignedIntrospectionOptions:
         with pytest.raises(InvalidArgumentError, match="asymmetric"):
             SignedIntrospectionOptions(issuer=ISSUER, jwks=jwks, algorithms=algorithms)
 
-    def test_issuer_required(self, jwks):
-        with pytest.raises(InvalidArgumentError, match="issuer"):
-            SignedIntrospectionOptions(issuer="", jwks=jwks)
+    @pytest.mark.parametrize("with_jwks", [True, False], ids=["manual", "discovery"])
+    def test_issuer_required(self, jwks, with_jwks):
+        with pytest.raises(InvalidArgumentError) as excinfo:
+            SignedIntrospectionOptions(issuer="", jwks=jwks if with_jwks else None)
 
-    def test_jwks_required_in_manual_mode(self):
-        with pytest.raises(InvalidArgumentError, match="both issuer and jwks"):
-            SignedIntrospectionOptions(issuer=ISSUER)
+        assert (excinfo.value.argument, excinfo.value.kind) == (
+            "issuer",
+            InvalidArgumentKind.MISSING,
+        )
 
-    @pytest.mark.parametrize("manual", [{"issuer": ISSUER}, {"jwks": "jwks"}])
-    def test_discovery_and_manual_inputs_conflict(self, jwks, manual):
-        manual = {k: jwks if v == "jwks" else v for k, v in manual.items()}
-
-        with pytest.raises(InvalidArgumentError, match="not both"):
-            SignedIntrospectionOptions(discovery_address=DISCO_ADDRESS, **manual)
-
-    def test_discovery_policy_needs_discovery_address(self, jwks):
-        with pytest.raises(InvalidArgumentError, match="discovery_policy requires"):
+    def test_discovery_policy_conflicts_with_jwks(self, jwks):
+        with pytest.raises(InvalidArgumentError) as excinfo:
             SignedIntrospectionOptions(
                 issuer=ISSUER, jwks=jwks, discovery_policy=DiscoveryPolicy()
             )
+
+        assert (excinfo.value.argument, excinfo.value.kind) == (
+            "discovery_policy",
+            InvalidArgumentKind.CONFLICT,
+        )
 
     def test_negative_leeway_rejected(self, jwks):
         with pytest.raises(InvalidArgumentError, match="leeway"):
             SignedIntrospectionOptions(issuer=ISSUER, jwks=jwks, leeway=-1)
 
-    def test_discovery_mode_needs_nothing_else(self):
-        options = SignedIntrospectionOptions(discovery_address=DISCO_ADDRESS)
+    def test_discovery_mode_needs_only_the_issuer(self):
+        policy = DiscoveryPolicy()
+        options = SignedIntrospectionOptions(issuer=ISSUER, discovery_policy=policy)
 
-        assert (options.issuer, options.jwks) == (None, None)
+        assert (options.issuer, options.jwks, options.discovery_policy) == (
+            ISSUER,
+            None,
+            policy,
+        )
 
 
 DISCO_ADDRESS = "https://auth.example.com/.well-known/openid-configuration"
@@ -350,7 +356,7 @@ class TestDiscoveryIntrospectionSigningAlgorithms:
             disco["introspection_signing_alg_values_supported"] = value
         respx.get(DISCO_ADDRESS).mock(return_value=httpx.Response(200, json=disco))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.introspection_signing_alg_values_supported == value
 
@@ -368,9 +374,7 @@ def _disco_request(**options) -> TokenIntrospectionRequest:
         token="the-token",
         client_id=CLIENT_ID,
         client_secret="secret",
-        signed_response=SignedIntrospectionOptions(
-            discovery_address=DISCO_ADDRESS, **options
-        ),
+        signed_response=SignedIntrospectionOptions(issuer=ISSUER, **options),
     )
 
 
@@ -511,13 +515,22 @@ class TestSignedIntrospectionDiscovery:
                 DiscoveryIssuerMismatchError,
             ),
             (
+                httpx.Response(200, json={**DISCO_JSON, "issuer": f"{ISSUER}/"}),
+                DiscoveryIssuerMismatchError,
+            ),
+            (
                 httpx.Response(
                     200, json={**DISCO_JSON, "jwks_uri": "http://auth.example.com/jwks"}
                 ),
                 DiscoveryHTTPSRequiredError,
             ),
         ],
-        ids=["unavailable", "issuer-mismatch", "http-jwks-uri"],
+        ids=[
+            "unavailable",
+            "issuer-mismatch",
+            "issuer-trailing-slash",
+            "http-jwks-uri",
+        ],
     )
     async def test_discovery_failure_raises_as_validate_token(
         self, sign, asynchronous, discovery, expected

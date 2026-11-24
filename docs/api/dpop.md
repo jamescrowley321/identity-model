@@ -115,7 +115,7 @@ try:
     claims = validate_token(
         access_token,
         CONFIG,
-        disco_doc_address,
+        issuer,
         presentation=TokenPresentation(
             scheme=AuthorizationScheme.DPOP,       # from the Authorization header
             method=request.method,
@@ -272,12 +272,12 @@ options = AuthOptions(
 )
 app.add_middleware(
     TokenValidationMiddleware,
-    discovery_url=settings.discovery_url,
+    issuer=settings.issuer,
     audience=settings.expected_audience,
     options=options,
 )
 ws_auth = build_ws_authenticator(
-    discovery_url=settings.discovery_url,
+    issuer=settings.issuer,
     audience=settings.expected_audience,
     options=options,
 )
@@ -298,7 +298,7 @@ raises `ValueError`, because every token would be refused.
 #### From `OIDCSettings`
 
 Pass `settings=` instead of `options=` and both entry points read the binding
-from `OIDCSettings`, along with `discovery_url`, `expected_audience` and (middleware)
+from `OIDCSettings`, along with `issuer`, `expected_audience` and (middleware)
 `excluded_paths`:
 
 ```python

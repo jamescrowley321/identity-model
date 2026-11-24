@@ -33,7 +33,7 @@
 - Pushed Authorization Requests (RFC 9126)
 - JWT Secured Authorization Request (RFC 9101)
 - FAPI 2.0 Security Profile Compliance
-- Policy-Based Configuration (DiscoveryPolicy, discovery_document_url)
+- Policy-Based Configuration (DiscoveryPolicy)
 
 ### Quality & Testing (v2.16–v2.17)
 - Performance benchmarking tests

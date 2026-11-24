@@ -14,7 +14,7 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 _BASE_DISCO = {
@@ -44,7 +44,7 @@ class TestParEndpointDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint == "https://example.com/par"
@@ -54,7 +54,7 @@ class TestParEndpointDiscoveryField:
     def test_par_endpoint_absent_defaults_none(self):
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint is None
@@ -75,7 +75,7 @@ class TestParEndpointDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.pushed_authorization_request_endpoint == "https://example.com/par"

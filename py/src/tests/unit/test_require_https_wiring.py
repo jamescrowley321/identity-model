@@ -39,7 +39,7 @@ from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -99,7 +99,7 @@ class TestSyncRequireHttpsWiring:
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
             )
 
     @respx.mock
@@ -121,7 +121,7 @@ class TestSyncRequireHttpsWiring:
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
                 http_client=client,
             )
 
@@ -155,7 +155,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+            issuer="http://localhost:8080",
         )
         assert decoded["sub"] == "user1"
 
@@ -187,7 +187,7 @@ class TestSyncRequireHttpsWiring:
             decoded = sync_validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+                issuer="http://localhost:8080",
                 http_client=client,
             )
         assert decoded["sub"] == "user1"
@@ -219,7 +219,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
 
@@ -268,7 +268,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config_permissive,
-            disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+            issuer="http://external.example.com",
         )
         assert decoded["sub"] == "user1"
 
@@ -282,7 +282,7 @@ class TestSyncRequireHttpsWiring:
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config_strict,
-                disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+                issuer="http://external.example.com",
             )
 
 
@@ -306,7 +306,7 @@ class TestAsyncRequireHttpsWiring:
             await async_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
             )
 
     @pytest.mark.asyncio
@@ -324,7 +324,7 @@ class TestAsyncRequireHttpsWiring:
                 await async_validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=config,
-                    disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                    issuer="http://evil.example.com",
                     http_client=client,
                 )
 
@@ -358,7 +358,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+            issuer="http://localhost:8080",
         )
         assert decoded["sub"] == "user1"
 
@@ -391,7 +391,7 @@ class TestAsyncRequireHttpsWiring:
             decoded = await async_validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+                issuer="http://localhost:8080",
                 http_client=client,
             )
         assert decoded["sub"] == "user1"
@@ -424,7 +424,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
 
@@ -472,7 +472,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config_permissive,
-            disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+            issuer="http://external.example.com",
         )
         assert decoded["sub"] == "user1"
 
@@ -486,7 +486,7 @@ class TestAsyncRequireHttpsWiring:
             await async_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config_strict,
-                disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+                issuer="http://external.example.com",
             )
 
 

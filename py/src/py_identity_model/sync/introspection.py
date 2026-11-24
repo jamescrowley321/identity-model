@@ -49,7 +49,7 @@ def _verify_with_discovery(
     cache: ValidationCache | None,
 ) -> TokenIntrospectionResponse:
     """Verify a 2xx JWT introspection response against the keys and
-    algorithms from ``options.discovery_address`` (RFC 9701 §5)."""
+    algorithms from the discovery document for ``options.issuer`` (RFC 9701 §5)."""
     client = _resolve_client(http_client)
     cache = _resolve_cache(cache)
     policy = options.discovery_policy or DiscoveryPolicy()
@@ -59,7 +59,7 @@ def _verify_with_discovery(
         # algorithms, so they can't come from two different fetches.
         try:
             key, _, disco = _discover_and_resolve_key(
-                token, options.discovery_address, client, policy, cache
+                token, options.issuer, client, policy, cache
             )
         except KEY_LOOKUP_ERRORS as exc:
             raise SignedIntrospectionRefused(
@@ -102,7 +102,7 @@ def introspect_token(
     Args:
         request: Introspection request with token and client credentials.
         http_client: Optional managed HTTP client. In discovery mode
-            (``signed_response.discovery_address``) it also fetches the
+            (``signed_response`` without ``jwks``) it also fetches the
             discovery document and keys.
         cache: The validation cache for the discovery document and keys in
             discovery mode. ``None`` (default) uses the default cache, as

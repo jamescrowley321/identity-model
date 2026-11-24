@@ -311,10 +311,10 @@ def test_bench_validate_token_warm_path(benchmark, rsa_private_key, rsa_private_
                 return_value=httpx.Response(200, json={"keys": [jwk]})
             )
             # Warm both caches once so the benched runs are pure cache-hit path.
-            loop.run_until_complete(aio_validate_token(token, config, _BENCH_DISCO_URL))
+            loop.run_until_complete(aio_validate_token(token, config, _BENCH_ISSUER))
             result = benchmark(
                 lambda: loop.run_until_complete(
-                    aio_validate_token(token, config, _BENCH_DISCO_URL)
+                    aio_validate_token(token, config, _BENCH_ISSUER)
                 )
             )
         assert result is not None

@@ -95,7 +95,7 @@ class TestSyncDiscoAlgorithmAllowlist:
         _mock_op(jwks)
 
         with pytest.raises(TokenValidationException) as exc_info:
-            sync_tv.validate_token(token, _config(allowed), DISCO_URL)
+            sync_tv.validate_token(token, _config(allowed), ISSUER)
 
         assert exc_info.value.message == (
             "Algorithm 'RS256' is not in the allowed algorithms"
@@ -110,7 +110,7 @@ class TestSyncDiscoAlgorithmAllowlist:
     ):
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
-        disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         with pytest.raises(TokenValidationException) as exc_info:
             sync_tv._retry_with_refreshed_jwks(
@@ -133,7 +133,7 @@ class TestSyncDiscoAlgorithmAllowlist:
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
 
-        decoded = sync_tv.validate_token(token, _config(algorithms), DISCO_URL)
+        decoded = sync_tv.validate_token(token, _config(algorithms), ISSUER)
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
 
@@ -144,7 +144,7 @@ class TestSyncDiscoAlgorithmAllowlist:
     ):
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
-        disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         decoded = sync_tv._retry_with_refreshed_jwks(
             token,
@@ -166,7 +166,7 @@ class TestAsyncDiscoAlgorithmAllowlist:
         _mock_op(jwks)
 
         with pytest.raises(TokenValidationException) as exc_info:
-            await aio_tv.validate_token(token, _config(allowed), DISCO_URL)
+            await aio_tv.validate_token(token, _config(allowed), ISSUER)
 
         assert exc_info.value.message == (
             "Algorithm 'RS256' is not in the allowed algorithms"
@@ -183,7 +183,7 @@ class TestAsyncDiscoAlgorithmAllowlist:
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
         disco = await aio_get_discovery_document(
-            DiscoveryDocumentRequest(address=DISCO_URL)
+            DiscoveryDocumentRequest(issuer=ISSUER)
         )
 
         with pytest.raises(TokenValidationException) as exc_info:
@@ -210,7 +210,7 @@ class TestAsyncDiscoAlgorithmAllowlist:
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
 
-        decoded = await aio_tv.validate_token(token, _config(algorithms), DISCO_URL)
+        decoded = await aio_tv.validate_token(token, _config(algorithms), ISSUER)
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
 
@@ -223,7 +223,7 @@ class TestAsyncDiscoAlgorithmAllowlist:
         token, jwks = rs256_token_and_jwks
         _mock_op(jwks)
         disco = await aio_get_discovery_document(
-            DiscoveryDocumentRequest(address=DISCO_URL)
+            DiscoveryDocumentRequest(issuer=ISSUER)
         )
 
         decoded = await aio_tv._retry_with_refreshed_jwks(
@@ -307,7 +307,7 @@ class TestSyncDefaultAllowlist:
         _mock_op(jwks)
 
         with pytest.raises(TokenValidationException) as exc_info:
-            sync_tv.validate_token(token, _config(None), DISCO_URL)
+            sync_tv.validate_token(token, _config(None), ISSUER)
 
         assert exc_info.value.message == (
             "Algorithm 'HS256' is not in the allowed algorithms"
@@ -319,7 +319,7 @@ class TestSyncDefaultAllowlist:
         token, jwks = eddsa_token_and_jwks
         _mock_op(jwks)
 
-        decoded = sync_tv.validate_token(token, _config(None), DISCO_URL)
+        decoded = sync_tv.validate_token(token, _config(None), ISSUER)
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
 
@@ -328,7 +328,7 @@ class TestSyncDefaultAllowlist:
         token, jwks = hs256_token_and_jwks
         _mock_op(jwks)
 
-        decoded = sync_tv.validate_token(token, _config(["HS256"]), DISCO_URL)
+        decoded = sync_tv.validate_token(token, _config(["HS256"]), ISSUER)
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
 
@@ -340,9 +340,7 @@ class TestSyncDefaultAllowlist:
         _mock_op(jwks)
 
         with pytest.raises(TokenValidationException) as exc_info:
-            sync_tv.validate_token(
-                token, _config(["PS256", "ES256", "EdDSA"]), DISCO_URL
-            )
+            sync_tv.validate_token(token, _config(["PS256", "ES256", "EdDSA"]), ISSUER)
 
         assert exc_info.value.details == {
             "alg": "RS256",
@@ -358,7 +356,7 @@ class TestAsyncDefaultAllowlist:
         _mock_op(jwks)
 
         with pytest.raises(TokenValidationException) as exc_info:
-            await aio_tv.validate_token(token, _config(None), DISCO_URL)
+            await aio_tv.validate_token(token, _config(None), ISSUER)
 
         assert exc_info.value.details == {"alg": "HS256", "allowed": DEFAULT_ALLOWED}
 
@@ -368,7 +366,7 @@ class TestAsyncDefaultAllowlist:
         token, jwks = eddsa_token_and_jwks
         _mock_op(jwks)
 
-        decoded = await aio_tv.validate_token(token, _config(None), DISCO_URL)
+        decoded = await aio_tv.validate_token(token, _config(None), ISSUER)
 
         assert decoded == {"sub": SUBJECT, "iss": ISSUER}
 
@@ -382,7 +380,7 @@ class TestAsyncDefaultAllowlist:
 
         with pytest.raises(TokenValidationException) as exc_info:
             await aio_tv.validate_token(
-                token, _config(["PS256", "ES256", "EdDSA"]), DISCO_URL
+                token, _config(["PS256", "ES256", "EdDSA"]), ISSUER
             )
 
         assert exc_info.value.details == {

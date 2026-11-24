@@ -297,7 +297,7 @@ class TestDiscoveryFailure:
         with pytest.raises(TypeError) as crash:
             iter(5)  # type: ignore[call-overload]
         cause = str(crash.value)
-        result = process_discovery_response(response, requested_address=DISCO_ADDR)
+        result = process_discovery_response(response, requested_issuer=ISSUER)
         assert (result.is_successful, result.error_kind, result.error) == (
             False,
             DiscoveryErrorKind.INVALID_DOCUMENT,
@@ -335,7 +335,7 @@ class TestDiscoveryFailure:
         response = httpx.Response(
             200, json={}, request=httpx.Request("GET", DISCO_ADDR)
         )
-        result = process_discovery_response(response, requested_address=DISCO_ADDR)
+        result = process_discovery_response(response, requested_issuer=ISSUER)
         assert (result.error_kind, result.error) == (kind, error)
 
 

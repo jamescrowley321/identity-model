@@ -23,7 +23,6 @@ from py_identity_model.sync.userinfo import get_userinfo
 
 # Dispatch table mapping request types to their handler functions
 _REQUEST_HANDLERS: dict = {
-    DiscoveryDocumentRequest: get_discovery_document,
     JwksRequest: get_jwks,
     ClientCredentialsTokenRequest: request_client_credentials_token,
     UserInfoRequest: get_userinfo,
@@ -59,20 +58,19 @@ def main():
     print("BASE REQUEST/RESPONSE EXAMPLES")
     print("=" * 60)
 
-    disco_url = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+    issuer = "https://demo.duendesoftware.com"
 
-    # All requests share a common BaseRequest interface
-    disco_req = DiscoveryDocumentRequest(address=disco_url)
-    print(
-        f"\n  isinstance(disco_req, BaseRequest) = {isinstance(disco_req, BaseRequest)}"
-    )
-
-    # Polymorphic fetch
-    disco_resp = polymorphic_fetch(disco_req)
+    # Discovery is addressed by the issuer, not a URL, so it is fetched
+    # directly; its response still shares the BaseResponse interface.
+    disco_resp = get_discovery_document(DiscoveryDocumentRequest(issuer=issuer))
     check_response(disco_resp, "Discovery")
 
     if disco_resp.is_successful and disco_resp.jwks_uri:
+        # Requests sent to an endpoint URL share the BaseRequest interface
         jwks_req = JwksRequest(address=disco_resp.jwks_uri)
+        print(
+            f"\n  isinstance(jwks_req, BaseRequest) = {isinstance(jwks_req, BaseRequest)}"
+        )
         jwks_resp = polymorphic_fetch(jwks_req)
         check_response(jwks_resp, "JWKS")
 

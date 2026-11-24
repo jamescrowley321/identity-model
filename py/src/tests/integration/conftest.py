@@ -72,7 +72,11 @@ from ..harness import (
     ProviderConfig,
     TokenSource,
 )
-from .test_utils import _is_valid_jwt_format, get_config
+from .test_utils import (
+    _is_valid_jwt_format,
+    get_config,
+    issuer_from_discovery_address,
+)
 
 
 @pytest.hookimpl(trylast=True)
@@ -181,11 +185,20 @@ def provider_slug(env_file) -> str:
 
 @pytest.fixture(scope="session")
 def test_config(env_file, provider_slug, tmp_path_factory):
-    """Session-scoped test configuration with file-lock for xdist safety."""
+    """Session-scoped test configuration with file-lock for xdist safety.
+
+    ``TEST_ISSUER`` is the ``TEST_ISSUER`` env var when set, else derived from
+    ``TEST_DISCO_ADDRESS``.
+    """
     root_tmp_dir = tmp_path_factory.getbasetemp().parent
     lock_file = root_tmp_dir / f"{provider_slug}_test_config.lock"
     with FileLock(str(lock_file)):
-        return get_config(env_file)
+        config = get_config(env_file)
+    if not config["TEST_ISSUER"]:
+        config["TEST_ISSUER"] = issuer_from_discovery_address(
+            config["TEST_DISCO_ADDRESS"]
+        )
+    return config
 
 
 @pytest.fixture(scope="session")
@@ -227,7 +240,7 @@ def discovery_document(test_config, provider_slug, tmp_path_factory):
         require_https = test_config.get("TEST_REQUIRE_HTTPS", True)
         policy = DiscoveryPolicy(require_https=require_https)
         disco_doc_req = DiscoveryDocumentRequest(
-            address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             policy=policy,
         )
         response = get_discovery_document(disco_doc_req)

@@ -10,9 +10,7 @@ Example:
 
 
     async def main():
-        request = DiscoveryDocumentRequest(
-            address="https://example.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://example.com")
         response = await get_discovery_document(request)
         if response.is_successful:
             print(f"Issuer: {response.issuer}")
@@ -36,8 +34,8 @@ from ..core.claims_validation import (
     require_scopes,
 )
 from ..core.discovery_policy import (
+    DiscoveryLocation,
     DiscoveryPolicy,
-    discovery_document_url,
 )
 from ..core.dpop import (
     DPoPAlgorithm,
@@ -256,6 +254,7 @@ __all__ = [
     "DiscoveryDocumentResponse",
     # Discovery Policy
     "DiscoveryErrorKind",
+    "DiscoveryLocation",
     "DiscoveryPolicy",
     "FAPI2ClientProfile",
     "FAPIProfileError",
@@ -319,7 +318,6 @@ __all__ = [
     "create_dpop_proof",
     "create_request_object",
     "delete_client",
-    "discovery_document_url",
     "exchange_token",
     "extract_dpop_nonce",
     "extract_jarm_response_jwt",

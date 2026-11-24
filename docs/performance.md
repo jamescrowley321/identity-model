@@ -166,13 +166,13 @@ import time
 
 # Sync (second request, cached)
 start = time.time()
-claims = validate_token(token, config, disco_address)
+claims = validate_token(token, config, issuer)
 print(f"Sync: {(time.time() - start) * 1000:.2f}ms")
 # Output: Sync: 1.5ms
 
 # Async (second request, cached)
 start = time.time()
-claims = await validate_token(token, config, disco_address)
+claims = await validate_token(token, config, issuer)
 print(f"Async: {(time.time() - start) * 1000:.2f}ms")
 # Output: Async: 1.8ms
 ```
@@ -192,7 +192,7 @@ tokens = [token1, token2, token3, token4, token5]
 # Sequential sync validation
 start = time.time()
 for token in tokens:
-    claims = validate_token(token, config, disco_address)
+    claims = validate_token(token, config, issuer)
 elapsed_sync = time.time() - start
 print(f"Sync Sequential: {elapsed_sync * 1000:.0f}ms")
 # Output: Sync Sequential: 7.5ms (5 tokens × 1.5ms each)
@@ -200,7 +200,7 @@ print(f"Sync Sequential: {elapsed_sync * 1000:.0f}ms")
 # Concurrent async validation
 start = time.time()
 results = await asyncio.gather(
-    *[validate_token(token, config, disco_address) for token in tokens]
+    *[validate_token(token, config, issuer) for token in tokens]
 )
 elapsed_async = time.time() - start
 print(f"Async Concurrent: {elapsed_async * 1000:.0f}ms")
@@ -222,7 +222,7 @@ Discovery documents rarely change. Call once and cache:
 ```python
 def validate_every_request(token: str):
     # This fetches discovery doc every time!
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = get_discovery_document(disco_request)
 
     # Then validates token...
@@ -236,7 +236,7 @@ def validate_every_request(token: str):
         perform_disco=True,  # Uses cached discovery
         audience="api",
     )
-    claims = validate_token(token, config, DISCO_ADDRESS)
+    claims = validate_token(token, config, ISSUER)
     return claims
 ```
 
@@ -247,7 +247,7 @@ def validate_every_request(token: str):
 config = TokenValidationConfig(perform_disco=True, audience="api")
 
 def validate_request(token: str):
-    return validate_token(token, config, DISCO_ADDRESS)
+    return validate_token(token, config, ISSUER)
 ```
 
 ### 2. Use Async for Concurrent Operations
@@ -258,14 +258,14 @@ If you need to validate multiple tokens or make multiple requests:
 ```python
 results = []
 for token in tokens:
-    claims = validate_token(token, config, disco_address)
+    claims = validate_token(token, config, issuer)
     results.append(claims)
 ```
 
 **Fast (Concurrent):**
 ```python
 results = await asyncio.gather(
-    *[validate_token(token, config, disco_address) for token in tokens],
+    *[validate_token(token, config, issuer) for token in tokens],
     return_exceptions=True  # Don't fail entire batch on single error
 )
 ```
@@ -347,7 +347,7 @@ client = AsyncHTTPClient(
 cache = AsyncValidationCache(config=CacheConfig(cache_max_entries=128))
 
 claims = await validate_token(
-    token, validation_config, disco_url, http_client=client, cache=cache
+    token, validation_config, issuer, http_client=client, cache=cache
 )
 ```
 
@@ -371,7 +371,7 @@ async def validate_tokens_batched(tokens: list[str], batch_size: int = 50):
         batch = tokens[i:i + batch_size]
 
         batch_results = await asyncio.gather(
-            *[validate_token(token, config, disco_address) for token in batch],
+            *[validate_token(token, config, issuer) for token in batch],
             return_exceptions=True
         )
 
@@ -395,7 +395,7 @@ async def warmup_cache():
     from py_identity_model import DiscoveryDocumentRequest
 
     disco_response = await get_discovery_document(
-        DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+        DiscoveryDocumentRequest(issuer=ISSUER)
     )
 
     if disco_response.is_successful:
@@ -440,7 +440,7 @@ async def startup():
     from py_identity_model import DiscoveryDocumentRequest
 
     disco = await get_discovery_document(
-        DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+        DiscoveryDocumentRequest(issuer=ISSUER)
     )
     if disco.is_successful:
         print("✓ Discovery cache warmed")
@@ -451,7 +451,7 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
         claims = await validate_token(
             jwt=token,
             token_validation_config=TOKEN_CONFIG,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         return claims
     except Exception as e:
@@ -482,7 +482,7 @@ def warmup():
     from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+        DiscoveryDocumentRequest(issuer=ISSUER)
     )
     if disco.is_successful:
         print("✓ Discovery cache warmed")
@@ -495,7 +495,7 @@ def verify_token():
         claims = validate_token(
             jwt=token,
             token_validation_config=TOKEN_CONFIG,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         return claims
     except Exception as e:
@@ -573,7 +573,7 @@ async def validate_with_metrics(token: str):
     start = time.time()
 
     try:
-        claims = await validate_token(token, config, disco_address)
+        claims = await validate_token(token, config, issuer)
         validation_total.labels(result='success').inc()
         return claims
     except TokenExpiredException:

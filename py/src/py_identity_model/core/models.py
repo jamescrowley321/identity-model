@@ -436,20 +436,22 @@ class JsonWebKey:
 
 
 @dataclass(frozen=True, kw_only=True)
-class DiscoveryDocumentRequest(BaseRequest):
+class DiscoveryDocumentRequest:
     """Request for fetching an OpenID Connect discovery document.
 
     Attributes:
-        address: The discovery document URL, fetched as given (e.g.
-            ``https://example.com/.well-known/openid-configuration``).
-            Build it from an issuer identifier with
-            :func:`~py_identity_model.discovery_document_url` (OpenID Connect
-            Discovery 1.0 §4.1). The document's ``issuer`` must equal this
-            URL without ``/.well-known/openid-configuration`` (§4.3).
+        issuer: The issuer identifier (e.g. ``https://example.com``), not the
+            discovery document URL. The library builds the URL from it under
+            ``policy.location``: OpenID Connect Discovery 1.0 §4.1 by default,
+            or RFC 8414 §3.1. The document's ``issuer`` must equal this value
+            exactly (§4.3), so ``https://example.com`` and
+            ``https://example.com/`` are different issuers. A value ending
+            with a well-known path is a configuration error.
         policy: Optional discovery policy for configuring validation
             behavior. When ``None``, strict defaults apply.
     """
 
+    issuer: str
     policy: DiscoveryPolicy | None = None
 
 
@@ -1068,17 +1070,20 @@ class SignedIntrospectionOptions:
     authorization server with an allowed algorithm and issued to the client's
     ``client_id`` (RFC 9701 §5).
 
-    Give either *discovery_address* or both *issuer* and *jwks*:
+    *issuer* is required; *jwks* selects the mode:
 
-    * **Discovery** (*discovery_address*): the issuer, ``jwks_uri`` and
+    * **Discovery** (no *jwks*): the ``jwks_uri`` and
       ``introspection_signing_alg_values_supported`` come from the discovery
-      document. The keys are fetched through the validation cache, and a
-      ``kid`` the cached keys don't have triggers one refresh, so key rotation
-      is picked up as it is by ``validate_token``.
-    * **Manual** (*issuer* and *jwks*): the keys are fixed, with no refresh.
+      document for *issuer*, whose ``issuer`` must equal it exactly. The keys
+      are fetched through the validation cache, and a ``kid`` the cached keys
+      don't have triggers one refresh, so key rotation is picked up as it is
+      by ``validate_token``.
+    * **Manual** (*jwks*): the keys are fixed, with no refresh.
 
     Attributes:
-        issuer: The authorization server's issuer identifier (manual mode).
+        issuer: The authorization server's issuer identifier, not its
+            discovery document URL: the expected ``iss``, and in discovery
+            mode the issuer the discovery URL is built from.
         jwks: The authorization server's signing keys, from ``get_jwks``
             (manual mode).
         algorithms: Allowed signing algorithms. ``None`` (default) allows the
@@ -1090,44 +1095,33 @@ class SignedIntrospectionOptions:
             that is not a list allows nothing. For FAPI 2.0 (Message Signing
             §5.5.2) pass ``FAPI2_ALLOWED_SIGNING_ALGORITHMS``. ``none`` and
             ``HS*`` are refused.
-        discovery_address: The discovery document URL (discovery mode).
         discovery_policy: How the discovery document and ``jwks_uri`` are
-            vetted. ``None`` (default) is a strict :class:`DiscoveryPolicy`.
-            Discovery mode only.
+            vetted, and where the document is fetched from. ``None``
+            (default) is a strict :class:`DiscoveryPolicy`. Discovery mode
+            only.
         leeway: Clock-skew tolerance in seconds for ``iat``, as
             ``TokenValidationConfig.leeway``. ``None`` (default) means none.
     """
 
-    issuer: str | None = None
+    issuer: str
     jwks: JwksResponse | None = None
     algorithms: frozenset[str] | None = None
-    discovery_address: str | None = None
     discovery_policy: DiscoveryPolicy | None = None
     leeway: float | None = None
 
     def __post_init__(self) -> None:
-        if self.discovery_address:
-            if self.issuer is not None or self.jwks is not None:
-                raise InvalidArgumentError(
-                    "discovery_address",
-                    InvalidArgumentKind.CONFLICT,
-                    "SignedIntrospectionOptions takes either discovery_address "
-                    "or issuer and jwks, not both",
-                )
-        else:
-            if not self.issuer or self.jwks is None:
-                raise InvalidArgumentError(
-                    "discovery_address",
-                    InvalidArgumentKind.MISSING,
-                    "SignedIntrospectionOptions requires discovery_address, "
-                    "or both issuer and jwks",
-                )
-            if self.discovery_policy is not None:
-                raise InvalidArgumentError(
-                    "discovery_policy",
-                    InvalidArgumentKind.CONFLICT,
-                    "discovery_policy requires discovery_address",
-                )
+        if not self.issuer:
+            raise InvalidArgumentError(
+                "issuer",
+                InvalidArgumentKind.MISSING,
+                "SignedIntrospectionOptions requires issuer",
+            )
+        if self.jwks is not None and self.discovery_policy is not None:
+            raise InvalidArgumentError(
+                "discovery_policy",
+                InvalidArgumentKind.CONFLICT,
+                "discovery_policy requires discovery mode (no jwks)",
+            )
         if self.leeway is not None and self.leeway < 0:
             raise InvalidArgumentError(
                 "leeway",

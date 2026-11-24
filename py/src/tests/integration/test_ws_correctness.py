@@ -102,7 +102,7 @@ def ws_matrix():
     with (
         serve_mock_op() as op,
         boot_rs(
-            discovery_url=op.discovery_url,
+            issuer=op.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
         ) as base_url,

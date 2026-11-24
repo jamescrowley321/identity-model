@@ -161,9 +161,7 @@ class TestSchemeEnforcement:
         )
         # Default require_https=True -> plaintext non-loopback HTTP disco is
         # rejected by the pre-flight scheme check BEFORE any network I/O.
-        result = await _get_disco_response(
-            "http://op.example/.well-known/openid-configuration"
-        )
+        result = await _get_disco_response("http://op.example")
         assert result.is_successful is False
         assert route.call_count == 0
         # Fail-closed: a scheme-rejected disco request does zero upstream work,
@@ -316,18 +314,16 @@ class TestRefreshSemantics:
 
 
 # ---------------------------------------------------------------------------
-# Discovery required-address error message
+# Discovery required-issuer error message
 # ---------------------------------------------------------------------------
 
 
-class TestDiscoRequiredAddress:
+class TestDiscoRequiredIssuer:
     @pytest.mark.asyncio
-    async def test_none_address_raises_with_actionable_message(self):
+    async def test_none_issuer_raises_with_actionable_message(self):
         with pytest.raises(ConfigurationException) as exc:
             await _get_disco_response(None)
-        assert (
-            str(exc.value) == "disco_doc_address is required when perform_disco is True"
-        )
+        assert str(exc.value) == "issuer is required when perform_disco is True"
 
 
 # ---------------------------------------------------------------------------
@@ -353,10 +349,10 @@ class TestDoubleCheckedLockAndLru:
         ``touch_cache_entry`` arg mutations that raise, and the no-op
         ``touch(cache, None)`` (recency would not move).
         """
-        addr_x = "https://opx.example/.well-known/openid-configuration"
-        addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = disco_cache_key(addr_x)
-        key_y = disco_cache_key(addr_y)
+        issuer_x = "https://opx.example"
+        issuer_y = "https://opy.example"
+        key_x = disco_cache_key(issuer_x)
+        key_y = disco_cache_key(issuer_y)
         resp_x = _disco_resp("https://opx.example")
         # Seed order: x (oldest) then y (newest).
         _caches()._disco[key_x] = DiscoCacheEntry(
@@ -367,12 +363,12 @@ class TestDoubleCheckedLockAndLru:
             cached_at=time.monotonic(),
             ttl=1e9,
         )
-        route = respx.get(addr_x).mock(
+        route = respx.get(f"{issuer_x}/.well-known/openid-configuration").mock(
             return_value=httpx.Response(200, json={"issuer": "https://opx.example"})
         )
         monkeypatch.setattr(aio_tv, "is_cache_expired", _expired_then_fresh())
 
-        result = await _get_disco_response(addr_x)
+        result = await _get_disco_response(issuer_x)
 
         assert result is resp_x  # served from cache, exact object
         assert route.call_count == 0  # no upstream fetch
@@ -385,10 +381,10 @@ class TestDoubleCheckedLockAndLru:
         """The lock-free fast-path hit refreshes LRU recency. Kills the
         fast-path ``touch(cache, None)`` no-op (hot entry would not move and
         an attacker reading distinct addresses could evict it)."""
-        addr_x = "https://opx.example/.well-known/openid-configuration"
-        addr_y = "https://opy.example/.well-known/openid-configuration"
-        key_x = disco_cache_key(addr_x)
-        key_y = disco_cache_key(addr_y)
+        issuer_x = "https://opx.example"
+        issuer_y = "https://opy.example"
+        key_x = disco_cache_key(issuer_x)
+        key_y = disco_cache_key(issuer_y)
         resp_x = _disco_resp("https://opx.example")
         _caches()._disco[key_x] = DiscoCacheEntry(
             response=resp_x, cached_at=time.monotonic(), ttl=1e9
@@ -398,13 +394,13 @@ class TestDoubleCheckedLockAndLru:
             cached_at=time.monotonic(),
             ttl=1e9,
         )
-        route = respx.get(addr_x).mock(
+        route = respx.get(f"{issuer_x}/.well-known/openid-configuration").mock(
             return_value=httpx.Response(200, json={"issuer": "https://opx.example"})
         )
         # Fresh on the fast path -> fast-path hit taken.
         monkeypatch.setattr(aio_tv, "is_cache_expired", Mock(side_effect=[False]))
 
-        result = await _get_disco_response(addr_x)
+        result = await _get_disco_response(issuer_x)
 
         assert result is resp_x
         assert route.call_count == 0

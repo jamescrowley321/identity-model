@@ -13,7 +13,7 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 _BASE_DISCO = {
@@ -41,7 +41,7 @@ class TestIssParameterDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.authorization_response_iss_parameter_supported is True
@@ -51,7 +51,7 @@ class TestIssParameterDiscoveryField:
         url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.authorization_response_iss_parameter_supported is None
@@ -69,7 +69,7 @@ class TestIssParameterDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.authorization_response_iss_parameter_supported is False

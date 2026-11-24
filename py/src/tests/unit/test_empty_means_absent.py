@@ -39,7 +39,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -157,7 +157,7 @@ class TestEmptyClientId:
         config = TokenValidationConfig(perform_disco=True, issuer=issuer, audience="")
         try:
             with pytest.raises(TokenValidationException, match="aud"):
-                validate_token(token, config, DISCO_URL)
+                validate_token(token, config, ISSUER)
         finally:
             clear_discovery_cache()
             clear_jwks_cache()
@@ -231,7 +231,7 @@ class TestEmptyKid:
             perform_disco=True, issuer=issuer, options={"verify_aud": False}
         )
         try:
-            assert validate_token(token, config, DISCO_URL) == claims
+            assert validate_token(token, config, ISSUER) == claims
             assert jwks_route.call_count == 1
         finally:
             clear_discovery_cache()

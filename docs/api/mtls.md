@@ -27,7 +27,7 @@ from py_identity_model import (
     resolve_mtls_endpoint,
 )
 
-disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCOVERY_URL))
+disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
 # Prefer the mTLS alias of the endpoint when the AS advertises one (§5).
 token_endpoint = resolve_mtls_endpoint(disco, "token_endpoint")
@@ -87,7 +87,7 @@ from py_identity_model import (
     validate_token,
 )
 
-claims = validate_token(token, TokenValidationConfig(perform_disco=True, audience="api"), DISCOVERY_URL)
+claims = validate_token(token, TokenValidationConfig(perform_disco=True, audience="api"), ISSUER)
 
 try:
     validate_certificate_binding(claims, presented_cert_pem)

@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.7/§3.3.2.11)
     id_token: str,
     token_validation_config: TokenValidationConfig,
-    disco_doc_address: str | None = None,
+    issuer: str | None = None,
     http_client: HTTPClient | None = None,
     *,
     nonce: str | RefreshNonce | None,
@@ -66,9 +66,12 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
     Args:
         id_token: The compact-serialized ID Token JWT.
         token_validation_config: Validation configuration. ``audience`` should
-            be the RP's ``client_id`` and ``issuer`` the OP issuer.
-        disco_doc_address: Discovery document address (required when
-            ``perform_disco`` is True).
+            be the RP's ``client_id``. Without discovery, ``issuer`` is the
+            OP issuer.
+        issuer: The OP's issuer identifier (required when ``perform_disco``
+            is True), not its discovery document URL. The discovery document's
+            ``issuer`` and the token's ``iss`` must both equal it exactly
+            (OpenID Connect Discovery 1.0 §4.3).
         http_client: Optional managed HTTP client (see ``validate_token``).
         cache: Optional :class:`ValidationCache` for the discovery document,
             JWKS and kid-miss cooldown (see ``validate_token``).
@@ -136,7 +139,7 @@ def validate_id_token(  # noqa: PLR0913  # OIDC id-token profile knobs (§3.1.3.
     claims = _validate_jwt_without_binding(
         id_token,
         token_validation_config,
-        disco_doc_address=disco_doc_address,
+        issuer=issuer,
         http_client=http_client,
         cache=cache,
     )

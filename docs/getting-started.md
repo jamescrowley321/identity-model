@@ -30,10 +30,10 @@ First, retrieve the OpenID Connect discovery document from your identity provide
 ```python
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-# Your identity provider's discovery endpoint
-DISCO_ADDRESS = "https://your-idp.com/.well-known/openid-configuration"
+# Your identity provider's issuer identifier
+ISSUER = "https://your-idp.com"
 
-disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
 disco_response = get_discovery_document(disco_request)
 
 if disco_response.is_successful:
@@ -107,7 +107,7 @@ try:
     claims = validate_token(
         jwt=jwt_token,
         token_validation_config=validation_config,
-        disco_doc_address=DISCO_ADDRESS
+        issuer=ISSUER
     )
     print(f"Token valid! Subject: {claims.get('sub')}")
     print(f"Scopes: {claims.get('scope')}")
@@ -132,7 +132,7 @@ import requests
 
 # Discover the token endpoint
 disco = get_discovery_document(
-    DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
+    DiscoveryDocumentRequest(issuer="https://auth.example.com")
 )
 
 # Get access token
@@ -181,7 +181,7 @@ def require_token(f):
             claims = validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="https://auth.example.com/.well-known/openid-configuration"
+                issuer="https://auth.example.com"
             )
             request.user_claims = claims
             return f(*args, **kwargs)
@@ -210,7 +210,7 @@ It's recommended to use environment variables for sensitive configuration:
 ```python
 import os
 
-DISCO_ADDRESS = os.environ.get("DISCO_ADDRESS")
+ISSUER = os.environ.get("ISSUER")
 CLIENT_ID = os.environ.get("CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 SCOPE = os.environ.get("SCOPE", "api:read")
@@ -219,7 +219,7 @@ SCOPE = os.environ.get("SCOPE", "api:read")
 Create a `.env` file (don't commit this!):
 
 ```bash
-DISCO_ADDRESS=https://your-idp.com/.well-known/openid-configuration
+ISSUER=https://your-idp.com
 CLIENT_ID=your-client-id
 CLIENT_SECRET=your-client-secret
 SCOPE=api:read api:write

@@ -58,7 +58,6 @@ from py_identity_model import (
     build_end_session_url,
     clear_jwks_cache,
     create_request_object,
-    discovery_document_url,
     generate_dpop_key,
     generate_pkce_pair,
     get_discovery_document,
@@ -77,6 +76,7 @@ from py_identity_model import (
     validate_post_logout_state,
     validate_token,
 )
+from py_identity_model.core.discovery_policy import discovery_document_url
 from py_identity_model.core.parsers import (
     extract_jwt_header_fields,
     find_key_by_kid,
@@ -307,9 +307,6 @@ class AuthSession:
     # signed authorization response JWT, decoded in /callback via the library's
     # process_jarm_response instead of plain query-string parsing.
     jarm: bool = False
-    # The OP's discovery address, kept so /callback can verify a JARM response
-    # (its signature is checked against the OP's published JWKS).
-    disco_address: str = ""
     # Results populated after callback
     result: dict = field(default_factory=dict)
 
@@ -565,7 +562,8 @@ def discover(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -583,7 +581,7 @@ def discover(
         )
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_url, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
 
@@ -635,7 +633,8 @@ def register(
     _set_active_test(profile, test_name)
     http_client = _get_http_client()
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         return JSONResponse(
@@ -645,7 +644,7 @@ def register(
 
     policy = DiscoveryPolicy(require_https=False, validate_issuer=True)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_url, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
     if not disco.is_successful:
@@ -787,7 +786,8 @@ def authorize(
 
     # Fetch discovery document for this issuer
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL: %s", exc)
@@ -805,7 +805,7 @@ def authorize(
         )
     policy = _discovery_policy(mtls=mtls.lower() == "true")
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_url, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
 
@@ -825,7 +825,7 @@ def authorize(
             content={"error": "discovery_failed", "detail": disco.error},
         )
 
-    # OIDC Discovery 1.0 §4.3: issuer in document MUST match the URL used to retrieve it
+    # OIDC Discovery 1.0 §4.3: issuer in document MUST equal the configured issuer
     if not disco.issuer:
         error_msg = "Discovery document missing required 'issuer' field"
         logger.error("REJECTED: %s", error_msg)
@@ -868,7 +868,6 @@ def authorize(
     }:
         return _authorize_fapi2(
             disco=disco,
-            disco_address=disco_url,
             issuer=issuer,
             client_id=client_id,
             scope=_FAPI2_SCOPE,
@@ -974,7 +973,6 @@ def authorize(
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
-        "disco_address": disco_url,
         "test_id": test_id,
     }
     _last_fapi_profile = None
@@ -1003,7 +1001,6 @@ def _fapi2_rejected(
 
 def _authorize_fapi2(
     disco: DiscoveryDocumentResponse,
-    disco_address: str,
     issuer: str,
     client_id: str,
     scope: str,
@@ -1097,7 +1094,6 @@ def _authorize_fapi2(
         dpop_key=dpop_key,
         jarm=jarm,
         mtls=mtls,
-        disco_address=disco_address,
     )
     sessions[state] = session
     if test_id:
@@ -1107,7 +1103,6 @@ def _authorize_fapi2(
     _last_flow_context = {
         "issuer": issuer,
         "client_id": client_id,
-        "disco_address": disco_address,
         "test_id": test_id,
     }
     _last_fapi_profile = profile
@@ -1122,13 +1117,14 @@ def _authorize_fapi2(
 
 def _fetch_and_validate_discovery(
     issuer: str, http_client: HTTPClient, session: AuthSession
-) -> HTMLResponse | tuple:
+) -> HTMLResponse | DiscoveryDocumentResponse:
     """Fetch discovery document and validate issuer for a callback flow.
 
-    Returns an HTMLResponse on error, or a (disco, disco_url) tuple on success.
+    Returns an HTMLResponse on error, or the discovery document on success.
     """
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         error_msg = f"invalid_issuer: {exc}"
         logger.error("REJECTED: invalid issuer URL in callback: %s", exc)
@@ -1141,7 +1137,7 @@ def _fetch_and_validate_discovery(
         )
     policy = _discovery_policy(mtls=session.mtls)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_url, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
 
@@ -1155,7 +1151,7 @@ def _fetch_and_validate_discovery(
             status_code=502,
         )
 
-    # OIDC Discovery 1.0 §4.3: issuer in document MUST match the URL used to retrieve it
+    # OIDC Discovery 1.0 §4.3: issuer in document MUST equal the configured issuer
     if not disco.issuer:
         error_msg = "Discovery document missing required 'issuer' field"
         logger.error("REJECTED: %s", error_msg)
@@ -1180,7 +1176,7 @@ def _fetch_and_validate_discovery(
             status_code=502,
         )
 
-    return disco, disco_url
+    return disco
 
 
 def _validate_fapi2_callback_issuer(
@@ -1445,7 +1441,7 @@ def _parse_callback(
     A JARM (JWT-Secured Authorization Response Mode) response carries the
     parameters inside a signed ``response`` JWT rather than plain query params;
     decode + verify it via the library's ``process_jarm_response``. The flow's
-    client_id / discovery address come from ``_last_flow_context`` because the
+    client_id / issuer come from ``_last_flow_context`` because the
     ``state`` (the session key) is inside the JWT. Returns the parsed callback,
     or an error ``HTMLResponse`` when parsing or JARM validation fails.
     """
@@ -1456,7 +1452,7 @@ def _parse_callback(
             return process_jarm_response(
                 request_url,
                 client_id=ctx.get("client_id", ""),
-                disco_doc_address=ctx.get("disco_address"),
+                issuer=ctx.get("issuer", ""),
                 algorithms=(
                     fapi_profile.signing_algorithms
                     if fapi_profile is not None
@@ -1548,7 +1544,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
     disco_result = _fetch_and_validate_discovery(session.issuer, http_client, session)
     if isinstance(disco_result, HTMLResponse):
         return disco_result
-    disco, disco_url = disco_result
+    disco = disco_result
 
     # FAPI 2.0: validate the RFC 9207 ``iss`` authorization-response parameter.
     fapi2_iss_error = _validate_fapi2_callback_issuer(cb_response, session)
@@ -1630,7 +1626,7 @@ def _handle_callback(request_url: str) -> HTMLResponse | JSONResponse:
             claims = validate_id_token(
                 id_token_jwt,
                 token_validation_config=_id_token_validation_config(session, disco),
-                disco_doc_address=disco_url,
+                issuer=session.issuer,
                 nonce=session.nonce or None,
             )
         except PyIdentityModelException as exc:
@@ -1794,7 +1790,7 @@ def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
         claims = validate_logout_token(
             logout_token,
             _logout_token_validation_config(flow_context),
-            disco_doc_address=flow_context["disco_address"],
+            issuer=flow_context["issuer"],
         )
     except LogoutTokenValidationException as exc:
         logger.error("REJECTED: logout token failed logout rules: %s", exc.message)

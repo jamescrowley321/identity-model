@@ -21,7 +21,7 @@ from py_identity_model.aio import (
 
 
 # Constants
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 # =============================================================================
@@ -35,7 +35,7 @@ async def fetch_discovery_document_example():
     print("Example 1: Async Discovery Document")
     print("=" * 60)
 
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
 
     # Async fetch - non-blocking
     response = await get_discovery_document(discovery_request)
@@ -144,7 +144,7 @@ async def validate_token_example(access_token: str):
         decoded = await validate_token(
             access_token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
 
         print("✓ Token validated successfully!")
@@ -176,7 +176,7 @@ async def userinfo_example(access_token: str, id_token_sub: str):
     print("=" * 60)
 
     # First get the discovery document to find the userinfo endpoint
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
     disco_response = await get_discovery_document(discovery_request)
 
     if not disco_response.is_successful:
@@ -222,11 +222,7 @@ async def concurrent_operations_example():
     print("Fetching discovery document and JWKS concurrently...")
 
     # Create tasks
-    disco_task = get_discovery_document(
-        DiscoveryDocumentRequest(
-            address="https://demo.duendesoftware.com/.well-known/openid-configuration"
-        )
-    )
+    disco_task = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     jwks_task = get_jwks(
         JwksRequest(
@@ -268,7 +264,7 @@ async def validate_multiple_tokens_example(tokens: list[str]):
         validate_token(
             token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
         for token in tokens
     ]
@@ -319,7 +315,7 @@ async def fastapi_pattern_example():
             claims = await validate_token(
                 token,
                 config,
-                disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+                issuer=DEMO_ISSUER,
             )
 
             return {

@@ -21,7 +21,7 @@ from py_identity_model.exceptions import ConfigurationException
 from py_identity_model.sync.token_validation import validate_token
 from py_identity_model.sync.validation_cache import ValidationCache
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -321,7 +321,7 @@ class TestDiscoveredIssuerCannotBeDisabled:
             perform_disco=True, options={"verify_iss": False}
         )
         with pytest.raises(ConfigurationException) as exc_info:
-            validate_token(discovery, config, DISCO_URL, cache=ValidationCache())
+            validate_token(discovery, config, ISSUER, cache=ValidationCache())
         assert exc_info.value.message == self._MESSAGE
 
     async def test_async_discovered_issuer(self, discovery):
@@ -330,6 +330,6 @@ class TestDiscoveredIssuerCannotBeDisabled:
         )
         with pytest.raises(ConfigurationException) as exc_info:
             await avalidate_token(
-                discovery, config, DISCO_URL, cache=AsyncValidationCache()
+                discovery, config, ISSUER, cache=AsyncValidationCache()
             )
         assert exc_info.value.message == self._MESSAGE

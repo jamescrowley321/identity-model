@@ -49,9 +49,7 @@ class TestDiscoveryEquivalence:
             return_value=Response(200, json=discovery_data)
         )
 
-        request = DiscoveryDocumentRequest(
-            address="https://auth.example.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
 
         # Get results from both APIs
         sync_result = sync_get_discovery(request)
@@ -76,9 +74,7 @@ class TestDiscoveryEquivalence:
             return_value=Response(404, text="Not Found")
         )
 
-        request = DiscoveryDocumentRequest(
-            address="https://auth.example.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
 
         # Get results from both APIs
         sync_result = sync_get_discovery(request)
@@ -109,9 +105,7 @@ class TestDiscoveryEquivalence:
             )
         )
 
-        request = DiscoveryDocumentRequest(
-            address="https://auth.example.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
 
         # Get results from both APIs
         sync_result = sync_get_discovery(request)
@@ -227,9 +221,7 @@ class TestResponseStructureEquivalence:
             return_value=Response(200, json=discovery_data)
         )
 
-        request = DiscoveryDocumentRequest(
-            address="https://auth.example.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
 
         sync_result = sync_get_discovery(request)
         async_result = await async_get_discovery(request)

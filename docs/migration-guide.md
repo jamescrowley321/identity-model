@@ -59,7 +59,7 @@ from py_identity_model.aio import (
 **Before (Sync):**
 ```python
 def get_token():
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = get_discovery_document(disco_request)
 
     if disco_response.is_successful:
@@ -70,7 +70,7 @@ def get_token():
 **After (Async):**
 ```python
 async def get_token():
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = await get_discovery_document(disco_request)
 
     if disco_response.is_successful:
@@ -157,7 +157,7 @@ config = TokenValidationConfig(
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
 def get_endpoints():
-    request = DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
+    request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
     response = get_discovery_document(request)
 
     if response.is_successful:
@@ -176,7 +176,7 @@ from py_identity_model import DiscoveryDocumentRequest
 from py_identity_model.aio import get_discovery_document
 
 async def get_endpoints():
-    request = DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
+    request = DiscoveryDocumentRequest(issuer="https://auth.example.com")
     response = await get_discovery_document(request)
 
     if response.is_successful:
@@ -205,7 +205,7 @@ def validate_request_token(token: str):
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
         )
         return claims
     except PyIdentityModelException as e:
@@ -228,7 +228,7 @@ async def validate_request_token(token: str):
         claims = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
         )
         return claims
     except PyIdentityModelException as e:
@@ -250,7 +250,7 @@ from py_identity_model import (
 def get_access_token():
     # Get token endpoint from discovery
     disco_response = get_discovery_document(
-        DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
+        DiscoveryDocumentRequest(issuer="https://auth.example.com")
     )
 
     if not disco_response.is_successful:
@@ -282,7 +282,7 @@ from py_identity_model.aio import (
 async def get_access_token():
     # Get token endpoint from discovery
     disco_response = await get_discovery_document(
-        DiscoveryDocumentRequest(address="https://auth.example.com/.well-known/openid-configuration")
+        DiscoveryDocumentRequest(issuer="https://auth.example.com")
     )
 
     if not disco_response.is_successful:
@@ -323,7 +323,7 @@ def verify_token(token: str = Depends(oauth2_scheme)):
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
         )
         return claims
     except Exception:
@@ -349,7 +349,7 @@ async def verify_token(token: str = Depends(oauth2_scheme)):
         claims = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
         )
         return claims
     except Exception:
@@ -386,7 +386,7 @@ def protected_route():
         claims = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
         )
         return jsonify({"user": claims["sub"]})
     except Exception as e:
@@ -413,7 +413,7 @@ from py_identity_model.aio import (
 
 # Use sync in background jobs
 def background_job():
-    disco = sync_get_discovery(DiscoveryDocumentRequest(address="..."))
+    disco = sync_get_discovery(DiscoveryDocumentRequest(issuer="..."))
     # ... sync processing
 
 # Use async in API endpoints
@@ -479,7 +479,7 @@ async def validate_many_tokens(tokens: list[str]):
 
     # Validate all tokens concurrently
     results = await asyncio.gather(
-        *[validate_token(token, config, disco_address) for token in tokens],
+        *[validate_token(token, config, issuer) for token in tokens],
         return_exceptions=True
     )
 
@@ -504,10 +504,10 @@ async def validate_many_tokens(tokens: list[str]):
 **Solution:**
 ```python
 # Wrong
-claims = validate_token(token, config, disco_address)
+claims = validate_token(token, config, issuer)
 
 # Correct
-claims = await validate_token(token, config, disco_address)
+claims = await validate_token(token, config, issuer)
 ```
 
 ### Error: "RuntimeError: no running event loop"
@@ -565,9 +565,7 @@ config = HTTPConfig(ca_bundle="/path/to/ca-bundle.crt")
 
 async def main():
     async with AsyncHTTPClient(config=config) as client:
-        request = DiscoveryDocumentRequest(
-            address="https://your-identity-server.com/.well-known/openid-configuration"
-        )
+        request = DiscoveryDocumentRequest(issuer="https://your-identity-server.com")
         response = await get_discovery_document(request, http_client=client)
 ```
 
@@ -614,7 +612,7 @@ from py_identity_model import DiscoveryDocumentRequest
 
 @pytest.mark.asyncio
 async def test_async_discovery():
-    request = DiscoveryDocumentRequest(address="https://demo.duendesoftware.com/.well-known/openid-configuration")
+    request = DiscoveryDocumentRequest(issuer="https://demo.duendesoftware.com")
     response = await get_discovery_document(request)
 
     assert response.is_successful

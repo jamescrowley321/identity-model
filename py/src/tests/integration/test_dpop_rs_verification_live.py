@@ -107,7 +107,7 @@ def validate(test_config, config):
         return validate_token(
             token,
             cfg or config,
-            test_config["TEST_DISCO_ADDRESS"],
+            test_config["TEST_ISSUER"],
             presentation=presentation,
         )
 
@@ -170,7 +170,7 @@ class TestDPoPBoundTokenLive:
         claims = await avalidate_token(
             token,
             config,
-            test_config["TEST_DISCO_ADDRESS"],
+            test_config["TEST_ISSUER"],
             presentation=_dpop(token, key),
         )
 

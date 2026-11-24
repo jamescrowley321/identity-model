@@ -25,7 +25,7 @@ from py_identity_model.exceptions import (
     DiscoveryValidationError,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 class TestDiscoveryValidationFunctions:
@@ -226,7 +226,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -253,7 +253,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -279,7 +279,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -305,7 +305,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -317,7 +317,7 @@ class TestDiscoveryComplianceIntegration:
         url = DISCO_URL
         respx.get(url).mock(side_effect=httpx.ConnectError("Network error"))
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -336,7 +336,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -354,7 +354,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is False
@@ -384,7 +384,7 @@ class TestDiscoveryComplianceIntegration:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
 
         assert result.is_successful is True

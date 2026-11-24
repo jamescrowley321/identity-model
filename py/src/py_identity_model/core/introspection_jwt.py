@@ -222,7 +222,7 @@ def verify_signed_introspection_response(
     """Verify a successful (2xx) JWT introspection response with the fixed
     keys of manual-mode ``request.signed_response`` (``issuer`` and ``jwks``).
 
-    Discovery mode (``discovery_address``) is handled by ``introspect_token``,
+    Discovery mode (no ``jwks``) is handled by ``introspect_token``,
     which fetches the keys.
 
     Args:

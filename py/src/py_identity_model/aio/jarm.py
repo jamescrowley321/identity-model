@@ -37,45 +37,31 @@ from .jwks import get_jwks
 from .managed_client import AsyncHTTPClient
 
 
-async def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline inputs
-    disco_doc_address: str | None,
-    issuer: str | None,
+async def _resolve_jarm_context(
+    issuer: str,
     jwks: JwksResponse | None,
     algorithms: list[str] | None,
     require_https: bool,
     http_client: AsyncHTTPClient | None,
-) -> tuple[str, list[str] | None, JwksResponse]:
-    """Resolve ``(issuer, allowed_algs, jwks_response)`` for JARM verification.
+) -> tuple[list[str] | None, JwksResponse]:
+    """Resolve ``(allowed_algs, jwks_response)`` for JARM verification.
 
     See ``sync.jarm._resolve_jarm_context`` for the offline vs discovery modes.
     """
-    offline = (
-        issuer is not None
-        and jwks is not None
-        and (algorithms is not None or disco_doc_address is None)
-    )
-    if offline:
+    # The decoder skips the iss check for a None issuer, so refuse it here,
+    # before either mode.
+    if not isinstance(issuer, str) or not issuer:
+        raise ConfigurationException("issuer is required for JARM processing")
+    if jwks is not None:
         validate_jwks_response(jwks)
-        return issuer, algorithms, jwks
-
-    if disco_doc_address is None:
-        raise ConfigurationException(
-            "disco_doc_address is required for JARM processing unless issuer "
-            "and jwks are supplied (offline mode)"
-        )
+        return algorithms, jwks
 
     policy = DiscoveryPolicy(require_https=require_https)
     disco_doc_response = await get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_doc_address, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
     validate_disco_response(disco_doc_response)
-
-    resolved_issuer = issuer or disco_doc_response.issuer
-    if not resolved_issuer:
-        raise ConfigurationException(
-            "Discovery document does not advertise an issuer; cannot validate JARM"
-        )
     allowed_algs = (
         algorithms
         if algorithms is not None
@@ -89,15 +75,14 @@ async def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline inputs
         JwksRequest(address=jwks_uri, policy=policy), http_client=http_client
     )
     validate_jwks_response(jwks_response)
-    return resolved_issuer, allowed_algs, jwks_response
+    return allowed_algs, jwks_response
 
 
 async def process_jarm_response(  # noqa: PLR0913  # discovery and offline inputs
     response: str,
     *,
     client_id: str,
-    disco_doc_address: str | None = None,
-    issuer: str | None = None,
+    issuer: str,
     jwks: JwksResponse | None = None,
     algorithms: list[str] | None = None,
     require_https: bool = True,
@@ -112,8 +97,8 @@ async def process_jarm_response(  # noqa: PLR0913  # discovery and offline input
     """
     response_jwt = response if is_jwt else extract_jarm_response_jwt(response)
 
-    resolved_issuer, allowed_algs, jwks_response = await _resolve_jarm_context(
-        disco_doc_address, issuer, jwks, algorithms, require_https, http_client
+    allowed_algs, jwks_response = await _resolve_jarm_context(
+        issuer, jwks, algorithms, require_https, http_client
     )
 
     kid, header_alg = extract_jarm_header(response_jwt)
@@ -126,7 +111,7 @@ async def process_jarm_response(  # noqa: PLR0913  # discovery and offline input
         response_jwt,
         key_dict,
         [selected_alg],
-        issuer=resolved_issuer,
+        issuer=issuer,
         audience=client_id,
         leeway=leeway,
     )

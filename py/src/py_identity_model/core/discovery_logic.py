@@ -14,7 +14,6 @@ from ..logging_config import logger
 from ..logging_utils import redact_url
 from .error_handlers import handle_discovery_error
 from .models import (
-    DiscoveryDocumentRequest,
     DiscoveryDocumentResponse,
     DiscoveryErrorKind,
 )
@@ -30,10 +29,10 @@ if TYPE_CHECKING:
     from .discovery_policy import DiscoveryPolicy
 
 
-def log_discovery_request(disco_doc_req: DiscoveryDocumentRequest) -> None:
+def log_discovery_request(url: str) -> None:
     """Log discovery document request."""
     logger.info(
-        f"Fetching discovery document from {redact_url(disco_doc_req.address)}",
+        f"Fetching discovery document from {redact_url(url)}",
     )
 
 
@@ -63,12 +62,12 @@ def process_successful_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
     *,
-    requested_address: str,
+    requested_issuer: str,
 ) -> DiscoveryDocumentResponse:
     """Process successful discovery response."""
     # Validate and parse response using shared logic
     response_json = validate_and_parse_discovery_response(
-        response, policy, requested_address=requested_address
+        response, policy, requested_issuer=requested_issuer
     )
 
     logger.info(
@@ -90,7 +89,7 @@ def process_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
     *,
-    requested_address: str,
+    requested_issuer: str,
 ) -> DiscoveryDocumentResponse:
     """
     Process discovery document response.
@@ -98,8 +97,8 @@ def process_discovery_response(
     Args:
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
-        requested_address: The discovery URL as the caller supplied it; the
-            document's issuer must match it.
+        requested_issuer: The configured issuer the discovery URL was built
+            from; the document's issuer must equal it exactly.
 
     Returns:
         DiscoveryDocumentResponse with parsed data or error
@@ -111,7 +110,7 @@ def process_discovery_response(
 
     try:
         return process_successful_response(
-            response, policy, requested_address=requested_address
+            response, policy, requested_issuer=requested_issuer
         )
     except (TypeError, AttributeError) as e:
         # A check crashed on a wrongly typed member of a 2xx document (e.g.

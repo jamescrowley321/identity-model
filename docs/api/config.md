@@ -154,10 +154,10 @@ cache = ValidationCache(config=CacheConfig(cache_max_entries=128))
 
 with HTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
+        DiscoveryDocumentRequest(issuer=ISSUER), http_client=client
     )
     claims = validate_token(
-        token, validation_config, DISCO_URL, http_client=client, cache=cache
+        token, validation_config, ISSUER, http_client=client, cache=cache
     )
 ```
 
@@ -169,7 +169,7 @@ async_cache = AsyncValidationCache(config=CacheConfig(cache_max_entries=128))
 
 async with AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     claims = await validate_token(
-        token, validation_config, DISCO_URL, http_client=client, cache=async_cache
+        token, validation_config, ISSUER, http_client=client, cache=async_cache
     )
 ```
 
@@ -283,7 +283,7 @@ Python defines them. Go and Rust still differ in places, as that page lists.
     configs with keyword arguments instead. `ConfigIssue` now has `setting`
     and `message`.
 
-    The client settings (`client_id`, `client_secret`, discovery URL, scope,
+    The client settings (`client_id`, `client_secret`, issuer, scope,
     audience, redirect URIs, excluded paths) are not part of either config.
     For the FastAPI package they live on `OIDCSettings`.
 

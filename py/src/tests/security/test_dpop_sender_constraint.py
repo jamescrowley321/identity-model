@@ -96,7 +96,7 @@ def _config(binding: TokenBinding = TokenBinding.NONE) -> TokenValidationConfig:
 
 def _rejected(token, config, presentation) -> DPoPErrorKind:
     with pytest.raises(DPoPValidationError) as exc:
-        validate_token(token, config, DISCO_URL, presentation=presentation)
+        validate_token(token, config, ISSUER, presentation=presentation)
     return exc.value.kind
 
 
@@ -113,7 +113,7 @@ def test_bound_token_accepted_with_its_key(op):
     key = generate_dpop_key()
     token = op({"jkt": key.jwk_thumbprint})
 
-    claims = validate_token(token, _config(), DISCO_URL, presentation=_dpop(token, key))
+    claims = validate_token(token, _config(), ISSUER, presentation=_dpop(token, key))
 
     assert claims["cnf"] == {"jkt": key.jwk_thumbprint}
 
@@ -143,7 +143,7 @@ def test_captured_proof_replay_refused(op):
     token = op({"jkt": key.jwk_thumbprint})
     config = _config()
     captured = _dpop(token, key)
-    validate_token(token, config, DISCO_URL, presentation=captured)
+    validate_token(token, config, ISSUER, presentation=captured)
 
     assert _rejected(token, config, captured) is DPoPErrorKind.REPLAYED_JTI
 

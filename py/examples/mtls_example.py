@@ -45,7 +45,7 @@ from py_identity_model.core.mtls import resolve_mtls_endpoint
 
 # A placeholder issuer; swap for a provider that advertises mTLS when running
 # for real (e.g. one exposing ``mtls_endpoint_aliases``).
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 def generate_self_signed_client_cert(tmp_dir: Path) -> tuple[str, str, bytes]:
@@ -91,9 +91,7 @@ def discover_mtls_metadata_example():
     print("Discover mTLS metadata (RFC 8705 §4/§5)")
     print("=" * 60)
 
-    response = get_discovery_document(
-        DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
-    )
+    response = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     if not response.is_successful:
         print(f"  Discovery failed: {response.error}")

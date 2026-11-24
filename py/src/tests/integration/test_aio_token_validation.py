@@ -47,7 +47,7 @@ class TestAsyncTokenValidation:
         try:
             decoded_token = await validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -86,7 +86,7 @@ class TestAsyncTokenValidation:
             ):
                 await validate_token(
                     jwt=client_credentials_token.token["access_token"],
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
         finally:
@@ -117,7 +117,7 @@ class TestAsyncTokenValidation:
         try:
             decoded_token = await validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 

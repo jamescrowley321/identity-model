@@ -68,7 +68,7 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.validation_cache import ValidationCache
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -228,7 +228,7 @@ class TestCooldownUsesMonotonicClock:
             validate_token(
                 jwt=attacker_token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 http_client=sync_client,
                 cache=sync_cache,
             )
@@ -252,7 +252,7 @@ class TestCooldownUsesMonotonicClock:
                 validate_token(
                     jwt=attacker_token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=sync_client,
                     cache=sync_cache,
                 )
@@ -289,7 +289,7 @@ class TestCooldownUsesMonotonicClock:
             await async_validate_token(
                 jwt=attacker_token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 http_client=async_client,
                 cache=async_cache,
             )
@@ -309,7 +309,7 @@ class TestCooldownUsesMonotonicClock:
                 await async_validate_token(
                     jwt=attacker_token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=async_client,
                     cache=async_cache,
                 )

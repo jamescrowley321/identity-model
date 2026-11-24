@@ -127,6 +127,24 @@ _REQUIRED_ENV_VARS = (
 )
 
 
+OIDC_WELL_KNOWN_SUFFIX = "/.well-known/openid-configuration"
+
+
+def issuer_from_discovery_address(address: str) -> str:
+    """The issuer whose OIDC discovery document is at *address*.
+
+    ``TEST_DISCO_ADDRESS`` holds the discovery URL; discovery takes the issuer,
+    so the suffix is stripped here once. Raises ``RuntimeError`` when the
+    address is not an OIDC discovery URL.
+    """
+    if not address.endswith(OIDC_WELL_KNOWN_SUFFIX):
+        raise RuntimeError(
+            f"TEST_DISCO_ADDRESS must end with {OIDC_WELL_KNOWN_SUFFIX!r} so the "
+            f"issuer can be derived from it; got {address!r}"
+        )
+    return address.removesuffix(OIDC_WELL_KNOWN_SUFFIX)
+
+
 def get_config(env_file: str | None = None) -> dict:
     """
     Get test configuration from environment variables.
@@ -147,6 +165,10 @@ def get_config(env_file: str | None = None) -> dict:
 
     config = {
         "TEST_DISCO_ADDRESS": os.environ.get("TEST_DISCO_ADDRESS", ""),
+        # Optional: the provider's issuer exactly as its discovery document
+        # declares it (e.g. with a trailing slash, which cannot be recovered
+        # from TEST_DISCO_ADDRESS). Unset derives it from TEST_DISCO_ADDRESS.
+        "TEST_ISSUER": os.environ.get("TEST_ISSUER", ""),
         "TEST_JWKS_ADDRESS": os.environ.get("TEST_JWKS_ADDRESS", ""),
         "TEST_CLIENT_ID": os.environ.get("TEST_CLIENT_ID", ""),
         "TEST_CLIENT_SECRET": os.environ.get("TEST_CLIENT_SECRET", ""),

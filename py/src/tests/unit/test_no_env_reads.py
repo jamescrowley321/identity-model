@@ -178,14 +178,14 @@ class TestSyncReadsNoEnvironment:
         _mock_provider(key)
         with HTTPClient(config=_config()) as client:
             disco = get_discovery_document(
-                DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
+                DiscoveryDocumentRequest(issuer=ISSUER), http_client=client
             )
             jwks = get_jwks(JwksRequest(address=JWKS_URL), http_client=client)
             first = validate_token(
-                _token(pem), _validation_config(), DISCO_URL, http_client=client
+                _token(pem), _validation_config(), ISSUER, http_client=client
             )
             cached = validate_token(
-                _token(pem), _validation_config(), DISCO_URL, http_client=client
+                _token(pem), _validation_config(), ISSUER, http_client=client
             )
         assert disco.is_successful
         assert jwks.is_successful
@@ -203,7 +203,7 @@ class TestSyncReadsNoEnvironment:
             validate_token(
                 _token(pem, UNKNOWN_KID),
                 _validation_config(),
-                DISCO_URL,
+                ISSUER,
                 http_client=client,
             )
         assert env_trap.library_reads == []
@@ -222,14 +222,14 @@ class TestAsyncReadsNoEnvironment:
         _mock_provider(key)
         async with AsyncHTTPClient(config=_config()) as client:
             disco = await aio_get_discovery_document(
-                DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
+                DiscoveryDocumentRequest(issuer=ISSUER), http_client=client
             )
             jwks = await aio_get_jwks(JwksRequest(address=JWKS_URL), http_client=client)
             first = await aio_validate_token(
-                _token(pem), _validation_config(), DISCO_URL, http_client=client
+                _token(pem), _validation_config(), ISSUER, http_client=client
             )
             cached = await aio_validate_token(
-                _token(pem), _validation_config(), DISCO_URL, http_client=client
+                _token(pem), _validation_config(), ISSUER, http_client=client
             )
         assert disco.is_successful
         assert jwks.is_successful
@@ -245,7 +245,7 @@ class TestAsyncReadsNoEnvironment:
                 await aio_validate_token(
                     _token(pem, UNKNOWN_KID),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                 )
         assert env_trap.library_reads == []

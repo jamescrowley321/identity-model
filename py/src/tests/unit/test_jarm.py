@@ -35,6 +35,7 @@ from py_identity_model.core.state_validation import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DiscoveryIssuerMismatchError,
     InvalidAudienceException,
     InvalidIssuerException,
     JarmValidationException,
@@ -366,6 +367,16 @@ class TestProcessJarmResponseOffline:
         with pytest.raises(InvalidIssuerException):
             self._process(signing, _query_url(forged))
 
+    @pytest.mark.parametrize("issuer", [None, ""])
+    def test_missing_issuer_rejected(self, signing, issuer):
+        # A None issuer would turn the decoder's iss check off.
+        private_key, _, _ = signing
+        forged = _sign(private_key, _base_claims(iss="https://attacker.example.com"))
+        with pytest.raises(
+            ConfigurationException, match="issuer is required for JARM processing"
+        ):
+            self._process(signing, _query_url(forged), issuer=issuer)
+
     def test_audience_mismatch_rejected(self, signing):
         private_key, _, _ = signing
         wrong_aud = _sign(private_key, _base_claims(aud="other-client"))
@@ -451,7 +462,7 @@ class TestProcessJarmResponseDiscoveryMode:
         result = process_jarm_response(
             _query_url(_sign(private_key, _base_claims())),
             client_id=CLIENT_ID,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         assert result.is_successful is True
         assert result.code == CODE
@@ -470,7 +481,7 @@ class TestProcessJarmResponseDiscoveryMode:
             process_jarm_response(
                 _query_url(_sign(private_key, _base_claims())),
                 client_id=CLIENT_ID,
-                disco_doc_address=DISCO_ADDRESS,
+                issuer=ISSUER,
             )
 
     @respx.mock
@@ -484,7 +495,7 @@ class TestProcessJarmResponseDiscoveryMode:
             process_jarm_response(
                 _query_url(forged),
                 client_id=CLIENT_ID,
-                disco_doc_address=DISCO_ADDRESS,
+                issuer=ISSUER,
             )
 
     @respx.mock
@@ -502,7 +513,7 @@ class TestProcessJarmResponseDiscoveryMode:
         result = process_jarm_response(
             _query_url(_sign(private_key, _base_claims())),
             client_id=CLIENT_ID,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         assert result.code == CODE
 
@@ -522,7 +533,7 @@ class TestProcessJarmResponseDiscoveryMode:
             process_jarm_response(
                 _query_url(_sign(private_key, _base_claims())),
                 client_id=CLIENT_ID,
-                disco_doc_address=DISCO_ADDRESS,
+                issuer=ISSUER,
                 algorithms=[],
             )
 
@@ -539,19 +550,36 @@ class TestProcessJarmResponseDiscoveryMode:
             process_jarm_response(
                 _query_url(_sign(private_key, _base_claims())),
                 client_id=CLIENT_ID,
-                disco_doc_address=DISCO_ADDRESS,
+                issuer=ISSUER,
             )
 
-    def test_no_discovery_and_incomplete_offline_raises(self, signing):
-        _, jwks, _ = signing
-        with pytest.raises(
-            ConfigurationException, match="disco_doc_address is required"
-        ):
+    @respx.mock
+    def test_document_issuer_must_equal_configured_issuer(self, signing):
+        # OIDC Discovery §4.3: a trailing-slash-only difference is a mismatch.
+        private_key, _, public_jwk = signing
+        self._mock_discovery(public_jwk, disco_overrides={"issuer": f"{ISSUER}/"})
+        with pytest.raises(DiscoveryIssuerMismatchError) as excinfo:
             process_jarm_response(
-                _query_url("x.y.z"),
+                _query_url(_sign(private_key, _base_claims())),
                 client_id=CLIENT_ID,
-                jwks=jwks,  # issuer missing -> not offline
+                issuer=ISSUER,
             )
+        assert (excinfo.value.requested, excinfo.value.returned) == (
+            ISSUER,
+            f"{ISSUER}/",
+        )
+
+    @respx.mock
+    def test_discovery_url_as_issuer_rejected_before_any_request(self, signing):
+        private_key, _, _ = signing
+        disco_route = respx.get(DISCO_ADDRESS)
+        with pytest.raises(ConfigurationException):
+            process_jarm_response(
+                _query_url(_sign(private_key, _base_claims())),
+                client_id=CLIENT_ID,
+                issuer=DISCO_ADDRESS,
+            )
+        assert disco_route.call_count == 0
 
 
 @pytest.mark.unit
@@ -583,6 +611,22 @@ class TestAsyncProcessJarmResponse:
         assert result.code == CODE
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("issuer", [None, ""])
+    async def test_offline_missing_issuer_rejected(self, signing, issuer):
+        private_key, jwks, _ = signing
+        forged = _sign(private_key, _base_claims(iss="https://attacker.example.com"))
+        with pytest.raises(
+            ConfigurationException, match="issuer is required for JARM processing"
+        ):
+            await async_process_jarm(
+                _query_url(forged),
+                client_id=CLIENT_ID,
+                issuer=issuer,
+                jwks=jwks,
+                algorithms=["ES256"],
+            )
+
+    @pytest.mark.asyncio
     async def test_offline_tampered_signature_rejected(self, signing):
         private_key, jwks, _ = signing
         other_key = ec.generate_private_key(ec.SECP256R1())
@@ -607,7 +651,7 @@ class TestAsyncProcessJarmResponse:
         result = await async_process_jarm(
             _query_url(_sign(private_key, _base_claims())),
             client_id=CLIENT_ID,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         assert result.code == CODE
         assert result.issuer == ISSUER
@@ -627,7 +671,7 @@ class TestDiscoveryParsesJarmFields:
         }
         respx.get(DISCO_ADDRESS).mock(return_value=httpx.Response(200, json=disco))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.authorization_signing_alg_values_supported == ["ES256", "PS256"]
         assert result.authorization_encryption_alg_values_supported == ["RSA-OAEP"]
@@ -639,7 +683,7 @@ class TestDiscoveryParsesJarmFields:
         disco.pop("authorization_signing_alg_values_supported", None)
         respx.get(DISCO_ADDRESS).mock(return_value=httpx.Response(200, json=disco))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.authorization_signing_alg_values_supported is None
         assert result.authorization_encryption_alg_values_supported is None

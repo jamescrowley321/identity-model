@@ -12,7 +12,11 @@ cooldown is keyed by ``jwks_uri`` alone.
 
 import time
 
-from ..core.discovery_policy import DiscoveryPolicy, resolve_discovery_policy
+from ..core.discovery_policy import (
+    DiscoveryPolicy,
+    discovery_document_url,
+    resolve_discovery_policy,
+)
 from ..core.jwks_cache import (
     apply_disco_cache_outcome,
     clear_cache_locked,
@@ -70,7 +74,7 @@ def _resolve_cache(cache: ValidationCache | None) -> ValidationCache:
 
 
 def _get_disco_response(
-    disco_doc_address: str | None,
+    issuer: str | None,
     policy: DiscoveryPolicy | None = None,
     http_client: HTTPClient | None = None,
     cache: ValidationCache | None = None,
@@ -79,7 +83,7 @@ def _get_disco_response(
 
     Uses cache-aside with per-URI single-flight: a fresh cached entry is
     returned without any lock; only the upstream fetch on a cache miss is
-    serialized, and only against other requests for the same address. The
+    serialized, and only against other requests for the same issuer. The
     cache-wide write lock covers only the brief cache write + eviction and
     never spans the upstream fetch.
 
@@ -89,16 +93,18 @@ def _get_disco_response(
     partitions it too: a client never reads a document another client fetched
     over a transport it does not trust.
     """
-    if disco_doc_address is None:
-        raise ConfigurationException(
-            "disco_doc_address is required when perform_disco is True"
-        )
+    if issuer is None:
+        raise ConfigurationException("issuer is required when perform_disco is True")
 
     client = _resolve_client(http_client)
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    cache_key = (client.trust_scope, disco_doc_address, policy.cache_key())
+    # Validates the issuer before any request. The cache is keyed on the
+    # issuer, not the URL: https://op and https://op/ share a URL (§4.1) but
+    # are different issuers, and a document matches only one of them.
+    discovery_document_url(issuer, policy.location)
+    cache_key = (client.trust_scope, issuer, policy.cache_key())
     # Cheap atomic dict read — no lock required for a single .get() in CPython.
     entry = cache._disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
@@ -117,7 +123,7 @@ def _get_disco_response(
             return entry.response
 
         response = get_discovery_document(
-            DiscoveryDocumentRequest(address=disco_doc_address, policy=policy),
+            DiscoveryDocumentRequest(issuer=issuer, policy=policy),
             http_client=client,
         )
         with cache._disco_write_lock:
@@ -278,7 +284,7 @@ def clear_jwks_cache(cache: ValidationCache | None = None) -> None:
 
 def _discover_and_resolve_key(
     jwt: str,
-    disco_doc_address: str | None,
+    issuer: str | None,
     client: HTTPClient,
     policy: DiscoveryPolicy,
     cache: ValidationCache,
@@ -290,7 +296,7 @@ def _discover_and_resolve_key(
 
     Returns (key_dict, alg, disco_response).
     """
-    disco_doc_response = _get_disco_response(disco_doc_address, policy, client, cache)
+    disco_doc_response = _get_disco_response(issuer, policy, client, cache)
     validate_disco_response(disco_doc_response)
     jwks_uri = validate_jwks_uri(disco_doc_response)
     jwks_response = _get_cached_jwks(jwks_uri, policy, client, cache)
@@ -459,7 +465,7 @@ def _retry_with_refreshed_jwks(
 def validate_token(
     jwt: str,
     token_validation_config: TokenValidationConfig,
-    disco_doc_address: str | None = None,
+    issuer: str | None = None,
     http_client: HTTPClient | None = None,
     *,
     cache: ValidationCache | None = None,
@@ -475,7 +481,12 @@ def validate_token(
     Args:
         jwt: The JWT token to validate
         token_validation_config: Token validation configuration
-        disco_doc_address: Discovery document address (required if perform_disco=True)
+        issuer: The issuer identifier (required if ``perform_disco`` is True),
+            e.g. ``https://example.com``; not the discovery document URL. The
+            discovery URL is built from it under the discovery policy's
+            ``location``, and the document's ``issuer`` must equal it exactly
+            (OpenID Connect Discovery 1.0 §4.3). Not used when
+            ``perform_disco`` is False.
         http_client: Optional managed HTTP client. When ``None`` (the default),
             the library default client is used. It sends the discovery and
             JWKS requests; its ``HTTPConfig`` sets the timeout, retries, TLS and
@@ -509,7 +520,7 @@ def validate_token(
     claims = _validate_jwt_without_binding(
         jwt,
         token_validation_config,
-        disco_doc_address,
+        issuer,
         http_client,
         cache=cache,
         accept_token_issuers=True,
@@ -521,7 +532,7 @@ def validate_token(
 def _validate_jwt_without_binding(
     jwt: str,
     token_validation_config: TokenValidationConfig,
-    disco_doc_address: str | None,
+    issuer: str | None,
     http_client: HTTPClient | None,
     *,
     cache: ValidationCache | None,
@@ -552,7 +563,7 @@ def _validate_jwt_without_binding(
         client.ensure_open()
         cache = _resolve_cache(cache)
         key_dict, alg, disco_doc_response = _discover_and_resolve_key(
-            jwt, disco_doc_address, client, policy, cache
+            jwt, issuer, client, policy, cache
         )
         resolved_config = build_resolved_config(token_validation_config, key_dict, alg)
 

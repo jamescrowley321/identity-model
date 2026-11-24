@@ -265,16 +265,16 @@ from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
 def test_discovery_document_success():
     """Test successful discovery document retrieval."""
-    request = DiscoveryDocumentRequest(address="https://example.com/.well-known/openid-configuration")
+    request = DiscoveryDocumentRequest(issuer="https://example.com")
     response = get_discovery_document(request)
 
     assert response.is_successful
     assert response.issuer is not None
 
 
-def test_discovery_document_invalid_url():
-    """Test discovery document with invalid URL."""
-    request = DiscoveryDocumentRequest(address="invalid-url")
+def test_discovery_document_invalid_issuer():
+    """Test discovery document with an invalid issuer."""
+    request = DiscoveryDocumentRequest(issuer="invalid-url")
     response = get_discovery_document(request)
 
     assert not response.is_successful
@@ -288,13 +288,13 @@ def test_discovery_document_invalid_url():
 Use Google-style docstrings:
 
 ```python
-def validate_token(jwt: str, token_validation_config: TokenValidationConfig, disco_doc_address: str) -> dict:
+def validate_token(jwt: str, token_validation_config: TokenValidationConfig, issuer: str) -> dict:
     """Validate a JWT token against the provided configuration.
 
     Args:
         jwt: The JWT token string to validate.
         token_validation_config: Configuration for token validation.
-        disco_doc_address: Address of the OpenID Connect discovery document.
+        issuer: The OpenID Provider's issuer identifier.
 
     Returns:
         Dictionary containing the validated JWT claims.

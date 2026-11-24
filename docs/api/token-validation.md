@@ -64,11 +64,7 @@ config = TokenValidationConfig(
     audience="my-api",
     token_issuers=[DISCOVERY_ISSUER, "P2exampleproject"],
 )
-claims = validate_token(
-    token,
-    config,
-    disco_doc_address=f"{DISCOVERY_ISSUER}/.well-known/openid-configuration",
-)
+claims = validate_token(token, config, issuer=DISCOVERY_ISSUER)
 ```
 
 - A token whose `iss` is not in the list raises `InvalidIssuerException`.
@@ -99,7 +95,7 @@ claims = validate_token(
   Core §3.1.3.7 step 2, Back-Channel Logout 1.0 §2.6).
 
 `allowed_issuers` is a separate setting. It names the discovery documents you
-trust, by their `issuer`, for callers that build the discovery address from an
+trust, by their `issuer`, for callers that take the issuer to discover from an
 untrusted token. It never widens the `iss` values a token may carry.
 
 ## Token type

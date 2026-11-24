@@ -127,7 +127,7 @@ class TestCooldownSurvivesShortLivedClients:
         for token in _unknown_kid_tokens():
             with HTTPClient() as client:
                 try:
-                    validate_token(token, VALIDATION, DISCO_URL, http_client=client)
+                    validate_token(token, VALIDATION, ISSUER, http_client=client)
                 except TokenValidationException:
                     rejected += 1
         assert rejected == ATTACKER_REQUEST_COUNT
@@ -142,7 +142,7 @@ class TestCooldownSurvivesShortLivedClients:
             async with AsyncHTTPClient() as client:
                 try:
                     await async_validate_token(
-                        token, VALIDATION, DISCO_URL, http_client=client
+                        token, VALIDATION, ISSUER, http_client=client
                     )
                 except TokenValidationException:
                     rejected += 1
@@ -156,7 +156,7 @@ class TestCooldownSurvivesShortLivedClients:
         for token in _unknown_kid_tokens():
             with HTTPClient() as client, pytest.raises(TokenValidationException):
                 validate_token(
-                    token, VALIDATION, DISCO_URL, http_client=client, cache=cache
+                    token, VALIDATION, ISSUER, http_client=client, cache=cache
                 )
         assert jwks_route.call_count == PRIME_AND_ONE_REFRESH
         assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
@@ -169,7 +169,7 @@ class TestCooldownSurvivesShortLivedClients:
             async with AsyncHTTPClient() as client:
                 with pytest.raises(TokenValidationException):
                     await async_validate_token(
-                        token, VALIDATION, DISCO_URL, http_client=client, cache=cache
+                        token, VALIDATION, ISSUER, http_client=client, cache=cache
                     )
         assert jwks_route.call_count == PRIME_AND_ONE_REFRESH
         assert list(cache._kid_miss_last_attempt) == [JWKS_URL]
@@ -196,9 +196,7 @@ class TestInjectedCache:
             HTTPClient() as client,
             pytest.raises(TokenValidationException),
         ):
-            validate_token(
-                token, VALIDATION, DISCO_URL, http_client=client, cache=cache
-            )
+            validate_token(token, VALIDATION, ISSUER, http_client=client, cache=cache)
         assert cache._jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
             CACHE_JWKS_TTL
         )
@@ -212,7 +210,7 @@ class TestInjectedCache:
         async with AsyncHTTPClient() as client:
             with pytest.raises(TokenValidationException):
                 await async_validate_token(
-                    token, VALIDATION, DISCO_URL, http_client=client, cache=cache
+                    token, VALIDATION, ISSUER, http_client=client, cache=cache
                 )
         assert cache._jwks[jwks_cache_key(JWKS_URL, client.trust_scope)].ttl == (
             CACHE_JWKS_TTL
@@ -342,7 +340,7 @@ class TestTwoEventLoops:
                 [token] = _unknown_kid_tokens(count=1)
                 results = await asyncio.gather(
                     *(
-                        async_validate_token(token, VALIDATION, DISCO_URL)
+                        async_validate_token(token, VALIDATION, ISSUER)
                         for _ in range(3)
                     ),
                     return_exceptions=True,
@@ -374,7 +372,7 @@ class TestJwksFallbackTtl:
         cache = ValidationCache()
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
-            validate_token(token, VALIDATION, DISCO_URL, cache=cache)
+            validate_token(token, VALIDATION, ISSUER, cache=cache)
         assert cache._jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS
 
     @respx.mock
@@ -383,5 +381,5 @@ class TestJwksFallbackTtl:
         cache = AsyncValidationCache()
         [token] = _unknown_kid_tokens(count=1)
         with pytest.raises(TokenValidationException):
-            await async_validate_token(token, VALIDATION, DISCO_URL, cache=cache)
+            await async_validate_token(token, VALIDATION, ISSUER, cache=cache)
         assert cache._jwks[jwks_cache_key(JWKS_URL)].ttl == ONE_HOUR_SECONDS

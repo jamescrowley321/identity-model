@@ -20,7 +20,7 @@ from py_identity_model import (
 
 
 # Constants
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 # =============================================================================
@@ -34,7 +34,7 @@ def fetch_discovery_document_example():
     print("Example 1: Discovery Document")
     print("=" * 60)
 
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
 
     # Synchronous fetch - blocks until response received
     response = get_discovery_document(discovery_request)
@@ -143,7 +143,7 @@ def validate_token_example(access_token: str):
         decoded = validate_token(
             access_token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
 
         print("✓ Token validated successfully!")
@@ -190,7 +190,7 @@ def custom_claims_validation_example(access_token: str):
         decoded = validate_token(
             access_token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
 
         print("✓ Token with custom claims validated successfully!")
@@ -218,7 +218,7 @@ def userinfo_example(access_token: str, id_token_sub: str):
     print("=" * 60)
 
     # First get the discovery document to find the userinfo endpoint
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
     disco_response = get_discovery_document(discovery_request)
 
     if not disco_response.is_successful:
@@ -263,9 +263,9 @@ def error_handling_example():
     print("=" * 60)
 
     # Test with invalid URL
-    print("\\nTesting with invalid discovery URL...")
+    print("\\nTesting with an unreachable issuer...")
     discovery_request = DiscoveryDocumentRequest(
-        address="https://invalid-url-that-does-not-exist.example.com/.well-known/openid-configuration"
+        issuer="https://invalid-url-that-does-not-exist.example.com"
     )
 
     response = get_discovery_document(discovery_request)
@@ -327,7 +327,7 @@ def flask_pattern_example():
             claims = validate_token(
                 token,
                 config,
-                disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+                issuer=DEMO_ISSUER,
             )
 
             return {

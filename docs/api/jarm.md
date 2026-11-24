@@ -26,7 +26,7 @@ if is_jarm_response(callback_url):
     result = process_jarm_response(
         callback_url,
         client_id=CLIENT_ID,
-        disco_doc_address=DISCOVERY_URL,  # issuer, JWKS, and algorithms via discovery
+        issuer=ISSUER,  # JWKS and algorithms via discovery
     )
     # Bind the response to the original request (CSRF defense).
     validate_authorize_callback_state(result, expected_state)
@@ -35,7 +35,7 @@ if is_jarm_response(callback_url):
 
 For `form_post.jwt`, the JWT arrives in the POST body rather than the URL —
 pass the raw JWT with `is_jwt=True`. To validate without any network I/O,
-supply `issuer` and `jwks` (and optionally `algorithms`) instead of `disco_doc_address`.
+supply `jwks` (and optionally `algorithms`) alongside `issuer`.
 
 Verification failures surface as the specific exception for what went wrong:
 `JarmValidationException` for a missing `response` parameter, a rejected

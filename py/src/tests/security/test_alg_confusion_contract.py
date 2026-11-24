@@ -46,7 +46,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ._security_helpers import generate_rsa_keypair, unsigned_none_alg_jwt
 
 
@@ -110,7 +110,7 @@ def test_validate_token_hs256_no_kid_raises_typed_exception() -> None:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
 
@@ -127,7 +127,7 @@ def test_validate_token_none_alg_no_kid_raises_typed_exception() -> None:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
 
