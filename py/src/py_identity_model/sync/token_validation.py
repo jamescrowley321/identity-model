@@ -100,10 +100,11 @@ def _get_disco_response(
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    # Validates the issuer before any request. The cache is keyed on the
-    # issuer, not the URL: https://op and https://op/ share a URL (§4.1) but
-    # are different issuers, and a document matches only one of them.
-    discovery_document_url(issuer, policy.location)
+    # Validates the issuer before any request (the location changes only the
+    # URL's path, not what is valid). The cache is keyed on the issuer, not
+    # the URL: https://op and https://op/ share a URL (§4.1) but are different
+    # issuers, and a document matches only one of them.
+    discovery_document_url(issuer)
     cache_key = (client.trust_scope, issuer, policy.cache_key())
     # Cheap atomic dict read — no lock required for a single .get() in CPython.
     entry = cache._disco.get(cache_key)

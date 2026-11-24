@@ -75,6 +75,9 @@ from .validation_cache import AsyncValidationCache, get_default_async_validation
 def _upstream_fetch_attempted(address: str, policy: DiscoveryPolicy) -> bool:
     """Return ``True`` when an upstream fetch was actually attempted for *address*.
 
+    *address* is the URL fetched, or for discovery the issuer it is built
+    from: both share the scheme and host the check reads.
+
     ``get_discovery_document`` / ``get_jwks`` short-circuit to an *unsuccessful*
     response **before any network I/O** only when the pre-flight scheme check
     (:func:`validate_url_scheme`) rejects the address. Every other unsuccessful
@@ -135,10 +138,11 @@ async def _get_disco_response(
     cache = _resolve_cache(cache)
     if policy is None:
         policy = DiscoveryPolicy()
-    # Validates the issuer before any request. The cache is keyed on the
-    # issuer, not the URL: https://op and https://op/ share a URL (§4.1) but
-    # are different issuers, and a document matches only one of them.
-    url = discovery_document_url(issuer, policy.location)
+    # Validates the issuer before any request (the location changes only the
+    # URL's path, not what is valid). The cache is keyed on the issuer, not
+    # the URL: https://op and https://op/ share a URL (§4.1) but are different
+    # issuers, and a document matches only one of them.
+    discovery_document_url(issuer)
     cache_key = (client.trust_scope, issuer, policy.cache_key())
     entry = cache._disco.get(cache_key)
     if entry is not None and not is_cache_expired(entry):
@@ -173,7 +177,7 @@ async def _get_disco_response(
         # _upstream_fetch_attempted. Gating on response.is_successful instead
         # would silently drop failed fetches and make an upstream outage read as
         # zero upstream volume.
-        if _upstream_fetch_attempted(url, policy):
+        if _upstream_fetch_attempted(issuer, policy):
             get_cache_counters().record_disco_miss()
         async with cache._disco_write_lock():
             apply_disco_cache_outcome(
