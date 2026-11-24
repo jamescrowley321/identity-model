@@ -1,7 +1,7 @@
 # JWT validation fixtures
 
 Shared key material and static tokens for the `validation` conformance suite
-(`spec/vectors/validation.json`, IDs `JWT-001`..`JWT-015`; `JWT-010` is retired, see `JWKS-004`).
+(`spec/vectors/validation.json`, IDs `JWT-001`..`JWT-016`; `JWT-010` is retired, see `JWKS-004`).
 
 | File | Purpose |
 |------|---------|
@@ -13,6 +13,7 @@ Shared key material and static tokens for the `validation` conformance suite
 | `alg-none-token.txt` | A static unsigned JWT with header `alg:"none"`, for `JWT-003`. It must be rejected unconditionally. |
 | `weak-rsa-1024-token.txt` | A static RS256 JWT signed by `weak-rsa-1024`, for `JWT-014`. Committed because some signers (aws-lc-rs) refuse to sign with a 1024-bit key. Its claims are valid until 2100, so only the key strength rejects it. |
 | `weak-ec-p192-token.txt` | A static ES256-labelled JWT signed with the P-192 key `weak-ec-p192`, for `JWT-014`. No JOSE library signs with P-192, so it is committed. |
+| `malformed-*-token.txt` | Static tokens that are not well-formed compact JWS, for `JWT-016`: one segment, a header that is not base64url, a header that is not JSON, a payload that is not JSON (validly signed by `signing-key.jwk.json`, so only the payload is at fault), and a signature that is not base64url. Each must be rejected with the malformed-token error. |
 
 Signed tokens carrying time-based claims (`exp`, `nbf`, `iat`) are **minted at
 test time** from `signing-key.jwk.json` rather than committed, so expiry stays

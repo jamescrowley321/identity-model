@@ -44,7 +44,9 @@ mod options;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::alphabet::URL_SAFE;
+use base64::engine::DecodePaddingMode;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, URL_SAFE_NO_PAD};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Deserialize;
 use serde_json::Value;
@@ -121,6 +123,7 @@ pub fn validate_token(
     validation.required_spec_claims.clear();
     validation.algorithms = vec![alg];
 
+    check_body_segments(token)?;
     let token_data = decode::<Value>(token, &decoding_key, &validation).map_err(map_verify_err)?;
 
     let claims = Claims::from_value(token_data.claims)?;
@@ -213,6 +216,32 @@ fn parse_header(token: &str) -> Result<JoseHeader> {
         .map_err(|e| IdentityError::Validation(format!("malformed token: parse header JSON: {e}")))
 }
 
+/// Unpadded base64url that accepts non-zero trailing bits, as the Go and Python
+/// libraries do: a tampered final signature character is a signature failure,
+/// not a malformed token.
+const LENIENT_URL_SAFE_NO_PAD: GeneralPurpose = GeneralPurpose::new(
+    &URL_SAFE,
+    GeneralPurposeConfig::new()
+        .with_encode_padding(false)
+        .with_decode_allow_trailing_bits(true)
+        .with_decode_padding_mode(DecodePaddingMode::RequireNone),
+);
+
+/// Rejects a payload or signature segment that is not base64url (RFC 7515
+/// §7.1) as a malformed token, before signature verification would report it
+/// as a signature failure. [`parse_header`] has already checked the segment
+/// count and the header.
+fn check_body_segments(token: &str) -> Result<()> {
+    let mut segments = token.split('.').skip(1);
+    for name in ["payload", "signature"] {
+        let segment = segments.next().unwrap_or_default();
+        LENIENT_URL_SAFE_NO_PAD.decode(segment).map_err(|e| {
+            IdentityError::Validation(format!("malformed token: decode {name}: {e}"))
+        })?;
+    }
+    Ok(())
+}
+
 /// Returns the `alg` from a compact JWS protected header, or `None` when the
 /// header carries no (or an empty) `alg`.
 ///
@@ -302,12 +331,17 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
 
 /// Maps a jsonwebtoken verification error to an [`IdentityError`]. Only the
 /// signature is checked here (all claim validation is disabled), so any failure
-/// is a signature or structural problem (JWT-009).
+/// is a signature problem (JWT-009) or a malformed token (JWT-016).
 fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
     use jsonwebtoken::errors::ErrorKind;
     match err.kind() {
         ErrorKind::InvalidSignature => {
             IdentityError::Validation("signature verification failed".to_string())
+        }
+        // A validly signed payload that is not UTF-8 JSON is a malformed token
+        // (RFC 7519 §7.2), not a signature failure.
+        ErrorKind::Json(_) | ErrorKind::Utf8(_) => {
+            IdentityError::Validation(format!("malformed token: {err}"))
         }
         _ => IdentityError::Validation(format!("signature verification failed: {err}")),
     }
@@ -466,6 +500,30 @@ mod tests {
         let err = validate_token("not.a", &public_key(), &ValidationOptions::new())
             .expect_err("two-segment token rejected");
         assert!(err.to_string().contains("malformed"), "{err}");
+    }
+
+    // JWT-016: every malformed fixture, including a validly signed payload that
+    // is not JSON and a signature that is not base64url, is a malformed-token
+    // validation error rather than a signature failure.
+    #[test]
+    fn rejects_malformed_fixtures_as_malformed() {
+        for name in [
+            "malformed-one-segment-token.txt",
+            "malformed-header-base64-token.txt",
+            "malformed-header-json-token.txt",
+            "malformed-payload-json-token.txt",
+            "malformed-signature-base64-token.txt",
+        ] {
+            let token = String::from_utf8(read_fixture(name)).expect("utf8 token");
+            let err = validate_token(token.trim(), &public_key(), &ValidationOptions::new())
+                .expect_err("malformed token rejected");
+            match err {
+                IdentityError::Validation(msg) => {
+                    assert!(msg.starts_with("malformed token"), "{name}: {msg}");
+                }
+                other => panic!("{name}: expected a Validation error, got {other:?}"),
+            }
+        }
     }
 
     // JWT-005: end-to-end, an expired token minted with the fixture key is
