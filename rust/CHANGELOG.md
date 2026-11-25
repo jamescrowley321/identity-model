@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.2 (2026-11-25)
+
+### Bug Fixes
+
+- **rust**: Bump url to 2.5.9 for RUSTSEC-2026-0592
+  ([`10d44d8`](https://github.com/jamescrowley321/identity-model/commit/10d44d8b11fffcd23a3c064a68c73600cdb87429))
+
+
 ## v0.8.1 (2026-10-30)
 
 ### Bug Fixes
