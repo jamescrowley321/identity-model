@@ -160,7 +160,7 @@ def _resolve_verification_key(token: str) -> tuple[dict, str]:
     used rather than a parsed ``JsonWebKey``, whose curve allowlist would refuse
     the P-192 key of JWT-014 before the strength floor sees it. The header is
     read with the library's own parser, as discovery mode does, so a malformed
-    token (JWT-016) is rejected here with the library's exception.
+    token (JWT-017) is rejected here with the library's exception.
     """
     kid, header_alg = extract_jwt_header_fields(token)
     key = next(

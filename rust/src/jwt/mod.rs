@@ -331,7 +331,7 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
 
 /// Maps a jsonwebtoken verification error to an [`IdentityError`]. Only the
 /// signature is checked here (all claim validation is disabled), so any failure
-/// is a signature problem (JWT-009) or a malformed token (JWT-016).
+/// is a signature problem (JWT-009) or a malformed token (JWT-017).
 fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
     use jsonwebtoken::errors::ErrorKind;
     match err.kind() {
@@ -502,7 +502,7 @@ mod tests {
         assert!(err.to_string().contains("malformed"), "{err}");
     }
 
-    // JWT-016: every malformed fixture, including a validly signed payload that
+    // JWT-017: every malformed fixture, including a validly signed payload that
     // is not JSON and a signature that is not base64url, is a malformed-token
     // validation error rather than a signature failure.
     #[test]
