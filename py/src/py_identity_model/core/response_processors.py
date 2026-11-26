@@ -743,10 +743,8 @@ def parse_refresh_token_response(
             )
         return RefreshTokenResponse(is_successful=True, token=response_json)
 
-    error_msg = (
-        f"Token refresh failed with status code: "
-        f"{response.status_code}. Response Content: {response.content}"
-    )
+    # The entire body, including OAuth error descriptions, may echo secrets.
+    error_msg = f"Token refresh failed with status code: {response.status_code}"
     return RefreshTokenResponse(is_successful=False, error=error_msg)
 
 

@@ -197,8 +197,7 @@ class TestSyncDpopTokenTypeRequired:
         assert response.is_successful is False
         assert response.error_kind is TokenErrorKind.DPOP_TOKEN_TYPE_MISMATCH
         assert response.error == (
-            f"Expected token_type 'DPoP' for a DPoP-bound request, got "
-            f"{token_type!r} (RFC 9449 §5)"
+            "Expected token_type 'DPoP' for a DPoP-bound request (RFC 9449 §5)"
         )
         assert response.rejected_token == token
 

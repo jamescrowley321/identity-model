@@ -197,10 +197,8 @@ def dpop_token_type_error(token: object) -> str | None:
     expected = TokenResponse.DPOP_TOKEN_TYPE.value
     if isinstance(token_type, str) and token_type.casefold() == expected.casefold():
         return None
-    return (
-        f"Expected token_type {expected!r} for a DPoP-bound request, got "
-        f"{token_type!r} (RFC 9449 §5)"
-    )
+    # The server's own token_type value is response data and is not echoed.
+    return f"Expected token_type {expected!r} for a DPoP-bound request (RFC 9449 §5)"
 
 
 def process_auth_code_token_response(

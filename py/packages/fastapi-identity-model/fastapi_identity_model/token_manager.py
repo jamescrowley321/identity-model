@@ -136,6 +136,9 @@ def _rejection(response: RefreshTokenResponse) -> TokenManagerError:
             return TokenManagerError(TokenManagerErrorKind.MISSING_ACCESS_TOKEN)
         if not _is_token(rejected.get("token_type")):
             return TokenManagerError(TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE)
+    # The core builds every refresh error message and keeps it free of
+    # response data (issue #1182), so it is passed through verbatim. This
+    # layer never re-parses or rewrites the core's messages.
     return TokenManagerError(
         TokenManagerErrorKind.REFRESH_FAILED,
         response.error or "no token in response",

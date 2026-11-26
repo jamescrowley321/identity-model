@@ -12,6 +12,12 @@ client builds the request with `FAPI2ClientProfile.refresh_token_request`.
 
 ## Response Model
 
+For an unsuccessful HTTP response, `error` reports only the status code; the
+response body, including `error` and `error_description`, may contain secrets
+and is not exposed. Network and unexpected-error messages are fixed labels
+that do not embed the exception detail; invalid-success-response errors are
+unchanged.
+
 ::: py_identity_model.core.models.RefreshTokenResponse
 
 ## Functions

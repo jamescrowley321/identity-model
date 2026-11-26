@@ -5,6 +5,7 @@ import httpx
 from py_identity_model.core.error_handlers import (
     handle_discovery_error,
     handle_jwks_error,
+    handle_refresh_token_error,
     handle_token_error,
 )
 from py_identity_model.core.models import DiscoveryErrorKind
@@ -146,3 +147,29 @@ class TestHandleTokenError:
         assert result.is_successful is False
         assert result.error is not None
         assert "Unexpected error" in result.error
+
+
+class TestHandleRefreshTokenError:
+    """Refresh error messages are fixed strings: no exception text returns.
+
+    The message flows into ``RefreshTokenResponse.error`` and onward into
+    ``TokenManagerError.details`` (issue #1182), and a network or parse
+    exception can quote response data. The detail belongs in the server
+    log, not in the returned message.
+    """
+
+    def test_network_error_message_is_fixed(self):
+        result = handle_refresh_token_error(
+            httpx.ConnectError("credential-sentinel-network-detail")
+        )
+
+        assert result.is_successful is False
+        assert result.error == "Network error during token refresh"
+
+    def test_unexpected_error_message_is_fixed(self):
+        result = handle_refresh_token_error(
+            RuntimeError("credential-sentinel-unexpected-detail")
+        )
+
+        assert result.is_successful is False
+        assert result.error == "Unexpected error during token refresh"

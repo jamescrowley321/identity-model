@@ -193,7 +193,12 @@ Anything but `Bearer` or `DPoP` raises `TokenManagerError` with
 `kind=TokenManagerErrorKind.UNSUPPORTED_TOKEN_TYPE`. Every failure is a
 `TokenManagerError` whose `kind` says why: `NO_REFRESH_TOKEN`,
 `DISCOVERY_FAILED`, `REFRESH_FAILED`, `MISSING_ACCESS_TOKEN` or
-`UNSUPPORTED_TOKEN_TYPE`.
+`UNSUPPORTED_TOKEN_TYPE`. For an unsuccessful refresh, `details["error"]`
+carries the core library's message verbatim: the status code for an HTTP
+failure, a fixed label for network and unexpected errors. The core never
+embeds response bodies in these messages — a body may contain secrets even in
+`error` or `error_description` — so this layer passes them through without
+rewriting.
 
 ## License
 
