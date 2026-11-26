@@ -62,6 +62,9 @@ type fakeOP struct {
 	// tokenHook, when set, runs at the start of every token request, outside
 	// op.mu, so a test can hold a callback on the token endpoint.
 	tokenHook func()
+	// tokenType, when set, replaces token_type "Bearer"; noTokenType omits it.
+	tokenType   string
+	noTokenType bool
 }
 
 func newFakeOP(t *testing.T) *fakeOP {
@@ -146,10 +149,17 @@ func (op *fakeOP) token(w http.ResponseWriter, r *http.Request) {
 		op.mutate(claims)
 	}
 	idToken := op.sign(claims)
-	op.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"access_token": "at-1", "token_type": "Bearer", "expires_in": 300, "id_token": idToken,
-	})
+	}
+	if op.tokenType != "" {
+		body["token_type"] = op.tokenType
+	}
+	if op.noTokenType {
+		delete(body, "token_type")
+	}
+	op.mu.Unlock()
+	writeJSON(w, http.StatusOK, body)
 }
 
 // sign is called with op.mu held.
@@ -773,6 +783,175 @@ func TestParseAllowedOrigins(t *testing.T) {
 			if !tc.wantErr && !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
+		})
+	}
+}
+
+// wantNoResult asserts that nothing is recorded for testID.
+func (rg *rig) wantNoResult(testID string) {
+	rg.t.Helper()
+	if status, got := rg.result(testID); status != http.StatusNotFound {
+		rg.t.Fatalf("/results/%s status %d, body %v, want 404", testID, status, got)
+	}
+}
+
+// bodyOf reads resp's body.
+func bodyOf(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(data)
+}
+
+// A flow still waiting on the OP when a newer flow of the same test starts
+// must not record its outcome into the newer flow's slot: its success is
+// discarded, and the newer flow's own outcome is the verdict.
+func TestStaleInFlightFlowCannotRecordIntoNewerFlow(t *testing.T) {
+	rg := newRig(t)
+	paramsA := rg.authorize("t-gen", nil)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	rg.op.set(func(op *fakeOP) {
+		op.nonces["code-a"] = paramsA.Get("nonce")
+		op.tokenHook = func() {
+			blocked := false
+			once.Do(func() { blocked = true; close(entered) })
+			if blocked {
+				<-release
+			}
+		}
+	})
+	type outcome struct {
+		status int
+		body   string
+	}
+	first := make(chan outcome, 1)
+	go func() {
+		cb := url.Values{"code": {"code-a"}, "state": {paramsA.Get("state")}}
+		resp, err := noRedirect.Get(rg.rp.URL + "/callback?" + cb.Encode())
+		if err != nil {
+			first <- outcome{}
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		data, _ := io.ReadAll(resp.Body)
+		first <- outcome{status: resp.StatusCode, body: string(data)}
+	}()
+	<-entered
+
+	paramsB := rg.authorize("t-gen", nil)
+	close(release)
+	got := <-first
+	if got.status != http.StatusBadRequest || !strings.Contains(got.body, reasonStaleFlow) {
+		t.Fatalf("stale callback = %d %q, want 400 %s", got.status, got.body, reasonStaleFlow)
+	}
+	rg.wantNoResult("t-gen")
+
+	rg.op.set(func(op *fakeOP) { op.nonces["code-b"] = paramsB.Get("nonce") })
+	if resp := rg.get("/callback", url.Values{"code": {"code-b"}, "state": {paramsB.Get("state")}}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("current callback status %d: %s", resp.StatusCode, bodyOf(t, resp))
+	}
+	rg.wantResult("t-gen", success("t-gen"))
+}
+
+// A superseded flow's callback that arrives after the newer flow started is
+// turned away before any OP call, and is not read as a forged state against
+// the newer flow.
+func TestLateCallbackOfSupersededFlow(t *testing.T) {
+	rg := newRig(t)
+	paramsA := rg.authorize("t-late", nil)
+	paramsB := rg.authorize("t-late", nil)
+	var tokenCalls int
+	var mu sync.Mutex
+	rg.op.set(func(op *fakeOP) {
+		op.nonces["code-a"] = paramsA.Get("nonce")
+		op.nonces["code-b"] = paramsB.Get("nonce")
+		op.tokenHook = func() { mu.Lock(); tokenCalls++; mu.Unlock() }
+	})
+	resp := rg.get("/callback", url.Values{"code": {"code-a"}, "state": {paramsA.Get("state")}})
+	if body := bodyOf(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, reasonStaleFlow) {
+		t.Fatalf("superseded callback = %d %q, want 400 %s", resp.StatusCode, body, reasonStaleFlow)
+	}
+	mu.Lock()
+	calls := tokenCalls
+	mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("superseded callback made %d token requests, want none", calls)
+	}
+	rg.wantNoResult("t-late")
+
+	if resp := rg.get("/callback", url.Values{"code": {"code-b"}, "state": {paramsB.Get("state")}}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("current callback status %d: %s", resp.StatusCode, bodyOf(t, resp))
+	}
+	rg.wantResult("t-late", success("t-late"))
+}
+
+// The two logins of a key-rotation module run one after the other on one
+// test_id; the second flow's outcome is the verdict.
+func TestSequentialLoginsOnOneTest(t *testing.T) {
+	rg := newRig(t)
+	if resp := rg.login("t-two"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("first login status %d", resp.StatusCode)
+	}
+	rg.op.set(func(op *fakeOP) { op.mutate = func(c map[string]any) { c["aud"] = "someone-else" } })
+	if resp := rg.login("t-two"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("second login status %d, want 400", resp.StatusCode)
+	}
+	rg.wantResult("t-two", rejected("t-two", reasonInvalidAudience))
+}
+
+func TestRepeatedCallbackParams(t *testing.T) {
+	cases := []struct {
+		name  string
+		param string
+	}{
+		{name: "state", param: "state"},
+		{name: "code", param: "code"},
+		{name: "error", param: "error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rg := newRig(t)
+			params := rg.authorize("t-dup", nil)
+			rg.op.set(func(op *fakeOP) { op.nonces["c"] = params.Get("nonce") })
+			cb := url.Values{"code": {"c"}, "state": {params.Get("state")}}
+			if tc.param == "error" {
+				cb.Set("error", "access_denied")
+			}
+			cb[tc.param] = append(cb[tc.param], cb.Get(tc.param))
+			if resp := rg.get("/callback", cb); resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status %d, want 400", resp.StatusCode)
+			}
+			rg.wantResult("t-dup", rejected("t-dup", reasonCallbackParse))
+		})
+	}
+}
+
+func TestTokenType(t *testing.T) {
+	cases := []struct {
+		name   string
+		set    func(op *fakeOP)
+		status int
+		want   func(testID string) map[string]any
+	}{
+		{name: "lowercase bearer", set: func(op *fakeOP) { op.tokenType = "bearer" }, status: http.StatusOK,
+			want: success},
+		{name: "missing", set: func(op *fakeOP) { op.noTokenType = true }, status: http.StatusBadRequest,
+			want: func(id string) map[string]any { return rejected(id, reasonTokenExchange) }},
+		{name: "not bearer", set: func(op *fakeOP) { op.tokenType = "N_A" }, status: http.StatusBadRequest,
+			want: func(id string) map[string]any { return rejected(id, reasonTokenExchange) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rg := newRig(t)
+			rg.op.set(tc.set)
+			if resp := rg.login("t-tt"); resp.StatusCode != tc.status {
+				t.Fatalf("status %d, want %d", resp.StatusCode, tc.status)
+			}
+			rg.wantResult("t-tt", tc.want("t-tt"))
 		})
 	}
 }

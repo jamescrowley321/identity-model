@@ -40,6 +40,7 @@ const (
 	reasonMissingEndpoint    = "missing_endpoint"
 	reasonUnsupportedFlow    = "unsupported_flow"
 	reasonRPError            = "rp_error"
+	reasonStaleFlow          = "stale_flow"
 )
 
 // claimReasons maps the claim a jwt.ClaimValidationError names to its reason.

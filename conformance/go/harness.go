@@ -74,10 +74,18 @@ type session struct {
 	clientSecret string
 	redirectURI  string
 	skipUserInfo bool
-	testID       string
+	flow         flowRef
 	testName     string
 	profile      string
 	provider     *discovery.ProviderConfiguration
+}
+
+// flowRef names one flow of a test: the test_id and the generation /authorize
+// gave it. Only the test's current generation may record an outcome, so a stale
+// flow that finishes after a newer one started cannot write into its slot.
+type flowRef struct {
+	testID string
+	gen    uint64
 }
 
 type server struct {
@@ -86,6 +94,8 @@ type server struct {
 	mu      sync.Mutex
 	pending []*session
 	results map[string]result
+	// gens is each test's current flow generation, bumped by /authorize.
+	gens map[string]uint64
 	// lastTestID is the test of the most recent /authorize: a rejection that
 	// carries no usable state is filed under it, and logged to that test's
 	// rp-log (lastProfile, lastTestName).
@@ -95,7 +105,7 @@ type server struct {
 }
 
 func newServer(cfg serverConfig) *server {
-	return &server{cfg: cfg, results: map[string]result{}}
+	return &server{cfg: cfg, results: map[string]result{}, gens: map[string]uint64{}}
 }
 
 func (s *server) routes() http.Handler {
@@ -145,17 +155,30 @@ func (s *server) getResult(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *server) record(testID, status, reason, detail string) {
-	if testID == "" {
-		return
+// currentFlow returns testID's current flow.
+func (s *server) currentFlow(testID string) flowRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return flowRef{testID: testID, gen: s.gens[testID]}
+}
+
+// record merges an outcome of flow f into its test's result. It reports false,
+// recording nothing, when f is no longer the test's current flow.
+func (s *server) record(f flowRef, status, reason, detail string) bool {
+	if f.testID == "" {
+		return true
 	}
-	res := result{TestID: testID, Status: status}
+	res := result{TestID: f.testID, Status: status}
 	if reason != "" {
 		res.Error = reason + ": " + detail
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gens[f.testID] != f.gen {
+		return false
+	}
 	s.mergeLocked(res)
-	s.mu.Unlock()
+	return true
 }
 
 // mergeLocked records res, called with s.mu held. Outcomes of one flow merge
@@ -197,17 +220,17 @@ func (s *server) fetchProvider(ctx context.Context, issuer string) (*discovery.P
 // discover fetches and validates discovery only (Config RP discovery modules).
 func (s *server) discover(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	testID := q.Get("test_id")
+	flow := s.currentFlow(q.Get("test_id"))
 	log := s.logger(q.Get("profile"), q.Get("test_name"))
 	ctx, cancel := context.WithTimeout(r.Context(), flowTimeout)
 	defer cancel()
 
 	provider, err := s.fetchProvider(ctx, q.Get("issuer"))
 	if err != nil {
-		s.refuse(w, log, testID, classify(err, reasonDiscoveryFailed), err.Error())
+		s.refuse(w, log, flow, classify(err, reasonDiscoveryFailed), err.Error())
 		return
 	}
-	s.record(testID, statusSuccess, "", "")
+	s.recordSuccess(log, flow)
 	log.Info("ACCEPTED: discovery document fetched and validated", "issuer", provider.Issuer)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "issuer": provider.Issuer})
 }
@@ -222,16 +245,20 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 		clientSecret: q.Get("client_secret"),
 		redirectURI:  strings.TrimRight(s.cfg.rpBaseURL, "/") + "/callback",
 		skipUserInfo: q.Get("skip_userinfo") == "true",
-		testID:       testID,
 		testName:     q.Get("test_name"),
 		profile:      q.Get("profile"),
 	}
 	log := s.logger(sess.profile, sess.testName)
 
 	// A new flow starts with no recorded outcome, so a flow that never reaches
-	// the callback cannot be read as an earlier flow's result.
+	// the callback cannot be read as an earlier flow's result. It also gets a
+	// new generation, so the test's earlier flows can no longer record. Their
+	// pending states stay known, so a late callback of one is turned away as
+	// stale instead of being read as a forged state against this flow.
 	s.mu.Lock()
 	delete(s.results, testID)
+	s.gens[testID]++
+	sess.flow = flowRef{testID: testID, gen: s.gens[testID]}
 	s.lastTestID = testID
 	s.lastProfile = sess.profile
 	s.lastTestName = sess.testName
@@ -239,7 +266,7 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 
 	for _, flag := range []string{"fapi2", "jarm", "mtls", "signed_request", "use_request_uri"} {
 		if q.Get(flag) == "true" {
-			s.reject(w, log, testID, reasonUnsupportedFlow, flag+" flows are not driven by this harness")
+			s.reject(w, log, sess.flow, reasonUnsupportedFlow, flag+" flows are not driven by this harness")
 			return
 		}
 	}
@@ -248,13 +275,13 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	provider, err := s.fetchProvider(ctx, sess.issuer)
 	if err != nil {
-		s.refuse(w, log, testID, classify(err, reasonDiscoveryFailed), err.Error())
+		s.refuse(w, log, sess.flow, classify(err, reasonDiscoveryFailed), err.Error())
 		return
 	}
 	sess.provider = provider
 
 	if err := sess.newSecrets(q.Get("use_pkce") == "true"); err != nil {
-		s.refuse(w, log, testID, reasonRPError, err.Error())
+		s.refuse(w, log, sess.flow, reasonRPError, err.Error())
 		return
 	}
 	params := url.Values{
@@ -275,7 +302,7 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 
 	authURL, err := url.Parse(provider.AuthorizationEndpoint)
 	if err != nil || provider.AuthorizationEndpoint == "" {
-		s.refuse(w, log, testID, reasonMissingEndpoint, "discovery has no usable authorization_endpoint")
+		s.refuse(w, log, sess.flow, reasonMissingEndpoint, "discovery has no usable authorization_endpoint")
 		return
 	}
 	merged := authURL.Query()
@@ -298,20 +325,36 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := r.Form
+	// An authorization response parameter MUST NOT be repeated (RFC 6749 §3.1).
+	if len(form["state"]) > 1 {
+		s.rejectUnattributed(w, reasonCallbackParse, "state parameter is repeated")
+		return
+	}
 	sess := s.takePending(form.Get("state"))
 	if sess == nil {
 		s.rejectUnattributed(w, reasonStateValidation, "unknown or missing state")
 		return
 	}
 	log := s.logger(sess.profile, sess.testName)
+	if s.currentFlow(sess.flow.testID) != sess.flow {
+		log.Warn("DISCARDED: callback of a superseded flow", "generation", sess.flow.gen)
+		writeError(w, reasonStaleFlow, "a newer flow for this test has started")
+		return
+	}
+	for _, name := range []string{"code", "error"} {
+		if len(form[name]) > 1 {
+			s.reject(w, log, sess.flow, reasonCallbackParse, name+" parameter is repeated")
+			return
+		}
+	}
 
 	if opErr := form.Get("error"); opErr != "" {
-		s.reject(w, log, sess.testID, opErr, "OP returned an error response: "+form.Get("error_description"))
+		s.reject(w, log, sess.flow, opErr, "OP returned an error response: "+form.Get("error_description"))
 		return
 	}
 	code := form.Get("code")
 	if code == "" {
-		s.reject(w, log, sess.testID, reasonMissingCode, "authorization response has no code")
+		s.reject(w, log, sess.flow, reasonMissingCode, "authorization response has no code")
 		return
 	}
 
@@ -329,17 +372,23 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens, err := token.AuthorizationCode(ctx, provider.TokenEndpoint, sess.clientID, code, sess.redirectURI, tokenOpts...)
 	if err != nil {
-		s.reject(w, log, sess.testID, classify(err, reasonTokenExchange), err.Error())
+		s.reject(w, log, sess.flow, classify(err, reasonTokenExchange), err.Error())
+		return
+	}
+	// token_type is REQUIRED (RFC 6749 §5.1) and this RP only uses Bearer
+	// tokens (RFC 6750); the type name is case-insensitive (RFC 6749 §7.1).
+	if !strings.EqualFold(tokens.TokenType, "Bearer") {
+		s.reject(w, log, sess.flow, reasonTokenExchange, fmt.Sprintf("token_type %q is not Bearer", tokens.TokenType))
 		return
 	}
 	if tokens.IDToken == "" {
-		s.reject(w, log, sess.testID, reasonIDTokenValidation, "token response has no id_token")
+		s.reject(w, log, sess.flow, reasonIDTokenValidation, "token response has no id_token")
 		return
 	}
 
 	keySet, err := jwks.FetchKeySet(ctx, provider.JWKSURI, jwks.WithHTTPClient(s.cfg.httpClient))
 	if err != nil {
-		s.reject(w, log, sess.testID, classify(err, reasonJWKSFailed), err.Error())
+		s.reject(w, log, sess.flow, classify(err, reasonJWKSFailed), err.Error())
 		return
 	}
 	claims, err := idtoken.ValidateIDToken(ctx, tokens.IDToken, keySet,
@@ -352,7 +401,7 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		idtoken.WithAccessTokenIssuedWithIDToken(false),
 	)
 	if err != nil {
-		s.reject(w, log, sess.testID, classify(err, reasonIDTokenValidation), err.Error())
+		s.reject(w, log, sess.flow, classify(err, reasonIDTokenValidation), err.Error())
 		return
 	}
 	log.Info("ACCEPTED: id_token validated (signature, iss, aud, iat, exp, sub, nonce)", "sub", claims.Subject)
@@ -364,30 +413,49 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 			userinfo.WithSubjectValidation(claims.Subject),
 		)
 		if err != nil {
-			s.reject(w, log, sess.testID, classify(err, reasonUserInfoValidation), err.Error())
+			s.reject(w, log, sess.flow, classify(err, reasonUserInfoValidation), err.Error())
 			return
 		}
 		userClaims = info.Claims()
 		log.Info("ACCEPTED: UserInfo fetched; sub matches the id_token")
 	}
 
-	s.record(sess.testID, statusSuccess, "", "")
+	if !s.recordSuccess(log, sess.flow) {
+		writeError(w, reasonStaleFlow, "a newer flow for this test started before this one finished")
+		return
+	}
 	log.Info("ACCEPTED: authentication successful", "issuer", sess.issuer, "sub", claims.Subject)
 	writeSuccess(w, claims, userClaims)
 }
 
-// reject records a rejection the RP decided and answers 400.
-func (s *server) reject(w http.ResponseWriter, log *slog.Logger, testID, reason, detail string) {
+// recordSuccess records flow f's success, logging when f is stale and the
+// success is discarded.
+func (s *server) recordSuccess(log *slog.Logger, f flowRef) bool {
+	if s.record(f, statusSuccess, "", "") {
+		return true
+	}
+	log.Warn("DISCARDED: success of a superseded flow", "generation", f.gen)
+	return false
+}
+
+// recordError records flow f's rejection, logging when f is stale.
+func (s *server) recordError(log *slog.Logger, f flowRef, reason, detail string) {
 	log.Error("REJECTED: "+reason, "detail", detail)
-	s.record(testID, statusError, reason, detail)
+	if !s.record(f, statusError, reason, detail) {
+		log.Warn("DISCARDED: rejection of a superseded flow", "generation", f.gen)
+	}
+}
+
+// reject records a rejection the RP decided and answers 400.
+func (s *server) reject(w http.ResponseWriter, log *slog.Logger, f flowRef, reason, detail string) {
+	s.recordError(log, f, reason, detail)
 	writeError(w, reason, detail)
 }
 
 // refuse records a flow the RP deliberately refused (discovery failure, issuer
 // mismatch, missing endpoint) and answers 502.
-func (s *server) refuse(w http.ResponseWriter, log *slog.Logger, testID, reason, detail string) {
-	log.Error("REJECTED: "+reason, "detail", detail)
-	s.record(testID, statusError, reason, detail)
+func (s *server) refuse(w http.ResponseWriter, log *slog.Logger, f flowRef, reason, detail string) {
+	s.recordError(log, f, reason, detail)
 	writeJSON(w, http.StatusBadGateway, map[string]string{"error": reason, "detail": detail})
 }
 
