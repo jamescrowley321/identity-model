@@ -34,7 +34,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -188,7 +188,7 @@ class TestRejectedAsAccessToken:
         _mock_disco_and_jwks(key_dict)
         token = _sign(rsa_keypair, _logout_token_claims(), "logout+jwt")
         with pytest.raises(AccessTokenTypeError) as exc_info:
-            validate_token(token, _disco_config(), disco_doc_address=DISCO_URL)
+            validate_token(token, _disco_config(), issuer=ISSUER)
         assert _error_fields(exc_info.value) == _expected_fields(
             AccessTokenTypeErrorKind.LOGOUT
         )
@@ -246,10 +246,7 @@ class TestLogoutTokenValidationUnaffected:
         _mock_disco_and_jwks(key_dict)
         claims = _logout_token_claims()
         token = _sign(rsa_keypair, claims, "logout+jwt")
-        assert (
-            validate_logout_token(token, _disco_config(), disco_doc_address=DISCO_URL)
-            == claims
-        )
+        assert validate_logout_token(token, _disco_config(), issuer=ISSUER) == claims
 
     @respx.mock
     async def test_async_logout_token_with_logout_typ_accepted(self, rsa_keypair):
@@ -258,8 +255,6 @@ class TestLogoutTokenValidationUnaffected:
         claims = _logout_token_claims()
         token = _sign(rsa_keypair, claims, "logout+jwt")
         assert (
-            await aio_validate_logout_token(
-                token, _disco_config(), disco_doc_address=DISCO_URL
-            )
+            await aio_validate_logout_token(token, _disco_config(), issuer=ISSUER)
             == claims
         )

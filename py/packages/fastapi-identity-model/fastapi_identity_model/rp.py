@@ -260,7 +260,7 @@ async def _exchange_code(
     return tok.token
 
 
-async def _validate_id_token(  # noqa: PLR0913  # includes router diagnostics option
+async def _validate_id_token(
     settings: OIDCSettings,
     id_token: str,
     expected_nonce: str,

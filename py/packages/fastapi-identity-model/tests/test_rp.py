@@ -886,7 +886,7 @@ async def test_router_discovery_diagnostics_are_opt_in_and_sanitized(
     async with _client(app) as client:
         response = await client.get("/auth/login")
     assert response.status_code == 502
-    assert response.json() == {"detail": "Identity provider discovery failed"}
+    assert response.json() == {"detail": "Identity provider configuration error"}
     assert response.headers.get("x-identity-model-error-kind") == (
         "issuer_mismatch" if enabled else None
     )

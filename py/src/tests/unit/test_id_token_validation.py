@@ -1937,7 +1937,7 @@ def test_discovery_id_token_distinguishes_header_and_signature_rejections(
         validate_id_token(
             token,
             config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             nonce=None,
             cache=ValidationCache(),
         )
