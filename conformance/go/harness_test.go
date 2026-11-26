@@ -68,6 +68,10 @@ type fakeOP struct {
 	// tokenType, when set, replaces token_type "Bearer"; noTokenType omits it.
 	tokenType   string
 	noTokenType bool
+	// signAlg, when set, replaces RS256 as the signing alg; jwkNoAlg
+	// publishes the keys without an "alg" member.
+	signAlg  jose.SignatureAlgorithm
+	jwkNoAlg bool
 }
 
 func newFakeOP(t *testing.T) *fakeOP {
@@ -113,8 +117,12 @@ func (op *fakeOP) jwks(w http.ResponseWriter, _ *http.Request) {
 	defer op.mu.Unlock()
 	op.jwksFetches++
 	set := jose.JSONWebKeySet{}
+	alg := "RS256"
+	if op.jwkNoAlg {
+		alg = ""
+	}
 	for _, k := range op.published {
-		set.Keys = append(set.Keys, jose.JSONWebKey{Key: &k.priv.PublicKey, KeyID: k.kid, Algorithm: "RS256", Use: "sig"})
+		set.Keys = append(set.Keys, jose.JSONWebKey{Key: &k.priv.PublicKey, KeyID: k.kid, Algorithm: alg, Use: "sig"})
 	}
 	writeJSON(w, http.StatusOK, set)
 }
@@ -179,7 +187,11 @@ func (op *fakeOP) sign(claims map[string]any) string {
 	if op.omitKid {
 		key = op.signer.priv
 	}
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithType("JWT"))
+	alg := jose.RS256
+	if op.signAlg != "" {
+		alg = op.signAlg
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: alg, Key: key}, (&jose.SignerOptions{}).WithType("JWT"))
 	if err != nil {
 		op.t.Fatalf("signer: %v", err)
 	}
@@ -1013,4 +1025,35 @@ func TestDiscoverRetryStartsNewFlow(t *testing.T) {
 		t.Fatalf("retry discover status %d, want 200", resp.StatusCode)
 	}
 	rg.wantResult("t-retry", success("t-retry"))
+}
+
+// The static clients register no id_token_signed_response_alg, so the ID Token
+// must be RS256 (OIDC Registration §2): another RSA alg the key could verify
+// is still rejected, and alg none keeps its own reason.
+func TestIDTokenAlgPinnedToRS256(t *testing.T) {
+	cases := map[string]struct {
+		configure func(op *fakeOP)
+		want      func(testID string) map[string]any
+	}{
+		"rs512-jwk-without-alg": {
+			configure: func(op *fakeOP) { op.signAlg = jose.RS512; op.jwkNoAlg = true },
+			want:      func(id string) map[string]any { return rejected(id, reasonInvalidAlgorithm) },
+		},
+		"rs256-jwk-without-alg": {
+			configure: func(op *fakeOP) { op.jwkNoAlg = true },
+			want:      success,
+		},
+		"alg-none": {
+			configure: func(op *fakeOP) { op.signer = nil },
+			want:      func(id string) map[string]any { return rejected(id, reasonAlgNone) },
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rg := newRig(t)
+			rg.op.set(tc.configure)
+			_ = rg.login(name)
+			rg.wantResult(name, tc.want(name))
+		})
+	}
 }

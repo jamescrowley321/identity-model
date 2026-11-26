@@ -407,6 +407,9 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		// an azp, and a present azp must be this client.
 		idtoken.WithAZPValidation(),
 		idtoken.WithNonce(sess.nonce),
+		// The suite's static clients register no id_token_signed_response_alg,
+		// so the ID Token must be RS256 (OIDC Registration §2).
+		idtoken.WithAllowedAlgorithms("RS256"),
 		// A token-endpoint ID Token may omit at_hash (§3.1.3.6); a present one
 		// must match the access token (§3.3.2.11).
 		idtoken.WithAccessToken(tokens.AccessToken),

@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,7 +43,12 @@ func main() {
 
 	port := getenv("RP_PORT", "8890")
 	if *healthcheck {
-		os.Exit(probe("http://127.0.0.1:" + port + "/health"))
+		target, err := probeAddr(os.Getenv("RP_LISTEN_ADDR"), port)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(probe(target))
 	}
 
 	rpBaseURL := strings.TrimRight(getenv("RP_BASE_URL", "http://localhost:"+port), "/")
@@ -86,10 +92,12 @@ func main() {
 	}
 }
 
-// probe is the container healthcheck (the runtime image has no curl).
-func probe(url string) int {
+// probe is the container healthcheck (the runtime image has no curl): it
+// GETs /health on target, an IP address and port (never a hostname).
+func probe(target netip.AddrPort) int {
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
+	u := url.URL{Scheme: "http", Host: target.String(), Path: "/health"}
+	resp, err := client.Get(u.String())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -99,6 +107,24 @@ func probe(url string) int {
 		return 1
 	}
 	return 0
+}
+
+// probeAddr is the address the healthcheck probes: the listen address, with an
+// unspecified one (0.0.0.0, ::) replaced by the loopback of its family.
+func probeAddr(host, port string) (netip.AddrPort, error) {
+	addr, err := listenAddr(host, port)
+	if err != nil {
+		return netip.AddrPort{}, err
+	}
+	ip := addr.Addr()
+	if ip.IsUnspecified() {
+		if ip.Is4() {
+			ip = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+		} else {
+			ip = netip.IPv6Loopback()
+		}
+	}
+	return netip.AddrPortFrom(ip, addr.Port()), nil
 }
 
 // listenAddr is the address the harness listens on. host must be an IP
