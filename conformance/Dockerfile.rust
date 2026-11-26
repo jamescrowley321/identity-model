@@ -1,0 +1,22 @@
+# RP conformance harness for the rs-identity-model crate (build context: repo root).
+FROM rust:1.97-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3 AS build
+
+WORKDIR /src
+
+# Only the sources the build reads, so no local target/ directory is sent.
+COPY rust/Cargo.toml rust/Cargo.toml
+COPY rust/src/ rust/src/
+COPY conformance/rust/Cargo.toml conformance/rust/Cargo.lock conformance/rust/
+COPY conformance/rust/src/ conformance/rust/src/
+
+# Not --locked: the lock records the path crate's own version, which the rust
+# release bumps in rust/Cargo.toml only. Registry crates still come from the lock.
+RUN cargo build --release --manifest-path conformance/rust/Cargo.toml
+
+FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
+
+COPY --from=build /src/conformance/rust/target/release/rs-identity-model-conformance /usr/local/bin/rs-identity-model-conformance
+
+EXPOSE 8891
+
+ENTRYPOINT ["/usr/local/bin/rs-identity-model-conformance"]
