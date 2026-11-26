@@ -507,8 +507,18 @@ def _fapi2_mtls_auth() -> MtlsClientAuth:
 @app.get("/")
 @app.get("/health")
 def health() -> dict:
-    """Health check."""
-    return {"status": "ok", "service": "conformance-rp"}
+    """Health check.
+
+    ``op_facing_base_url`` is the base the harness puts in URLs the OP fetches
+    server-to-server (``request_uri``). A hosted run checks it against the RP's
+    public URL, so a harness started without ``RP_INTERNAL_BASE_URL`` fails up
+    front instead of handing the hosted OP an unreachable request_uri.
+    """
+    return {
+        "status": "ok",
+        "service": "conformance-rp",
+        "op_facing_base_url": RP_INTERNAL_BASE_URL,
+    }
 
 
 @app.post("/clear-cache")

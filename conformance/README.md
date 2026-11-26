@@ -68,6 +68,40 @@ basic, config and form-post plans (`conformance` job), the three FAPI 2.0 plans
 conformance-test-dynamic-logout`) and the three `fastapi-*` plans
 (`conformance-fastapi` job).
 
+### Dynamic and logout plans on the hosted suite
+
+In these three plans the OP calls the RP **server-to-server**, which the hosted
+suite (`certification.openid.net`) cannot do at a runner's `localhost:8888`:
+
+| Plan | What the OP calls on the RP |
+| --- | --- |
+| `dynamic-rp` | `GET /request-object/{id}`: the plan forces `request_type=request_uri`, so the OP fetches every signed request object (6 modules) |
+| `rpinitiated-logout-rp` | `POST /backchannel-logout`: the suite stops the module unless the client registers a back- or front-channel logout URI, and the harness implements back-channel |
+| `backchannel-logout-rp` | `POST /backchannel-logout` with a Logout Token (all 8 modules) |
+
+The browser-facing URLs (`redirect_uri`, `post_logout_redirect_uri`) stay on
+`localhost:8888`, since `run_tests.py` itself plays the user agent. So a hosted
+run needs the harness reachable from the internet at some base URL, given as
+`--rp-public-url` (env `CONFORMANCE_RP_PUBLIC_URL`), with the harness started
+with `RP_INTERNAL_BASE_URL` set to that same URL. `run_tests.py` then registers
+`<url>/backchannel-logout` instead of the docker-network address in the config,
+and before it creates the plan checks that `<url>/health` answers and reports
+that base as its `op_facing_base_url`. Without a public URL it refuses these
+plans on a hosted suite rather than run them to a guaranteed failure.
+
+```bash
+RP_INTERNAL_BASE_URL=https://rp.example.org uvicorn app:app --port 8888  # in conformance/
+make conformance-test-dynamic-logout HOSTED=1 \
+  CONFORMANCE_SERVER=https://www.certification.openid.net/ \
+  RP_PUBLIC_URL=https://rp.example.org
+```
+
+In CI, `conformance-hosted.yml` runs them only on `workflow_dispatch` with
+`dynamic_logout: true` and `rp_public_url` set. A GitHub-hosted runner has no
+inbound address, so that URL has to be routed to the runner by something else
+(a tunnel started in the job, or a self-hosted runner with public ingress);
+the workflow does not set one up.
+
 ## How a module passes
 
 The suite judges the RP from the OP side: for a negative module it only sees
