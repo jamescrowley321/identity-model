@@ -21,7 +21,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
-use crate::classify::{Reason, TokenFacts, classify_discovery, classify_id_token};
+use crate::classify::{
+    Reason, TokenFacts, classify_discovery, classify_id_token, classify_userinfo,
+    needs_key_resolution,
+};
 use crate::rplog::{ActiveTest, RpLog};
 
 /// Scopes requested by every flow (the Python harness's default).
@@ -576,8 +579,10 @@ async fn complete_flow(
 
     let subject = claims.subject.clone().unwrap_or_default();
     let mut userinfo = Value::Null;
-    if let (false, Some(endpoint)) = (session.skip_userinfo, metadata.userinfo_endpoint.as_deref())
-    {
+    // Skipped with no access token, no endpoint, or when the flow opts out
+    // (as the Python harness does).
+    let wants_userinfo = !session.skip_userinfo && !tokens.access_token.is_empty();
+    if let (true, Some(endpoint)) = (wants_userinfo, metadata.userinfo_endpoint.as_deref()) {
         let fetched = match UserInfoClient::builder()
             .userinfo_endpoint(endpoint)
             .http_client(state.0.config.http.clone())
@@ -592,13 +597,16 @@ async fn complete_flow(
             Err(error) => Err(error),
         };
         // OIDC Core 1.0 §5.3.2: a UserInfo response whose sub differs from the
-        // ID token's is fatal, as is any response the RP cannot use.
+        // ID token's is a validation rejection (400). A fetch that never got a
+        // usable response is a refusal (502), never a validation verdict.
         let response = fetched.map_err(|e| {
-            reject(
-                StatusCode::BAD_REQUEST,
-                Reason::UserinfoValidation,
-                &e.to_string(),
-            )
+            let reason = classify_userinfo(&e);
+            let status = if reason == Reason::UserinfoValidation {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            reject(status, reason, &e.to_string())
         })?;
         userinfo = serde_json::to_value(&response).unwrap_or(Value::Null);
     }
@@ -635,7 +643,8 @@ async fn validate(
         Ok(claims) => Ok(claims),
         Err(error) => {
             let mut facts = TokenFacts::inspect(id_token);
-            if let (IdentityError::Validation(_), Some(alg)) = (&error, facts.alg.as_deref()) {
+            if let (true, Some(alg)) = (needs_key_resolution(&error, &facts), facts.alg.as_deref())
+            {
                 let kid = TokenFacts::header_kid(id_token);
                 facts.key_resolved = jwks
                     .resolve_signing_key(&metadata.jwks_uri, &kid, alg)

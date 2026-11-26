@@ -37,6 +37,7 @@ pub enum Reason {
     TokenExchange,
     MissingIdToken,
     UserinfoValidation,
+    UserinfoFailed,
 }
 
 impl Reason {
@@ -64,6 +65,7 @@ impl Reason {
             Self::TokenExchange => "token_exchange",
             Self::MissingIdToken => "missing_id_token",
             Self::UserinfoValidation => "userinfo_validation",
+            Self::UserinfoFailed => "userinfo_failed",
         }
     }
 }
@@ -138,6 +140,31 @@ pub fn classify_id_token(error: &IdentityError, facts: &TokenFacts) -> Reason {
     }
 }
 
+/// Whether the classification of `error` turns on [`TokenFacts::key_resolved`]:
+/// a validation failure naming no claim, on an allowed signing algorithm. Only
+/// then does the caller ask the JWKS client, so an unsigned or claim-rejected
+/// token never triggers a JWKS fetch.
+pub fn needs_key_resolution(error: &IdentityError, facts: &TokenFacts) -> bool {
+    matches!(error, IdentityError::Validation(message) if validation_claim(message).is_none())
+        && facts.alg.as_deref().is_some_and(is_allowed_signing_alg)
+}
+
+fn is_allowed_signing_alg(alg: &str) -> bool {
+    DEFAULT_ALLOWED_ALGORITHMS.contains(&alg)
+}
+
+/// Classifies a UserInfo failure. Only a response the RP received and refused
+/// is `userinfo_validation` (OIDC Core 1.0 §5.3.2 `sub` checks, §5.3.3 error
+/// status), as the Python harness records it. A failure before the response
+/// could be checked (transport, configuration, an undecodable body) is
+/// `userinfo_failed`, so it can never pass a module expecting the `sub` check.
+pub fn classify_userinfo(error: &IdentityError) -> Reason {
+    match error {
+        IdentityError::Validation(_) | IdentityError::UserInfo { .. } => Reason::UserinfoValidation,
+        _ => Reason::UserinfoFailed,
+    }
+}
+
 /// Classifies a discovery failure.
 pub fn classify_discovery(error: &DiscoveryError) -> Reason {
     match error {
@@ -177,7 +204,7 @@ fn claim_reason(claim: &str) -> Reason {
 fn unnamed_reason(facts: &TokenFacts) -> Reason {
     match facts.alg.as_deref() {
         Some(alg) if alg.eq_ignore_ascii_case("none") => Reason::AlgNone,
-        Some(alg) if DEFAULT_ALLOWED_ALGORITHMS.contains(&alg) => {
+        Some(alg) if is_allowed_signing_alg(alg) => {
             if facts.claims_well_formed && facts.key_resolved {
                 Reason::InvalidSignature
             } else {
@@ -368,6 +395,24 @@ mod tests {
     }
 
     #[test]
+    fn only_unnamed_failures_on_an_allowed_alg_need_the_key() {
+        let rejected = validation("rejected");
+        assert!(needs_key_resolution(&rejected, &signed_facts()));
+        let named = validation(r#"claim "iss" invalid: expected "a", got "b""#);
+        assert!(!needs_key_resolution(&named, &signed_facts()));
+        for alg in ["none", "HS256"] {
+            let facts = TokenFacts {
+                alg: Some(alg.into()),
+                ..signed_facts()
+            };
+            assert!(!needs_key_resolution(&rejected, &facts), "{alg}");
+        }
+        assert!(!needs_key_resolution(&rejected, &TokenFacts::default()));
+        let profile = id_token("ID token missing required 'sub' claim");
+        assert!(!needs_key_resolution(&profile, &signed_facts()));
+    }
+
+    #[test]
     fn discovery_errors_keep_the_issuer_mismatch_type() {
         let mismatch = DiscoveryError::IssuerMismatch {
             requested: "https://a/".into(),
@@ -411,6 +456,100 @@ mod tests {
         assert_eq!(TokenFacts::inspect("a.b.c.d"), TokenFacts::default());
     }
 
+    /// Fetches from a mock UserInfo endpoint answering `response` with the
+    /// crate's own client, so the classified error is the one the crate emits.
+    async fn userinfo_error(response: Option<wiremock::ResponseTemplate>) -> IdentityError {
+        use rs_identity_model::UserInfoClient;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer};
+
+        let server = MockServer::start().await;
+        let endpoint = match response {
+            Some(template) => {
+                Mock::given(method("GET"))
+                    .and(path("/userinfo"))
+                    .respond_with(template)
+                    .mount(&server)
+                    .await;
+                format!("{}/userinfo", server.uri())
+            }
+            // Nothing listens on a port just released: a transport failure.
+            None => {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+                let address = listener.local_addr().expect("address");
+                drop(listener);
+                format!("http://{address}/userinfo")
+            }
+        };
+        UserInfoClient::builder()
+            .userinfo_endpoint(&endpoint)
+            .allow_http(true)
+            .build()
+            .expect("userinfo client")
+            .fetch_with_subject("access-token", "expected-sub")
+            .await
+            .expect_err("the fetch is rejected")
+    }
+
+    #[tokio::test]
+    async fn userinfo_rejections_of_the_response_are_userinfo_validation() {
+        use wiremock::ResponseTemplate;
+
+        let cases = [
+            (
+                "sub mismatch",
+                ResponseTemplate::new(200).set_body_json(json!({"sub": "other-sub"})),
+            ),
+            (
+                "missing sub",
+                ResponseTemplate::new(200).set_body_json(json!({"name": "n"})),
+            ),
+            ("non-2xx status", ResponseTemplate::new(401)),
+        ];
+        for (case, template) in cases {
+            let error = userinfo_error(Some(template)).await;
+            assert_eq!(
+                classify_userinfo(&error),
+                Reason::UserinfoValidation,
+                "{case}: {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn userinfo_failures_that_never_checked_the_sub_are_not_validation() {
+        use wiremock::ResponseTemplate;
+
+        let undecodable = userinfo_error(Some(
+            ResponseTemplate::new(200).set_body_raw("not json", "application/json"),
+        ))
+        .await;
+        assert_eq!(
+            classify_userinfo(&undecodable),
+            Reason::UserinfoFailed,
+            "{undecodable}"
+        );
+        let transport = userinfo_error(None).await;
+        assert_eq!(
+            classify_userinfo(&transport),
+            Reason::UserinfoFailed,
+            "{transport}"
+        );
+        let configuration = rs_identity_model::UserInfoClient::builder()
+            .userinfo_endpoint("http://op.example/userinfo")
+            .allow_http(true)
+            .build()
+            .expect("userinfo client")
+            .fetch_with_subject("", "expected-sub")
+            .await
+            .expect_err("an empty access token is refused");
+        assert_eq!(
+            classify_userinfo(&configuration),
+            Reason::UserinfoFailed,
+            "{configuration}"
+        );
+    }
+
     #[test]
     fn reason_wire_forms_match_the_manifest_classes() {
         let cases = [
@@ -423,6 +562,7 @@ mod tests {
             (Reason::InvalidSignature, "invalid_signature"),
             (Reason::KeySelection, "key_selection"),
             (Reason::UserinfoValidation, "userinfo_validation"),
+            (Reason::UserinfoFailed, "userinfo_failed"),
             (Reason::IssuerMismatch, "issuer_mismatch"),
         ];
         for (reason, wire) in cases {

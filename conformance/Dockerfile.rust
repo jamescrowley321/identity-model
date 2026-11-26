@@ -9,7 +9,9 @@ COPY rust/src/ rust/src/
 COPY conformance/rust/Cargo.toml conformance/rust/Cargo.lock conformance/rust/
 COPY conformance/rust/src/ conformance/rust/src/
 
-RUN cargo build --release --locked --manifest-path conformance/rust/Cargo.toml
+# Not --locked: the lock records the path crate's own version, which the rust
+# release bumps in rust/Cargo.toml only. Registry crates still come from the lock.
+RUN cargo build --release --manifest-path conformance/rust/Cargo.toml
 
 FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
 
