@@ -1,6 +1,6 @@
 //! Rust executor for the shared ID-Token profile spec vectors.
 //!
-//! Drives every vector in `spec/vectors/id-token.json` (`IDT-001`..`IDT-012`)
+//! Drives every vector in `spec/vectors/id-token.json` (every case, `IDT-001`..`IDT-015`)
 //! through the pure [`rs_identity_model::validate_id_token_claims`] — the same
 //! language-neutral vector set the Python
 //! (`py/src/tests/unit/test_id_token_internal.py`) and Go runners execute —
@@ -128,6 +128,9 @@ fn matches_reason(reason: &str, err: &IdentityError) -> bool {
     match reason {
         "untrusted_audience" => {
             matches!(err, IdentityError::IdTokenUntrustedAudience(untrusted) if !untrusted.is_empty())
+        }
+        "client_id_not_in_aud" => {
+            matches!(err, IdentityError::AudienceMismatch { expected, actual } if !actual.contains(expected))
         }
         "missing_sub" => missing("sub"),
         "missing_aud" => missing("aud"),
