@@ -60,7 +60,8 @@ pub enum IdentityError {
     SignatureInvalid,
 
     /// The resolved JWK cannot be turned into a verification key: an
-    /// unsupported `kty` or curve, or unusable key material.
+    /// unsupported `kty` or curve, unusable key material, or a key whose
+    /// family cannot verify the token's `alg`.
     #[error("convert key {kid:?}: {reason}")]
     KeyConversion {
         /// The key's `kid` (empty when it has none).
