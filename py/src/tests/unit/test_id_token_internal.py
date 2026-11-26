@@ -111,6 +111,18 @@ def _run_vector(vector: dict) -> None:
     )
 
 
+# Vectors the Python validator does not meet yet, keyed by param id. Strict and
+# pinned to the "did not raise" failure: once the validator rejects the vector
+# the xfail turns red, and the vector must then be claimed with its reason
+# mapping above.
+_KNOWN_GAPS = {
+    "IDT-015-only a trusted foreign audience": (
+        "#1166: validate_id_token_claims accepts an aud that lacks the client_id "
+        "when every aud value is a trusted audience (OIDC Core 1.0 §3.1.3.7 step 3)"
+    ),
+}
+
+
 def _vector_params() -> list:
     params = []
     for case in _CASES:
@@ -118,7 +130,18 @@ def _vector_params() -> list:
         assert vectors, f"{case['id']}: ID-Token vector case carries no vectors"
         for idx, vector in enumerate(vectors):
             label = vector.get("name") or str(idx)
-            params.append(pytest.param(case["id"], vector, id=f"{case['id']}-{label}"))
+            param_id = f"{case['id']}-{label}"
+            gap = _KNOWN_GAPS.get(param_id)
+            marks = (
+                [
+                    pytest.mark.xfail(
+                        reason=gap, raises=pytest.fail.Exception, strict=True
+                    )
+                ]
+                if gap
+                else []
+            )
+            params.append(pytest.param(case["id"], vector, id=param_id, marks=marks))
     return params
 
 

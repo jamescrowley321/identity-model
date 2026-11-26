@@ -2,7 +2,7 @@
   "capability": "id-token",
   "spec": "OpenID Connect Core 1.0 \u00a72, \u00a73.1.3.7, \u00a73.2.2.10, \u00a73.3.2.11",
   "spec_url": "https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation",
-  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`, and the `access_token_issued_with_id_token`/`code_issued_with_id_token` switches \u2014 absent means true), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, missing_aud, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_missing, at_hash_mismatch, c_hash_missing, c_hash_mismatch, unsupported_alg, alg_required) that each language maps to its own error type. One case (IDT-014) carries a second family, `configuration` with reason `azp_requires_client_id`: the caller's inputs are inconsistent (`validate_azp` without a `client_id`), so validation fails before any claim is read; each language maps it to its own typed configuration error, never to an ID-Token profile rejection. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512, EdDSA\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow the OIDF-certified py-identity-model reference (`core/id_token_logic.py::validate_id_token_claims`). Python (py/src/tests/unit/test_id_token_internal.py), Go (go/internal/spectest/idtoken_spec_test.go) and Rust (rust/tests/it/internal/id_token.rs) each execute every vector of every case and fail if any is skipped. Rule order is the reference order: sub, then a missing aud (IDT-013), then untrusted audiences (\u00a73.1.3.7 step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored. at_hash/c_hash presence is required per bound value. A supplied access token or code is taken to have come back in the same authorization response as the ID Token (\u00a73.2.2.10, \u00a73.3.2.11: `id_token token`, `code id_token`, `code id_token token`) unless the caller sets its switch (`access_token_issued_with_id_token`/`code_issued_with_id_token`) to false, so by default an absent claim rejects (`at_hash_missing`/`c_hash_missing`). With the switch false \u2014 e.g. an ID Token from the token endpoint, where at_hash is OPTIONAL (\u00a73.1.3.6, \u00a73.3.3.6) \u2014 an absent claim is accepted and a present one must still match (`*_mismatch`). Absent means the claim key is missing; the presence check runs before the hash is computed, and a switch without its access_token/code has no effect.",
+  "notes": "Deterministic, network-free vectors for the ID-Token *profile* rules that make an ID Token an ID Token \u2014 the checks layered on top of standard JWT validation (signature/iss/aud/iat/exp, covered by validation.json). Each vector supplies the already-decoded `input.claims`, the ID-Token JOSE-header `input.header_alg`, and the caller inputs (`client_id`, the `trusted_audiences` list of additional audiences the client trusts \u2014 absent means none \u2014 the opt-in `validate_azp` switch \u2014 absent means false \u2014 the opt-in `nonce`/`access_token`/`code`/`max_age`/`leeway`, and the `access_token_issued_with_id_token`/`code_issued_with_id_token` switches \u2014 absent means true), plus a fixed `input.now` (POSIX seconds) so `auth_time`/`max_age` freshness is clock-independent. Vectors are LANGUAGE-NEUTRAL: an `accept` outcome means every profile rule passes; a `reject` outcome carries a canonical `error` family (`id_token_profile`) plus a stable `reason` label (one of: missing_sub, missing_aud, untrusted_audience, azp_required_multi_aud, azp_mismatch, nonce_mismatch, auth_time_stale, auth_time_missing, at_hash_missing, at_hash_mismatch, c_hash_missing, c_hash_mismatch, unsupported_alg, alg_required, client_id_not_in_aud) that each language maps to its own error type. One case (IDT-014) carries a second family, `configuration` with reason `azp_requires_client_id`: the caller's inputs are inconsistent (`validate_azp` without a `client_id`), so validation fails before any claim is read; each language maps it to its own typed configuration error, never to an ID-Token profile rejection. `at_hash`/`c_hash` values are the real OIDC \u00a73.3.2.11 left-half construction \u2014 base64url-no-pad of the left-most half of H(value.ascii) where H is the SHA-2 variant of `header_alg` (RS256\u2192SHA-256, ES512\u2192SHA-512, EdDSA\u2192SHA-512); the c_hash for code `Qcb0Orv1...` equals the value in the OIDC Core \u00a73.3.2.11 worked example. Expected outcomes follow OIDC Core 1.0, not any one implementation. Python (py/src/tests/unit/test_id_token_internal.py), Go (go/internal/spectest/idtoken_spec_test.go) and Rust (rust/tests/it/internal/id_token.rs) each execute every vector of every case and fail if any is skipped. A runner whose validator does not meet a vector yet lists it as a known gap with its tracking issue: the vector still runs and must still produce the old outcome, so the runner fails once the gap closes and the vector must then be claimed. IDT-015 (`only a trusted foreign audience`) is a known gap in Python and Go (#1166); Rust meets it. Rule order is the reference order: sub, then a missing aud (IDT-013), then untrusted audiences (\u00a73.1.3.7 step 3), then a configured client_id missing from aud (IDT-015, also step 3), then azp (only with `validate_azp`), nonce, auth_time, at_hash, c_hash. The IDT-003 multiple-audience vectors list their second audience in `trusted_audiences` so they keep exercising the azp rules; without it step 3 rejects them first (IDT-012). The azp rules are opt-in: OIDC Core 1.0 errata set 2 \u00a73.1.3.7 step 4 covers extensions only, step 5 is a MAY/SHOULD, and \u00a72 tells relying parties that use no extensions to ignore azp. With `validate_azp` true, multiple audiences require an azp (`azp_required_multi_aud`, the Core 1.0 (2014) step-4 SHOULD) and a present azp must equal the client_id (`azp_mismatch`, step 5); without it azp is ignored. at_hash/c_hash presence is required per bound value. A supplied access token or code is taken to have come back in the same authorization response as the ID Token (\u00a73.2.2.10, \u00a73.3.2.11: `id_token token`, `code id_token`, `code id_token token`) unless the caller sets its switch (`access_token_issued_with_id_token`/`code_issued_with_id_token`) to false, so by default an absent claim rejects (`at_hash_missing`/`c_hash_missing`). With the switch false \u2014 e.g. an ID Token from the token endpoint, where at_hash is OPTIONAL (\u00a73.1.3.6, \u00a73.3.3.6) \u2014 an absent claim is accepted and a present one must still match (`*_mismatch`). Absent means the claim key is missing; the presence check runs before the hash is computed, and a switch without its access_token/code has no effect.",
   "tests": [
     {
       "id": "IDT-001",
@@ -1726,6 +1726,43 @@
             "outcome": "reject",
             "error": "configuration",
             "reason": "azp_requires_client_id"
+          }
+        }
+      ]
+    },
+    {
+      "id": "IDT-015",
+      "title": "An ID Token whose aud does not list the client_id is rejected",
+      "given": "A decoded ID Token whose every aud value is trusted by the client, but none of them is the client's own client_id",
+      "when": "The ID-Token profile rules are applied",
+      "then": "The ID Token MUST be rejected if it does not list the Client as a valid audience (\u00a73.1.3.7 step 3): trusted additional audiences never stand in for the client_id. The check runs after the untrusted-audience rule, so a token failing both reports untrusted_audience (IDT-012)",
+      "references": [
+        "OIDC Core 1.0 \u00a73.1.3.7"
+      ],
+      "vectors": [
+        {
+          "name": "only a trusted foreign audience",
+          "input": {
+            "claims": {
+              "iss": "https://op.example.com",
+              "sub": "248289761001",
+              "aud": [
+                "other-client-9x"
+              ],
+              "iat": 1699999900,
+              "exp": 1700003600
+            },
+            "header_alg": "RS256",
+            "client_id": "s6BhdRkqt3",
+            "trusted_audiences": [
+              "other-client-9x"
+            ],
+            "now": 1700000000
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "id_token_profile",
+            "reason": "client_id_not_in_aud"
           }
         }
       ]
