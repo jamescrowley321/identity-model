@@ -1498,7 +1498,7 @@ def _zip_directory(src_dir: Path, output: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Harness selection (Python, or a native Go/Rust RP harness)
+# Harness selection (Python, Go or Rust RP harness)
 # ---------------------------------------------------------------------------
 
 CONFIG_DIR = Path(__file__).parent / "configs"
@@ -1513,9 +1513,9 @@ class Harness(StrEnum):
     RUST = "rust"
 
 
-# Plans a native harness runs. Each reuses the Python plan's manifest entry in
+# Plans the Go and Rust harnesses run. Each reuses the Python plan's manifest entry in
 # expected_modules.json: one set of expected verdicts for every language.
-NATIVE_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
+HARNESS_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
 
 
 class HarnessError(Exception):
@@ -1567,7 +1567,7 @@ def resolve_harness_run(
 ) -> HarnessRun:
     """Resolve the config, manifest key, RP URL and output paths for a run.
 
-    The Python harness reads ``configs/<plan>.json``; a native harness reads
+    The Python harness reads ``configs/<plan>.json``; the Go and Rust harnesses read
     ``configs/<harness>-<plan>.json``, which must carry the harness's
     ``rp_url``. ``rp_url`` (the ``--rp-url`` flag) overrides the config.
     """
@@ -1576,9 +1576,9 @@ def resolve_harness_run(
         rp_log_subdir = Path(plan)
         default_output = None
     else:
-        if plan not in NATIVE_PLANS:
+        if plan not in HARNESS_PLANS:
             raise HarnessError(
-                f"the {harness} harness runs only {', '.join(NATIVE_PLANS)}, "
+                f"the {harness} harness runs only {', '.join(HARNESS_PLANS)}, "
                 f"not {plan!r}"
             )
         config_path = config_dir / f"{harness}-{plan}.json"
@@ -1596,7 +1596,7 @@ def resolve_harness_run(
         raise HarnessError(f"{config_path}: must be an object")
     config_url = _config_rp_url(config, config_path)
     if harness is not Harness.PY and config_url is None:
-        raise HarnessError(f"{config_path}: a native harness config needs rp_url")
+        raise HarnessError(f"{config_path}: a {harness} harness config needs rp_url")
     return HarnessRun(
         config_path=config_path,
         manifest_plan=plan,
@@ -1662,7 +1662,7 @@ def main() -> None:
         help=(
             "RP harness to drive (default: py). go/rust read "
             "configs/<harness>-<plan>.json and run only "
-            f"{', '.join(NATIVE_PLANS)}."
+            f"{', '.join(HARNESS_PLANS)}."
         ),
     )
     parser.add_argument(

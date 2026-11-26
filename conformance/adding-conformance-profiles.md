@@ -151,9 +151,10 @@ SKIP is a coverage hole, not a pass.
 - The gap-analysis issues: close with links to the passing run.
 - Auto-memory: the profile, its variant tuple, and any gotchas discovered.
 
-## Native RP harnesses (Go, Rust)
+## Adding a harness (Go, Rust)
 
-A native harness runs the `basic-rp`, `config-rp` and `form-post-basic-rp`
+The Go and Rust RP harnesses run the same OIDF conformance plumbing as the
+Python one. A Go or Rust harness runs the `basic-rp`, `config-rp` and `form-post-basic-rp`
 plans against the Go or Rust library. It is added by its own files only; the
 runner, Makefile, workflow and manifest already handle it:
 
@@ -177,13 +178,13 @@ runner, Makefile, workflow and manifest already handle it:
 - **Expected verdicts** come from the plan's existing entry in
   `expected_modules.json`; never add `<h>-*` entries. The harness's rejection
   reason classes must match the ones listed there.
-- **Run.** `make conformance-test-native HARNESS=<h>` (local suite) or add
-  `HOSTED=1` (hosted suite, needs `CONFORMANCE_TOKEN`; `PUBLISH=` as for
-  `conformance-test`). Results land in `results/<h>-<plan>-latest.json`
+- **Run.** `make conformance-test HARNESS=<h>` (local suite) or add
+  `HOSTED=1` (hosted suite, needs `CONFORMANCE_TOKEN`; `PUBLISH=` as for the
+  Python harness). Results land in `results/<h>-<plan>-latest.json`
   (`results/hosted/` for hosted, with `-export.zip` and `-rp-logs.zip`).
-  CI: `.github/workflows/conformance-native.yml`, one leg per harness; a leg
-  skips until its overlay exists. Hosted: dispatch it with `harness` and
-  `publish`.
+  CI: the `conformance-harness` matrix job in `.github/workflows/conformance.yml`
+  runs one leg per harness; a leg skips until its overlay exists. Hosted:
+  `gh workflow run conformance-hosted.yml -f harness=<h> -f publish=none`.
 
 ### Harness protocol
 
@@ -194,7 +195,7 @@ The runner drives every harness the same way (see `app.py`):
 | `GET /health` | 200 once ready |
 | `POST /clear-cache` | Drop discovery and JWKS caches; called before every module |
 | `GET /discover` | `issuer`, `test_id`, `test_name`, `profile`: fetch and validate discovery only |
-| `GET /authorize` | `issuer`, `client_id`, `client_secret`, `test_id`, `test_name`, `profile`, `use_pkce`, `skip_userinfo` (plus flags the native plans send as `false`): redirect to the OP |
+| `GET /authorize` | `issuer`, `client_id`, `client_secret`, `test_id`, `test_name`, `profile`, `use_pkce`, `skip_userinfo` (plus flags the Go/Rust plans send as `false`): redirect to the OP |
 | `GET`/`POST /callback` | Authorization response (query, or `form_post` body): exchange the code, validate the ID token, call UserInfo unless skipped |
 | `GET /results/{test_id}` | The module's recorded outcome, or 404 if none |
 

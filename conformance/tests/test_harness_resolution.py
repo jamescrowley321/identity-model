@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from run_tests import (
     MANIFEST_PATH,
-    NATIVE_PLANS,
+    HARNESS_PLANS,
     RP_BASE_URL,
     Harness,
     HarnessError,
@@ -49,8 +49,8 @@ def test_python_harness_keeps_existing_config_and_default_rp_url(tmp_path):
 
 
 @pytest.mark.parametrize("harness", [Harness.GO, Harness.RUST])
-@pytest.mark.parametrize("plan", NATIVE_PLANS)
-def test_native_harness_reads_prefixed_config_and_shared_manifest_key(
+@pytest.mark.parametrize("plan", HARNESS_PLANS)
+def test_go_rust_harness_reads_prefixed_config_and_shared_manifest_key(
     tmp_path, harness, plan
 ):
     config_path = _write(
@@ -68,7 +68,7 @@ def test_native_harness_reads_prefixed_config_and_shared_manifest_key(
     )
 
 
-def test_native_hosted_run_writes_under_hosted(tmp_path):
+def test_go_hosted_run_writes_under_hosted(tmp_path):
     _write(tmp_path, "go-basic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
 
     run = resolve_harness_run(
@@ -92,7 +92,7 @@ def test_rp_url_flag_overrides_config(tmp_path):
     assert run.rp_base_url == "http://rp-rust:8891"
 
 
-def test_native_harness_rejects_plan_outside_native_set(tmp_path):
+def test_go_harness_rejects_plan_outside_harness_plans(tmp_path):
     _write(tmp_path, "go-fastapi-basic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
 
     with pytest.raises(HarnessError, match="runs only"):
@@ -101,14 +101,14 @@ def test_native_harness_rejects_plan_outside_native_set(tmp_path):
         )
 
 
-def test_missing_native_config_is_an_error(tmp_path):
+def test_missing_go_config_is_an_error(tmp_path):
     with pytest.raises(HarnessError, match="config not found"):
         resolve_harness_run(
             Harness.GO, "basic-rp", config_dir=tmp_path, results_dir=tmp_path
         )
 
 
-def test_native_config_without_rp_url_is_an_error(tmp_path):
+def test_go_config_without_rp_url_is_an_error(tmp_path):
     _write(tmp_path, "go-basic-rp", PLAN_CONFIG)
 
     with pytest.raises(HarnessError, match="needs rp_url"):
@@ -138,12 +138,12 @@ def test_invalid_json_config_is_an_error(tmp_path):
         )
 
 
-@pytest.mark.parametrize("plan", NATIVE_PLANS)
-def test_every_native_plan_has_a_manifest_entry(plan):
+@pytest.mark.parametrize("plan", HARNESS_PLANS)
+def test_every_harness_plan_has_a_manifest_entry(plan):
     assert load_manifest(plan, MANIFEST_PATH)
 
 
-@pytest.mark.parametrize("plan", NATIVE_PLANS)
+@pytest.mark.parametrize("plan", HARNESS_PLANS)
 def test_python_configs_resolve_to_port_8888(plan):
     run = resolve_harness_run(Harness.PY, plan)
 
