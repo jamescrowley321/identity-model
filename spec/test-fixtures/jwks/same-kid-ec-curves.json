@@ -1,0 +1,20 @@
+{
+  "keys": [
+    {
+      "kty": "EC",
+      "kid": "shared-kid",
+      "use": "sig",
+      "crv": "P-384",
+      "x": "9ffQYHYH3wcLWmHR12brn3K_B35xS9TZmLdtyA6SHfdUgYX4YbqZmvOgNCv-FSwg",
+      "y": "u2-HYRH1mRhFaHecfqgNvdnZdJLFS1Uun2ZtJH2U9Ug5Q2dJpUTAf2NAjzYCZUnz"
+    },
+    {
+      "kty": "EC",
+      "kid": "shared-kid",
+      "use": "sig",
+      "crv": "P-256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+    }
+  ]
+}
