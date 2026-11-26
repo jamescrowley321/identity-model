@@ -360,8 +360,7 @@ def _alg_crv(alg: str) -> str | None:
             return "secp256k1"
         case "Ed25519" | "Ed448":
             return alg
-        case _:
-            return None
+    return None
 
 
 def _first_usable_kid_match(
