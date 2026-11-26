@@ -81,7 +81,7 @@ use subtle::ConstantTimeEq;
 use crate::jwks::JwksClient;
 use crate::{IdentityError, Result};
 
-use super::claims::Claims;
+use super::claims::{Claims, malformed_claim, missing_claim};
 use super::options::ValidationOptions;
 use super::{now_unix, parse_header_alg, validate_token_with_jwks};
 
@@ -283,15 +283,13 @@ impl IdTokenValidationOptionsBuilder {
 ///
 /// # Errors
 ///
-/// [`IdentityError::IdTokenValidation`] when `alg` is missing (`alg_required`)
-/// or cannot be mapped to a hash (`unsupported_alg`). Fails **closed** — an
+/// [`IdentityError::UnsupportedHashAlgorithm`] when `alg` is missing
+/// (`alg: None`) or cannot be mapped to a hash. Fails **closed** — an
 /// unknown `alg` for a hash check is an error, never a silently skipped check.
 fn digest_for_alg(bytes: &[u8], alg: Option<&str>) -> Result<Vec<u8>> {
     let alg = alg.map(str::trim).unwrap_or_default();
     if alg.is_empty() {
-        return Err(IdentityError::IdTokenValidation(
-            "ID token header 'alg' is required to validate at_hash/c_hash".to_string(),
-        ));
+        return Err(IdentityError::UnsupportedHashAlgorithm { alg: None });
     }
     if EDDSA_ALGS.contains(&alg) {
         // Assumes Ed25519 (SHA-512). Ed448 also carries alg "EdDSA" but hashes
@@ -306,9 +304,9 @@ fn digest_for_alg(bytes: &[u8], alg: Option<&str>) -> Result<Vec<u8>> {
     } else if alg.ends_with("512") {
         Ok(Sha512::digest(bytes).to_vec())
     } else {
-        Err(IdentityError::IdTokenValidation(format!(
-            "Unsupported ID token 'alg' {alg:?} for at_hash/c_hash validation"
-        )))
+        Err(IdentityError::UnsupportedHashAlgorithm {
+            alg: Some(alg.to_string()),
+        })
     }
 }
 
@@ -364,17 +362,16 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Resul
     let azp_present = azp.is_some_and(|value| !value.is_empty());
     if audiences.len() > 1 && !azp_present {
         // Core 1.0 (2014) step 4 SHOULD: multiple audiences carry an `azp`.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token with multiple audiences must contain an 'azp' claim".to_string(),
-        ));
+        return Err(missing_claim("azp"));
     }
     if let Some(azp) = azp
         && azp != client_id
     {
         // Errata 2 step 5: a present `azp` identifies this client.
-        return Err(IdentityError::IdTokenValidation(
-            "ID token 'azp' claim does not match the configured client_id".to_string(),
-        ));
+        return Err(IdentityError::AuthorizedPartyMismatch {
+            expected: client_id.to_string(),
+            actual: azp.to_string(),
+        });
     }
     Ok(())
 }
@@ -401,10 +398,17 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Resul
 ///   neither the `client_id` nor one of the configured trusted audiences
 ///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
 ///   before the opt-in `azp` rules.
-/// - [`IdentityError::IdTokenValidation`] when `aud` is absent, null or holds
-///   only empty strings (§2), checked after `sub`, or when any other ID-Token
-///   profile rule is violated. Fails **closed**: a hash check whose `header_alg` is missing
-///   or unmappable is an error, not a skipped check.
+/// - [`IdentityError::MissingClaim`] when `sub` is absent or empty, `aud` is
+///   absent, null or holds only empty strings (§2, checked after `sub`), a
+///   multi-audience token has no `azp`, `auth_time` is absent under `max_age`,
+///   or a required `at_hash` / `c_hash` is absent.
+/// - [`IdentityError::AuthorizedPartyMismatch`], [`IdentityError::NonceMismatch`],
+///   [`IdentityError::MaxAgeExceeded`] or [`IdentityError::TokenHashMismatch`]
+///   when the matching opt-in check fails; [`IdentityError::MalformedClaim`]
+///   for a non-numeric `auth_time`.
+/// - [`IdentityError::UnsupportedHashAlgorithm`] when a hash check's
+///   `header_alg` is missing or unmappable. Fails **closed**: an error, not a
+///   skipped check.
 pub fn validate_id_token_claims(
     claims: &Claims,
     header_alg: Option<&str>,
@@ -415,9 +419,7 @@ pub fn validate_id_token_claims(
 
     // §2 / §3.1.3.7 — `sub` is REQUIRED and must be non-empty.
     if claims.subject.as_deref().unwrap_or_default().is_empty() {
-        return Err(IdentityError::IdTokenValidation(
-            "ID token missing required 'sub' claim".to_string(),
-        ));
+        return Err(missing_claim("sub"));
     }
 
     // §2 — `aud` is REQUIRED. An absent or null `aud`, or one holding only
@@ -425,9 +427,7 @@ pub fn validate_id_token_claims(
     // `client_id`.
     let audiences = claims.audience.values();
     if audiences.iter().all(String::is_empty) {
-        return Err(IdentityError::IdTokenValidation(
-            "ID token missing required 'aud' claim".to_string(),
-        ));
+        return Err(missing_claim("aud"));
     }
 
     // §3.1.3.7 step 3 — reject additional audiences not trusted by the
@@ -460,26 +460,26 @@ pub fn validate_id_token_claims(
             .as_deref()
             .is_some_and(|actual| ct_eq(actual, expected));
         if !matches {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'nonce' claim does not match the expected value".to_string(),
-            ));
+            return Err(IdentityError::NonceMismatch);
         }
     }
 
     // §3.1.3.7 step 12 — `auth_time` freshness (only when `max_age` passed).
     if let Some(max_age) = options.max_age {
-        let auth_time = claims.get("auth_time").and_then(numeric_seconds);
-        let Some(auth_time) = auth_time else {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token missing required numeric 'auth_time' claim for max_age check".to_string(),
-            ));
+        let Some(raw_auth_time) = claims.get("auth_time") else {
+            return Err(missing_claim("auth_time"));
+        };
+        let Some(auth_time) = numeric_seconds(raw_auth_time) else {
+            return Err(malformed_claim("auth_time", "must be a numeric date"));
         };
         let now = options.now.unwrap_or_else(now_unix);
         let leeway = i64::try_from(options.leeway.as_secs()).unwrap_or(i64::MAX);
         if now.saturating_sub(auth_time) > max_age.saturating_add(leeway) {
-            return Err(IdentityError::IdTokenValidation(
-                "ID token 'auth_time' is older than the permitted max_age".to_string(),
-            ));
+            return Err(IdentityError::MaxAgeExceeded {
+                auth_time,
+                max_age,
+                now,
+            });
         }
     }
 
@@ -489,7 +489,6 @@ pub fn validate_id_token_claims(
             claims,
             header_alg,
             "at_hash",
-            "the access token",
             access_token,
             options.access_token_issued_with_id_token,
         )?;
@@ -501,7 +500,6 @@ pub fn validate_id_token_claims(
             claims,
             header_alg,
             "c_hash",
-            "the authorization code",
             code,
             options.code_issued_with_id_token,
         )?;
@@ -520,15 +518,12 @@ fn validate_hash_binding(
     claims: &Claims,
     header_alg: Option<&str>,
     claim: &str,
-    subject: &str,
     value: &str,
     required: bool,
 ) -> Result<()> {
     if !claims.has(claim) {
         if required {
-            return Err(IdentityError::IdTokenValidation(format!(
-                "ID token missing required '{claim}' claim for {subject} issued with it"
-            )));
+            return Err(missing_claim(claim));
         }
         return Ok(());
     }
@@ -537,9 +532,9 @@ fn validate_hash_binding(
         .get_str(claim)
         .is_some_and(|actual| ct_eq(actual, &expected));
     if !matches {
-        return Err(IdentityError::IdTokenValidation(format!(
-            "ID token '{claim}' claim does not match {subject}"
-        )));
+        return Err(IdentityError::TokenHashMismatch {
+            claim: claim.to_string(),
+        });
     }
     Ok(())
 }
@@ -565,15 +560,17 @@ fn validate_hash_binding(
 /// - [`IdentityError::IdTokenAzpRequiresClientId`] — `validate_azp` is set but
 ///   neither `profile` nor the `base` audience supplies a `client_id`. Reported
 ///   before the JWKS fetch.
-/// - [`IdentityError::Validation`] — standard JWT validation failed (bad
-///   signature, wrong issuer/audience, expired token).
+/// - the typed JWT errors of [`validate_token`](crate::validate_token) —
+///   [`IdentityError::SignatureInvalid`], [`IdentityError::IssuerMismatch`],
+///   [`IdentityError::AudienceMismatch`], [`IdentityError::Expired`], ... — when
+///   standard JWT validation fails.
 /// - [`IdentityError::KeyNotFound`] — no JWKS key matched the token's `kid`.
 /// - [`IdentityError::AmbiguousKey`] — the token has no `kid` and more than
 ///   one JWKS key could verify it.
 /// - [`IdentityError::IdTokenUntrustedAudience`] — the token's `aud` carries
 ///   a value the client does not trust (§3.1.3.7 step 3).
-/// - [`IdentityError::IdTokenValidation`] — another ID-Token-profile rule
-///   failed.
+/// - the ID-Token-profile errors of [`validate_id_token_claims`] when another
+///   profile rule fails.
 /// - the transport/parse errors of
 ///   [`validate_token_with_jwks`](crate::validate_token_with_jwks).
 pub async fn validate_id_token(
@@ -608,14 +605,27 @@ mod tests {
         Claims::from_json(value).expect("valid claims object")
     }
 
-    /// Asserts a rejection is an [`IdentityError::IdTokenValidation`] whose
-    /// message contains `needle` (the stable per-reason marker).
-    fn assert_id_token_reject(err: &IdentityError, needle: &str) {
-        match err {
-            IdentityError::IdTokenValidation(msg) => {
-                assert!(msg.contains(needle), "message {msg:?} lacks {needle:?}");
-            }
-            other => panic!("expected IdTokenValidation, got {other:?}"),
+    /// Asserts a rejection is exactly the `want` variant.
+    fn assert_id_token_reject(err: &IdentityError, want: &IdentityError) {
+        assert_eq!(err, want);
+    }
+
+    fn missing(claim: &str) -> IdentityError {
+        IdentityError::MissingClaim {
+            claim: claim.into(),
+        }
+    }
+
+    fn hash_mismatch(claim: &str) -> IdentityError {
+        IdentityError::TokenHashMismatch {
+            claim: claim.into(),
+        }
+    }
+
+    fn azp_mismatch(actual: &str) -> IdentityError {
+        IdentityError::AuthorizedPartyMismatch {
+            expected: "s6BhdRkqt3".into(),
+            actual: actual.into(),
         }
     }
 
@@ -639,12 +649,12 @@ mod tests {
         let absent = claims(json!({"aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &opts).unwrap_err(),
-            "required 'sub'",
+            &missing("sub"),
         );
         let empty = claims(json!({"sub": "", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&empty, Some("RS256"), &opts).unwrap_err(),
-            "required 'sub'",
+            &missing("sub"),
         );
     }
 
@@ -670,7 +680,7 @@ mod tests {
             }
             assert_id_token_reject(
                 &validate_id_token_claims(&claims(value), Some("RS256"), opts).unwrap_err(),
-                "required 'aud'",
+                &missing("aud"),
             );
         }
 
@@ -851,7 +861,7 @@ mod tests {
         let no_azp = claims(json!({"sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"]}));
         assert_id_token_reject(
             &validate_id_token_claims(&no_azp, Some("RS256"), &cid).unwrap_err(),
-            "multiple audiences must contain an 'azp'",
+            &missing("azp"),
         );
 
         let wrong_azp = claims(
@@ -859,7 +869,7 @@ mod tests {
         );
         assert_id_token_reject(
             &validate_id_token_claims(&wrong_azp, Some("RS256"), &cid).unwrap_err(),
-            "'azp' claim does not match",
+            &azp_mismatch("other-client-9x"),
         );
 
         let right_azp = claims(
@@ -895,7 +905,7 @@ mod tests {
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&multi_empty, Some("RS256"), &cid).unwrap_err(),
-            "multiple audiences must contain an 'azp'",
+            &missing("azp"),
         );
 
         // single-aud + azp="" WITH a client_id: the oracle's `azp is not None`
@@ -903,7 +913,7 @@ mod tests {
         let single_empty_cid = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": ""}));
         assert_id_token_reject(
             &validate_id_token_claims(&single_empty_cid, Some("RS256"), &cid).unwrap_err(),
-            "'azp' claim does not match",
+            &azp_mismatch(""),
         );
     }
 
@@ -921,7 +931,7 @@ mod tests {
         let bad = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "azp": "impostor-client"}));
         assert_id_token_reject(
             &validate_id_token_claims(&bad, Some("RS256"), &cid).unwrap_err(),
-            "'azp' claim does not match",
+            &azp_mismatch("impostor-client"),
         );
     }
 
@@ -992,13 +1002,13 @@ mod tests {
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&c, Some("RS256"), &mismatch).unwrap_err(),
-            "'nonce' claim does not match",
+            &IdentityError::NonceMismatch,
         );
 
         let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &matching).unwrap_err(),
-            "'nonce' claim does not match",
+            &IdentityError::NonceMismatch,
         );
     }
 
@@ -1027,13 +1037,17 @@ mod tests {
         let stale = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_992_800}));
         assert_id_token_reject(
             &validate_id_token_claims(&stale, Some("RS256"), &opts).unwrap_err(),
-            "'auth_time' is older than",
+            &IdentityError::MaxAgeExceeded {
+                auth_time: 1_699_992_800,
+                max_age: 3600,
+                now: 1_700_000_000,
+            },
         );
 
-        let missing = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
+        let no_auth_time = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
-            &validate_id_token_claims(&missing, Some("RS256"), &opts).unwrap_err(),
-            "missing required numeric 'auth_time'",
+            &validate_id_token_claims(&no_auth_time, Some("RS256"), &opts).unwrap_err(),
+            &missing("auth_time"),
         );
     }
 
@@ -1055,7 +1069,7 @@ mod tests {
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "at_hash": "DyAleB7ctGQvU9M3DbMBYQ"}));
         assert_id_token_reject(
             &validate_id_token_claims(&bad, Some("RS256"), &opts).unwrap_err(),
-            "'at_hash' claim does not match",
+            &hash_mismatch("at_hash"),
         );
 
         // By default the access token is taken to have come back with the ID
@@ -1063,7 +1077,7 @@ mod tests {
         let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &opts).unwrap_err(),
-            "missing required 'at_hash'",
+            &missing("at_hash"),
         );
         let issued_with = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
@@ -1072,13 +1086,13 @@ mod tests {
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
-            "missing required 'at_hash'",
+            &missing("at_hash"),
         );
         validate_id_token_claims(&good, Some("RS256"), &issued_with)
             .expect("required at_hash present and correct");
         assert_id_token_reject(
             &validate_id_token_claims(&bad, Some("RS256"), &issued_with).unwrap_err(),
-            "'at_hash' claim does not match",
+            &hash_mismatch("at_hash"),
         );
 
         // A token-endpoint ID Token may omit at_hash (§3.1.3.6).
@@ -1094,7 +1108,7 @@ mod tests {
         let null = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "at_hash": null}));
         assert_id_token_reject(
             &validate_id_token_claims(&null, Some("RS256"), &token_endpoint).unwrap_err(),
-            "'at_hash' claim does not match",
+            &hash_mismatch("at_hash"),
         );
 
         // With nothing to verify, an unmappable alg is never consulted.
@@ -1132,7 +1146,7 @@ mod tests {
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "at_hash": "T7VF8gELfbwjUBkK04GEhg"}));
         assert_id_token_reject(
             &validate_id_token_claims(&mismatched, Some("ES512"), &sha256_sized).unwrap_err(),
-            "'at_hash' claim does not match",
+            &hash_mismatch("at_hash"),
         );
     }
 
@@ -1152,7 +1166,7 @@ mod tests {
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "c_hash": "DyAleB7ctGQvU9M3DbMBYQ"}));
         assert_id_token_reject(
             &validate_id_token_claims(&bad, Some("RS256"), &rs).unwrap_err(),
-            "'c_hash' claim does not match",
+            &hash_mismatch("c_hash"),
         );
 
         let es = IdTokenValidationOptions::builder()
@@ -1170,7 +1184,7 @@ mod tests {
         let absent = claims(json!({"sub": "u", "aud": "s6BhdRkqt3"}));
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &rs).unwrap_err(),
-            "missing required 'c_hash'",
+            &missing("c_hash"),
         );
         let issued_with = IdTokenValidationOptions::builder()
             .client_id("s6BhdRkqt3")
@@ -1179,7 +1193,7 @@ mod tests {
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&absent, Some("RS256"), &issued_with).unwrap_err(),
-            "missing required 'c_hash'",
+            &missing("c_hash"),
         );
         validate_id_token_claims(&good, Some("RS256"), &issued_with)
             .expect("required c_hash present and correct");
@@ -1217,11 +1231,13 @@ mod tests {
 
         assert_id_token_reject(
             &validate_id_token_claims(&with_at, Some("UNKNOWN"), &at).unwrap_err(),
-            "Unsupported ID token 'alg'",
+            &IdentityError::UnsupportedHashAlgorithm {
+                alg: Some("UNKNOWN".into()),
+            },
         );
         assert_id_token_reject(
             &validate_id_token_claims(&with_at, None, &at).unwrap_err(),
-            "header 'alg' is required",
+            &IdentityError::UnsupportedHashAlgorithm { alg: None },
         );
 
         let code = IdTokenValidationOptions::builder()
@@ -1232,12 +1248,27 @@ mod tests {
             claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "c_hash": "LDktKdoQak3Pk0cnXxCltA"}));
         assert_id_token_reject(
             &validate_id_token_claims(&with_code, Some("RS999"), &code).unwrap_err(),
-            "Unsupported ID token 'alg'",
+            &IdentityError::UnsupportedHashAlgorithm {
+                alg: Some("RS999".into()),
+            },
         );
     }
 
     // A JSON-boolean auth_time is not a numeric date and fails the max_age check
     // closed rather than coercing.
+    // Boundary: an auth_time exactly max_age old (no leeway) is still fresh;
+    // only an older one exceeds max_age (§3.1.3.7 step 12).
+    #[test]
+    fn auth_time_exactly_max_age_old_is_fresh() {
+        let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": 1_699_996_400}));
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .max_age(3600)
+            .now(1_700_000_000)
+            .build();
+        validate_id_token_claims(&c, Some("RS256"), &opts).expect("auth_time == now - max_age");
+    }
+
     #[test]
     fn boolean_auth_time_is_not_numeric() {
         let c = claims(json!({"sub": "u", "aud": "s6BhdRkqt3", "auth_time": true}));
@@ -1248,7 +1279,10 @@ mod tests {
             .build();
         assert_id_token_reject(
             &validate_id_token_claims(&c, Some("RS256"), &opts).unwrap_err(),
-            "missing required numeric 'auth_time'",
+            &IdentityError::MalformedClaim {
+                claim: "auth_time".into(),
+                reason: "must be a numeric date".into(),
+            },
         );
     }
 }

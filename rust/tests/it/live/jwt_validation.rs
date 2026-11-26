@@ -108,10 +108,7 @@ async fn client_credentials_validate_and_tamper() {
         rs_identity_model::validate_token_with_jwks(&tampered, &jwks, &meta.jwks_uri, &options)
             .await
             .expect_err("tampered token must be rejected");
-    assert!(
-        matches!(err, IdentityError::Validation(_)),
-        "err = {err:?}, want Validation for tampered signature"
-    );
+    assert_eq!(err, IdentityError::SignatureInvalid);
 }
 
 // JWT-001 / JWKS-004: discover the live provider, fetch its real JWKS, then

@@ -8,9 +8,8 @@
 //! NOT `#[ignore]`-gated: it runs in every bare `cargo test`.
 //!
 //! Thin-executor contract: the vectors carry inputs and canonical expected
-//! outcomes; only the mapping of canonical error codes to
-//! [`IdentityError::Validation`] message shapes (and the typed
-//! [`IdentityError::WeakKey`]) lives here (`assert_reject`).
+//! outcomes; only the mapping of canonical error codes to typed
+//! [`IdentityError`] variants lives here (`assert_reject`).
 //!
 //! Two deliberate deviations from the Go runner, both semantics-preserving:
 //!
@@ -326,40 +325,44 @@ fn options_for(o: &VectorOptions) -> ValidationOptions {
     b.build()
 }
 
-/// Asserts a rejection matches the canonical code via the crate's stable
-/// [`IdentityError::Validation`] message shapes (`rust/src/jwt/mod.rs`,
-/// `claims.rs::claim_err`).
+/// Asserts a rejection is the crate's typed variant for the canonical code.
 fn assert_reject(label: &str, err: &IdentityError, expect: &Expect) {
-    if expect.error == "weak_key" {
-        assert!(
-            matches!(err, IdentityError::WeakKey { .. }),
-            "{label}: expected IdentityError::WeakKey, got {err:?}"
-        );
-        return;
-    }
-    let IdentityError::Validation(msg) = err else {
-        panic!("{label}: expected IdentityError::Validation, got {err:?}");
-    };
     let matched = match expect.error.as_str() {
-        "malformed" => msg.starts_with("malformed token"),
-        "alg_none" => msg.contains("algorithm \"none\""),
-        "unsupported_alg" => msg.starts_with("unsupported or disallowed algorithm"),
-        "signature" => msg.starts_with("signature verification failed"),
-        "key_conversion" => msg.starts_with("convert "),
+        "weak_key" => matches!(err, IdentityError::WeakKey { .. }),
+        "malformed" => matches!(err, IdentityError::MalformedToken(_)),
+        "alg_none" => matches!(err, IdentityError::AlgorithmNone),
+        "unsupported_alg" => matches!(err, IdentityError::AlgorithmNotAllowed { .. }),
+        "signature" => matches!(err, IdentityError::SignatureInvalid),
+        "key_conversion" => matches!(err, IdentityError::KeyConversion { .. }),
         "claim_validation" => {
             assert!(
                 !expect.claim.is_empty(),
                 "{label}: claim_validation without claim"
             );
-            msg.starts_with(&format!("claim {:?} invalid", expect.claim))
+            rejected_claim(err) == Some(expect.claim.as_str())
         }
         other => panic!("{label}: unknown canonical error code {other:?}"),
     };
     assert!(
         matched,
-        "{label}: rejection {msg:?} does not match canonical code {:?} (claim {:?})",
+        "{label}: rejection {err:?} does not match canonical code {:?} (claim {:?})",
         expect.error, expect.claim
     );
+}
+
+/// The claim a typed claim-rule rejection is about, by variant.
+fn rejected_claim(err: &IdentityError) -> Option<&str> {
+    match err {
+        IdentityError::MissingClaim { claim } | IdentityError::MalformedClaim { claim, .. } => {
+            Some(claim)
+        }
+        IdentityError::Expired { .. } => Some("exp"),
+        IdentityError::NotYetValid { .. } => Some("nbf"),
+        IdentityError::IssuerMismatch { .. } => Some("iss"),
+        IdentityError::AudienceMismatch { .. } => Some("aud"),
+        IdentityError::NonceMismatch => Some("nonce"),
+        _ => None,
+    }
 }
 
 /// Asserts every claim listed in the vector's accept expectation.

@@ -21,10 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
-use crate::classify::{
-    Reason, TokenFacts, classify_discovery, classify_id_token, classify_userinfo,
-    needs_key_resolution,
-};
+use crate::classify::{Reason, classify_discovery, classify_id_token, classify_userinfo};
 use crate::rplog::{ActiveTest, RpLog};
 
 /// Scopes requested by every flow (the Python harness's default).
@@ -639,21 +636,9 @@ async fn validate(
         .client_id(&session.client_id)
         .nonce(&session.nonce)
         .build();
-    match validate_id_token(id_token, &jwks, &metadata.jwks_uri, &base, &profile).await {
-        Ok(claims) => Ok(claims),
-        Err(error) => {
-            let mut facts = TokenFacts::inspect(id_token);
-            if let (true, Some(alg)) = (needs_key_resolution(&error, &facts), facts.alg.as_deref())
-            {
-                let kid = TokenFacts::header_kid(id_token);
-                facts.key_resolved = jwks
-                    .resolve_signing_key(&metadata.jwks_uri, &kid, alg)
-                    .await
-                    .is_ok();
-            }
-            Err((classify_id_token(&error, &facts), error.to_string()))
-        }
-    }
+    validate_id_token(id_token, &jwks, &metadata.jwks_uri, &base, &profile)
+        .await
+        .map_err(|error| (classify_id_token(&error), error.to_string()))
 }
 
 fn escape(text: &str) -> String {

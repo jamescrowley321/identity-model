@@ -26,9 +26,9 @@
 //! * base profile — signature (live discovery → JWKS), `iss`, `aud`, `exp` and
 //!   the required `sub` — validate on the real claim set;
 //! * the same real ID Token is rejected when validated for a different
-//!   `client_id` ([`IdentityError::Validation`], `aud` mismatch);
-//! * the `nonce` sent on the authorization request binds (a wrong nonce is an
-//!   [`IdentityError::IdTokenValidation`]);
+//!   `client_id` ([`IdentityError::AudienceMismatch`]);
+//! * the `nonce` sent on the authorization request binds (a wrong nonce is
+//!   [`IdentityError::NonceMismatch`]);
 //! * `max_age`/`auth_time` freshness holds on the real `auth_time`;
 //! * the code-flow (token-endpoint) ID Token is accepted with the issued
 //!   access token whether or not it carries `at_hash` (§3.1.3.6). A present
@@ -302,8 +302,8 @@ async fn validate_id_token_end_to_end() {
         .await
         .expect_err("ID Token must be rejected for a different audience");
     assert!(
-        matches!(err, IdentityError::Validation(_)),
-        "err = {err:?}, want Validation for aud mismatch"
+        matches!(&err, IdentityError::AudienceMismatch { expected, .. } if expected == "some-other-audience"),
+        "err = {err:?}, want AudienceMismatch"
     );
 
     // --- nonce binding (only if the OP echoed the requested nonce). ---
@@ -328,10 +328,7 @@ async fn validate_id_token_end_to_end() {
         let err = validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &wrong_nonce)
             .await
             .expect_err("a wrong nonce must be rejected");
-        assert!(
-            matches!(err, IdentityError::IdTokenValidation(_)),
-            "err = {err:?}, want IdTokenValidation for nonce mismatch"
-        );
+        assert_eq!(err, IdentityError::NonceMismatch);
     } else {
         eprintln!("SKIP(nonce): OP did not echo the requested nonce into the ID Token");
     }
@@ -390,9 +387,11 @@ async fn validate_id_token_end_to_end() {
         )
         .await
         .expect_err("a tampered access token must fail the at_hash check");
-        assert!(
-            matches!(&err, IdentityError::IdTokenValidation(msg) if msg.contains("'at_hash' claim does not match")),
-            "err = {err:?}, want IdTokenValidation for at_hash mismatch"
+        assert_eq!(
+            err,
+            IdentityError::TokenHashMismatch {
+                claim: "at_hash".into()
+            }
         );
         validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &required)
             .await
@@ -401,9 +400,11 @@ async fn validate_id_token_end_to_end() {
         let err = validate_id_token(id_token, &jwks, &meta.jwks_uri, &base, &required)
             .await
             .expect_err("an absent at_hash must fail when it is required");
-        assert!(
-            matches!(&err, IdentityError::IdTokenValidation(msg) if msg.contains("missing required 'at_hash'")),
-            "err = {err:?}, want IdTokenValidation for a missing at_hash"
+        assert_eq!(
+            err,
+            IdentityError::MissingClaim {
+                claim: "at_hash".into()
+            }
         );
     }
 }

@@ -26,6 +26,11 @@ endpoints.
 - Async via `tokio`; HTTP via `reqwest` with `rustls`.
 - JWT handling via the `jsonwebtoken` crate.
 - Builder-pattern configuration; `Result<T, IdentityError>` everywhere (`thiserror`).
+  `IdentityError` is `#[non_exhaustive]`; JWT and ID Token failures are typed
+  variants (`MalformedToken`, `AlgorithmNone`, `AlgorithmNotAllowed`,
+  `SignatureInvalid`, `Expired`, `NotYetValid`, `IssuerMismatch`,
+  `AudienceMismatch`, `NonceMismatch`, `MissingClaim { claim }`, ...), so match
+  on the variant rather than the message.
 - Caches use `tokio::sync::RwLock` for thread-safe async access.
 - Security hardening: secrets are redacted from `Debug`/error output, clock-skew
   is validated during JWT verification, `azp` is checked by the ID-token profile on opt-in (`.validate_azp(true)`),
