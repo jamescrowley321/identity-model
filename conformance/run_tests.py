@@ -59,6 +59,108 @@ def _is_local_suite(url: str) -> bool:
     return hostname in LOCAL_HOSTNAMES
 
 
+# Plans whose OP calls the RP server-to-server, keyed to the call it makes. A
+# hosted suite cannot reach the harness at RP_BASE_URL (the runner's localhost),
+# so these plans need the RP's publicly reachable base URL (--rp-public-url).
+# The browser-facing URLs (redirect_uri, post_logout_redirect_uri) stay on
+# RP_BASE_URL: the runner itself plays the user agent and follows them.
+OP_CALLBACK_PROFILES = {
+    "dynamic-rp": (
+        "fetches each signed request object from the RP's "
+        "/request-object/{id} (the plan forces request_type=request_uri)"
+    ),
+    "rpinitiated-logout-rp": (
+        "POSTs a Logout Token to the RP's /backchannel-logout (the plan stops "
+        "unless the client registers a back- or front-channel logout URI)"
+    ),
+    "backchannel-logout-rp": ("POSTs a Logout Token to the RP's /backchannel-logout"),
+}
+
+
+def effective_rp_public_url(suite_url: str, rp_public_url: str | None) -> str | None:
+    """Return the public RP URL to use against ``suite_url``.
+
+    A local suite reaches the harness over the docker network, so a leftover
+    public URL must not replace the config's ``backchannel_logout_uri`` there.
+    """
+    if not rp_public_url or _is_local_suite(suite_url):
+        return None
+    return rp_public_url
+
+
+def rp_public_url_problem(
+    profile: str, suite_url: str, rp_public_url: str | None
+) -> str | None:
+    """Return why ``profile`` cannot run against ``suite_url``, or ``None``.
+
+    Only a hosted suite running an OP-callback plan needs a public RP URL; a
+    local suite reaches the harness over the docker network.
+    """
+    if profile not in OP_CALLBACK_PROFILES or _is_local_suite(suite_url):
+        return None
+    if not rp_public_url:
+        return (
+            f"{profile} on a hosted suite needs --rp-public-url "
+            f"(env CONFORMANCE_RP_PUBLIC_URL): the OP "
+            f"{OP_CALLBACK_PROFILES[profile]}, and it cannot reach {RP_BASE_URL}"
+        )
+    parsed = urlparse(rp_public_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return f"--rp-public-url {rp_public_url!r} is not an absolute http(s) URL"
+    if parsed.hostname in LOCAL_HOSTNAMES:
+        return (
+            f"--rp-public-url {rp_public_url!r} is a local address the hosted "
+            "suite cannot reach"
+        )
+    return None
+
+
+def apply_rp_public_url(
+    client_overrides: dict | None, rp_public_url: str | None
+) -> dict | None:
+    """Point the registered ``backchannel_logout_uri`` at the RP's public URL.
+
+    The committed logout configs register the docker-network address the local
+    suite uses; a hosted OP must be given the public one instead.
+    """
+    if (
+        not rp_public_url
+        or not client_overrides
+        or "backchannel_logout_uri" not in client_overrides
+    ):
+        return client_overrides
+    return {
+        **client_overrides,
+        "backchannel_logout_uri": f"{rp_public_url.rstrip('/')}/backchannel-logout",
+    }
+
+
+def rp_public_url_unreachable(rp_public_url: str) -> str | None:
+    """Return why the harness is not usable at ``rp_public_url``, or ``None``.
+
+    Fetches ``/health`` through the public URL (so it proves the ingress works,
+    at least from here) and checks the harness hands the OP that same base in
+    ``request_uri``; otherwise a plan would fail module by module much later.
+    """
+    base = rp_public_url.rstrip("/")
+    try:
+        response = httpx.get(f"{base}/health", timeout=15.0)
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        return f"RP harness not reachable at {base}/health: {exc}"
+    if response.status_code != 200:
+        return f"RP harness at {base}/health answered HTTP {response.status_code}"
+    try:
+        op_facing = str(response.json().get("op_facing_base_url", ""))
+    except (ValueError, AttributeError):
+        return f"{base}/health did not return the harness's JSON health body"
+    if op_facing != base:
+        return (
+            f"the harness at {base} hands the OP {op_facing!r} as its base URL; "
+            f"start it with RP_INTERNAL_BASE_URL={base}"
+        )
+    return None
+
+
 def _parse_content_disposition_filename(disposition: str) -> str | None:
     """Extract the filename from a ``Content-Disposition`` header.
 
@@ -1203,6 +1305,7 @@ def run_plan(
     publish: str = "",
     profile: str = "",
     only_module: str | None = None,
+    rp_public_url: str | None = None,
 ) -> tuple[str, list[TestResult]]:
     """Run the tests in a conformance test plan.
 
@@ -1233,7 +1336,9 @@ def run_plan(
     # instead registers the RP's public JWKS (served at /fapi2-jwks) so the suite
     # can verify its private_key_jwt assertions, and supplies the OP's own signing
     # keys (LoadServerJWKs). The private half never leaves the RP.
-    client_overrides: dict | None = config.get("client")
+    client_overrides: dict | None = apply_rp_public_url(
+        config.get("client"), rp_public_url
+    )
     server_jwks: dict | None = None
     if fapi2:
         if mtls:
@@ -1674,6 +1779,17 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--rp-public-url",
+        default=os.environ.get("CONFORMANCE_RP_PUBLIC_URL", "").strip() or None,
+        help=(
+            "Publicly reachable base URL of the RP harness, for plans whose OP "
+            "calls the RP server-to-server (dynamic-rp request_uri, the logout "
+            "plans' back-channel logout). Required for those plans on a hosted "
+            "suite; the harness must run with RP_INTERNAL_BASE_URL set to it "
+            "(env: CONFORMANCE_RP_PUBLIC_URL)."
+        ),
+    )
+    parser.add_argument(
         "--output",
         "-o",
         default=None,
@@ -1768,6 +1884,18 @@ def main() -> None:
     except HarnessError as exc:
         logger.error("%s", exc)
         sys.exit(1)
+
+    # Only the py harness runs the OP-callback plans (HARNESS_PLANS excludes
+    # them for go/rust), so these checks never touch a native harness run.
+    rp_public_url = effective_rp_public_url(args.suite_url, args.rp_public_url)
+    if args.rp_public_url and rp_public_url is None:
+        logger.warning("Ignoring --rp-public-url for a local suite")
+    problem = rp_public_url_problem(args.plan, args.suite_url, rp_public_url)
+    if problem is None and rp_public_url and args.plan in OP_CALLBACK_PROFILES:
+        problem = rp_public_url_unreachable(rp_public_url)
+    if problem:
+        logger.error("%s", problem)
+        sys.exit(1)
     output = args.output or run.default_output
 
     publish_value = "" if args.publish == "none" else args.publish
@@ -1797,6 +1925,7 @@ def main() -> None:
         publish=publish_value,
         profile=run.manifest_plan,
         only_module=args.only_module,
+        rp_public_url=rp_public_url,
     )
 
     all_ok = print_summary(results)

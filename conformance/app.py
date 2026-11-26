@@ -234,7 +234,8 @@ RP_BASE_URL = os.environ.get("RP_BASE_URL", "http://localhost:8888")
 # OP-facing base URL: used for request_uri, which the OP fetches server-to-server.
 # Inside docker the OP reaches the RP by its compose service name, not localhost;
 # defaults to RP_BASE_URL for non-docker runs.
-RP_INTERNAL_BASE_URL = os.environ.get("RP_INTERNAL_BASE_URL", RP_BASE_URL)
+# A trailing slash would make request_uri ``//request-object/...``, which 404s.
+RP_INTERNAL_BASE_URL = os.environ.get("RP_INTERNAL_BASE_URL", RP_BASE_URL).rstrip("/")
 
 # ---------------------------------------------------------------------------
 # RP signing key for JWT Secured Authorization Requests (JAR, RFC 9101)
@@ -507,8 +508,18 @@ def _fapi2_mtls_auth() -> MtlsClientAuth:
 @app.get("/")
 @app.get("/health")
 def health() -> dict:
-    """Health check."""
-    return {"status": "ok", "service": "conformance-rp"}
+    """Health check.
+
+    ``op_facing_base_url`` is the base the harness puts in URLs the OP fetches
+    server-to-server (``request_uri``). A hosted run checks it against the RP's
+    public URL, so a harness started without ``RP_INTERNAL_BASE_URL`` fails up
+    front instead of handing the hosted OP an unreachable request_uri.
+    """
+    return {
+        "status": "ok",
+        "service": "conformance-rp",
+        "op_facing_base_url": RP_INTERNAL_BASE_URL,
+    }
 
 
 @app.post("/clear-cache")

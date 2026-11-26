@@ -462,11 +462,21 @@ conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package r
 	@echo "fastapi-identity-model conformance regression complete. Results in conformance/results/"
 
 .PHONY: conformance-test-dynamic-logout
-conformance-test-dynamic-logout: conformance-up ## Run the Dynamic RP and logout RP plans against the local suite
+# HOSTED=1 needs RP_PUBLIC_URL: in these plans the hosted OP calls the RP
+# server-to-server, and the RP harness (started by you on :8888) must run with
+# RP_INTERNAL_BASE_URL set to that same URL. See conformance/README.md.
+conformance-test-dynamic-logout: $(if $(HOSTED),,conformance-up) ## Run the Dynamic RP and logout RP plans (HOSTED=1 RP_PUBLIC_URL=... for hosted suite)
+ifdef HOSTED
+	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/dynamic-rp-latest.json --export-zip conformance/results/hosted/dynamic-rp-export.zip --rp-logs-zip conformance/results/hosted/dynamic-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/rpinitiated-logout-rp-latest.json --export-zip conformance/results/hosted/rpinitiated-logout-rp-export.zip --rp-logs-zip conformance/results/hosted/rpinitiated-logout-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/backchannel-logout-rp-latest.json --export-zip conformance/results/hosted/backchannel-logout-rp-export.zip --rp-logs-zip conformance/results/hosted/backchannel-logout-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	@echo "Hosted dynamic and logout conformance tests complete. Results in conformance/results/hosted/"
+else
 	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --output conformance/results/dynamic-rp-latest.json --verbose
 	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --output conformance/results/rpinitiated-logout-rp-latest.json --verbose
 	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --output conformance/results/backchannel-logout-rp-latest.json --verbose
 	@echo "Dynamic and logout conformance tests complete. Results in conformance/results/"
+endif
 
 .PHONY: conformance-test-harness
 conformance-test-harness: ## Run conformance harness unit tests (parser + callback)
