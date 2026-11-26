@@ -19,6 +19,9 @@ import (
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
+
+	"github.com/jamescrowley321/identity-model/go/pkg/discovery"
+	"github.com/jamescrowley321/identity-model/go/pkg/jwks"
 )
 
 const (
@@ -225,6 +228,15 @@ func newRig(t *testing.T) *rig {
 // the fake OP so it can refer to the OP's issuer.
 func newRigWith(t *testing.T, configure func(cfg *serverConfig, op *fakeOP)) *rig {
 	t.Helper()
+	// The library's discovery and JWKS caches are process-wide and keyed by
+	// URL; httptest reuses ports, so a test could otherwise read an earlier
+	// test's cached document or keys.
+	discovery.ClearCache()
+	jwks.ClearCache()
+	t.Cleanup(func() {
+		discovery.ClearCache()
+		jwks.ClearCache()
+	})
 	op := newFakeOP(t)
 	logDir := t.TempDir()
 	client := op.srv.Client()
@@ -954,4 +966,51 @@ func TestTokenType(t *testing.T) {
 			rg.wantResult("t-tt", tc.want("t-tt"))
 		})
 	}
+}
+
+// azp is checked (Core §3.1.3.7 steps 4-5): a token whose azp names another
+// party is rejected, and one whose azp is this client is accepted.
+func TestAZPValidated(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(c map[string]any)
+		want   func(testID string) map[string]any
+	}{
+		"azp-other-party": {
+			mutate: func(c map[string]any) { c["azp"] = "someone-else" },
+			want:   func(id string) map[string]any { return rejected(id, reasonInvalidAudience) },
+		},
+		"multi-aud-no-azp": {
+			mutate: func(c map[string]any) { c["aud"] = []string{testClientID, "someone-else"} },
+			want:   func(id string) map[string]any { return rejected(id, reasonInvalidAudience) },
+		},
+		"azp-this-client": {
+			mutate: func(c map[string]any) { c["azp"] = testClientID },
+			want:   success,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rg := newRig(t)
+			rg.op.set(func(op *fakeOP) { op.mutate = tc.mutate })
+			_ = rg.login(name)
+			rg.wantResult(name, tc.want(name))
+		})
+	}
+}
+
+// A /discover retry after a rejection is a new flow: its outcome replaces the
+// earlier one instead of merging into a conflict.
+func TestDiscoverRetryStartsNewFlow(t *testing.T) {
+	rg := newRig(t)
+	q := url.Values{"issuer": {rg.op.issuer()}, "test_id": {"t-retry"}, "test_name": {"t-retry"}, "profile": {"config-rp"}}
+	rg.op.set(func(op *fakeOP) { op.discoveryIssuer = "https://other.example" })
+	if resp := rg.get("/discover", q); resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("first discover status %d, want 502", resp.StatusCode)
+	}
+	rg.wantResult("t-retry", rejected("t-retry", reasonIssuerMismatch))
+	rg.op.set(func(op *fakeOP) { op.discoveryIssuer = "" })
+	if resp := rg.get("/discover", q); resp.StatusCode != http.StatusOK {
+		t.Fatalf("retry discover status %d, want 200", resp.StatusCode)
+	}
+	rg.wantResult("t-retry", success("t-retry"))
 }

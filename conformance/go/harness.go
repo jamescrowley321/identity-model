@@ -162,6 +162,16 @@ func (s *server) currentFlow(testID string) flowRef {
 	return flowRef{testID: testID, gen: s.gens[testID]}
 }
 
+// newFlowLocked starts a new flow for testID, called with s.mu held. The new
+// flow has no recorded outcome, so it cannot be read as an earlier flow's
+// result, and a new generation, so the test's earlier flows can no longer
+// record.
+func (s *server) newFlowLocked(testID string) flowRef {
+	delete(s.results, testID)
+	s.gens[testID]++
+	return flowRef{testID: testID, gen: s.gens[testID]}
+}
+
 // record merges an outcome of flow f into its test's result. It reports false,
 // recording nothing, when f is no longer the test's current flow.
 func (s *server) record(f flowRef, status, reason, detail string) bool {
@@ -220,7 +230,10 @@ func (s *server) fetchProvider(ctx context.Context, issuer string) (*discovery.P
 // discover fetches and validates discovery only (Config RP discovery modules).
 func (s *server) discover(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	flow := s.currentFlow(q.Get("test_id"))
+	// Each /discover is its own flow, so a retry is judged on its own outcome.
+	s.mu.Lock()
+	flow := s.newFlowLocked(q.Get("test_id"))
+	s.mu.Unlock()
 	log := s.logger(q.Get("profile"), q.Get("test_name"))
 	ctx, cancel := context.WithTimeout(r.Context(), flowTimeout)
 	defer cancel()
@@ -250,15 +263,11 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	log := s.logger(sess.profile, sess.testName)
 
-	// A new flow starts with no recorded outcome, so a flow that never reaches
-	// the callback cannot be read as an earlier flow's result. It also gets a
-	// new generation, so the test's earlier flows can no longer record. Their
-	// pending states stay known, so a late callback of one is turned away as
-	// stale instead of being read as a forged state against this flow.
+	// The test's earlier flows' pending states stay known, so a late callback
+	// of one is turned away as stale instead of being read as a forged state
+	// against this flow.
 	s.mu.Lock()
-	delete(s.results, testID)
-	s.gens[testID]++
-	sess.flow = flowRef{testID: testID, gen: s.gens[testID]}
+	sess.flow = s.newFlowLocked(testID)
 	s.lastTestID = testID
 	s.lastProfile = sess.profile
 	s.lastTestName = sess.testName
@@ -394,6 +403,9 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 	claims, err := idtoken.ValidateIDToken(ctx, tokens.IDToken, keySet,
 		idtoken.WithIssuer(sess.issuer),
 		idtoken.WithClientID(sess.clientID),
+		// azp rules (§3.1.3.7 steps 4-5): a multi-audience token must carry
+		// an azp, and a present azp must be this client.
+		idtoken.WithAZPValidation(),
 		idtoken.WithNonce(sess.nonce),
 		// A token-endpoint ID Token may omit at_hash (§3.1.3.6); a present one
 		// must match the access token (§3.3.2.11).

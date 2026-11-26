@@ -11,6 +11,9 @@ services:
       - "127.0.0.1:8890:8890"
     environment:
       - RP_PORT=8890
+      # The harness listens on loopback by default; inside the container it
+      # must listen on all interfaces for the loopback-published port above.
+      - RP_LISTEN_ADDR=0.0.0.0
       - RP_BASE_URL=http://localhost:8890
       - RP_LOG_DIR=/rp-logs
       # The local suite's self-signed certificate, trusted in addition to the
