@@ -389,9 +389,12 @@ conformance-down: ## Tear down conformance suite
 # harness adds only its own files: the overlay
 # conformance/docker-compose.$(HARNESS).yml (service rp-$(HARNESS)) and
 # conformance/configs/$(HARNESS)-<plan>.json (which carry the harness's rp_url).
+# For go/rust, PLANS (space-separated) picks plans; unset, every plan with a
+# conformance/configs/$(HARNESS)-<plan>.json runs. On a hosted suite the
+# Dynamic and logout plans also need RP_PUBLIC_URL.
 # See conformance/adding-conformance-profiles.md, "Adding a harness".
 HARNESS ?= py
-HARNESS_PLANS := basic-rp config-rp form-post-basic-rp
+PLANS ?=
 HARNESS_COMPOSE = docker compose -f conformance/docker-compose.yml -f conformance/docker-compose.$(HARNESS).yml
 
 .PHONY: conformance-test
@@ -447,9 +450,13 @@ endif
 	  fi; \
 	  sleep 2; \
 	done
-	@status=0; for plan in $(HARNESS_PLANS); do \
+	@plans=$$($(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --resolve-plans "$(PLANS)" \
+	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)") $(if $(RP_PUBLIC_URL),--rp-public-url "$(RP_PUBLIC_URL)")) || exit 1; \
+	echo "$(HARNESS) harness plans: $$plans"; \
+	status=0; for plan in $$plans; do \
 	  $(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --plan $$plan \
 	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)" --export-zip conformance/results/hosted/$(HARNESS)-$$plan-export.zip --rp-logs-zip conformance/results/hosted/$(HARNESS)-$$plan-rp-logs.zip --publish "$(or $(PUBLISH),none)") \
+	    $(if $(RP_PUBLIC_URL),--rp-public-url "$(RP_PUBLIC_URL)") \
 	    --verbose || status=1; \
 	done; exit $$status
 endif

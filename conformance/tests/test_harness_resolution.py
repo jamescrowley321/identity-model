@@ -1,4 +1,4 @@
-"""Tests for ``--harness`` config/manifest resolution in run_tests.py (#1198)."""
+"""Tests for ``--harness`` config/manifest and plan resolution in run_tests.py."""
 
 from __future__ import annotations
 
@@ -7,18 +7,38 @@ from pathlib import Path
 
 import pytest
 from run_tests import (
+    DEFAULT_PY_PLANS,
     MANIFEST_PATH,
-    HARNESS_PLANS,
+    OP_CALLBACK_PROFILES,
     RP_BASE_URL,
     Harness,
     HarnessError,
     HarnessRun,
+    discover_harness_plans,
+    harness_plans,
     load_manifest,
+    parse_plan_list,
     resolve_harness_run,
+    resolve_plans,
 )
 
 
 GO_RP_URL = "http://localhost:8890"
+HOSTED = "https://www.certification.openid.net/"
+LOCAL = "https://localhost.emobix.co.uk:8443"
+PUBLIC = "https://rp.example.com"
+OIDF_RP_PLANS = [
+    "basic-rp",
+    "form-post-basic-rp",
+    "config-rp",
+    "fapi2-rp",
+    "fapi2-mtls-rp",
+    "fapi2-message-signing-rp",
+    "dynamic-rp",
+    "rpinitiated-logout-rp",
+    "backchannel-logout-rp",
+]
+HARNESS_PLANS = harness_plans()
 PLAN_CONFIG = {
     "plan_name": "oidcc-client-basic-certification-test-plan",
     "variant": {"client_registration": "static_client"},
@@ -92,13 +112,130 @@ def test_rp_url_flag_overrides_config(tmp_path):
     assert run.rp_base_url == "http://rp-rust:8891"
 
 
-def test_go_harness_rejects_plan_outside_harness_plans(tmp_path):
-    _write(tmp_path, "go-fastapi-basic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+@pytest.mark.parametrize("plan", ["fastapi-basic-rp", "no-such-rp"])
+def test_go_harness_rejects_plan_outside_harness_plans(tmp_path, plan):
+    _write(tmp_path, f"go-{plan}", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
 
     with pytest.raises(HarnessError, match="runs only"):
-        resolve_harness_run(
-            Harness.GO, "fastapi-basic-rp", config_dir=tmp_path, results_dir=tmp_path
-        )
+        resolve_harness_run(Harness.GO, plan, config_dir=tmp_path, results_dir=tmp_path)
+
+
+def test_harness_plans_are_every_manifest_plan_but_fastapi():
+    assert list(HARNESS_PLANS) == OIDF_RP_PLANS
+
+
+def test_harness_plans_follow_the_manifest(tmp_path):
+    manifest = tmp_path / "expected_modules.json"
+    manifest.write_text(json.dumps({"b-rp": {}, "fastapi-b-rp": {}, "a-rp": {}}))
+
+    assert harness_plans(manifest) == ("b-rp", "a-rp")
+
+
+def test_unreadable_manifest_is_a_harness_error(tmp_path):
+    with pytest.raises(HarnessError, match="cannot read manifest"):
+        harness_plans(tmp_path / "missing.json")
+
+
+def test_discovery_finds_the_harness_configs_in_manifest_order(tmp_path):
+    for name in ["go-fapi2-rp", "go-basic-rp", "go-dynamic-rp", "rust-config-rp"]:
+        _write(tmp_path, name, {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+    _write(tmp_path, "config-rp", PLAN_CONFIG)
+
+    assert discover_harness_plans(Harness.GO, config_dir=tmp_path) == [
+        "basic-rp",
+        "fapi2-rp",
+        "dynamic-rp",
+    ]
+    assert discover_harness_plans(Harness.RUST, config_dir=tmp_path) == ["config-rp"]
+
+
+@pytest.mark.parametrize("name", ["go-fastapi-basic-rp", "go-basic-rpp"])
+def test_discovery_rejects_a_config_naming_no_runnable_plan(tmp_path, name):
+    _write(tmp_path, name, {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    with pytest.raises(HarnessError, match=f"{name}.json names no plan"):
+        discover_harness_plans(Harness.GO, config_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("spec", "plans"),
+    [
+        ("", []),
+        ("  ", []),
+        ("fapi2-rp", ["fapi2-rp"]),
+        ("fapi2-rp fapi2-mtls-rp", ["fapi2-rp", "fapi2-mtls-rp"]),
+        ("fapi2-rp,fapi2-mtls-rp", ["fapi2-rp", "fapi2-mtls-rp"]),
+        (" basic-rp, config-rp ,basic-rp ", ["basic-rp", "config-rp"]),
+    ],
+)
+def test_parse_plan_list(spec, plans):
+    assert parse_plan_list(spec) == plans
+
+
+def test_python_default_plans_are_the_basic_trio():
+    assert resolve_plans(Harness.PY, "") == list(DEFAULT_PY_PLANS)
+    assert list(DEFAULT_PY_PLANS) == ["basic-rp", "config-rp", "form-post-basic-rp"]
+
+
+def test_python_runs_any_named_harness_plan():
+    assert resolve_plans(Harness.PY, ",".join(OIDF_RP_PLANS)) == OIDF_RP_PLANS
+
+
+@pytest.mark.parametrize("plan", ["fastapi-basic-rp", "no-such-rp"])
+def test_python_rejects_unknown_and_fastapi_plans(plan):
+    with pytest.raises(HarnessError, match="unknown plan"):
+        resolve_plans(Harness.PY, f"basic-rp {plan}")
+
+
+@pytest.mark.parametrize("harness", [Harness.GO, Harness.RUST])
+def test_go_rust_default_is_every_plan_with_a_config(tmp_path, harness):
+    for plan in ["fapi2-mtls-rp", "basic-rp", "backchannel-logout-rp"]:
+        _write(tmp_path, f"{harness}-{plan}", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    assert resolve_plans(harness, "", config_dir=tmp_path) == [
+        "basic-rp",
+        "fapi2-mtls-rp",
+        "backchannel-logout-rp",
+    ]
+
+
+def test_go_rust_default_without_configs_is_an_error(tmp_path):
+    with pytest.raises(HarnessError, match="no .*go-<plan>.json config exists"):
+        resolve_plans(Harness.GO, "", config_dir=tmp_path)
+
+
+def test_named_plan_without_its_harness_config_is_an_error(tmp_path):
+    _write(tmp_path, "go-basic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    with pytest.raises(HarnessError, match="config not found: .*go-fapi2-rp.json"):
+        resolve_plans(Harness.GO, "basic-rp fapi2-rp", config_dir=tmp_path)
+
+
+@pytest.mark.parametrize("harness", list(Harness))
+@pytest.mark.parametrize("plan", sorted(OP_CALLBACK_PROFILES))
+def test_hosted_op_callback_plan_needs_a_public_url_for_every_harness(
+    tmp_path, harness, plan
+):
+    name = plan if harness is Harness.PY else f"{harness}-{plan}"
+    _write(tmp_path, name, {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    with pytest.raises(HarnessError, match="needs --rp-public-url"):
+        resolve_plans(harness, plan, suite_url=HOSTED, config_dir=tmp_path)
+    assert resolve_plans(
+        harness, plan, suite_url=HOSTED, rp_public_url=PUBLIC, config_dir=tmp_path
+    ) == [plan]
+    assert resolve_plans(harness, plan, suite_url=LOCAL, config_dir=tmp_path) == [plan]
+
+
+@pytest.mark.parametrize("harness", list(Harness))
+@pytest.mark.parametrize(
+    "plan", ["basic-rp", "fapi2-rp", "fapi2-mtls-rp", "fapi2-message-signing-rp"]
+)
+def test_hosted_plan_without_op_callbacks_needs_no_public_url(tmp_path, harness, plan):
+    name = plan if harness is Harness.PY else f"{harness}-{plan}"
+    _write(tmp_path, name, {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    assert resolve_plans(harness, plan, suite_url=HOSTED, config_dir=tmp_path) == [plan]
 
 
 def test_missing_go_config_is_an_error(tmp_path):

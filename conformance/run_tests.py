@@ -17,6 +17,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import textwrap
@@ -60,8 +61,10 @@ def _is_local_suite(url: str) -> bool:
 
 
 # Plans whose OP calls the RP server-to-server, keyed to the call it makes. A
-# hosted suite cannot reach the harness at RP_BASE_URL (the runner's localhost),
-# so these plans need the RP's publicly reachable base URL (--rp-public-url).
+# hosted suite cannot reach any harness (py, go or rust) at the runner's
+# localhost, so these plans need the RP's publicly reachable base URL
+# (--rp-public-url). The FAPI 2.0 plans make no such call: the suite reads the
+# client keys from the registered jwks and PAR carries the request by value.
 # The browser-facing URLs (redirect_uri, post_logout_redirect_uri) stay on
 # RP_BASE_URL: the runner itself plays the user agent and follows them.
 OP_CALLBACK_PROFILES = {
@@ -102,7 +105,8 @@ def rp_public_url_problem(
         return (
             f"{profile} on a hosted suite needs --rp-public-url "
             f"(env CONFORMANCE_RP_PUBLIC_URL): the OP "
-            f"{OP_CALLBACK_PROFILES[profile]}, and it cannot reach {RP_BASE_URL}"
+            f"{OP_CALLBACK_PROFILES[profile]}, and it cannot reach the harness "
+            "at this machine's localhost"
         )
     parsed = urlparse(rp_public_url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -1618,9 +1622,11 @@ class Harness(StrEnum):
     RUST = "rust"
 
 
-# Plans the Go and Rust harnesses run. Each reuses the Python plan's manifest entry in
-# expected_modules.json: one set of expected verdicts for every language.
-HARNESS_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
+# Plans the rp-fastapi package regression runs (against :8889); no other
+# harness runs them.
+FASTAPI_PLAN_PREFIX = "fastapi-"
+# What ``make conformance-test`` runs for the Python harness when PLANS is unset.
+DEFAULT_PY_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
 
 
 class HarnessError(Exception):
@@ -1661,6 +1667,104 @@ def _config_rp_url(config: dict, config_path: Path) -> str | None:
     return rp_url.rstrip("/")
 
 
+def harness_plans(manifest_path: Path = MANIFEST_PATH) -> tuple[str, ...]:
+    """Plans a Go or Rust harness may run, in manifest order.
+
+    Every plan in ``expected_modules.json`` except the ``fastapi-*`` package
+    regression plans. A harness runs a plan with the plan's existing manifest
+    entry: one set of expected verdicts for every language.
+    """
+    try:
+        data = json.loads(manifest_path.read_text())
+    except (OSError, ValueError) as exc:
+        raise HarnessError(f"cannot read manifest {manifest_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise HarnessError(f"manifest {manifest_path} must be an object")
+    return tuple(p for p in data if not p.startswith(FASTAPI_PLAN_PREFIX))
+
+
+def discover_harness_plans(
+    harness: Harness,
+    *,
+    config_dir: Path = CONFIG_DIR,
+    manifest_path: Path = MANIFEST_PATH,
+) -> list[str]:
+    """Plans with a ``configs/<harness>-<plan>.json``, in manifest order.
+
+    A ``<harness>-*.json`` naming no runnable plan is an error, so a misspelt
+    config fails loudly instead of silently never running.
+    """
+    allowed = harness_plans(manifest_path)
+    prefix = f"{harness}-"
+    found = {path.stem[len(prefix) :] for path in config_dir.glob(f"{prefix}*.json")}
+    unknown = sorted(found - set(allowed))
+    if unknown:
+        names = ", ".join(f"{prefix}{p}.json" for p in unknown)
+        raise HarnessError(
+            f"{config_dir}: {names} names no plan the {harness} harness can run "
+            f"({', '.join(allowed)})"
+        )
+    return [p for p in allowed if p in found]
+
+
+def parse_plan_list(spec: str) -> list[str]:
+    """Split a space- and/or comma-separated plan list, dropping repeats."""
+    plans = [p for p in re.split(r"[\s,]+", spec) if p]
+    return list(dict.fromkeys(plans))
+
+
+def resolve_plans(
+    harness: Harness,
+    spec: str,
+    *,
+    suite_url: str = SUITE_BASE_URL,
+    rp_public_url: str | None = None,
+    config_dir: Path = CONFIG_DIR,
+    manifest_path: Path = MANIFEST_PATH,
+) -> list[str]:
+    """Resolve and pre-check the plans one ``make conformance-test`` run drives.
+
+    An empty ``spec`` means the default: :data:`DEFAULT_PY_PLANS` for the
+    Python harness, every plan with a ``configs/<harness>-*.json`` for Go and
+    Rust. Every plan must resolve (:func:`resolve_harness_run`) and, on a
+    hosted suite, an OP-callback plan needs a public RP URL; all of it is
+    checked before the first plan runs.
+    """
+    plans = parse_plan_list(spec)
+    if not plans:
+        if harness is Harness.PY:
+            plans = list(DEFAULT_PY_PLANS)
+        else:
+            plans = discover_harness_plans(
+                harness, config_dir=config_dir, manifest_path=manifest_path
+            )
+            if not plans:
+                raise HarnessError(
+                    f"no {config_dir / f'{harness}-<plan>.json'} config exists"
+                )
+    if harness is Harness.PY:
+        known = harness_plans(manifest_path)
+        unknown = [p for p in plans if p not in known]
+        if unknown:
+            raise HarnessError(
+                f"unknown plan(s) {', '.join(unknown)}; the py harness runs "
+                f"{', '.join(known)} (fastapi-* plans: make conformance-test-fastapi)"
+            )
+    public_url = effective_rp_public_url(suite_url, rp_public_url)
+    for plan in plans:
+        resolve_harness_run(
+            harness,
+            plan,
+            hosted=not _is_local_suite(suite_url),
+            config_dir=config_dir,
+            manifest_path=manifest_path,
+        )
+        problem = rp_public_url_problem(plan, suite_url, public_url)
+        if problem:
+            raise HarnessError(problem)
+    return plans
+
+
 def resolve_harness_run(
     harness: Harness,
     plan: str,
@@ -1669,22 +1773,24 @@ def resolve_harness_run(
     hosted: bool = False,
     config_dir: Path = CONFIG_DIR,
     results_dir: Path = RESULTS_DIR,
+    manifest_path: Path = MANIFEST_PATH,
 ) -> HarnessRun:
     """Resolve the config, manifest key, RP URL and output paths for a run.
 
     The Python harness reads ``configs/<plan>.json``; the Go and Rust harnesses read
     ``configs/<harness>-<plan>.json``, which must carry the harness's
-    ``rp_url``. ``rp_url`` (the ``--rp-url`` flag) overrides the config.
+    ``rp_url``, for any plan in :func:`harness_plans`. ``rp_url`` (the
+    ``--rp-url`` flag) overrides the config.
     """
     if harness is Harness.PY:
         config_path = config_dir / f"{plan}.json"
         rp_log_subdir = Path(plan)
         default_output = None
     else:
-        if plan not in HARNESS_PLANS:
+        allowed = harness_plans(manifest_path)
+        if plan not in allowed:
             raise HarnessError(
-                f"the {harness} harness runs only {', '.join(HARNESS_PLANS)}, "
-                f"not {plan!r}"
+                f"the {harness} harness runs only {', '.join(allowed)}, not {plan!r}"
             )
         config_path = config_dir / f"{harness}-{plan}.json"
         rp_log_subdir = Path(harness, plan)
@@ -1726,7 +1832,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--plan",
-        required=True,
         choices=[
             "basic-rp",
             "config-rp",
@@ -1752,7 +1857,20 @@ def main() -> None:
             "fastapi-config-rp",
             "fastapi-form-post-basic-rp",
         ],
-        help="Test plan to run",
+        help="Test plan to run (required unless --resolve-plans)",
+    )
+    parser.add_argument(
+        "--resolve-plans",
+        metavar="PLANS",
+        default=None,
+        help=(
+            "Print the plans one `make conformance-test` run drives for "
+            "--harness, space-separated, and exit: PLANS is a space- or "
+            "comma-separated list, empty for the default (py: "
+            f"{' '.join(DEFAULT_PY_PLANS)}; go/rust: every plan with a "
+            "configs/<harness>-<plan>.json). Fails if a plan has no usable "
+            "config, or needs --rp-public-url on a hosted --suite-url."
+        ),
     )
     parser.add_argument(
         "--suite-url",
@@ -1766,8 +1884,7 @@ def main() -> None:
         default=Harness.PY,
         help=(
             "RP harness to drive (default: py). go/rust read "
-            "configs/<harness>-<plan>.json and run only "
-            f"{', '.join(HARNESS_PLANS)}."
+            "configs/<harness>-<plan>.json and run any plan but fastapi-*."
         ),
     )
     parser.add_argument(
@@ -1782,11 +1899,12 @@ def main() -> None:
         "--rp-public-url",
         default=os.environ.get("CONFORMANCE_RP_PUBLIC_URL", "").strip() or None,
         help=(
-            "Publicly reachable base URL of the RP harness, for plans whose OP "
-            "calls the RP server-to-server (dynamic-rp request_uri, the logout "
-            "plans' back-channel logout). Required for those plans on a hosted "
-            "suite; the harness must run with RP_INTERNAL_BASE_URL set to it "
-            "(env: CONFORMANCE_RP_PUBLIC_URL)."
+            "Publicly reachable base URL of the RP harness (any --harness), "
+            "for plans whose OP calls the RP server-to-server (dynamic-rp "
+            "request_uri, the logout plans' back-channel logout). Required for "
+            "those plans on a hosted suite; the harness must report it as its "
+            "/health op_facing_base_url (the Python harness: run it with "
+            "RP_INTERNAL_BASE_URL set to it) (env: CONFORMANCE_RP_PUBLIC_URL)."
         ),
     )
     parser.add_argument(
@@ -1855,6 +1973,22 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    if args.resolve_plans is not None:
+        try:
+            plans = resolve_plans(
+                args.harness,
+                args.resolve_plans,
+                suite_url=args.suite_url,
+                rp_public_url=args.rp_public_url,
+            )
+        except HarnessError as exc:
+            logger.error("%s", exc)
+            sys.exit(1)
+        print(" ".join(plans))
+        sys.exit(0)
+    if args.plan is None:
+        parser.error("--plan is required")
+
     # Token guard: require CONFORMANCE_TOKEN for non-local suites
     if not _is_local_suite(args.suite_url) and not env_token:
         logger.error(
@@ -1885,8 +2019,8 @@ def main() -> None:
         logger.error("%s", exc)
         sys.exit(1)
 
-    # Only the py harness runs the OP-callback plans (HARNESS_PLANS excludes
-    # them for go/rust), so these checks never touch a native harness run.
+    # Every harness runs the OP-callback plans; on a hosted suite each needs the
+    # harness's public URL, and the harness must hand the OP that same base.
     rp_public_url = effective_rp_public_url(args.suite_url, args.rp_public_url)
     if args.rp_public_url and rp_public_url is None:
         logger.warning("Ignoring --rp-public-url for a local suite")
