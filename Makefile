@@ -399,6 +399,59 @@ else
 	@echo "Conformance tests complete. Results in conformance/results/"
 endif
 
+# Native (Go/Rust) RP harnesses. Each harness adds only its own files: the
+# overlay conformance/docker-compose.$(HARNESS).yml (service rp-$(HARNESS)) and
+# conformance/configs/$(HARNESS)-<plan>.json (which carry the harness's rp_url).
+# See conformance/adding-conformance-profiles.md, "Native RP harnesses".
+NATIVE_PLANS := basic-rp config-rp form-post-basic-rp
+NATIVE_COMPOSE = docker compose -f conformance/docker-compose.yml -f conformance/docker-compose.$(HARNESS).yml
+
+.PHONY: conformance-test-native
+conformance-test-native: ## Run a native RP harness (HARNESS=go|rust; HOSTED=1 for hosted suite)
+	@case "$(HARNESS)" in go|rust) ;; *) echo "HARNESS must be go or rust (got '$(HARNESS)')"; exit 1;; esac
+	@test -f conformance/docker-compose.$(HARNESS).yml || { echo "conformance/docker-compose.$(HARNESS).yml does not exist"; exit 1; }
+	@# The overlay bind-mounts this dir as the harness's RP_LOG_DIR; create it as
+	@# the invoking user so docker does not create it root-owned.
+	mkdir -p conformance/results/hosted/rp-logs/$(HARNESS)
+ifdef HOSTED
+	$(NATIVE_COMPOSE) up -d --build --no-deps rp-$(HARNESS)
+else
+	$(NATIVE_COMPOSE) up -d --build --wait nginx rp-$(HARNESS)
+	@echo "Waiting for conformance suite at https://localhost.emobix.co.uk:8443..."
+	@for i in $$(seq 1 60); do \
+	  HTTP_CODE=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost.emobix.co.uk:8443/ || echo 000); \
+	  if [ "$$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$$HTTP_CODE" -lt 400 ] 2>/dev/null; then \
+	    echo "Conformance suite is ready (HTTP $$HTTP_CODE)"; \
+	    break; \
+	  fi; \
+	  if [ "$$i" -eq 60 ]; then \
+	    echo "Timed out waiting for conformance suite"; \
+	    $(NATIVE_COMPOSE) logs server; \
+	    exit 1; \
+	  fi; \
+	  sleep 5; \
+	done
+endif
+	@RP_URL=$$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["rp_url"].rstrip("/"))' conformance/configs/$(HARNESS)-basic-rp.json) || exit 1; \
+	echo "Waiting for $(HARNESS) RP harness at $$RP_URL/health..."; \
+	for i in $$(seq 1 60); do \
+	  if curl -sf "$$RP_URL/health" > /dev/null 2>&1; then \
+	    echo "$(HARNESS) RP harness is ready"; \
+	    break; \
+	  fi; \
+	  if [ "$$i" -eq 60 ]; then \
+	    echo "Timed out waiting for $(HARNESS) RP harness"; \
+	    $(NATIVE_COMPOSE) logs rp-$(HARNESS); \
+	    exit 1; \
+	  fi; \
+	  sleep 2; \
+	done
+	@status=0; for plan in $(NATIVE_PLANS); do \
+	  $(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --plan $$plan \
+	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)" --export-zip conformance/results/hosted/$(HARNESS)-$$plan-export.zip --rp-logs-zip conformance/results/hosted/$(HARNESS)-$$plan-rp-logs.zip --publish "$(or $(PUBLISH),none)") \
+	    --verbose || status=1; \
+	done; exit $$status
+
 .PHONY: conformance-test-fastapi
 conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package regression against the local suite
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-basic-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-basic-rp-latest.json --verbose
