@@ -216,17 +216,41 @@ class TestFindKeyByKid:
         )
 
     @pytest.mark.parametrize(
-        ("alg", "decoy_crv"), [("Ed25519", "Ed448"), ("Ed448", "Ed25519")]
+        ("alg", "kty", "crv"),
+        [
+            ("ES256", "EC", "P-256"),
+            ("ES384", "EC", "P-384"),
+            ("ES512", "EC", "P-521"),
+            ("ES256K", "EC", "secp256k1"),
+            ("Ed25519", "OKP", "Ed25519"),
+            ("Ed448", "OKP", "Ed448"),
+        ],
     )
-    def test_find_key_by_kid_shared_kid_skips_okp_key_on_other_curve(
-        self, alg, decoy_crv
-    ):
-        decoy = JsonWebKey(kty="OKP", kid="shared", use="sig", crv=decoy_crv, x="a")
-        fitting = JsonWebKey(kty="OKP", kid="shared", use="sig", crv=alg, x="x")
+    def test_find_key_by_kid_shared_kid_picks_key_on_alg_curve(self, alg, kty, crv):
+        curves = {
+            "EC": ["P-256", "P-384", "P-521", "secp256k1"],
+            "OKP": ["Ed25519", "Ed448"],
+        }
+        y = "b" if kty == "EC" else None
+        decoys = [
+            JsonWebKey(kty=kty, kid="shared", use="sig", crv=c, x="a", y=y)
+            for c in curves[kty]
+            if c != crv
+        ]
+        fitting = JsonWebKey(kty=kty, kid="shared", use="sig", crv=crv, x="x", y=y)
 
-        assert find_key_by_kid("shared", [decoy, fitting], jwt_alg=alg) == (
+        assert find_key_by_kid("shared", [*decoys, fitting], jwt_alg=alg) == (
             fitting.as_dict(),
             alg,
+        )
+
+    def test_find_key_by_kid_shared_kid_eddsa_names_no_curve(self):
+        ed448 = JsonWebKey(kty="OKP", kid="shared", use="sig", crv="Ed448", x="a")
+        ed25519 = JsonWebKey(kty="OKP", kid="shared", use="sig", crv="Ed25519", x="x")
+
+        assert find_key_by_kid("shared", [ed448, ed25519], jwt_alg="EdDSA") == (
+            ed448.as_dict(),
+            "EdDSA",
         )
 
     def test_find_key_by_kid_shared_kid_non_string_alg_is_rejected(self):

@@ -346,16 +346,22 @@ def _no_kid_candidates(
     return signing_keys
 
 
-# The curve each ECDSA or fully specified EdDSA algorithm is defined on
-# (RFC 7518 §3.4, RFC 8812 §3.2, RFC 9864). Plain "EdDSA" names no curve.
-_ALG_TO_CRV: dict[str, str] = {
-    "ES256": "P-256",
-    "ES384": "P-384",
-    "ES512": "P-521",
-    "ES256K": "secp256k1",
-    "Ed25519": "Ed25519",
-    "Ed448": "Ed448",
-}
+def _alg_crv(alg: str) -> str | None:
+    """The curve an ECDSA or fully specified EdDSA ``alg`` is defined on
+    (RFC 7518 §3.4, RFC 8812 §3.2, RFC 9864). Plain ``EdDSA`` names no curve."""
+    match alg:
+        case "ES256":
+            return "P-256"
+        case "ES384":
+            return "P-384"
+        case "ES512":
+            return "P-521"
+        case "ES256K":
+            return "secp256k1"
+        case "Ed25519" | "Ed448":
+            return alg
+        case _:
+            return None
 
 
 def _first_usable_kid_match(
@@ -365,7 +371,7 @@ def _first_usable_kid_match(
     """Pick the key among those sharing the token's ``kid``.
 
     RFC 7517 §4.5 allows keys of different ``kty`` to share a ``kid``, so the
-    first key whose ``kty``, ``alg`` and (for ECDSA) ``crv`` fit the header
+    first key whose ``kty``, ``alg`` and (for ECDSA/Ed25519/Ed448) ``crv`` fit the header
     ``alg`` is used. When
     none fits, the first match is returned so the consistency check reports
     why it cannot verify the token.
@@ -373,7 +379,7 @@ def _first_usable_kid_match(
     _reject_non_string_alg(jwt_alg)
     if jwt_alg:
         expected_kty = _ALG_TO_KTY.get(jwt_alg)
-        expected_crv = _ALG_TO_CRV.get(jwt_alg)
+        expected_crv = _alg_crv(jwt_alg)
         for key in matches:
             if (
                 expected_kty in (None, key.kty)
