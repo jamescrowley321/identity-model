@@ -1,0 +1,27 @@
+# Overlay on docker-compose.yml: the rs-identity-model RP harness, driven by
+# `make conformance-test HARNESS=rust` through the basic-rp, config-rp and
+# form-post-basic-rp plans. See adding-conformance-profiles.md, "Adding a harness".
+services:
+  rp-rust:
+    build:
+      context: ..
+      dockerfile: conformance/Dockerfile.rust
+    ports:
+      - "8891:8891"
+    environment:
+      - RP_HOST=0.0.0.0
+      - RP_PORT=8891
+      - RP_BASE_URL=http://localhost:8891
+      - RP_LOG_DIR=/rp-logs
+    volumes:
+      # The local suite's self-signed certificate, pinned by the harness when
+      # present (a hosted run starts this service with --no-deps).
+      - certs:/certs:ro
+      - ./results/hosted/rp-logs/rust:/rp-logs
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+      server:
+        condition: service_healthy
