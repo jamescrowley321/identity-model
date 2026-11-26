@@ -30,13 +30,12 @@ from fastapi.testclient import TestClient
 
 from py_identity_model import (
     DiscoveryErrorKind,
+    InvalidIssuerException,
     JwksResponse,
+    NetworkException,
     UserInfoErrorKind,
     UserInfoResponse,
 )
-
-# Importing the real exception class so the harness's `except` clause matches.
-from py_identity_model.exceptions import TokenValidationException
 
 
 XSS_PAYLOAD = "<script>alert(1)</script>"
@@ -127,7 +126,8 @@ class TestIdTokenValidationFailedEscaping:
         _clear_state()
 
     def test_id_token_validation_failure_escapes_script_payload(self) -> None:
-        _make_session(state="state-idtok")
+        session = _make_session(state="state-idtok")
+        session.result["test_id"] = "idtok"
 
         with (
             patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
@@ -144,7 +144,7 @@ class TestIdTokenValidationFailedEscaping:
             patch.object(
                 harness_app,
                 "validate_id_token",
-                side_effect=TokenValidationException(XSS_PAYLOAD),
+                side_effect=InvalidIssuerException(XSS_PAYLOAD),
             ),
         ):
             client = TestClient(harness_app.app)
@@ -157,6 +157,54 @@ class TestIdTokenValidationFailedEscaping:
         assert XSS_PAYLOAD not in body
         assert XSS_ESCAPED in body
         assert "<h1>ID Token Validation Failed</h1>" in body
+        assert client.get("/results/idtok").json()["error"] == (
+            f"invalid_issuer: {XSS_PAYLOAD}"
+        )
+
+
+class TestIdTokenNetworkFailureRecording:
+    """A network failure during ID-token validation must be recorded as an
+    unclassified rejection, not crash the callback (#1131).
+
+    ``validate_id_token`` can raise ``NetworkException`` subclasses (a
+    discovery or JWKS fetch failure) which carry no typed validation kind;
+    the harness records them with the unclassified reason.
+    """
+
+    def teardown_method(self) -> None:
+        _clear_state()
+
+    def test_network_failure_is_recorded_unclassified(self) -> None:
+        session = _make_session(state="state-net")
+        session.result["test_id"] = "net"
+
+        with (
+            patch.object(harness_app, "get_discovery_document", return_value=_Disco()),
+            patch.object(
+                harness_app,
+                "discovery_document_url",
+                return_value="https://op.example.com/.well-known/openid-configuration",
+            ),
+            patch.object(
+                harness_app,
+                "request_authorization_code_token",
+                return_value=_TokenRespOk(),
+            ),
+            patch.object(
+                harness_app,
+                "validate_id_token",
+                side_effect=NetworkException("JWKS fetch failed"),
+            ),
+        ):
+            client = TestClient(harness_app.app)
+            response = client.get(
+                "/callback", params={"state": "state-net", "code": "abc"}
+            )
+
+        assert response.status_code == HTTP_BAD_REQUEST
+        assert client.get("/results/net").json()["error"] == (
+            "id_token_validation: JWKS fetch failed"
+        )
 
 
 class TestUserInfoValidationFailedEscaping:

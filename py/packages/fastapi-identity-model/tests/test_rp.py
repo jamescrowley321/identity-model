@@ -24,7 +24,9 @@ from fastapi_identity_model import (
 from py_identity_model import (
     AuthorizeCallbackException,
     ConfigurationException,
+    DiscoveryErrorKind,
     DiscoveryException,
+    InvalidIssuerException,
     JwksException,
     NetworkException,
     TokenValidationException,
@@ -794,3 +796,51 @@ async def test_configuration_error_during_id_token_validation_is_500(monkeypatch
         state, _ = await _login(client)
         resp = await client.get(f"/auth/callback?code=abc&state={state}")
     assert resp.status_code == 500
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_router_discovery_diagnostics_are_opt_in_and_sanitized(
+    monkeypatch, enabled
+):
+    secret = "https://private.example/issuer"
+    _patch(
+        monkeypatch,
+        disco=SimpleNamespace(
+            is_successful=False,
+            error=secret,
+            error_kind=DiscoveryErrorKind.ISSUER_MISMATCH,
+        ),
+    )
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test-secret")
+    options = {"expose_error_kind": True} if enabled else {}
+    app.include_router(build_oidc_router(SETTINGS, **options), prefix="/auth")
+    async with _client(app) as client:
+        response = await client.get("/auth/login")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Identity provider discovery failed"}
+    assert response.headers.get("x-identity-model-error-kind") == (
+        "issuer_mismatch" if enabled else None
+    )
+    assert secret not in str(response.headers)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_router_callback_diagnostics_do_not_return_validation_details(
+    monkeypatch, enabled
+):
+    _patch(monkeypatch)
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="test-secret")
+    options = {"expose_error_kind": True} if enabled else {}
+    app.include_router(build_oidc_router(SETTINGS, **options), prefix="/auth")
+    async with _client(app) as client:
+        state, _ = await _login(client)
+        rp.validate_id_token.side_effect = InvalidIssuerException("private issuer")
+        response = await client.get(f"/auth/callback?code=abc&state={state}")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "ID token validation failed"}
+    assert response.headers.get("x-identity-model-error-kind") == (
+        "invalid_issuer" if enabled else None
+    )
+    assert "private issuer" not in str(response.headers)

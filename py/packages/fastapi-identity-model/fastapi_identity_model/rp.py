@@ -44,9 +44,12 @@ from starlette.responses import RedirectResponse
 from py_identity_model import (
     AuthorizationScheme,
     ConfigurationException,
+    DiscoveryErrorKind,
     IdTokenNonceError,
     NetworkException,
     PyIdentityModelException,
+    TokenValidationErrorKind,
+    TokenValidationException,
 )
 from py_identity_model.aio import (
     AuthorizationCodeTokenRequest,
@@ -153,8 +156,16 @@ def _expected_issuer(discovery_url: str) -> str:
     return base.rstrip("/")
 
 
+def _error_kind_headers(
+    enabled: bool, kind: DiscoveryErrorKind | TokenValidationErrorKind | None
+) -> dict[str, str] | None:
+    if enabled and isinstance(kind, (DiscoveryErrorKind, TokenValidationErrorKind)):
+        return {"X-Identity-Model-Error-Kind": kind.value}
+    return None
+
+
 async def _discover(
-    settings: OIDCSettings, http_client: AsyncHTTPClient | None
+    settings: OIDCSettings, http_client: AsyncHTTPClient | None, expose_error_kind: bool
 ) -> DiscoveryDocumentResponse:
     disco = await get_discovery_document(
         DiscoveryDocumentRequest(address=settings.discovery_url),
@@ -168,6 +179,9 @@ async def _discover(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Identity provider discovery failed",
+            headers=_error_kind_headers(
+                expose_error_kind, disco.error_kind if expose_error_kind else None
+            ),
         )
     # OIDC Discovery 1.0 §4.3: the document's issuer MUST match the URL the
     # document was retrieved from (issuer mix-up defense). The library only
@@ -184,6 +198,9 @@ async def _discover(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Identity provider configuration error",
+            headers=_error_kind_headers(
+                expose_error_kind, DiscoveryErrorKind.ISSUER_MISMATCH
+            ),
         )
     return disco
 
@@ -202,9 +219,10 @@ async def _login(
     settings: OIDCSettings,
     session_key: str,
     http_client: AsyncHTTPClient | None,
+    expose_error_kind: bool,
 ) -> RedirectResponse:
     _require_session(request)
-    disco = await _discover(settings, http_client)
+    disco = await _discover(settings, http_client, expose_error_kind)
     authorization_endpoint = _require_endpoint(
         disco.authorization_endpoint, "authorization_endpoint"
     )
@@ -258,12 +276,13 @@ async def _exchange_code(
     return tok.token
 
 
-async def _validate_id_token(
+async def _validate_id_token(  # noqa: PLR0913  # includes router diagnostics option
     settings: OIDCSettings,
     disco: DiscoveryDocumentResponse,
     id_token: str,
     expected_nonce: str,
     http_client: AsyncHTTPClient | None,
+    expose_error_kind: bool,
 ) -> dict:
     """Validate the ID token (signature/iss/aud/exp/required claims) and bind the nonce."""
     # Guard the issuer explicitly: a discovery doc missing ``issuer`` would
@@ -293,14 +312,22 @@ async def _validate_id_token(
     except PyIdentityModelException as exc:
         if not isinstance(exc, NetworkException):
             logger.info("ID token validation failed: %s", exc)
+            headers = _error_kind_headers(
+                expose_error_kind,
+                exc.validation_kind
+                if isinstance(exc, TokenValidationException)
+                else None,
+            )
             if isinstance(exc, IdTokenNonceError):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Nonce mismatch",
+                    headers=headers,
                 ) from exc
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="ID token validation failed",
+                headers=headers,
             ) from exc
         logger.warning("Provider unreachable during ID token validation: %s", exc)
         raise HTTPException(
@@ -376,6 +403,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     store_tokens: bool,
     fetch_userinfo: bool,
     http_client: AsyncHTTPClient | None,
+    expose_error_kind: bool,
 ) -> RedirectResponse:
     _require_session(request)
     # Pop the flow state so it is single-use: a failed or replayed callback
@@ -415,7 +443,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             detail="Authorization response missing code",
         )
 
-    disco = await _discover(settings, http_client)
+    disco = await _discover(settings, http_client, expose_error_kind)
     # RFC 9207 §2.4: a present ``iss`` must equal the metadata issuer, and a
     # provider that advertises the parameter must send it.
     issuer_check = validate_authorize_callback_issuer(
@@ -446,7 +474,7 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
             detail="Provider did not return an ID token",
         )
     claims = await _validate_id_token(
-        settings, disco, id_token, flow["nonce"], http_client
+        settings, disco, id_token, flow["nonce"], http_client, expose_error_kind
     )
 
     userinfo: dict = {}
@@ -479,13 +507,14 @@ async def _callback(  # noqa: PLR0913  # request-scoped args + the router's buil
     )
 
 
-def build_oidc_router(
+def build_oidc_router(  # noqa: PLR0913  # independent router options
     settings: OIDCSettings,
     *,
     session_key: str = "oidc",
     store_tokens: bool = False,
     fetch_userinfo: bool = True,
     http_client: AsyncHTTPClient | None = None,
+    expose_error_kind: bool = False,
 ) -> APIRouter:
     """Build an OIDC relying-party router.
 
@@ -501,6 +530,9 @@ def build_oidc_router(
         http_client: Managed HTTP client for every provider call (discovery,
             token, JWKS, UserInfo), built from your ``HTTPConfig``. ``None`` uses
             the library default client.
+        expose_error_kind: Opt in to an X-Identity-Model-Error-Kind response
+            header with only the discovery or token validation category.
+            Enable only in controlled diagnostics environments.
 
     Returns:
         An ``APIRouter`` with ``/login``, ``/callback`` and ``/logout`` routes.
@@ -514,7 +546,9 @@ def build_oidc_router(
 
     @router.get("/login")
     async def login(request: Request) -> RedirectResponse:
-        return await _login(request, settings, session_key, http_client)
+        return await _login(
+            request, settings, session_key, http_client, expose_error_kind
+        )
 
     @router.get("/callback")
     async def callback(request: Request) -> RedirectResponse:
@@ -526,6 +560,7 @@ def build_oidc_router(
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
             http_client=http_client,
+            expose_error_kind=expose_error_kind,
         )
 
     @router.post("/callback")
@@ -548,6 +583,7 @@ def build_oidc_router(
             store_tokens=store_tokens,
             fetch_userinfo=fetch_userinfo,
             http_client=http_client,
+            expose_error_kind=expose_error_kind,
         )
 
     @router.post("/logout")

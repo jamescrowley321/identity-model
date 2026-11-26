@@ -1,62 +1,62 @@
 {
   "plan": "backchannel-logout-rp",
-  "plan_id": "j5KESngOGt6HA",
+  "plan_id": "KyQlmZnAsgjr9",
   "suite_url": "https://localhost.emobix.co.uk:8443",
   "results": [
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout",
       "status": "PASSED",
-      "test_id": "m4OP6GvDxAeRRt5",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=m4OP6GvDxAeRRt5",
+      "test_id": "kKyvNvrbFcxZmqV",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=kKyvNvrbFcxZmqV",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-alg-none",
       "status": "PASSED",
-      "test_id": "4DhLhJBcLaIwfUX",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=4DhLhJBcLaIwfUX",
+      "test_id": "ywyOnudPof6GWAO",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=ywyOnudPof6GWAO",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-no-event",
       "status": "PASSED",
-      "test_id": "xxRjswVzZzHSjTJ",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=xxRjswVzZzHSjTJ",
+      "test_id": "Oa4fx6iyJFVYNhX",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=Oa4fx6iyJFVYNhX",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-with-nonce",
       "status": "PASSED",
-      "test_id": "HdATbEUBoDbUP8V",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=HdATbEUBoDbUP8V",
+      "test_id": "uQSuaZrAJz881ho",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=uQSuaZrAJz881ho",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-alg",
       "status": "PASSED",
-      "test_id": "sNESPvjjY3xKzoK",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=sNESPvjjY3xKzoK",
+      "test_id": "spMxVYzJgvGFHMb",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=spMxVYzJgvGFHMb",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-aud",
       "status": "PASSED",
-      "test_id": "JGJPCl6SHZcEkj5",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=JGJPCl6SHZcEkj5",
+      "test_id": "KBWBTLbvycgmriN",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=KBWBTLbvycgmriN",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-event",
       "status": "PASSED",
-      "test_id": "MAvS83hCKs4AE7f",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=MAvS83hCKs4AE7f",
+      "test_id": "QmlhxId5LYgwiYT",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=QmlhxId5LYgwiYT",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-rp-backchannel-rpinitlogout-wrong-iss",
       "status": "PASSED",
-      "test_id": "lIwuBlL1XJ5jIHe",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=lIwuBlL1XJ5jIHe",
+      "test_id": "f1iyHWSAHSGAl8T",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=f1iyHWSAHSGAl8T",
       "detail": ""
     }
   ],

@@ -35,14 +35,36 @@ class ValidationException(PyIdentityModelException):
     """Raised when validation fails."""
 
 
+class TokenValidationErrorKind(Enum):
+    """Stable categories for JWT and ID Token validation failures."""
+
+    UNCLASSIFIED = "id_token_validation"
+    ISSUER = "invalid_issuer"
+    AUDIENCE = "invalid_audience"
+    EXPIRATION = "invalid_expiration"
+    ISSUED_AT = "invalid_issued_at"
+    SUBJECT = "invalid_subject"
+    SIGNATURE = "invalid_signature"
+    KEY_SELECTION = "key_selection"
+    ALGORITHM = "invalid_algorithm"
+    ALGORITHM_NONE = "alg_none"
+    NONCE = "nonce_mismatch"
+    AT_HASH = "invalid_at_hash"
+    C_HASH = "invalid_c_hash"
+
+
 class TokenValidationException(ValidationException):
     """Raised when token validation fails."""
+
+    _default_validation_kind = TokenValidationErrorKind.UNCLASSIFIED
 
     def __init__(
         self,
         message: str,
         token_part: str | None = None,
         details: dict | None = None,
+        *,
+        validation_kind: TokenValidationErrorKind | None = None,
     ):
         """
         Initialize a TokenValidationException.
@@ -52,13 +74,17 @@ class TokenValidationException(ValidationException):
             token_part: The part of the token that failed validation
                        ('header', 'payload', or 'signature').
             details: Optional dictionary containing additional error context.
+            validation_kind: Why token validation rejected the token.
         """
         super().__init__(message, details)
         self.token_part = token_part
+        self.validation_kind = validation_kind or self._default_validation_kind
 
 
 class SignatureVerificationException(TokenValidationException):
     """Raised when token signature verification fails."""
+
+    _default_validation_kind = TokenValidationErrorKind.SIGNATURE
 
     def __init__(self, message: str, details: dict | None = None):
         super().__init__(message, token_part="signature", details=details)
@@ -67,6 +93,8 @@ class SignatureVerificationException(TokenValidationException):
 class TokenExpiredException(TokenValidationException):
     """Raised when token has expired."""
 
+    _default_validation_kind = TokenValidationErrorKind.EXPIRATION
+
     def __init__(self, message: str, details: dict | None = None):
         super().__init__(message, token_part="payload", details=details)
 
@@ -74,12 +102,16 @@ class TokenExpiredException(TokenValidationException):
 class InvalidAudienceException(TokenValidationException):
     """Raised when audience validation fails."""
 
+    _default_validation_kind = TokenValidationErrorKind.AUDIENCE
+
     def __init__(self, message: str, details: dict | None = None):
         super().__init__(message, token_part="payload", details=details)
 
 
 class InvalidIssuerException(TokenValidationException):
     """Raised when issuer validation fails."""
+
+    _default_validation_kind = TokenValidationErrorKind.ISSUER
 
     def __init__(self, message: str, details: dict | None = None):
         super().__init__(message, token_part="payload", details=details)
@@ -95,6 +127,8 @@ class KeyNotFoundException(TokenValidationException):
     holds no signing key. ``details["kid"]`` is the header ``kid`` (``None``
     when absent) and ``details["available_kids"]`` the signing keys' ids.
     """
+
+    _default_validation_kind = TokenValidationErrorKind.KEY_SELECTION
 
     def __init__(self, message: str, kid: str | None, available_kids: list):
         super().__init__(
@@ -118,6 +152,8 @@ class AmbiguousKeyException(TokenValidationException):
     ``details["key_count"]`` their number.
     """
 
+    _default_validation_kind = TokenValidationErrorKind.KEY_SELECTION
+
     def __init__(self, message: str, available_kids: list, key_count: int):
         super().__init__(
             message,
@@ -136,6 +172,8 @@ class KeyAlgorithmMismatchException(TokenValidationException):
     ``jwt_alg``.
     """
 
+    _default_validation_kind = TokenValidationErrorKind.KEY_SELECTION
+
 
 class WeakKeyException(TokenValidationException):
     """Raised when the key chosen to verify a token is below the strength floor.
@@ -147,6 +185,8 @@ class WeakKeyException(TokenValidationException):
     refresh. ``details`` holds the key's ``kid`` (``None`` when absent),
     ``kty``, its size in ``bits`` and the ``min_bits`` it needed.
     """
+
+    _default_validation_kind = TokenValidationErrorKind.KEY_SELECTION
 
     def __init__(
         self, message: str, kid: str | None, kty: str, bits: int, min_bits: int
@@ -194,6 +234,8 @@ class UntrustedAudienceException(IdTokenValidationException):
     rejected values.
     """
 
+    _default_validation_kind = TokenValidationErrorKind.AUDIENCE
+
     def __init__(self, message: str, untrusted_audiences: list):
         super().__init__(
             message,
@@ -223,6 +265,11 @@ class IdTokenMissingClaimError(IdTokenValidationException):
             f"ID token missing required '{claim.value}' claim",
             token_part="payload",
             details={"claim": claim.value},
+            validation_kind=(
+                TokenValidationErrorKind.EXPIRATION
+                if claim is IdTokenRequiredClaim.EXP
+                else TokenValidationErrorKind.ISSUED_AT
+            ),
         )
 
 
@@ -232,6 +279,8 @@ class IdTokenNonceError(IdTokenValidationException):
     OpenID Connect Core 1.0 §2 and §3.1.3.7 step 11: the claim is absent or
     differs from the nonce sent, or is present when none was sent.
     """
+
+    _default_validation_kind = TokenValidationErrorKind.NONCE
 
     def __init__(self, message: str) -> None:
         super().__init__(message, token_part="payload")
@@ -754,6 +803,7 @@ __all__ = [
     "SuccessfulResponseAccessError",
     "TokenExpiredException",
     "TokenRequestException",
+    "TokenValidationErrorKind",
     "TokenValidationException",
     "UntrustedAudienceException",
     "UserInfoException",

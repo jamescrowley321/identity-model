@@ -9,17 +9,17 @@ import httpx
 import pytest
 import respx
 from run_tests import (
-    drive_rp_register,
     MANIFEST_PATH,
     Expectation,
     ManifestError,
     ModuleExpectation,
     RPEvidence,
+    _suite_status,
     assess_module,
     check_plan_modules,
     drive_rp_authorize,
+    drive_rp_register,
     load_manifest,
-    _suite_status,
 )
 
 
@@ -332,23 +332,36 @@ def test_harness_records_unknown_state_against_last_flow(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("status_code", "detail", "recorded"),
+    ("status_code", "detail", "kind", "reason"),
     [
+        (502, "Identity provider discovery failed", None, "discovery_failed"),
         (
             502,
             "Identity provider discovery failed",
-            "discovery_failed: Identity provider discovery failed",
+            "network_error",
+            "discovery_failed",
         ),
-        (400, "something new", "router_rejected: something new"),
-        (500, "Internal Server Error", "router_crashed: Internal Server Error"),
+        (
+            502,
+            "Identity provider discovery failed",
+            "issuer_mismatch",
+            "issuer_mismatch",
+        ),
+        (401, "ID token validation failed", "invalid_issuer", "invalid_issuer"),
+        (401, "ID token validation failed", "unknown_kind", "id_token_validation"),
+        (400, "something new", None, "router_rejected"),
+        (500, "Internal Server Error", "invalid_issuer", "router_crashed"),
     ],
 )
-def test_fastapi_harness_classifies_router_rejections(status_code, detail, recorded):
+def test_fastapi_harness_classifies_router_rejections(
+    status_code, detail, kind, reason
+):
     import app_fastapi
 
-    response = httpx.Response(status_code, json={"detail": detail})
+    headers = {"X-Identity-Model-Error-Kind": kind} if kind else {}
+    response = httpx.Response(status_code, json={"detail": detail}, headers=headers)
 
-    assert app_fastapi._router_rejection(response) == recorded
+    assert app_fastapi._router_rejection(response) == f"{reason}: {detail}"
 
 
 def test_earlier_rejected_flow_fails_accept_module():
@@ -500,30 +513,6 @@ def test_other_discovery_failure_is_discovery_failed(harness):
     )
 
     assert harness._discovery_failure(disco) == "discovery_failed: timeout"
-
-
-def test_alg_none_id_token_rejection_has_its_own_class(harness):
-    from py_identity_model.exceptions import TokenValidationException
-
-    exc = TokenValidationException("no", token_part="header", details={"alg": "none"})
-
-    assert harness._id_token_rejection_class(exc) == "alg_none"
-
-
-def test_nonce_id_token_rejection_has_its_own_class(harness):
-    from py_identity_model.exceptions import IdTokenNonceError
-
-    exc = IdTokenNonceError("ID token 'nonce' claim does not match the expected value")
-
-    assert harness._id_token_rejection_class(exc) == "nonce_mismatch"
-
-
-def test_other_id_token_rejection_is_id_token_validation(harness):
-    from py_identity_model.exceptions import TokenValidationException
-
-    exc = TokenValidationException("Invalid issuer")
-
-    assert harness._id_token_rejection_class(exc) == "id_token_validation"
 
 
 @pytest.mark.parametrize(
@@ -775,3 +764,27 @@ def test_manifest_that_is_not_an_object_is_a_manifest_error(tmp_path):
         load_manifest("plan", path)
 
     assert str(excinfo.value) == f"manifest {path} must be an object"
+
+
+@pytest.mark.parametrize(
+    ("plan", "module", "expected_reason"),
+    [
+        ("basic-rp", "oidcc-client-test-invalid-iss", "invalid_issuer"),
+        ("fastapi-basic-rp", "oidcc-client-test-invalid-iss", "invalid_issuer"),
+        (
+            "fastapi-config-rp",
+            "oidcc-client-test-discovery-issuer-mismatch",
+            "issuer_mismatch",
+        ),
+        (
+            "fapi2-rp",
+            "fapi2-security-profile-final-client-test-invalid-alternate-alg",
+            "invalid_algorithm",
+        ),
+    ],
+)
+def test_typed_manifest_rejects_wrong_failure(plan, module, expected_reason):
+    expectation = load_manifest(plan)[module]
+    for reason, status in [(expected_reason, "PASSED"), ("key_selection", "FAILED")]:
+        evidence = RPEvidence({"status": "error", "error": f"{reason}: rejected"})
+        assert assess_module("PASSED", expectation, evidence)[0] == status

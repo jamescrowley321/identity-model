@@ -49,7 +49,11 @@ import httpx
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import OIDCSettings, build_oidc_router
-from py_identity_model import discovery_document_url
+from py_identity_model import (
+    DiscoveryErrorKind,
+    TokenValidationErrorKind,
+    discovery_document_url,
+)
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
@@ -135,6 +139,7 @@ _ROUTER_REASONS = {
     "No active login flow in session": "missing_flow",
     "Malformed authorization response": "callback_parse",
 }
+_TOKEN_REASONS = frozenset(kind.value for kind in TokenValidationErrorKind)
 # The router's one formatted detail: "Provider discovery is missing '<name>'".
 _ROUTER_MISSING_ENDPOINT_PREFIX = "Provider discovery is missing "
 
@@ -152,6 +157,14 @@ def _router_rejection(resp: httpx.Response) -> str:
     detail = _error_detail(resp)
     if resp.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
         return f"{ROUTER_CRASH_REASON}: {detail}"
+    kind = resp.headers.get("X-Identity-Model-Error-Kind")
+    if resp.status_code == httpx.codes.UNAUTHORIZED and kind in _TOKEN_REASONS:
+        return f"{kind}: {detail}"
+    if (
+        resp.status_code == httpx.codes.BAD_GATEWAY
+        and kind == DiscoveryErrorKind.ISSUER_MISMATCH.value
+    ):
+        return f"{kind}: {detail}"
     if detail.startswith(_ROUTER_MISSING_ENDPOINT_PREFIX):
         return f"missing_endpoint: {detail}"
     return f"{_ROUTER_REASONS.get(detail, 'router_rejected')}: {detail}"
@@ -191,7 +204,12 @@ def _build_test_app(settings: OIDCSettings, *, fetch_userinfo: bool = True) -> F
     test_app = FastAPI()
     test_app.add_middleware(SessionMiddleware, secret_key=secrets.token_urlsafe(32))
     test_app.include_router(
-        build_oidc_router(settings, store_tokens=True, fetch_userinfo=fetch_userinfo)
+        build_oidc_router(
+            settings,
+            store_tokens=True,
+            fetch_userinfo=fetch_userinfo,
+            expose_error_kind=True,
+        )
     )
 
     @test_app.get("/session")
