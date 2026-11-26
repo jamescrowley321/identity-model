@@ -16,7 +16,7 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/discovery"
 )
 
-// fixture reads a shared conformance fixture from spec/test-fixtures/revocation.
+// fixture reads a shared spec fixture from spec/test-fixtures/revocation.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	// test file lives at go/pkg/revocation; fixtures at <repo>/spec/test-fixtures.

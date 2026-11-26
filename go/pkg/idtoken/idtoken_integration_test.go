@@ -143,7 +143,7 @@ func decodeUnverifiedClaims(t *testing.T, idToken string) map[string]any {
 // carry an at_hash (OPs emit it only for authorization-endpoint responses), so
 // at_hash is asserted only when the OP actually mints one — that leg guards
 // itself and documents the reason. at_hash coverage otherwise lives in the
-// conformance vectors.
+// spec vectors.
 func TestIntegration_ValidateIDToken_BaseProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

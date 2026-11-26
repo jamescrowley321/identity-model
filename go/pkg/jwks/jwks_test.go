@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// fixture reads a shared conformance fixture from spec/test-fixtures/jwks.
+// fixture reads a shared spec fixture from spec/test-fixtures/jwks.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	// test file lives at go/pkg/jwks; fixtures at <repo>/spec/test-fixtures.

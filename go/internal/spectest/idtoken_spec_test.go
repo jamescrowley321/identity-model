@@ -1,4 +1,4 @@
-package conformance
+package spectest
 
 import (
 	"errors"
@@ -9,12 +9,12 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/idtoken"
 )
 
-// TestIDTokenConformance drives every vector in id-token.json through the pure,
+// TestIDTokenSpec drives every vector in id-token.json through the pure,
 // network-free idtoken.ValidateClaims and asserts the accept/reject outcome and
 // the canonical reason. It is the Go leg of the cross-language ID-Token profile
 // parity: it MUST agree with the Python reference runner
-// (py/src/tests/unit/test_id_token_conformance.py) on all vectors.
-func TestIDTokenConformance(t *testing.T) {
+// (py/src/tests/unit/test_id_token_internal.py) on all vectors.
+func TestIDTokenSpec(t *testing.T) {
 	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
 		t.Fatalf("load id-token capability: %v", err)

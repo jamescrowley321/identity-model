@@ -12,7 +12,7 @@
 //	}
 //	fmt.Println(cfg.TokenEndpoint)
 //
-// Behaviour is governed by the cross-language conformance contract in
+// Behaviour is governed by the cross-language spec-vector contract in
 // spec/vectors/discovery.json (test IDs DISC-001..DISC-010) and the
 // capability definitions in spec/capabilities.md:
 //

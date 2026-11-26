@@ -18,7 +18,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 )
 
-// fixture reads a shared conformance fixture from spec/test-fixtures/dpop.
+// fixture reads a shared spec fixture from spec/test-fixtures/dpop.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	// test file lives at go/pkg/dpop; fixtures at <repo>/spec/test-fixtures.

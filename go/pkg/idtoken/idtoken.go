@@ -67,7 +67,7 @@ func ValidateIDToken(ctx context.Context, rawToken string, keySet *jwks.JSONWebK
 // [ErrAZPRequiresClientID] before any claim is read when [WithAZPValidation]
 // is set without [WithClientID].
 //
-// This is the network-free entry point the cross-language conformance vectors
+// This is the network-free entry point the cross-language spec vectors
 // (spec/vectors/id-token.json) drive; it is the Go analog of the reference
 // validate_id_token_claims.
 func ValidateClaims(claims map[string]any, headerAlg string, opts ...Option) error {
@@ -286,7 +286,7 @@ func constantTimeEqual(a, b string) bool {
 }
 
 // decodeVerified splits an already-verified compact JWT and returns its payload
-// as a map[string]any (numbers as float64, matching the conformance loader) plus
+// as a map[string]any (numbers as float64, matching the spec-vector loader) plus
 // the header alg. It is only called after [jwt.Validate] has authenticated the
 // token, so the header and payload it re-decodes are trusted.
 func decodeVerified(rawToken string) (map[string]any, string, error) {
