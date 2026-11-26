@@ -22,7 +22,10 @@ from py_identity_model import (
     get_userinfo,
     request_client_credentials_token,
 )
-from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.discovery_policy import (
+    DiscoveryPolicy,
+    discovery_document_url,
+)
 
 
 # HTTP status codes
@@ -32,10 +35,7 @@ HTTP_FORBIDDEN = 403
 HTTP_INTERNAL_SERVER_ERROR = 500
 
 # Configuration from environment
-DISCOVERY_URL = os.getenv(
-    "DISCOVERY_URL",
-    "https://localhost:5001/.well-known/openid-configuration",
-)
+ISSUER = os.getenv("ISSUER", "https://localhost:5001")
 FASTAPI_URL = os.getenv("FASTAPI_URL", "http://localhost:8000")
 CLIENT_ID = os.getenv("CLIENT_ID", "py-identity-model-client")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET", "py-identity-model-secret")
@@ -70,14 +70,14 @@ def get_access_token() -> tuple[str | None, str | None]:
     Returns:
         Tuple of (access_token, userinfo_endpoint). Either may be None on failure.
     """
-    print(f"🔍 Getting discovery document from {DISCOVERY_URL}")
+    print(f"🔍 Getting discovery document for {ISSUER}")
 
     try:
         # Get discovery document using py-identity-model
         # Disable endpoint validation for Docker: the identity server's
-        # internal hostname differs from the external discovery URL.
+        # internal hostname differs from the issuer.
         policy = DiscoveryPolicy(validate_endpoints=False)
-        disco_request = DiscoveryDocumentRequest(address=DISCOVERY_URL, policy=policy)
+        disco_request = DiscoveryDocumentRequest(issuer=ISSUER, policy=policy)
         disco_response = get_discovery_document(disco_request)
 
         if not disco_response.is_successful:
@@ -313,7 +313,7 @@ def run_tests():
 
     # Print environment info
     print("\n📋 Environment Configuration:")
-    print(f"  DISCOVERY_URL: {DISCOVERY_URL}")
+    print(f"  ISSUER: {ISSUER}")
     print(f"  FASTAPI_URL: {FASTAPI_URL}")
     print(
         f"  REQUESTS_CA_BUNDLE: {os.getenv('REQUESTS_CA_BUNDLE', 'Not set')}",
@@ -335,7 +335,7 @@ def run_tests():
         print("❌ FastAPI service not available")
         return 1
 
-    if not wait_for_service(DISCOVERY_URL):
+    if not wait_for_service(discovery_document_url(ISSUER)):
         print("❌ Identity server not available")
         return 1
 

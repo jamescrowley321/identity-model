@@ -106,7 +106,7 @@ def _wait_for_health(
 @contextlib.contextmanager
 def boot_rs_process(
     *,
-    discovery_url: str,
+    issuer: str,
     audience: str,
     require_scope: str = "api",
     workers: int = 1,
@@ -122,7 +122,8 @@ def boot_rs_process(
     callers only need the URL — use :func:`boot_rs`.
 
     Args:
-        discovery_url: OIDC discovery URL the middleware binds to.
+        issuer: Issuer identifier the middleware binds to (discovery is
+            fetched for it).
         audience: Expected ``aud`` claim (middleware requires non-empty).
         require_scope: Scope enforced on ``/protected`` (403 if absent).
         workers: uvicorn ``--workers`` count (>=2 proves multi-worker boot).
@@ -140,7 +141,7 @@ def boot_rs_process(
     base_url = f"http://127.0.0.1:{port}"
 
     env = dict(os.environ)
-    env["RS_DISCOVERY_URL"] = discovery_url
+    env["RS_ISSUER"] = issuer
     env["RS_AUDIENCE"] = audience
     env["RS_REQUIRE_SCOPE"] = require_scope
     env["RS_REQUIRE_ACCESS_TOKEN_MARKER"] = (
@@ -199,7 +200,7 @@ def boot_rs_process(
 @contextlib.contextmanager
 def boot_rs(
     *,
-    discovery_url: str,
+    issuer: str,
     audience: str,
     require_scope: str = "api",
     workers: int = 1,
@@ -217,7 +218,7 @@ def boot_rs(
         The ``http://127.0.0.1:<port>`` base URL of the running server.
     """
     with boot_rs_process(
-        discovery_url=discovery_url,
+        issuer=issuer,
         audience=audience,
         require_scope=require_scope,
         workers=workers,

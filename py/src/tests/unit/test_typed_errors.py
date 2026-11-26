@@ -306,7 +306,7 @@ class TestValidateTokenOverHttp:
             validate_token(
                 jwt="a.b.c",
                 token_validation_config=config,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
         assert excinfo.value.status_code == SERVICE_UNAVAILABLE
 
@@ -327,7 +327,7 @@ class TestValidateTokenOverHttp:
             validate_token(
                 jwt="a.b.c",
                 token_validation_config=config,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
         assert (excinfo.value.requested, excinfo.value.returned) == (
             ISSUER,
@@ -359,7 +359,7 @@ class TestValidateTokenOverHttp:
             validate_token(
                 jwt="a.b.c",
                 token_validation_config=config,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
         assert type(excinfo.value) is DiscoveryValidationError
 

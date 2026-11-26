@@ -37,7 +37,7 @@ def test_token_validation_expired_token(test_config, expired_token, require_http
     with pytest.raises(TokenExpiredException):
         validate_token(
             jwt=expired_token,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             token_validation_config=TokenValidationConfig(
                 perform_disco=True,
                 options=expired_options,
@@ -60,7 +60,7 @@ def test_token_validation_succeeds(
 
     claims = validate_token(
         jwt=client_credentials_token.token["access_token"],
-        disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+        issuer=test_config["TEST_ISSUER"],
         token_validation_config=validation_config,
     )
     assert claims is not None
@@ -84,7 +84,7 @@ def test_token_validation_with_invalid_config_throws_exception(
     with pytest.raises(ConfigurationException):
         validate_token(
             jwt=client_credentials_token.token["access_token"],
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             token_validation_config=validation_config,
         )
 
@@ -108,7 +108,7 @@ def test_cache_succeeds(
         for _ in range(num_validations):
             validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -153,7 +153,7 @@ def test_benchmark_validation(
         for _ in range(num_validations):
             validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
     elapsed_time = datetime.datetime.now(tz=datetime.UTC) - start_time
@@ -189,7 +189,7 @@ def test_claim_validation_function_succeeds(
 
     decoded_token = validate_token(
         jwt=client_credentials_token.token["access_token"],
-        disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+        issuer=test_config["TEST_ISSUER"],
         token_validation_config=validation_config,
     )
 
@@ -321,6 +321,6 @@ def test_claim_validation_function_fails(
     with pytest.raises(TokenValidationException):
         validate_token(
             jwt=client_credentials_token.token["access_token"],
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             token_validation_config=validation_config,
         )

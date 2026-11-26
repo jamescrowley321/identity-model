@@ -286,7 +286,7 @@ class TestValidateTokenRejectsWeakKey:
         jwks_route = _mock_op(jwk)
 
         with pytest.raises(WeakKeyException):
-            sync_tv.validate_token(token, _disco_config(), DISCO_URL)
+            sync_tv.validate_token(token, _disco_config(), ISSUER)
 
         assert jwks_route.call_count == 1
 
@@ -297,6 +297,6 @@ class TestValidateTokenRejectsWeakKey:
         jwks_route = _mock_op(jwk)
 
         with pytest.raises(WeakKeyException):
-            await aio_tv.validate_token(token, _disco_config(), DISCO_URL)
+            await aio_tv.validate_token(token, _disco_config(), ISSUER)
 
         assert jwks_route.call_count == 1

@@ -106,7 +106,7 @@ class TestMultipleTokensFromSameProvider:
             for i, token in enumerate(tokens):
                 claims = validate_token(
                     jwt=token,
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
                 assert claims is not None, f"Token {i + 1} validation failed"
@@ -160,7 +160,7 @@ class TestCacheIsolationBetweenProviders:
         with pytest.raises(TokenValidationException) as exc_info:
             validate_token(
                 jwt=alternate_provider_token,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -192,7 +192,7 @@ class TestCacheIsolationBetweenProviders:
         with pytest.raises(TokenExpiredException):
             validate_token(
                 jwt=expired_token,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -241,7 +241,7 @@ class TestBenchmarkWithPreGeneratedTokens:
                 for token in tokens:
                     validate_token(
                         jwt=token,
-                        disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                        issuer=test_config["TEST_ISSUER"],
                         token_validation_config=validation_config,
                     )
         elapsed_time = datetime.datetime.now(tz=datetime.UTC) - start_time
@@ -288,7 +288,7 @@ class TestBenchmarkWithPreGeneratedTokens:
             for _ in range(num_validations):
                 validate_token(
                     jwt=token,
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
         elapsed_time = datetime.datetime.now(tz=datetime.UTC) - start_time

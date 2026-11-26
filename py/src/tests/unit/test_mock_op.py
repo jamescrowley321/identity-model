@@ -61,7 +61,7 @@ async def _validate(mock: MockOP, token: str) -> dict:
         return await validate_token(
             token,
             _validation_config(),
-            disco_doc_address=mock.discovery_url,
+            issuer=mock.issuer,
             http_client=client,
             cache=AsyncValidationCache(),
         )

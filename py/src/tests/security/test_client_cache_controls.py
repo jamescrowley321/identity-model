@@ -164,7 +164,7 @@ def _token(origin: str) -> str:
 def _disco_key(
     origin: str, scope: TrustScope = DEFAULT_TRUST_SCOPE
 ) -> tuple[TrustScope, str, tuple]:
-    return disco_cache_key(f"{origin}{DISCO_PATH}", scope=scope)
+    return disco_cache_key(origin, scope=scope)
 
 
 def _fresh_jwks_entry() -> JwksCacheEntry:
@@ -242,7 +242,7 @@ class TestSyncRefreshThroughInjectedClient:
             claims = sync_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
-                f"{ORIGIN}{DISCO_PATH}",
+                ORIGIN,
                 http_client=client,
                 cache=cache,
             )
@@ -272,7 +272,7 @@ class TestAsyncRefreshThroughInjectedClient:
             claims = await aio_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
-                f"{ORIGIN}{DISCO_PATH}",
+                ORIGIN,
                 http_client=client,
                 cache=cache,
             )
@@ -323,7 +323,7 @@ class TestSyncKidMissRefreshCoalescing:
             claims = sync_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
-                f"{ORIGIN}{DISCO_PATH}",
+                ORIGIN,
                 http_client=client,
                 cache=cache,
             )
@@ -379,7 +379,7 @@ class TestAsyncKidMissRefreshCoalescing:
             claims = await aio_tv.validate_token(
                 _token(ORIGIN),
                 _validation_config(ORIGIN),
-                f"{ORIGIN}{DISCO_PATH}",
+                ORIGIN,
                 http_client=client,
                 cache=cache,
             )
@@ -493,7 +493,7 @@ class TestSyncLockFreeHit:
             results = self._call_while_locked(
                 cache._disco_fetch_lock(_disco_key(hot)),
                 lambda: sync_tv._get_disco_response(
-                    f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client, cache
+                    hot, DiscoveryPolicy(), client, cache
                 ),
             )
 
@@ -535,9 +535,7 @@ class TestSyncDoubleCheckedHit:
             cache._disco[_disco_key(hot)] = hot_entry = _fresh_disco_entry(hot)
             cache._disco[_disco_key(other)] = _fresh_disco_entry(other)
 
-            result = sync_tv._get_disco_response(
-                f"{hot}{DISCO_PATH}", DiscoveryPolicy(), client, cache
-            )
+            result = sync_tv._get_disco_response(hot, DiscoveryPolicy(), client, cache)
 
             assert result is hot_entry.response
             assert list(cache._disco) == [_disco_key(other), _disco_key(hot)]
@@ -578,7 +576,7 @@ class TestSyncMissWaitsOnFetchLock:
         assert fetched_while_locked is False
         assert len(upstream.requests) == 1
 
-    def test_disco_miss_waits_on_the_address_lock(self):
+    def test_disco_miss_waits_on_the_issuer_lock(self):
         upstream = _Upstream([[]])
         with upstream.client() as client:
             cache = ValidationCache()
@@ -590,7 +588,7 @@ class TestSyncMissWaitsOnFetchLock:
                 cache._disco_fetch_lock(_disco_key(origin, client.trust_scope)),
                 upstream,
                 lambda: sync_tv._get_disco_response(
-                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
+                    origin, DiscoveryPolicy(), client, cache
                 ),
             )
 
@@ -626,7 +624,7 @@ class TestAsyncMissWaitsOnFetchLock:
         assert len(upstream.requests) == 1
 
     @pytest.mark.asyncio
-    async def test_disco_miss_waits_on_the_address_lock(self):
+    async def test_disco_miss_waits_on_the_issuer_lock(self):
         upstream = _Upstream([[]])
         async with upstream.async_client() as client:
             cache = AsyncValidationCache()
@@ -638,7 +636,7 @@ class TestAsyncMissWaitsOnFetchLock:
                 cache._disco_fetch_lock(_disco_key(origin, client.trust_scope)),
                 upstream,
                 lambda: aio_tv._get_disco_response(
-                    f"{origin}{DISCO_PATH}", DiscoveryPolicy(), client, cache
+                    origin, DiscoveryPolicy(), client, cache
                 ),
             )
 

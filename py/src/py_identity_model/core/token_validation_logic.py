@@ -282,9 +282,9 @@ def _enforce_allowed_issuers(
     """Fail closed unless every issuer used to validate the token is approved.
 
     Multi-tenant spoofing defence (Epic 16 R.9 / audit RT-SPOOF-F1). In discovery
-    mode the ``effective_issuer`` is whatever discovery document the caller pointed
-    at, so the idiomatic middleware pattern (read ``iss`` from the untrusted token,
-    build ``disco_doc_address`` from it, validate) lets an attacker stand up their
+    mode the ``effective_issuer`` is whatever issuer the caller passed for
+    discovery, so the idiomatic middleware pattern (read ``iss`` from the untrusted
+    token, pass it as the issuer, validate) lets an attacker stand up their
     own tenant, mint a validly-signed token, and pass — only the app's own
     ``iss``->authz mapping would stop it. Pinning an approved issuer set rejects
     the discovery result *before* it is trusted. Configured but unresolvable ->

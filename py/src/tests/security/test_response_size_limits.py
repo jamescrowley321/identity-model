@@ -117,6 +117,8 @@ def test_oversized_discovery_body_is_rejected() -> None:
         "service_documentation": _PAD,
     }
     respx.get(disco_url).mock(return_value=httpx.Response(200, json=doc))
-    result = get_discovery_document(DiscoveryDocumentRequest(address=disco_url))
+    result = get_discovery_document(
+        DiscoveryDocumentRequest(issuer="https://as.example.com")
+    )
     assert result.is_successful is False
     assert "too large" in (result.error or "").lower()

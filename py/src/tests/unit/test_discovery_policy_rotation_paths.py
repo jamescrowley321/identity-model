@@ -188,7 +188,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
         decoded = sync_validate_token(
             jwt=_token(new_pem, NEW_KID),
             token_validation_config=_lax_config(),
-            disco_doc_address=HTTP_DISCO_URL,
+            issuer=HTTP_ISSUER,
         )
 
         assert decoded["sub"] == SUBJECT
@@ -218,7 +218,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
         decoded = await async_validate_token(
             jwt=_token(new_pem, NEW_KID),
             token_validation_config=_lax_config(),
-            disco_doc_address=HTTP_DISCO_URL,
+            issuer=HTTP_ISSUER,
         )
 
         assert decoded["sub"] == SUBJECT
@@ -247,7 +247,7 @@ class TestInjectedPolicyGovernsKidMissRefresh:
             sync_validate_token(
                 jwt=_token(new_pem, NEW_KID),
                 token_validation_config=strict,
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
             )
 
 
@@ -281,7 +281,7 @@ class TestInjectedPolicyGovernsSignatureRetry:
         decoded = sync_validate_token(
             jwt=_token(rotated_pem, SHARED_KID),
             token_validation_config=_lax_config(),
-            disco_doc_address=HTTP_DISCO_URL,
+            issuer=HTTP_ISSUER,
         )
 
         assert decoded["sub"] == SUBJECT
@@ -308,7 +308,7 @@ class TestInjectedPolicyGovernsSignatureRetry:
         decoded = await async_validate_token(
             jwt=_token(rotated_pem, SHARED_KID),
             token_validation_config=_lax_config(),
-            disco_doc_address=HTTP_DISCO_URL,
+            issuer=HTTP_ISSUER,
         )
 
         assert decoded["sub"] == SUBJECT
@@ -348,7 +348,7 @@ class TestInjectedPolicyRetryStampsCooldownOnPersistentFailure:
             sync_validate_token(
                 jwt=_token(forged_pem, SHARED_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
             )
 
         # The refresh was admitted (fired) but decode still failed → the
@@ -377,7 +377,7 @@ class TestInjectedPolicyRetryStampsCooldownOnPersistentFailure:
             await async_validate_token(
                 jwt=_token(forged_pem, SHARED_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
             )
 
         assert jwks_route.call_count == PRIME_PLUS_REFRESH
@@ -407,7 +407,7 @@ class TestInjectedPolicyGovernsInjectedClientPath:
             decoded = sync_validate_token(
                 jwt=_token(pem, NEW_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
                 http_client=client,
             )
         assert decoded["sub"] == SUBJECT
@@ -431,7 +431,7 @@ class TestInjectedPolicyGovernsInjectedClientPath:
             decoded = sync_validate_token(
                 jwt=_token(rotated_pem, SHARED_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
                 http_client=client,
             )
         assert decoded["sub"] == SUBJECT
@@ -453,7 +453,7 @@ class TestInjectedPolicyGovernsInjectedClientPath:
             decoded = await async_validate_token(
                 jwt=_token(pem, NEW_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
                 http_client=client,
             )
         assert decoded["sub"] == SUBJECT
@@ -478,7 +478,7 @@ class TestInjectedPolicyGovernsInjectedClientPath:
             decoded = await async_validate_token(
                 jwt=_token(rotated_pem, SHARED_KID),
                 token_validation_config=_lax_config(),
-                disco_doc_address=HTTP_DISCO_URL,
+                issuer=HTTP_ISSUER,
                 http_client=client,
             )
         assert decoded["sub"] == SUBJECT

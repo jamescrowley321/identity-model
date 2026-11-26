@@ -5,14 +5,19 @@ several OpenID Connect rules that 4.x left to the caller. This page lists every
 breaking change, with what to change in your code. fastapi-identity-model
 releases a matching version that requires py-identity-model 5.
 
-Most applications need three edits:
+Most applications need four edits:
 
-1. Build an `HTTPConfig` and pass it on an `HTTPClient` / `AsyncHTTPClient`
+1. Pass the provider's issuer (`https://login.example.com`) wherever you passed
+   its discovery document URL: `validate_token`, `validate_id_token`,
+   `DiscoveryDocumentRequest(issuer=...)`, and `OIDCSettings.issuer` (env
+   `OIDC_ISSUER`) in the FastAPI package. The document's `issuer` must match it
+   exactly.
+2. Build an `HTTPConfig` and pass it on an `HTTPClient` / `AsyncHTTPClient`
    (and a `CacheConfig` on a `ValidationCache`) instead of setting
    `HTTP_TIMEOUT` and the other environment variables.
-2. If you use the FastAPI package, replace `OIDCSettings.from_env()` with
+3. If you use the FastAPI package, replace `OIDCSettings.from_env()` with
    `oidc_settings_from_env()`.
-3. Pass `trusted_audiences=` to `validate_id_token` (or set
+4. Pass `trusted_audiences=` to `validate_id_token` (or set
    `OIDCSettings.trusted_audiences` for the FastAPI login router) if your
    provider issues ID Tokens with more than one audience.
 
@@ -384,8 +389,8 @@ After:
 ```python
 from fastapi_identity_model.config_helpers import oidc_settings_from_env
 
-settings = oidc_settings_from_env()        # OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, ...
-settings = oidc_settings_from_env("APP_")  # APP_DISCOVERY_URL, APP_CLIENT_ID, ...
+settings = oidc_settings_from_env()        # OIDC_ISSUER, OIDC_CLIENT_ID, ...
+settings = oidc_settings_from_env("APP_")  # APP_ISSUER, APP_CLIENT_ID, ...
 ```
 
 HTTP settings for the FastAPI package come from a py-identity-model
@@ -430,7 +435,7 @@ keyword arguments on either entry point.
 Both entry points also take `settings=`. With `settings` and no `options`,
 they use `AuthOptions.from_settings(settings)`, so `OIDCSettings.required_binding`
 and `OIDC_REQUIRED_BINDING` take effect; in 4.x and earlier 5.0 builds the
-setting was never read. `settings` also supplies `discovery_url`, `audience`
+setting was never read. `settings` also supplies `issuer`, `audience`
 and (middleware only) `excluded_paths` when they are not passed.
 
 Before:
@@ -465,8 +470,8 @@ app.add_middleware(TokenValidationMiddleware, settings=settings, options=options
 ws_auth = build_ws_authenticator(settings=settings, options=options)
 ```
 
-- `discovery_url` is now optional on both entry points; one of
-  `discovery_url` or `settings` is required.
+- `issuer` is optional on both entry points; one of `issuer` or `settings`
+  is required.
 - Explicit `options` win over `settings`, but an `options` whose
   `required_binding` or `expected_origin` differs from a value `settings` sets
   raises `ValueError`. Build it with `AuthOptions.from_settings(settings, ...)`.
@@ -706,7 +711,7 @@ config = TokenValidationConfig(perform_disco=True, audience="my-api")
 config = dataclasses.replace(config, leeway=30)
 
 settings = OIDCSettings(
-    discovery_url="https://op.example.com/.well-known/openid-configuration",
+    issuer="https://op.example.com",
     client_id="app",
     audience_override="my-api",
 )
@@ -753,35 +758,60 @@ PushedAuthorizationRequest(
 
 ## Discovery
 
-### `parse_discovery_url` is replaced by `discovery_document_url` ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128))
+### Discovery takes the issuer, not the discovery URL ([#1128](https://github.com/jamescrowley321/identity-model/pull/1128), [#1154](https://github.com/jamescrowley321/identity-model/issues/1154))
 
-`DiscoveryDocumentRequest.address`, `disco_doc_address` and
-`OIDCSettings.discovery_url` are the discovery document URL, the same as
-`address` on every other request. Passing a bare issuer fetches the issuer URL
-itself, which fails.
+Every discovery entry point takes the provider's issuer identifier, and the
+library builds the discovery URL from it:
 
-`discovery_document_url(issuer)` builds that URL from an issuer identifier as
-OpenID Connect Discovery 1.0 §4.1 specifies: a terminating `/` is removed and
-`/.well-known/openid-configuration` is appended. It raises
-`ConfigurationException` for an empty value, a non-HTTP(S) URL, a URL without
-a host, a query or fragment, a value that is not a valid URL, or a value that
-already ends with the well-known path.
+- `DiscoveryDocumentRequest(issuer=...)` replaces `address=`.
+- `validate_token`, `validate_id_token` and `validate_logout_token` (sync and
+  async) take `issuer` in place of `disco_doc_address`, in the same position.
+- `process_jarm_response` takes a required `issuer`; `disco_doc_address` is
+  removed. Without `jwks` it fetches the discovery document for `issuer`.
+- `SignedIntrospectionOptions` takes a required `issuer`; `discovery_address`
+  is removed. Without `jwks` it fetches the discovery document for `issuer`.
+- FastAPI: `OIDCSettings.issuer` replaces `discovery_url`,
+  `oidc_settings_from_env` reads `{prefix}ISSUER` instead of
+  `{prefix}DISCOVERY_URL`, and `TokenValidationMiddleware`,
+  `build_ws_authenticator` and `TokenManager` take `issuer=` instead of
+  `discovery_url=`.
 
-`parse_discovery_url` and `DiscoveryEndpoint` are removed. `parse_discovery_url`
-appended the path only when it was missing and returned the authority as well;
-`discovery_document_url` takes only an issuer and returns the URL.
+The URL follows OpenID Connect Discovery 1.0 §4.1 by default: a terminating
+`/` is removed and `/.well-known/openid-configuration` is appended. For an
+authorization server that publishes RFC 8414 metadata, set
+`DiscoveryPolicy(location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER)`:
+`/.well-known/oauth-authorization-server` is inserted between the host and
+the issuer's path (RFC 8414 §3.1).
+
+An issuer that ends with a well-known path, has a query or fragment, has no
+host or is not an HTTP(S) URL is a `ConfigurationException`, raised before
+any request (`get_discovery_document` returns it as
+`DiscoveryErrorKind.INVALID_CONFIGURATION`). Passing the old discovery URL
+therefore fails at once.
+
+`discovery_document_url` is no longer exported, and `parse_discovery_url` and
+`DiscoveryEndpoint` are removed.
 
 ```python
 # Before
-from py_identity_model import parse_discovery_url
-
-url = parse_discovery_url("https://login.example.com").url
+claims = validate_token(
+    token, config, "https://login.example.com/.well-known/openid-configuration"
+)
+disco = get_discovery_document(
+    DiscoveryDocumentRequest(
+        address="https://login.example.com/.well-known/openid-configuration"
+    )
+)
 
 # After
-from py_identity_model import discovery_document_url
-
-url = discovery_document_url("https://login.example.com")
+claims = validate_token(token, config, "https://login.example.com")
+disco = get_discovery_document(
+    DiscoveryDocumentRequest(issuer="https://login.example.com")
+)
 ```
+
+For AWS Cognito, the issuer is the user pool's
+`https://cognito-idp.<region>.amazonaws.com/<userPoolId>`.
 
 ### Every Discovery §3 REQUIRED field must be present ([#891](https://github.com/jamescrowley321/identity-model/pull/891))
 
@@ -815,7 +845,7 @@ from py_identity_model import (
 )
 
 disco = get_discovery_document(
-    DiscoveryDocumentRequest(address=AUTHORITY, policy=DiscoveryPolicy())
+    DiscoveryDocumentRequest(issuer=AUTHORITY, policy=DiscoveryPolicy())
 )
 if not disco.is_successful and disco.error_kind is DiscoveryErrorKind.MISSING_FIELDS:
     print(disco.missing_fields)  # e.g. ("jwks_uri",)
@@ -1003,20 +1033,23 @@ PS256, ES256 or EdDSA "using the Ed25519 variant", and RSA keys of at least
 `FAPIViolationCode.KEY_NOT_ALLOWED` violation, so a profile built with one
 raises `FAPIProfileError`. 4.x reported such clients as compliant.
 
-### The issuer must match the requested issuer ([#842](https://github.com/jamescrowley321/identity-model/pull/842))
+### The issuer must match the configured issuer exactly ([#842](https://github.com/jamescrowley321/identity-model/pull/842), [#1154](https://github.com/jamescrowley321/identity-model/issues/1154))
 
-The document's `issuer` must equal the address you requested it from (OIDC
-Discovery 1.0 §4.3, RFC 8414 §3.3). Otherwise discovery fails with
-`DiscoveryErrorKind.ISSUER_MISMATCH`. The comparison is an exact string match
-against `DiscoveryDocumentRequest.address` as you passed it, with
-`/.well-known/openid-configuration` removed. A trailing slash on either side
-is the only difference allowed: host case, an explicit port and the path all
-count. No `DiscoveryPolicy` setting turns this off.
+The document's `issuer` must be identical to the issuer you configured (OIDC
+Discovery 1.0 §4.3, RFC 8414 §3.3), compared character for character with no
+normalization. Otherwise discovery fails with
+`DiscoveryErrorKind.ISSUER_MISMATCH` (`DiscoveryIssuerMismatchError`, with
+`requested` and `returned`). Host case, an explicit port, the path and a
+trailing slash all count: `https://login.example.com` and
+`https://login.example.com/` are different issuers. Both are fetched from
+`https://login.example.com/.well-known/openid-configuration`, and only the one
+the document names is accepted. No `DiscoveryPolicy` setting turns this off.
+The same issuer is the one an ID Token's `iss` must equal.
 
 Before (accepted in 4.x):
 
 ```python
-# The provider's document says "issuer": "https://login.example.com"
+# The provider's document says "issuer": "https://login.example.com/"
 disco = get_discovery_document(
     DiscoveryDocumentRequest(address="https://LOGIN.example.com:443")
 )
@@ -1025,33 +1058,29 @@ disco = get_discovery_document(
 After:
 
 ```python
-from py_identity_model import discovery_document_url
-
 disco = get_discovery_document(
-    DiscoveryDocumentRequest(
-        address=discovery_document_url("https://login.example.com")
-    )
+    DiscoveryDocumentRequest(issuer="https://login.example.com/")
 )
-# address == "https://login.example.com/.well-known/openid-configuration"
 ```
 
-`address` is the discovery document URL; the library does not append the
-well-known path. See
-[`parse_discovery_url` is replaced by `discovery_document_url`](#parse_discovery_url-is-replaced-by-discovery_document_url-1128).
-
-Use the issuer exactly as your provider publishes it. If you call
-`process_discovery_response` (`py_identity_model.core.discovery_logic`) or
+Use the issuer exactly as your provider publishes it in its discovery
+document. If you call `process_discovery_response`
+(`py_identity_model.core.discovery_logic`) or
 `validate_and_parse_discovery_response`
-(`py_identity_model.core.response_processors`) directly, both now take a
-required keyword-only `requested_address`:
+(`py_identity_model.core.response_processors`) directly, both take a required
+keyword-only `requested_issuer`:
 
 ```python
 from py_identity_model.core.discovery_logic import process_discovery_response
 
 disco = process_discovery_response(
-    response, policy, requested_address="https://login.example.com"
+    response, policy, requested_issuer="https://login.example.com"
 )
 ```
+
+The endpoint-authority check allows the issuer's scheme and host,
+`DiscoveryPolicy.authority` when set, and
+`DiscoveryPolicy.additional_endpoint_base_addresses`.
 
 ## OAuth requests
 
@@ -1238,7 +1267,7 @@ scheme, _, access_token = request.headers["Authorization"].partition(" ")
 claims = validate_token(
     access_token,
     config,
-    disco_doc_address,
+    issuer,
     presentation=TokenPresentation(
         scheme=(
             AuthorizationScheme.DPOP
@@ -1275,7 +1304,7 @@ in. The `azp` check stays off by default because §3.1.3.7 makes it a SHOULD:
 
 ```python
 settings = OIDCSettings(
-    discovery_url=DISCOVERY_URL,
+    issuer=ISSUER,
     client_id="my-client",
     redirect_uri=REDIRECT_URI,
     trusted_audiences=["https://api.example.com"],
@@ -1345,18 +1374,18 @@ request's absolute URL and method, so they never hit this.
 ### Signed introspection gets its keys from discovery ([#1067](https://github.com/jamescrowley321/identity-model/issues/1067))
 
 Signed introspection responses (RFC 9701) are new in 5.0.
-`SignedIntrospectionOptions` takes either `discovery_address` or both `issuer`
-and `jwks`; passing both, or neither, raises `InvalidArgumentError`.
+`SignedIntrospectionOptions` takes a required `issuer` and an optional
+`jwks`; an empty `issuer`, or `discovery_policy` with `jwks`, raises
+`InvalidArgumentError`.
 
-- **Discovery mode** (`discovery_address=`, recommended): the issuer, keys and
-  algorithms come from the discovery document. The keys go through the
+- **Discovery mode** (no `jwks`, recommended): the keys and algorithms come
+  from the discovery document for `issuer`. The keys go through the
   validation cache, and an unknown `kid` refreshes them once, so the
   authorization server can rotate keys. `introspect_token` takes
   `cache=` (keyword-only) for an injected `ValidationCache` /
   `AsyncValidationCache`. A discovery document or JWK Set that can't be
   fetched fails the call with `error_kind=None`.
-- **Manual mode** (`issuer=`, `jwks=`): the keys are fixed and never
-  refreshed.
+- **Manual mode** (`jwks=`): the keys are fixed and never refreshed.
 - **Algorithms.** With `algorithms=None`, discovery mode allows the
   `introspection_signing_alg_values_supported` algorithms that are in
   `DEFAULT_ALLOWED_ALGORITHMS` (all of them if nothing is advertised; none if
@@ -1370,7 +1399,7 @@ and `jwks`; passing both, or neither, raises `InvalidArgumentError`.
 ```python
 from py_identity_model import SignedIntrospectionOptions
 
-signed = SignedIntrospectionOptions(discovery_address=disco_address)
+signed = SignedIntrospectionOptions(issuer=ISSUER)
 ```
 
 ## ID Token validation
@@ -1402,7 +1431,7 @@ After, for a token with `"aud": [CLIENT_ID, "https://api.example.com"]`:
 claims = validate_id_token(
     id_token,
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     nonce=expected_nonce,
     trusted_audiences=["https://api.example.com"],
 )
@@ -1458,7 +1487,7 @@ After, keeping the 4.x behaviour:
 claims = validate_id_token(
     id_token,
     validation_config,
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     nonce=expected_nonce,
     validate_azp=True,
 )
@@ -1493,7 +1522,7 @@ config = TokenValidationConfig(perform_disco=True, issuer=ISSUER, audience=CLIEN
 claims = validate_id_token(
     id_token,
     config,
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     nonce=expected_nonce,
     validate_azp=True,
 )
@@ -1550,7 +1579,7 @@ After:
 
 ```python
 claims = validate_id_token(
-    id_token, validation_config, disco_doc_address=DISCOVERY_URL, nonce=expected_nonce
+    id_token, validation_config, issuer=ISSUER, nonce=expected_nonce
 )
 ```
 
@@ -1564,7 +1593,7 @@ original_nonce = original_claims.get("nonce")
 refreshed = validate_id_token(
     refresh_response.id_token,
     validation_config,
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     # No nonce at the original login: None, so a nonce on refresh is rejected.
     nonce=RefreshNonce(original_nonce) if original_nonce else None,
 )
@@ -1582,7 +1611,7 @@ when present, so a validly signed ID Token without them was accepted.
 from py_identity_model import IdTokenMissingClaimError, IdTokenRequiredClaim
 
 try:
-    claims = validate_id_token(id_token, validation_config, DISCOVERY_URL, nonce=nonce)
+    claims = validate_id_token(id_token, validation_config, ISSUER, nonce=nonce)
 except IdTokenMissingClaimError as exc:
     assert exc.claim in (IdTokenRequiredClaim.EXP, IdTokenRequiredClaim.IAT)
 ```
@@ -1629,7 +1658,7 @@ match.
 claims = validate_id_token(
     id_token,
     validation_config,
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     nonce=expected_nonce,
     access_token=token_response.access_token,
     access_token_issued_with_id_token=False,  # code flow: from the token endpoint
@@ -1658,7 +1687,7 @@ subclass to handle the case on its own:
 from py_identity_model import AmbiguousKeyException, validate_token
 
 try:
-    claims = validate_token(token, validation_config, DISCOVERY_URL)
+    claims = validate_token(token, validation_config, ISSUER)
 except AmbiguousKeyException as exc:
     print(exc.details["available_kids"])
 ```
@@ -1685,7 +1714,7 @@ validation until it does.
 from py_identity_model import KeyNotFoundException, validate_token
 
 try:
-    claims = validate_token(token, validation_config, DISCOVERY_URL)
+    claims = validate_token(token, validation_config, ISSUER)
 except KeyNotFoundException as exc:
     print(exc.details["kid"], exc.details["available_kids"])
 ```
@@ -1827,7 +1856,7 @@ it. Its tokens fail validation until it does.
 from py_identity_model import validate_token, WeakKeyException
 
 try:
-    claims = validate_token(token, validation_config, DISCOVERY_URL)
+    claims = validate_token(token, validation_config, ISSUER)
 except WeakKeyException as exc:
     print(exc.details["kid"], exc.details["bits"], exc.details["min_bits"])
 ```
@@ -1895,7 +1924,7 @@ config = TokenValidationConfig(
     audience="my-api",
     token_issuers=[DISCOVERY_ISSUER, SESSION_ISSUER],
 )
-claims = validate_token(token, config, disco_doc_address=DISCOVERY_URL)
+claims = validate_token(token, config, issuer=ISSUER)
 ```
 
 - `token_issuers=None`, the default, changes nothing: `iss` must equal the
@@ -2027,7 +2056,7 @@ response = get_userinfo(
     UserInfoRequest(address=USERINFO_URL, token=access_token, expected_sub=id_token_sub)
 )
 if response.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB:
-    claims = validate_token(response.unverified_jwt, validation_config, DISCOVERY_URL)
+    claims = validate_token(response.unverified_jwt, validation_config, ISSUER)
     if claims.get("sub") != id_token_sub:
         raise ValueError("UserInfo sub does not match the ID Token")
 elif response.is_successful:
@@ -2056,7 +2085,7 @@ unless your provider omits `exp`.
 from py_identity_model import LogoutTokenValidationException, validate_logout_token
 
 try:
-    claims = validate_logout_token(logout_token, validation_config, DISCOVERY_URL)
+    claims = validate_logout_token(logout_token, validation_config, ISSUER)
 except LogoutTokenValidationException:
     ...  # 5.0: also raised when exp is missing
 ```
@@ -2075,7 +2104,7 @@ keyword `client_id` and an optional `trusted_audiences`.
 claims = validate_logout_token(
     logout_token,
     validation_config,
-    DISCOVERY_URL,
+    ISSUER,
     trusted_audiences=["https://partner.example.com"],
 )
 ```
@@ -2124,7 +2153,7 @@ from py_identity_model import (
 )
 
 try:
-    claims = validate_token(token, config, disco_doc_address=address)
+    claims = validate_token(token, config, issuer=ISSUER)
 except NetworkException:
     ...  # provider unavailable: retry later, answer 503
 except PyIdentityModelException:
@@ -2134,7 +2163,7 @@ except PyIdentityModelException:
 An `except TokenValidationException` handler no longer catches discovery or
 JWKS failures; catch `PyIdentityModelException` (or the types above) as well.
 
-`introspect_token` with `SignedIntrospectionOptions(discovery_address=...)`
+`introspect_token` with a `SignedIntrospectionOptions` without `jwks`
 fetches the discovery document and keys after its own request, and raises
 these same exceptions when that fetch fails. A failed introspection request
 itself is still returned as a failed response.

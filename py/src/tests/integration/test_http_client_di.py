@@ -25,7 +25,7 @@ class TestSyncDIIntegration:
         with HTTPClient() as client:
             response = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),
@@ -41,7 +41,7 @@ class TestSyncDIIntegration:
         with HTTPClient() as client:
             disco = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),
@@ -61,7 +61,7 @@ class TestSyncDIIntegration:
         with HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT)) as client:
             response = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),

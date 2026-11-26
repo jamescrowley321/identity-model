@@ -151,7 +151,7 @@ class TokenManager:
     Example:
         ```python
         manager = TokenManager(
-            discovery_url="https://auth.example.com/.well-known/openid-configuration",
+            issuer="https://auth.example.com",
             client_id="my-client-id",
             client_secret="my-client-secret",
         )
@@ -171,7 +171,7 @@ class TokenManager:
 
     def __init__(
         self,
-        discovery_url: str,
+        issuer: str,
         client_id: str,
         client_secret: str | None = None,
         refresh_before_seconds: int = 300,
@@ -181,7 +181,7 @@ class TokenManager:
         """Initialize the token manager.
 
         Args:
-            discovery_url: The OpenID Connect discovery document URL.
+            issuer: The provider's issuer identifier.
             client_id: The OAuth2 client ID.
             client_secret: The OAuth2 client secret (omit for public clients).
             refresh_before_seconds: Refresh this many seconds before expiry.
@@ -189,7 +189,7 @@ class TokenManager:
                 grant, built from your ``HTTPConfig``. ``None`` uses the library
                 default client.
         """
-        self.discovery_url = discovery_url
+        self.issuer = issuer
         self.client_id = client_id
         self.client_secret = client_secret
         self.refresh_before_seconds = refresh_before_seconds
@@ -253,7 +253,7 @@ class TokenManager:
     async def _resolve_token_endpoint(self) -> str:
         """Resolve the token endpoint from discovery (per-process cached by the library)."""
         disco = await get_discovery_document(
-            DiscoveryDocumentRequest(address=self.discovery_url),
+            DiscoveryDocumentRequest(issuer=self.issuer),
             http_client=self.http_client,
         )
         if not disco.is_successful or not disco.token_endpoint:

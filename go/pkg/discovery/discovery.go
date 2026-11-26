@@ -99,9 +99,10 @@ var requiredFields = []requiredField{
 }
 
 // FetchConfiguration fetches, validates and caches the OIDC provider metadata
-// for issuerURL. It requests {issuerURL}/.well-known/openid-configuration,
-// validates the required fields and the issuer match, then returns the parsed
-// [ProviderConfiguration].
+// for issuerURL. It requests {issuerURL}/.well-known/openid-configuration
+// (with any terminating "/" of issuerURL removed, OIDC Discovery 1.0 §4.1),
+// validates the required fields and that the document's issuer is identical to
+// issuerURL (§4.3), then returns the parsed [ProviderConfiguration].
 //
 // Results are cached with a configurable TTL (default 24h, see
 // [WithCacheTTL]); a cache hit within the TTL makes no HTTP request
@@ -122,8 +123,8 @@ func ClearCache() { globalCache.clear() }
 // document. It contains no caching logic so it can be invoked once per
 // singleflight group.
 func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*ProviderConfiguration, error) {
-	issuer := strings.TrimRight(strings.TrimSpace(issuerURL), "/")
-	if issuer == "" {
+	issuer := strings.TrimSpace(issuerURL)
+	if strings.TrimRight(issuer, "/") == "" {
 		return nil, &ParseError{Err: fmt.Errorf("issuer URL is empty")}
 	}
 
@@ -145,7 +146,8 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	endpoint := issuer + wellKnownPath
+	// §4.1: any terminating "/" is removed before appending the well-known path.
+	endpoint := strings.TrimRight(issuer, "/") + wellKnownPath
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("discovery: build request: %w", err)
@@ -208,11 +210,10 @@ func fetchAndValidate(ctx context.Context, issuerURL string, cfg *config) (*Prov
 		return nil, &MissingFieldsError{Fields: missing}
 	}
 
-	// DISC-003: the response issuer must match the requested issuer. Compare
-	// with trailing slashes trimmed on both sides so the requested and returned
-	// forms are normalised symmetrically (a difference only in a trailing slash
-	// is not a mismatch).
-	if strings.TrimRight(doc.Issuer, "/") != issuer {
+	// DISC-003: the response issuer must be identical to the requested issuer
+	// (§4.3), compared code point to code point with no normalisation (§5), so
+	// a difference only in a trailing slash is a mismatch.
+	if doc.Issuer != issuer {
 		return nil, &IssuerMismatchError{Requested: issuer, Returned: doc.Issuer}
 	}
 

@@ -26,7 +26,7 @@ from py_identity_model import (
 
 
 # A placeholder issuer; swap for your own provider when running for real.
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 def generate_es256_private_key_pem() -> str:
@@ -52,9 +52,7 @@ def discover_auth_methods_example():
     print("Discover token_endpoint_auth_methods_supported")
     print("=" * 60)
 
-    response = get_discovery_document(
-        DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
-    )
+    response = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     if not response.is_successful:
         print(f"  Discovery failed: {response.error}")

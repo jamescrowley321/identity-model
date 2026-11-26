@@ -20,7 +20,7 @@ from py_identity_model import (
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 
 
 def _app(monkeypatch, validate) -> FastAPI:
@@ -28,7 +28,7 @@ def _app(monkeypatch, validate) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health"],
     )
@@ -216,12 +216,12 @@ async def test_options_preflight_passes_through(monkeypatch):
 
 def test_audience_is_required():
     with pytest.raises(ValueError, match="audience"):
-        TokenValidationMiddleware(FastAPI(), discovery_url=DISCOVERY_URL)
+        TokenValidationMiddleware(FastAPI(), issuer=ISSUER)
 
 
 def test_explicit_empty_excluded_paths_excludes_nothing():
     mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid", excluded_paths=[]
+        FastAPI(), issuer=ISSUER, audience="cid", excluded_paths=[]
     )
     assert mw_obj.excluded_paths == []
     assert mw_obj._is_excluded("/docs") is False
@@ -231,7 +231,7 @@ def test_root_excluded_path_is_not_a_catch_all():
     # A "/" entry must match only the root, not every path via subpath prefix.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/", "/docs"],
     )
@@ -246,7 +246,7 @@ def test_exact_match_default_does_not_exclude_subpaths():
     # excluded prefix is not silently exposed.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health", "/docs"],
     )
@@ -259,7 +259,7 @@ def test_subtree_wildcard_opt_in_excludes_prefix_and_below():
     # A trailing "/*" is the explicit opt-in for subtree exclusion.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/docs/*"],
     )
@@ -274,7 +274,7 @@ def test_bare_star_is_not_a_catch_all():
     # "/*" (root subtree) must not disable auth wholesale via a one-char typo.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/*"],
     )
@@ -285,9 +285,7 @@ def test_bare_star_is_not_a_catch_all():
 def test_default_excluded_paths_cover_swagger_oauth2_redirect():
     # Exact matching no longer implies the /docs subtree, so the Swagger OAuth2
     # redirect must be listed explicitly in the defaults.
-    mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid"
-    )
+    mw_obj = TokenValidationMiddleware(FastAPI(), issuer=ISSUER, audience="cid")
     assert mw_obj._is_excluded("/docs") is True
     assert mw_obj._is_excluded("/docs/oauth2-redirect") is True
     assert mw_obj._is_excluded("/openapi.json") is True
@@ -299,9 +297,7 @@ def test_default_excluded_paths_cover_swagger_oauth2_redirect():
 def test_access_token_marker_defaults_off():
     # The F-07 defence is opt-in: default construction leaves it disabled with
     # the scope/scp marker set, so existing deployments are unaffected.
-    mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid"
-    )
+    mw_obj = TokenValidationMiddleware(FastAPI(), issuer=ISSUER, audience="cid")
     assert mw_obj.require_access_token_marker is False
     assert mw_obj.access_token_marker_claims == ("scope", "scp")
 
@@ -312,7 +308,7 @@ def test_require_access_token_marker_with_empty_claims_raises():
     with pytest.raises(ValueError, match="access_token_marker_claims"):
         TokenValidationMiddleware(
             FastAPI(),
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience="cid",
             require_access_token_marker=True,
             access_token_marker_claims=(),

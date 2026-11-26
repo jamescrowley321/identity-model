@@ -58,7 +58,7 @@ def discovery_signed_response(
 ) -> SignedIntrospectionOptions | None:
     """``request.signed_response`` when it gets its keys from discovery."""
     signed = request.signed_response
-    return signed if signed is not None and signed.discovery_address else None
+    return signed if signed is not None and signed.jwks is None else None
 
 
 def log_introspection_status(status_code: int) -> None:

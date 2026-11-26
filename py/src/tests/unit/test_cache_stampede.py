@@ -53,7 +53,7 @@ from py_identity_model.sync.validation_cache import (
     get_default_validation_cache,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     disco_cache_key,
@@ -110,7 +110,7 @@ class TestSyncDiscoCacheStampede:
         def worker(idx: int) -> None:
             try:
                 barrier.wait()
-                results[idx] = _get_disco_response(DISCO_URL)
+                results[idx] = _get_disco_response(ISSUER)
             except Exception as exc:
                 errors[idx] = exc
 
@@ -216,10 +216,10 @@ class TestSyncStampedeAfterExpiry:
         )
 
         # Prime cache, then expire it
-        _get_disco_response(DISCO_URL)
+        _get_disco_response(ISSUER)
         assert disco_route.call_count == 1
 
-        cache_key = disco_cache_key(DISCO_URL)
+        cache_key = disco_cache_key(ISSUER)
         _sync_caches()._disco[cache_key] = DiscoCacheEntry(
             response=_sync_caches()._disco[cache_key].response,
             cached_at=time.monotonic() - 3601,
@@ -232,7 +232,7 @@ class TestSyncStampedeAfterExpiry:
         def worker(idx: int) -> None:
             try:
                 barrier.wait()
-                _get_disco_response(DISCO_URL)
+                _get_disco_response(ISSUER)
             except Exception as exc:
                 errors[idx] = exc
 
@@ -260,7 +260,7 @@ class TestAsyncDiscoCacheStampede:
         )
 
         results = await asyncio.gather(
-            *[async_get_disco_response(DISCO_URL) for _ in range(5)]
+            *[async_get_disco_response(ISSUER) for _ in range(5)]
         )
 
         assert all(r is not None for r in results)
@@ -327,11 +327,11 @@ class TestAsyncStampedeAfterExpiry:
         )
 
         # Prime cache
-        await async_get_disco_response(DISCO_URL)
+        await async_get_disco_response(ISSUER)
         assert disco_route.call_count == 1
 
         # Expire the entry
-        cache_key = disco_cache_key(DISCO_URL)
+        cache_key = disco_cache_key(ISSUER)
         _async_caches()._disco[cache_key] = DiscoCacheEntry(
             response=_async_caches()._disco[cache_key].response,
             cached_at=time.monotonic() - 3601,
@@ -339,7 +339,7 @@ class TestAsyncStampedeAfterExpiry:
         )
 
         results = await asyncio.gather(
-            *[async_get_disco_response(DISCO_URL) for _ in range(5)]
+            *[async_get_disco_response(ISSUER) for _ in range(5)]
         )
 
         assert all(r is not None for r in results)
@@ -623,7 +623,7 @@ class TestAsyncKidMissStampede:
                 async_validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                 )
                 for _ in range(N)
             ]
@@ -689,7 +689,7 @@ class TestAsyncKidMissStampede:
             return await async_validate_token(
                 jwt=tok,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         results = await asyncio.gather(*[_validate(i) for i in range(N)])
@@ -745,7 +745,7 @@ class TestSyncKidMissStampede:
                 results[idx] = validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                 )
             except Exception as exc:
                 errors[idx] = exc
@@ -812,7 +812,7 @@ class TestSyncStillMissingDiagnostic:
             validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
         assert any("still absent" in rec.message.lower() for rec in caplog.records), (
             f"Expected 'still absent' warning, got: {[r.message for r in caplog.records]}"

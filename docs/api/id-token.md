@@ -62,7 +62,7 @@ from py_identity_model import TokenValidationConfig, validate_id_token
 claims = validate_id_token(
     id_token,
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
     trusted_audiences=["https://api.example.com"],  # other audiences you trust
     validate_azp=True,             # opt in to the azp rules
     nonce=expected_nonce,          # from the authorization request

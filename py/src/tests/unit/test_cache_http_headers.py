@@ -50,7 +50,7 @@ from py_identity_model.sync.validation_cache import (
     get_default_validation_cache,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     disco_cache_key,
@@ -133,13 +133,13 @@ class TestSyncFailedResponseNotCached:
 
         respx.get(DISCO_URL).mock(side_effect=handler)
 
-        failed = _get_disco_response(DISCO_URL)
+        failed = _get_disco_response(ISSUER)
         assert failed.is_successful is False
-        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
+        assert disco_cache_key(ISSUER) not in _sync_caches()._disco
 
-        success = _get_disco_response(DISCO_URL)
+        success = _get_disco_response(ISSUER)
         assert success.is_successful is True
-        assert disco_cache_key(DISCO_URL) in _sync_caches()._disco
+        assert disco_cache_key(ISSUER) in _sync_caches()._disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -180,13 +180,13 @@ class TestAsyncFailedResponseNotCached:
 
         respx.get(DISCO_URL).mock(side_effect=handler)
 
-        failed = await async_get_disco_response(DISCO_URL)
+        failed = await async_get_disco_response(ISSUER)
         assert failed.is_successful is False
-        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
+        assert disco_cache_key(ISSUER) not in _async_caches()._disco
 
-        success = await async_get_disco_response(DISCO_URL)
+        success = await async_get_disco_response(ISSUER)
         assert success.is_successful is True
-        assert disco_cache_key(DISCO_URL) in _async_caches()._disco
+        assert disco_cache_key(ISSUER) in _async_caches()._disco
         assert len(call_log) == 2  # noqa: PLR2004
 
 
@@ -223,9 +223,9 @@ class TestSyncNoStoreCachedForJwks:
             )
         )
 
-        response = _get_disco_response(DISCO_URL)
+        response = _get_disco_response(ISSUER)
         assert response.is_successful is True
-        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
+        assert disco_cache_key(ISSUER) not in _sync_caches()._disco
 
 
 class TestAsyncNoStoreCachedForJwks:
@@ -257,9 +257,9 @@ class TestAsyncNoStoreCachedForJwks:
             )
         )
 
-        response = await async_get_disco_response(DISCO_URL)
+        response = await async_get_disco_response(ISSUER)
         assert response.is_successful is True
-        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
+        assert disco_cache_key(ISSUER) not in _async_caches()._disco
 
 
 # ============================================================================
@@ -298,10 +298,10 @@ class TestSyncNoCacheCachedForJwks:
         )
 
         for _ in range(3):
-            response = _get_disco_response(DISCO_URL)
+            response = _get_disco_response(ISSUER)
             assert response.is_successful is True
 
-        assert disco_cache_key(DISCO_URL) not in _sync_caches()._disco
+        assert disco_cache_key(ISSUER) not in _sync_caches()._disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -338,9 +338,9 @@ class TestAsyncNoCacheCachedForJwks:
         )
 
         for _ in range(3):
-            await async_get_disco_response(DISCO_URL)
+            await async_get_disco_response(ISSUER)
 
-        assert disco_cache_key(DISCO_URL) not in _async_caches()._disco
+        assert disco_cache_key(ISSUER) not in _async_caches()._disco
         assert disco_route.call_count == 3  # noqa: PLR2004
 
 
@@ -449,9 +449,9 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
 
         respx.get(DISCO_URL).mock(side_effect=handler)
 
-        primed = _get_disco_response(DISCO_URL)
+        primed = _get_disco_response(ISSUER)
         assert primed.is_successful is True
-        cache_key = disco_cache_key(DISCO_URL)
+        cache_key = disco_cache_key(ISSUER)
         assert cache_key in _sync_caches()._disco
 
         # Manually expire the entry without removing it — this is the state
@@ -467,7 +467,7 @@ class TestSyncRefreshReplacesStaleOnUncacheable:
             ttl=stale_entry.ttl,
         )
 
-        _get_disco_response(DISCO_URL)
+        _get_disco_response(ISSUER)
         # The expired entry must be popped, not left as dead weight.
         assert cache_key not in _sync_caches()._disco
 

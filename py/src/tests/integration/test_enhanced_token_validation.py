@@ -28,7 +28,7 @@ class TestEnhancedTokenValidation:
         decoded = validate_token(
             token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
         )
         assert "iss" in decoded
 
@@ -47,7 +47,7 @@ class TestEnhancedTokenValidation:
         decoded = validate_token(
             token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
         )
         assert decoded["iss"] == issuer
 
@@ -66,7 +66,7 @@ class TestEnhancedTokenValidation:
         decoded = validate_token(
             token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
         )
         assert decoded["iss"] == issuer
 
@@ -88,7 +88,7 @@ class TestEnhancedTokenValidation:
         decoded = validate_token(
             token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
         )
         assert decoded["iss"] == issuer
 
@@ -107,7 +107,7 @@ class TestEnhancedTokenValidation:
         decoded = validate_token(
             token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
         )
         assert decoded["iss"] == issuer
 
@@ -128,7 +128,7 @@ class TestEnhancedTokenValidation:
             validate_token(
                 token,
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
             )
         assert exc_info.value.message == "Invalid issuer"
 
@@ -148,7 +148,7 @@ class TestEnhancedTokenValidation:
             validate_token(
                 token,
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
             )
         assert exc_info.value.details == {
             "issuer": issuer,

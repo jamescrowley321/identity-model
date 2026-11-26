@@ -32,7 +32,7 @@ from py_identity_model.sync.token_validation import (
     clear_jwks_cache,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -201,7 +201,7 @@ class TestLogoutAudience:
             headers={"kid": key_dict["kid"]},
         )
         with pytest.raises(LogoutTokenValidationException) as exc_info:
-            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_logout_token(token, _config(), issuer=ISSUER)
         assert exc_info.value.details == {"untrusted_audiences": ["evil"]}
 
     @respx.mock
@@ -216,7 +216,7 @@ class TestLogoutAudience:
         claims = validate_logout_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             trusted_audiences=["partner"],
         )
         assert claims["aud"] == [_AUDIENCE, "partner"]
@@ -279,7 +279,7 @@ class TestLogoutRequiresClientId:
             perform_disco=True, audience=audience, issuer=_ISSUER
         )
         with pytest.raises(ConfigurationException) as exc_info:
-            validate_logout_token("not-a-jwt", config, disco_doc_address=DISCO_URL)
+            validate_logout_token("not-a-jwt", config, issuer=ISSUER)
         assert exc_info.value.message == self._MESSAGE
         assert respx.calls.call_count == 0
 
@@ -287,9 +287,7 @@ class TestLogoutRequiresClientId:
     async def test_async_rejects_missing_client_id_before_io(self):
         config = TokenValidationConfig(perform_disco=True, issuer=_ISSUER)
         with pytest.raises(ConfigurationException) as exc_info:
-            await aio_validate_logout_token(
-                "not-a-jwt", config, disco_doc_address=DISCO_URL
-            )
+            await aio_validate_logout_token("not-a-jwt", config, issuer=ISSUER)
         assert exc_info.value.message == self._MESSAGE
         assert respx.calls.call_count == 0
 
@@ -331,7 +329,7 @@ class TestSyncValidateLogoutToken:
         _mock_disco_and_jwks(key_dict)
         token = sign_jwt(pem, _valid_logout_claims(), headers={"kid": key_dict["kid"]})
 
-        claims = validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+        claims = validate_logout_token(token, _config(), issuer=ISSUER)
 
         assert claims["sub"] == "user-1"
         assert BACKCHANNEL_LOGOUT_EVENT in claims["events"]
@@ -348,7 +346,7 @@ class TestSyncValidateLogoutToken:
         )
 
         with pytest.raises(TokenExpiredException):
-            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_logout_token(token, _config(), issuer=ISSUER)
 
     @respx.mock
     def test_logout_token_without_exp_rejected(self, rsa_keypair):
@@ -361,7 +359,7 @@ class TestSyncValidateLogoutToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(LogoutTokenValidationException, match=r"'exp'"):
-            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_logout_token(token, _config(), issuer=ISSUER)
 
     @respx.mock
     def test_signed_token_with_nonce_rejected_after_signature_check(self, rsa_keypair):
@@ -376,7 +374,7 @@ class TestSyncValidateLogoutToken:
         )
 
         with pytest.raises(LogoutTokenValidationException, match=r"nonce"):
-            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_logout_token(token, _config(), issuer=ISSUER)
 
     @respx.mock
     def test_signed_token_missing_events_rejected(self, rsa_keypair):
@@ -388,4 +386,4 @@ class TestSyncValidateLogoutToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(LogoutTokenValidationException, match=r"events"):
-            validate_logout_token(token, _config(), disco_doc_address=DISCO_URL)
+            validate_logout_token(token, _config(), issuer=ISSUER)

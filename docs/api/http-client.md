@@ -37,7 +37,7 @@ from py_identity_model import (
 
 with HTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address="https://..."),
+        DiscoveryDocumentRequest(issuer="https://..."),
         http_client=client,
     )
 ```
@@ -52,7 +52,7 @@ from py_identity_model.aio import AsyncHTTPClient, get_discovery_document
 
 async with AsyncHTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     disco = await get_discovery_document(
-        DiscoveryDocumentRequest(address="https://..."),
+        DiscoveryDocumentRequest(issuer="https://..."),
         http_client=client,
     )
 ```
@@ -82,7 +82,7 @@ cache = ValidationCache(config=CacheConfig(jwks_cache_ttl=900.0, cache_max_entri
 
 with HTTPClient(config=HTTPConfig(http_timeout=10.0)) as client:
     claims = validate_token(
-        token, validation_config, DISCO_URL, http_client=client, cache=cache
+        token, validation_config, ISSUER, http_client=client, cache=cache
     )
 ```
 

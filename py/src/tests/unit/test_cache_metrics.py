@@ -23,7 +23,7 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.core.cache_metrics import CACHE_COUNTERS
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -180,13 +180,13 @@ class TestCacheCountersIntegration:
         )
 
         # First call: cold cache → upstream fetch → one miss, no hits.
-        await _get_disco_response(DISCO_URL)
+        await _get_disco_response(ISSUER)
         snap = get_cache_counters().snapshot()
         assert snap["disco_misses"] == 1
         assert snap["disco_hits"] == 0
 
         # Second call: fresh entry → hit, no additional upstream fetch.
-        await _get_disco_response(DISCO_URL)
+        await _get_disco_response(ISSUER)
         snap = get_cache_counters().snapshot()
         assert snap["disco_misses"] == 1
         assert snap["disco_hits"] == 1
@@ -240,7 +240,7 @@ class TestCacheCountersIntegration:
         """
         route = respx.get(DISCO_URL).mock(return_value=httpx.Response(503))
 
-        result = await _get_disco_response(DISCO_URL)
+        result = await _get_disco_response(ISSUER)
         snap = get_cache_counters().snapshot()
 
         assert result.is_successful is False

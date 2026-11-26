@@ -30,14 +30,18 @@ from fastapi_identity_model import (
 import fastapi_identity_model.middleware as mw
 import fastapi_identity_model.token_manager as tm_mod
 from py_identity_model import CacheConfig, HTTPConfig
-from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
+from py_identity_model.aio import (
+    AsyncHTTPClient,
+    AsyncValidationCache,
+    DiscoveryDocumentRequest,
+)
 
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 SETTINGS = OIDCSettings(
-    discovery_url=DISCOVERY_URL,
+    issuer=ISSUER,
     client_id="cid",
     redirect_uri="http://testserver/auth/callback",
 )
@@ -80,7 +84,7 @@ async def _call_through_middleware(monkeypatch, **kwargs) -> AsyncMock:
     app = FastAPI()
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         **kwargs,
     )
@@ -119,7 +123,7 @@ async def test_middleware_validates_with_the_given_cache(monkeypatch, cache):
 async def _call_ws_authenticator(monkeypatch, **kwargs) -> AsyncMock:
     validate = AsyncMock(return_value=dict(_ACCESS_CLAIMS))
     monkeypatch.setattr(ws, "validate_token", validate)
-    auth = build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid", **kwargs)
+    auth = build_ws_authenticator(issuer=ISSUER, audience="cid", **kwargs)
     sock = SimpleNamespace(
         headers=Headers({}),
         query_params={"access_token": "t"},
@@ -252,7 +256,7 @@ async def _refresh_through_manager(monkeypatch, **kwargs) -> dict[str, AsyncMock
     }
     for name, mock in mocks.items():
         monkeypatch.setattr(tm_mod, name, mock)
-    manager = TokenManager(DISCOVERY_URL, "cid", **kwargs)
+    manager = TokenManager(ISSUER, "cid", **kwargs)
     manager.set_tokens(
         access_token="stale", refresh_token="r", expires_in=-10, token_type="Bearer"
     )
@@ -274,3 +278,10 @@ async def test_token_manager_defaults_to_the_library_client(monkeypatch):
         "get_discovery_document": [None],
         "refresh_token": [None],
     }
+
+
+async def test_token_manager_discovers_from_its_issuer(monkeypatch):
+    mocks = await _refresh_through_manager(monkeypatch)
+    assert [call.args for call in mocks["get_discovery_document"].await_args_list] == [
+        (DiscoveryDocumentRequest(issuer=ISSUER),)
+    ]

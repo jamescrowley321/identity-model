@@ -10,7 +10,7 @@ from py_identity_model.aio.discovery import (
     get_discovery_document,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ class TestAsyncDiscoveryDocument:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = await get_discovery_document(request)
 
         assert result.is_successful is True
@@ -50,7 +50,7 @@ class TestAsyncDiscoveryDocument:
         url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(404, content=b"Not Found"))
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = await get_discovery_document(request)
 
         assert result.is_successful is False
@@ -63,7 +63,7 @@ class TestAsyncDiscoveryDocument:
         url = DISCO_URL
         respx.get(url).mock(side_effect=httpx.ConnectError("Network error"))
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = await get_discovery_document(request)
 
         assert result.is_successful is False
@@ -82,7 +82,7 @@ class TestAsyncDiscoveryDocument:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = await get_discovery_document(request)
 
         assert result.is_successful is False
@@ -98,7 +98,7 @@ class TestAsyncDiscoveryPreFlightSchemeValidation:
     async def test_http_url_rejected_before_request(self):
         """HTTP to non-loopback host fails without making any HTTP request."""
         request = DiscoveryDocumentRequest(
-            address="http://auth.example.com/.well-known/openid-configuration",
+            issuer="http://auth.example.com",
         )
         result = await get_discovery_document(request)
         assert result.is_successful is False
@@ -124,7 +124,7 @@ class TestAsyncDiscoveryPreFlightSchemeValidation:
                 headers={"Content-Type": "application/json"},
             )
         )
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer="http://127.0.0.1:9999")
         result = await get_discovery_document(request)
         # Pre-flight passes for loopback — mock was actually called
         assert route.called
@@ -152,7 +152,9 @@ class TestAsyncDiscoveryPreFlightSchemeValidation:
             )
         )
         policy = DiscoveryPolicy(require_https=False, validate_issuer=False)
-        request = DiscoveryDocumentRequest(address=url, policy=policy)
+        request = DiscoveryDocumentRequest(
+            issuer="http://auth.example.com:9999", policy=policy
+        )
         result = await get_discovery_document(request)
         # Pre-flight and post-flight both pass with relaxed policy
         assert route.called

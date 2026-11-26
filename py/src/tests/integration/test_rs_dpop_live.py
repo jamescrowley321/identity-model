@@ -87,9 +87,7 @@ def unbound_token(discovery_document, auth_code_client) -> str:
 
 @pytest.fixture(scope="module")
 def rs(test_config):
-    with boot_rs(
-        discovery_url=test_config["TEST_DISCO_ADDRESS"], audience=RS_AUDIENCE
-    ) as base_url:
+    with boot_rs(issuer=test_config["TEST_ISSUER"], audience=RS_AUDIENCE) as base_url:
         yield base_url
 
 
@@ -157,7 +155,7 @@ def test_unbound_bearer_accepted_by_default(rs, unbound_token):
 
 def test_unbound_bearer_rejected_when_dpop_required(test_config, unbound_token):
     with boot_rs(
-        discovery_url=test_config["TEST_DISCO_ADDRESS"],
+        issuer=test_config["TEST_ISSUER"],
         audience=RS_AUDIENCE,
         extra_env={"RS_REQUIRED_BINDING": "dpop"},
     ) as base_url:

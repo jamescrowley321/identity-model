@@ -36,7 +36,7 @@ from py_identity_model import (
     jwks_from_dict,
 )
 from py_identity_model.core import jwks_cache
-from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.discovery_policy import DiscoveryLocation, DiscoveryPolicy
 from py_identity_model.core.models import AuthorizationCodeTokenRequest
 from py_identity_model.core.token_validation_logic import validate_jwks_response
 from py_identity_model.exceptions import (
@@ -119,9 +119,7 @@ class Adapter(NamedTuple):
 def _revocation_call(base: str, inp: dict) -> Any:
     endpoint = base + "/revoke"
     if inp.get("discover"):
-        disco = get_discovery_document(
-            DiscoveryDocumentRequest(address=base + _DISCO_PATH)
-        )
+        disco = get_discovery_document(DiscoveryDocumentRequest(issuer=base))
         assert disco.is_successful, disco.error
         endpoint = getattr(disco, "revocation_endpoint", None)
         if endpoint is None:
@@ -335,13 +333,22 @@ def _client_credentials_expect(case_id: str, expect: dict, response: Any) -> Non
 # error codes, exact HTTP statuses, and exact missing-field sets.
 
 
+_DISCOVERY_LOCATIONS = {
+    "openid_configuration": DiscoveryLocation.OPENID_CONFIGURATION,
+    "oauth_authorization_server": DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER,
+}
+
+
 def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
-    address = base + _DISCO_PATH
+    issuer = base + inp.get("issuer_suffix", "")
     # The fixture is plain HTTP on loopback; require_https also withdraws the
     # loopback exemption so the HTTPS requirement applies.
-    policy = DiscoveryPolicy(allow_http_on_loopback=not inp.get("require_https"))
+    policy = DiscoveryPolicy(
+        allow_http_on_loopback=not inp.get("require_https"),
+        location=_DISCOVERY_LOCATIONS[inp.get("location", "openid_configuration")],
+    )
     if "calls_at_seconds" not in inp:
-        request = DiscoveryDocumentRequest(address=address, policy=policy)
+        request = DiscoveryDocumentRequest(issuer=issuer, policy=policy)
         return base, [get_discovery_document(request)]
     responses = []
     # A dedicated cache carries the vector's TTL, so nothing is left in the
@@ -361,7 +368,7 @@ def _discovery_call(base: str, inp: dict) -> tuple[str, list]:
         for at in inp["calls_at_seconds"]:
             now[0] = start + at
             responses.append(
-                token_validation._get_disco_response(address, policy, client, cache)
+                token_validation._get_disco_response(issuer, policy, client, cache)
             )
     return base, responses
 
@@ -458,9 +465,7 @@ def _dpop_expect(case_id: str, expect: dict, result: tuple) -> None:
 def _introspection_call(base: str, inp: dict) -> Any:
     endpoint = base + "/introspect"
     if inp.get("discover"):
-        disco = get_discovery_document(
-            DiscoveryDocumentRequest(address=base + _DISCO_PATH)
-        )
+        disco = get_discovery_document(DiscoveryDocumentRequest(issuer=base))
         assert disco.is_successful, disco.error
         assert disco.introspection_endpoint, "discovery has no introspection_endpoint"
         endpoint = disco.introspection_endpoint
@@ -590,7 +595,7 @@ def _jwks_step(
     if step == "resolve":
         key, _, _ = _discover_and_resolve_key(
             _token_with_header(kid, alg),
-            base + _DISCO_PATH,
+            base,
             client,
             DiscoveryPolicy(),
             cache,

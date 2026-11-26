@@ -70,7 +70,7 @@ uv add py-identity-model
 ```python
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com/.well-known/openid-configuration"))
+response = get_discovery_document(DiscoveryDocumentRequest(issuer="https://issuer.example.com"))
 if response.is_successful:
     print(f"Token Endpoint: {response.token_endpoint}")
 ```
@@ -81,7 +81,7 @@ if response.is_successful:
 from py_identity_model import TokenValidationConfig, validate_token
 
 config = TokenValidationConfig(perform_disco=True, audience="my-api")
-claims = validate_token(jwt=token, token_validation_config=config, disco_doc_address="https://issuer.example.com/.well-known/openid-configuration")
+claims = validate_token(jwt=token, token_validation_config=config, issuer="https://issuer.example.com")
 ```
 
 ### Async API
@@ -90,7 +90,7 @@ claims = validate_token(jwt=token, token_validation_config=config, disco_doc_add
 from py_identity_model.aio import get_discovery_document, validate_token
 from py_identity_model import DiscoveryDocumentRequest
 
-response = await get_discovery_document(DiscoveryDocumentRequest(address=url))
+response = await get_discovery_document(DiscoveryDocumentRequest(issuer=issuer))
 ```
 
 ### Client Credentials
@@ -147,7 +147,7 @@ app = FastAPI()
 
 app.add_middleware(
     TokenValidationMiddleware,
-    discovery_url="https://issuer.example.com/.well-known/openid-configuration",
+    issuer="https://issuer.example.com",
     audience="my-api",
     excluded_paths=["/health", "/docs", "/openapi.json"],
 )
@@ -178,7 +178,7 @@ point (cache settings go on a `CacheConfig`, passed on a `ValidationCache`):
 from py_identity_model import HTTPClient, HTTPConfig, validate_token
 
 client = HTTPClient(config=HTTPConfig(http_timeout=10.0, ca_bundle="/path/to/ca.crt"))
-claims = validate_token(token, validation_config, disco_url, http_client=client)
+claims = validate_token(token, validation_config, issuer, http_client=client)
 ```
 
 Without `http_client=`, the library default client (built from `HTTPConfig()`)

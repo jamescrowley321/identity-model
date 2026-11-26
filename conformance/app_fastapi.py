@@ -12,7 +12,7 @@ router survives the same OIDF RP suite (invalid iss/aud/sig, nonce,
 missing-sub, kid, key rotation, form_post) the library passes.
 
 How it works — the OIDF suite varies the issuer per test module, while the
-router binds one ``OIDCSettings.discovery_url`` at build time. So the harness
+router binds one ``OIDCSettings.issuer`` at build time. So the harness
 builds a fresh FastAPI app (SessionMiddleware + router) per ``/authorize``,
 drives its ``/login`` in-process over ``httpx.ASGITransport``, and keeps the
 ``(client, cookie jar)`` pair keyed by the flow's ``state`` — the same
@@ -49,15 +49,12 @@ import httpx
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import OIDCSettings, build_oidc_router
-from py_identity_model import (
-    DiscoveryErrorKind,
-    TokenValidationErrorKind,
-    discovery_document_url,
-)
+from py_identity_model import DiscoveryErrorKind, TokenValidationErrorKind
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.core.discovery_policy import discovery_document_url
 from py_identity_model.exceptions import ConfigurationException
 
 
@@ -289,7 +286,8 @@ async def discover(
     """
     _set_active_test(profile, test_name)
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -299,7 +297,7 @@ async def discover(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_url,
+        issuer=issuer,
         client_id="conformance-rp",
         redirect_uri=f"{RP_BASE_URL}/callback",
     )
@@ -355,7 +353,8 @@ async def authorize(
     # A new flow starts with no recorded outcome (see app.py /authorize).
     test_results.pop(test_id, None)
     try:
-        disco_url = discovery_document_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -365,7 +364,7 @@ async def authorize(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_url,
+        issuer=issuer,
         client_id=client_id,
         client_secret=client_secret or None,
         redirect_uri=f"{RP_BASE_URL}/callback",

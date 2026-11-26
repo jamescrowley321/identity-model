@@ -51,7 +51,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -874,7 +874,7 @@ class TestUntrustedAudiences:
             perform_disco=True, audience=None, issuer=_ISSUER
         )
         with pytest.raises(IdTokenValidationException, match="missing required 'aud'"):
-            validate_id_token(token, config, disco_doc_address=DISCO_URL, nonce=None)
+            validate_id_token(token, config, issuer=ISSUER, nonce=None)
 
     @respx.mock
     def test_sync_wrapper_rejects_untrusted_audience(self, rsa_keypair):
@@ -887,7 +887,7 @@ class TestUntrustedAudiences:
             headers={"kid": key_dict["kid"]},
         )
         with pytest.raises(UntrustedAudienceException):
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
+            validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
     @respx.mock
     def test_sync_wrapper_forwards_trusted_audiences(self, rsa_keypair):
@@ -902,7 +902,7 @@ class TestUntrustedAudiences:
         claims = validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             trusted_audiences=["other-client"],
             nonce=None,
         )
@@ -920,9 +920,7 @@ class TestUntrustedAudiences:
             headers={"kid": key_dict["kid"]},
         )
         with pytest.raises(UntrustedAudienceException):
-            await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce=None
-            )
+            await aio_validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -938,7 +936,7 @@ class TestUntrustedAudiences:
         claims = await aio_validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             trusted_audiences=["other-client"],
             nonce=None,
         )
@@ -969,7 +967,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 "not-a-jwt",
                 config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 validate_azp=True,
                 nonce=None,
             )
@@ -994,7 +992,7 @@ class TestSyncValidateIdToken:
                 validate_id_token(
                     token,
                     config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     trusted_audiences=["other-api", ""],
                     nonce=None,
                 )
@@ -1012,9 +1010,7 @@ class TestSyncValidateIdToken:
         _mock_disco_and_jwks(key_dict)
         token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
 
-        claims = validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, nonce=None
-        )
+        claims = validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
         assert claims["sub"] == "user-1"
         assert claims["aud"] == _AUDIENCE
@@ -1029,7 +1025,7 @@ class TestSyncValidateIdToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenValidationException, match=r"sub"):
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
+            validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
     @respx.mock
     def test_signed_cross_client_azp_accepted_by_default(self, rsa_keypair):
@@ -1038,9 +1034,7 @@ class TestSyncValidateIdToken:
         token_claims = _valid_id_claims(azp="android-client")
         token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
 
-        claims = validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, nonce=None
-        )
+        claims = validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
         assert claims == token_claims
 
@@ -1058,7 +1052,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 validate_azp=True,
                 nonce=None,
             )
@@ -1072,9 +1066,7 @@ class TestSyncValidateIdToken:
         )
 
         with pytest.raises(IdTokenNonceError, match=r"nonce"):
-            validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
-            )
+            validate_id_token(token, _config(), issuer=ISSUER, nonce="expected")
 
     @respx.mock
     def test_signed_id_token_nonce_match_accepted(self, rsa_keypair):
@@ -1084,9 +1076,7 @@ class TestSyncValidateIdToken:
             pem, _valid_id_claims(nonce="n-42"), headers={"kid": key_dict["kid"]}
         )
 
-        claims = validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, nonce="n-42"
-        )
+        claims = validate_id_token(token, _config(), issuer=ISSUER, nonce="n-42")
         assert claims["nonce"] == "n-42"
 
     @respx.mock
@@ -1105,7 +1095,7 @@ class TestSyncValidateIdToken:
         claims = validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             access_token=access_token,
             nonce=None,
         )
@@ -1125,7 +1115,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 access_token="real-access-token-xyz",
                 nonce=None,
             )
@@ -1140,7 +1130,7 @@ class TestSyncValidateIdToken:
         claims = validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             access_token="real-access-token-xyz",
             access_token_issued_with_id_token=False,
             nonce=None,
@@ -1159,7 +1149,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 access_token="real-access-token-xyz",
                 access_token_issued_with_id_token=True,
                 nonce=None,
@@ -1177,7 +1167,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 code="real-auth-code-abc",
                 code_issued_with_id_token=True,
                 nonce=None,
@@ -1197,7 +1187,7 @@ class TestSyncValidateIdToken:
         )
 
         claims = validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, code=code, nonce=None
+            token, _config(), issuer=ISSUER, code=code, nonce=None
         )
         assert claims["sub"] == "user-1"
 
@@ -1217,7 +1207,7 @@ class TestSyncValidateIdToken:
             validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 code="real-auth-code-abc",
                 nonce=None,
             )
@@ -1233,9 +1223,7 @@ class TestSyncValidateIdToken:
         )
 
         with pytest.raises(IdTokenValidationException, match=r"max_age"):
-            validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, max_age=60, nonce=None
-            )
+            validate_id_token(token, _config(), issuer=ISSUER, max_age=60, nonce=None)
 
 
 class TestAsyncValidateIdToken:
@@ -1264,7 +1252,7 @@ class TestAsyncValidateIdToken:
             await aio_validate_id_token(
                 "not-a-jwt",
                 config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 validate_azp=True,
                 nonce=None,
             )
@@ -1290,7 +1278,7 @@ class TestAsyncValidateIdToken:
                 await aio_validate_id_token(
                     token,
                     config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     trusted_audiences=["other-api", ""],
                     nonce=None,
                 )
@@ -1308,7 +1296,7 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, _valid_id_claims(), headers={"kid": key_dict["kid"]})
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, nonce=None
+            token, _config(), issuer=ISSUER, nonce=None
         )
 
         assert claims["sub"] == "user-1"
@@ -1324,9 +1312,7 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenValidationException, match=r"sub"):
-            await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce=None
-            )
+            await aio_validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -1337,7 +1323,7 @@ class TestAsyncValidateIdToken:
         token = sign_jwt(pem, token_claims, headers={"kid": key_dict["kid"]})
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, nonce=None
+            token, _config(), issuer=ISSUER, nonce=None
         )
 
         assert claims == token_claims
@@ -1357,7 +1343,7 @@ class TestAsyncValidateIdToken:
             await aio_validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 validate_azp=True,
                 nonce=None,
             )
@@ -1377,7 +1363,7 @@ class TestAsyncValidateIdToken:
         claims = await aio_validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             access_token=access_token,
             nonce=None,
         )
@@ -1393,7 +1379,7 @@ class TestAsyncValidateIdToken:
         claims = await aio_validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             access_token="real-access-token-xyz",
             access_token_issued_with_id_token=False,
             nonce=None,
@@ -1415,7 +1401,7 @@ class TestAsyncValidateIdToken:
             await aio_validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 access_token="real-access-token-xyz",
                 access_token_issued_with_id_token=True,
                 nonce=None,
@@ -1436,7 +1422,7 @@ class TestAsyncValidateIdToken:
             await aio_validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 code="real-auth-code-abc",
                 code_issued_with_id_token=True,
                 nonce=None,
@@ -1456,7 +1442,7 @@ class TestAsyncValidateIdToken:
         )
 
         claims = await aio_validate_id_token(
-            token, _config(), disco_doc_address=DISCO_URL, code=code, nonce=None
+            token, _config(), issuer=ISSUER, code=code, nonce=None
         )
         assert claims["sub"] == "user-1"
 
@@ -1476,7 +1462,7 @@ class TestAsyncValidateIdToken:
             await aio_validate_id_token(
                 token,
                 _config(),
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 code="real-auth-code-abc",
                 nonce=None,
             )
@@ -1492,7 +1478,7 @@ class TestAsyncValidateIdToken:
 
         with pytest.raises(IdTokenNonceError, match=r"nonce"):
             await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
+                token, _config(), issuer=ISSUER, nonce="expected"
             )
 
 
@@ -1541,7 +1527,7 @@ class TestSyncAsyncPureAgreement:
         sync_claims = validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             nonce="n-shared",
             access_token=access_token,
             max_age=300,
@@ -1550,7 +1536,7 @@ class TestSyncAsyncPureAgreement:
         async_claims = await aio_validate_id_token(
             token,
             _config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             nonce="n-shared",
             access_token=access_token,
             max_age=300,
@@ -1572,12 +1558,10 @@ class TestSyncAsyncPureAgreement:
                 bad_claims, "RS256", client_id=_AUDIENCE, nonce="expected"
             )
         with pytest.raises(IdTokenValidationException, match=r"nonce"):
-            validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
-            )
+            validate_id_token(token, _config(), issuer=ISSUER, nonce="expected")
         with pytest.raises(IdTokenValidationException, match=r"nonce"):
             await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce="expected"
+                token, _config(), issuer=ISSUER, nonce="expected"
             )
 
 
@@ -1616,7 +1600,7 @@ class TestRequiredTimeClaims:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenMissingClaimError) as exc_info:
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce=None)
+            validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
         assert exc_info.value.claim is claim
 
     @pytest.mark.parametrize("claim", list(IdTokenRequiredClaim))
@@ -1631,9 +1615,7 @@ class TestRequiredTimeClaims:
         token = sign_jwt(pem, claims, headers={"kid": key_dict["kid"]})
 
         with pytest.raises(IdTokenMissingClaimError) as exc_info:
-            await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce=None
-            )
+            await aio_validate_id_token(token, _config(), issuer=ISSUER, nonce=None)
         assert exc_info.value.claim is claim
 
 
@@ -1813,7 +1795,7 @@ class TestBlankIssuerEntries:
             issuer=issuer,
         )
         with pytest.raises(ConfigurationException) as exc_info:
-            validate_id_token(token, config, disco_doc_address=DISCO_URL, nonce=None)
+            validate_id_token(token, config, issuer=ISSUER, nonce=None)
         assert exc_info.value.message == _BLANK_ISSUER_ENTRY
 
     async def test_async_rejects_blank_entry(self, rsa_keypair):
@@ -1862,7 +1844,7 @@ class TestEmptyNonceArgument:
         _key_dict, pem = rsa_keypair
         token = sign_jwt(pem, _valid_id_claims(nonce=""))
         with pytest.raises(ConfigurationException) as exc_info:
-            validate_id_token(token, _config(), disco_doc_address=DISCO_URL, nonce="")
+            validate_id_token(token, _config(), issuer=ISSUER, nonce="")
         assert exc_info.value.message == _EMPTY_NONCE
         assert respx.calls.call_count == 0
 
@@ -1871,9 +1853,7 @@ class TestEmptyNonceArgument:
         _key_dict, pem = rsa_keypair
         token = sign_jwt(pem, _valid_id_claims(nonce=""))
         with pytest.raises(ConfigurationException) as exc_info:
-            await aio_validate_id_token(
-                token, _config(), disco_doc_address=DISCO_URL, nonce=""
-            )
+            await aio_validate_id_token(token, _config(), issuer=ISSUER, nonce="")
         assert exc_info.value.message == _EMPTY_NONCE
         assert respx.calls.call_count == 0
 
@@ -1957,7 +1937,7 @@ def test_discovery_id_token_distinguishes_header_and_signature_rejections(
         validate_id_token(
             token,
             config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
             nonce=None,
             cache=ValidationCache(),
         )

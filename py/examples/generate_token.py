@@ -27,16 +27,16 @@ def main():
     """Generate a token from the local identity server."""
 
     # Local identity server configuration
-    discovery_address = "https://localhost:5001/.well-known/openid-configuration"
+    issuer = "https://localhost:5001"
     client_id = "py-identity-model-client"
     client_secret = "py-identity-model-secret"
     scope = "py-identity-model"
 
     print("🔍 Discovering endpoints from local identity server...")
-    print(f"   Discovery URL: {discovery_address}")
+    print(f"   Issuer: {issuer}")
 
     # Get discovery document to find token endpoint
-    disco_request = DiscoveryDocumentRequest(address=discovery_address)
+    disco_request = DiscoveryDocumentRequest(issuer=issuer)
     disco_response = get_discovery_document(disco_request)
 
     if not disco_response.is_successful:

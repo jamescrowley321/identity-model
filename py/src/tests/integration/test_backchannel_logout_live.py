@@ -177,7 +177,7 @@ class TestBackChannelLogoutLive:
                     audience=registered.client_id,
                     issuer=raw_discovery["issuer"],
                 ),
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
             )
             assert isinstance(claims, dict)
             assert BACKCHANNEL_LOGOUT_EVENT in claims.get("events", {})

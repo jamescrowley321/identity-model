@@ -391,7 +391,7 @@ class TestValidateFAPIDiscoveryFromDocument:
         }
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=metadata))
 
-        disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert disco.dpop_signing_alg_values_supported == ["ES256"]
         assert _messages(validate_fapi_discovery(disco).violations) == []

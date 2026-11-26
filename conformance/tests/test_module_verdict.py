@@ -315,7 +315,7 @@ def test_harness_records_unknown_state_against_last_flow(monkeypatch):
     monkeypatch.setattr(
         harness_app,
         "_last_flow_context",
-        {"issuer": ISSUER, "client_id": "c", "disco_address": "", "test_id": "m9"},
+        {"issuer": ISSUER, "client_id": "c", "test_id": "m9"},
     )
     monkeypatch.setattr(harness_app, "test_results", {})
     client = TestClient(harness_app.app)
@@ -397,7 +397,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(
         harness_app,
         "_last_flow_context",
-        {"issuer": ISSUER, "client_id": "c", "disco_address": "", "test_id": "m9"},
+        {"issuer": ISSUER, "client_id": "c", "test_id": "m9"},
     )
     monkeypatch.setattr(harness_app, "test_results", {})
     return harness_app
@@ -701,13 +701,31 @@ def test_fastapi_stray_callback_after_success_records_a_conflict(monkeypatch):
 
 
 def _router_fixed_details() -> list[str]:
-    import re
+    """Every fixed string the router can send as an error ``detail``.
+
+    Includes both branches of a conditional ``detail``; a formatted
+    (f-string) detail is not fixed and is left out.
+    """
+    import ast
 
     router = (
         Path(__file__).parents[2]
         / "py/packages/fastapi-identity-model/fastapi_identity_model/rp.py"
     )
-    return re.findall(r'detail="([^"]+)"', router.read_text())
+    details: list[str] = []
+    for node in ast.walk(ast.parse(router.read_text())):
+        if isinstance(node, ast.keyword) and node.arg == "detail":
+            values = (
+                [node.value.body, node.value.orelse]
+                if isinstance(node.value, ast.IfExp)
+                else [node.value]
+            )
+            details.extend(
+                value.value
+                for value in values
+                if isinstance(value, ast.Constant) and isinstance(value.value, str)
+            )
+    return details
 
 
 def test_every_fixed_router_detail_has_a_reason_class():

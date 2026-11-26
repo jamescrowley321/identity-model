@@ -45,7 +45,8 @@ from py_identity_model import (
 
 pytestmark = pytest.mark.unit
 
-DISCO_URL = "https://as.example.com/.well-known/openid-configuration"
+ISSUER = "https://as.example.com"
+DISCO_URL = f"{ISSUER}/.well-known/openid-configuration"
 
 # The classic link-local metadata SSRF target, plaintext HTTP.
 METADATA_HTTP = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
@@ -73,7 +74,7 @@ OFFHOST_PAR = "https://par.example.net/par"
 LOOPBACK_MTLS_HTTPS = "https://127.0.0.1:8443/token"
 
 _BASE_DISCO = {
-    "issuer": "https://as.example.com",
+    "issuer": ISSUER,
     "jwks_uri": "https://as.example.com/jwks",
     "authorization_endpoint": "https://as.example.com/authorize",
     "token_endpoint": "https://as.example.com/token",
@@ -85,7 +86,7 @@ _BASE_DISCO = {
 
 def _fetch(doc: dict) -> DiscoveryDocumentResponse:
     respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=doc))
-    return get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+    return get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
 
 @pytest.mark.parametrize(
@@ -160,7 +161,7 @@ def test_loopback_mtls_alias_allowed_when_opted_in() -> None:
     respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=doc))
     result = get_discovery_document(
         DiscoveryDocumentRequest(
-            address=DISCO_URL,
+            issuer=ISSUER,
             policy=DiscoveryPolicy(allow_loopback_endpoints=True),
         )
     )
@@ -176,7 +177,7 @@ def test_link_local_mtls_alias_rejected_even_with_loopback_opt_in() -> None:
     respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=doc))
     result = get_discovery_document(
         DiscoveryDocumentRequest(
-            address=DISCO_URL,
+            issuer=ISSUER,
             policy=DiscoveryPolicy(allow_loopback_endpoints=True),
         )
     )
@@ -211,7 +212,7 @@ def test_offhost_par_rejected_by_default_but_accepted_when_allowlisted() -> None
     respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=doc))
     allowlisted = get_discovery_document(
         DiscoveryDocumentRequest(
-            address=DISCO_URL,
+            issuer=ISSUER,
             policy=DiscoveryPolicy(
                 additional_endpoint_base_addresses=["https://par.example.net"]
             ),

@@ -800,7 +800,7 @@ def _scenario_stack(workers: int = 1) -> Iterator[tuple[MockOP, str, int]]:
     with (
         serve_mock_op() as op,
         boot_rs_process(
-            discovery_url=op.discovery_url,
+            issuer=op.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
             workers=workers,

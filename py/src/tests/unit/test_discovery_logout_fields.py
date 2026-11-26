@@ -13,7 +13,7 @@ from py_identity_model.discovery import (
     get_discovery_document,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 _BASE_DISCO = {
@@ -42,7 +42,7 @@ class TestBackchannelLogoutDiscoveryFields:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.backchannel_logout_supported is True
@@ -53,7 +53,7 @@ class TestBackchannelLogoutDiscoveryFields:
         url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.backchannel_logout_supported is None
@@ -73,7 +73,7 @@ class TestBackchannelLogoutDiscoveryFields:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.backchannel_logout_supported is True
         assert result.backchannel_logout_session_supported is False
@@ -95,7 +95,7 @@ class TestEndSessionEndpointDiscoveryField:
             )
         )
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.end_session_endpoint == "https://example.com/logout"
@@ -105,7 +105,7 @@ class TestEndSessionEndpointDiscoveryField:
         url = DISCO_URL
         respx.get(url).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
 
-        result = get_discovery_document(DiscoveryDocumentRequest(address=url))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.end_session_endpoint is None

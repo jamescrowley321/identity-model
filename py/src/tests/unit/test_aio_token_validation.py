@@ -32,7 +32,7 @@ from py_identity_model.exceptions import (
     TokenValidationException,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
@@ -103,7 +103,7 @@ class TestAsyncTokenValidation:
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @pytest.mark.asyncio
@@ -127,7 +127,7 @@ class TestAsyncTokenValidation:
                 await validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=validation_config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                 )
 
@@ -152,7 +152,7 @@ class TestAsyncTokenValidation:
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
 
@@ -187,7 +187,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -195,7 +195,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -227,7 +227,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -238,7 +238,7 @@ class TestAsyncJwksCacheTTL:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_route.call_count == JWKS_FETCH_AFTER_EXPIRY
@@ -282,7 +282,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -333,7 +333,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -374,7 +374,7 @@ class TestAsyncSignatureRetry:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -382,7 +382,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_route.call_count == 1, (
@@ -426,7 +426,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @pytest.mark.asyncio
@@ -461,7 +461,7 @@ class TestAsyncSignatureRetry:
                 await validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                 )
 

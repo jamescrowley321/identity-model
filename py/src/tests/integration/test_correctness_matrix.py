@@ -69,7 +69,7 @@ ID_TOKEN_DETAIL = "ID token cannot be used as an access token"
 # What the module fixture exposes: the live mock OP (to mint bespoke tokens), the
 # booted RS base URL, the forged corpus, and the mock OP discovery URL (so a
 # second RS can be booted against the same issuer for the F-07 marker case).
-MockMatrix = namedtuple("MockMatrix", "op base_url corpus discovery_url")
+MockMatrix = namedtuple("MockMatrix", "op base_url corpus issuer")
 
 
 def _get_protected(base_url: str, token: str) -> httpx.Response:
@@ -97,12 +97,12 @@ def mock_matrix():
     with (
         serve_mock_op() as op,
         boot_rs(
-            discovery_url=op.discovery_url,
+            issuer=op.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
         ) as base_url,
     ):
-        yield MockMatrix(op, base_url, build_corpus(op), op.discovery_url)
+        yield MockMatrix(op, base_url, build_corpus(op), op.issuer)
 
 
 @pytest.mark.parametrize("name", ACCEPTED_200_CLASSES)
@@ -205,7 +205,7 @@ def test_cross_issuer_token_from_a_different_issuer_is_rejected(mock_matrix):
     with (
         serve_mock_op() as op_b,
         boot_rs(
-            discovery_url=op_b.discovery_url,
+            issuer=op_b.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
         ) as rs_b,
@@ -309,7 +309,7 @@ def test_scopeless_access_token_marker_gate(mock_matrix):
     assert default.status_code == httpx.codes.FORBIDDEN
 
     with boot_rs(
-        discovery_url=mock_matrix.discovery_url,
+        issuer=mock_matrix.issuer,
         audience=CORPUS_AUDIENCE,
         require_scope="read",
         require_access_token_marker=True,
@@ -338,18 +338,16 @@ def _granted_scopes(access_token: str) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def node_oidc_discovery_url(test_config, is_node_oidc_fixture) -> str:
+def node_oidc_issuer(test_config, is_node_oidc_fixture) -> str:
     if not is_node_oidc_fixture:
         pytest.skip(
             "correctness-matrix real-issuer leg asserts node-oidc's "
             "urn:test:api audience; remote matrix providers mint different tokens"
         )
-    return test_config["TEST_DISCO_ADDRESS"]
+    return test_config["TEST_ISSUER"]
 
 
-def test_real_issuer_valid_token_accepted(
-    node_oidc_discovery_url, client_credentials_token
-):
+def test_real_issuer_valid_token_accepted(node_oidc_issuer, client_credentials_token):
     """A REAL node-oidc CC token → 200 through the booted RS (real HTTP DoD)."""
     access_token = client_credentials_token.token.get("access_token", "")
     assert access_token, "CC fixture returned no access_token"
@@ -357,7 +355,7 @@ def test_real_issuer_valid_token_accepted(
     assert scopes, "minted token carried no scopes to guard on"
 
     with boot_rs(
-        discovery_url=node_oidc_discovery_url,
+        issuer=node_oidc_issuer,
         audience=NODE_OIDC_AUDIENCE,
         require_scope=scopes[0],
     ) as base_url:
@@ -367,9 +365,7 @@ def test_real_issuer_valid_token_accepted(
     assert response.json()["sub"]
 
 
-def test_real_issuer_wrong_aud_rejected(
-    node_oidc_discovery_url, client_credentials_token
-):
+def test_real_issuer_wrong_aud_rejected(node_oidc_issuer, client_credentials_token):
     """A REAL node-oidc token against an RS expecting a different aud → 401.
 
     A real-issuer negative the corpus cannot forge: a genuinely signed token
@@ -380,7 +376,7 @@ def test_real_issuer_wrong_aud_rejected(
     assert access_token, "CC fixture returned no access_token"
 
     with boot_rs(
-        discovery_url=node_oidc_discovery_url,
+        issuer=node_oidc_issuer,
         audience="urn:does-not-match-any-real-token",
     ) as base_url:
         response = _get_protected(base_url, access_token)

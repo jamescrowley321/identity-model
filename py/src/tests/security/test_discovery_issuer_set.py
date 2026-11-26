@@ -110,9 +110,9 @@ def _config(**overrides: object) -> TokenValidationConfig:
 
 async def _validate(api: str, token: str, config: TokenValidationConfig) -> dict:
     if api == SYNC:
-        return validate_token(token, config, DISCO_URL, cache=ValidationCache())
+        return validate_token(token, config, DISCOVERY_ISSUER, cache=ValidationCache())
     return await aio_validate_token(
-        token, config, DISCO_URL, cache=AsyncValidationCache()
+        token, config, DISCOVERY_ISSUER, cache=AsyncValidationCache()
     )
 
 
@@ -121,10 +121,10 @@ async def _validate_id_token(
 ) -> dict:
     if api == SYNC:
         return validate_id_token(
-            token, config, DISCO_URL, nonce=None, cache=ValidationCache()
+            token, config, DISCOVERY_ISSUER, nonce=None, cache=ValidationCache()
         )
     return await aio_validate_id_token(
-        token, config, DISCO_URL, nonce=None, cache=AsyncValidationCache()
+        token, config, DISCOVERY_ISSUER, nonce=None, cache=AsyncValidationCache()
     )
 
 
@@ -132,16 +132,18 @@ async def _validate_logout_token(
     api: str, token: str, config: TokenValidationConfig
 ) -> dict:
     if api == SYNC:
-        return validate_logout_token(token, config, DISCO_URL, cache=ValidationCache())
+        return validate_logout_token(
+            token, config, DISCOVERY_ISSUER, cache=ValidationCache()
+        )
     return await aio_validate_logout_token(
-        token, config, DISCO_URL, cache=AsyncValidationCache()
+        token, config, DISCOVERY_ISSUER, cache=AsyncValidationCache()
     )
 
 
 async def _retry_without_the_flag(
     api: str, token: str, config: TokenValidationConfig
 ) -> dict:
-    request = DiscoveryDocumentRequest(address=DISCO_URL)
+    request = DiscoveryDocumentRequest(issuer=DISCOVERY_ISSUER)
     if api == SYNC:
         return sync_tv._retry_with_refreshed_jwks(
             token,

@@ -7,9 +7,9 @@ environments using DiscoveryPolicy.
 
 from py_identity_model import (
     DiscoveryDocumentRequest,
+    DiscoveryLocation,
     DiscoveryPolicy,
     TokenValidationConfig,
-    discovery_document_url,
 )
 
 
@@ -20,9 +20,9 @@ def production_example():
     print("=" * 60)
 
     req = DiscoveryDocumentRequest(
-        address=discovery_document_url("https://auth.example.com"),
+        issuer="https://auth.example.com",
     )
-    print(f"\n  Address: {req.address}")
+    print(f"\n  Issuer: {req.issuer}")
     print(f"  Policy: {req.policy} (None = strict defaults)")
     print("  HTTPS required, issuer validated, endpoints validated")
 
@@ -38,10 +38,10 @@ def development_example():
         validate_issuer=False,
     )
     req = DiscoveryDocumentRequest(
-        address=discovery_document_url("http://localhost:8080"),
+        issuer="http://localhost:8080",
         policy=policy,
     )
-    print(f"\n  Address: {req.address}")
+    print(f"\n  Issuer: {req.issuer}")
     print(f"  require_https: {policy.require_https}")
     print(f"  validate_issuer: {policy.validate_issuer}")
     print("  HTTP allowed, issuer validation disabled")
@@ -58,10 +58,10 @@ def loopback_example():
         allow_http_on_loopback=True,
     )
     req = DiscoveryDocumentRequest(
-        address=discovery_document_url("http://localhost:5000"),
+        issuer="http://localhost:5000",
         policy=policy,
     )
-    print(f"\n  Address: {req.address}")
+    print(f"\n  Issuer: {req.issuer}")
     print(f"  require_https: {policy.require_https}")
     print(f"  allow_http_on_loopback: {policy.allow_http_on_loopback}")
     print("  HTTPS required, but localhost gets an exception")
@@ -93,15 +93,27 @@ def cached_validation_example():
     print("  reused, and cache entries are partitioned by the full policy.")
 
 
-def discovery_url_example():
-    """Derive the discovery document URL from an issuer (OIDC Discovery §4.1)."""
+def discovery_location_example():
+    """Choose where the metadata document is fetched from.
+
+    The library builds the URL from the issuer. The default is the OpenID
+    Connect location (Discovery 1.0 §4.1); an OAuth 2.0 authorization server
+    that only publishes RFC 8414 metadata uses
+    ``DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER``.
+    """
     print("\n" + "=" * 60)
-    print("Discovery Document URL")
+    print("Discovery Policy - Metadata Location")
     print("=" * 60)
 
-    for issuer in ("https://auth.example.com", "https://auth.example.com/tenant1"):
-        print(f"\n  Issuer: {issuer}")
-        print(f"  Discovery URL: {discovery_document_url(issuer)}")
+    policy = DiscoveryPolicy(location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER)
+    req = DiscoveryDocumentRequest(
+        issuer="https://auth.example.com/tenant1",
+        policy=policy,
+    )
+    print(f"\n  Issuer: {req.issuer}")
+    print(f"  location: {policy.location}")
+    print("  Fetched from https://auth.example.com/.well-known/")
+    print("  oauth-authorization-server/tenant1 (RFC 8414 §3.1)")
 
 
 def main():
@@ -109,7 +121,7 @@ def main():
     development_example()
     loopback_example()
     cached_validation_example()
-    discovery_url_example()
+    discovery_location_example()
     print("\n" + "=" * 60)
     print("Examples completed!")
     print("=" * 60)

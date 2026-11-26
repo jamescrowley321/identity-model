@@ -81,7 +81,7 @@ def serve_mock_op(
         timeout: Seconds to wait for the first successful discovery response.
 
     Yields:
-        The live :class:`MockOP` instance (use ``op.discovery_url`` for the RS,
+        The live :class:`MockOP` instance (use ``op.issuer`` for the RS,
         ``op.sign`` / :func:`~corpus.build_corpus` for forged tokens).
     """
     # Deferred so importing this module in the root env (where uvicorn is not

@@ -108,7 +108,7 @@ async def _discover(body: str, asynchronous: bool):
             200, text=body, headers={"Content-Type": "application/json"}
         )
     )
-    request = DiscoveryDocumentRequest(address=DISCO_URL)
+    request = DiscoveryDocumentRequest(issuer=ISSUER)
     if asynchronous:
         return await async_discover(request)
     return get_discovery_document(request)
@@ -180,9 +180,7 @@ def test_no_policy_relaxes_jwks_uri(policy):
         request=httpx.Request("GET", DISCO_URL),
     )
     with pytest.raises(DiscoveryMissingFieldsError) as exc_info:
-        validate_and_parse_discovery_response(
-            response, policy, requested_address=DISCO_URL
-        )
+        validate_and_parse_discovery_response(response, policy, requested_issuer=ISSUER)
     assert exc_info.value.fields == ("jwks_uri",)
 
 

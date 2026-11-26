@@ -26,7 +26,7 @@ _DEFAULT_EXCLUDED_PATHS = [
 @pytest.fixture
 def clean_env(monkeypatch):
     for name in (
-        "DISCOVERY_URL",
+        "ISSUER",
         "CLIENT_ID",
         "REDIRECT_URI",
         "CLIENT_SECRET",
@@ -47,9 +47,7 @@ def clean_env(monkeypatch):
 
 
 def test_every_setting_is_read(clean_env):
-    clean_env.setenv(
-        "OIDC_DISCOVERY_URL", "https://op/.well-known/openid-configuration"
-    )
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_REDIRECT_URI", "http://localhost/cb")
     clean_env.setenv("OIDC_CLIENT_SECRET", "secret")
@@ -65,7 +63,7 @@ def test_every_setting_is_read(clean_env):
     clean_env.setenv("OIDC_VALIDATE_AZP", "true")
 
     assert oidc_settings_from_env() == OIDCSettings(
-        discovery_url="https://op/.well-known/openid-configuration",
+        issuer="https://op",
         client_id="cid",
         redirect_uri="http://localhost/cb",
         client_secret="secret",
@@ -83,12 +81,12 @@ def test_every_setting_is_read(clean_env):
 
 
 def test_unset_optional_settings_take_the_defaults(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
 
     settings = oidc_settings_from_env()
 
-    assert settings == OIDCSettings(discovery_url="d", client_id="cid")
+    assert settings == OIDCSettings(issuer="https://op", client_id="cid")
     assert settings.redirect_uri == ""
     assert settings.expected_audience == "cid"
     assert settings.excluded_paths == _DEFAULT_EXCLUDED_PATHS
@@ -101,7 +99,7 @@ def test_unset_optional_settings_take_the_defaults(clean_env):
 
 
 def test_unknown_required_binding_is_rejected(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_REQUIRED_BINDING", "bearer")
 
@@ -110,7 +108,7 @@ def test_unknown_required_binding_is_rejected(clean_env):
 
 
 def test_invalid_expected_origin_is_rejected(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_EXPECTED_ORIGIN", "https://api.example.com/v1")
 
@@ -118,10 +116,10 @@ def test_invalid_expected_origin_is_rejected(clean_env):
         oidc_settings_from_env()
 
 
-@pytest.mark.parametrize("missing", ["DISCOVERY_URL", "CLIENT_ID"])
+@pytest.mark.parametrize("missing", ["ISSUER", "CLIENT_ID"])
 @pytest.mark.parametrize("value", [None, ""])
 def test_missing_required_setting_names_the_variable(clean_env, missing, value):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     if value is None:
         clean_env.delenv(f"OIDC_{missing}")
@@ -132,15 +130,25 @@ def test_missing_required_setting_names_the_variable(clean_env, missing, value):
         oidc_settings_from_env()
 
 
+def test_discovery_url_variable_does_not_supply_the_issuer(clean_env):
+    clean_env.setenv(
+        "OIDC_DISCOVERY_URL", "https://op/.well-known/openid-configuration"
+    )
+    clean_env.setenv("OIDC_CLIENT_ID", "cid")
+
+    with pytest.raises(ValueError, match="OIDC_ISSUER"):
+        oidc_settings_from_env()
+
+
 def test_prefix_applies_to_every_variable(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "ignored")
+    clean_env.setenv("OIDC_ISSUER", "ignored")
     clean_env.setenv("OIDC_CLIENT_ID", "ignored")
-    clean_env.setenv("APP_DISCOVERY_URL", "d")
+    clean_env.setenv("APP_ISSUER", "https://op")
     clean_env.setenv("APP_CLIENT_ID", "cid")
     clean_env.setenv("APP_SCOPE", "openid")
 
     assert oidc_settings_from_env("APP_") == OIDCSettings(
-        discovery_url="d", client_id="cid", scope="openid"
+        issuer="https://op", client_id="cid", scope="openid"
     )
 
 
@@ -155,7 +163,7 @@ def test_helper_is_not_re_exported_at_the_top_level():
 
 @pytest.mark.parametrize("value", ["urn:api,", "urn:api,,other", " , urn:api"])
 def test_empty_trusted_audience_entry_is_rejected(clean_env, value):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_TRUSTED_AUDIENCES", value)
 
@@ -164,7 +172,7 @@ def test_empty_trusted_audience_entry_is_rejected(clean_env, value):
 
 
 def test_empty_trusted_audiences_variable_means_none(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_TRUSTED_AUDIENCES", "")
 
@@ -173,7 +181,7 @@ def test_empty_trusted_audiences_variable_means_none(clean_env):
 
 @pytest.mark.parametrize(("value", "expected"), [("TRUE", True), ("False", False)])
 def test_validate_azp_is_case_insensitive(clean_env, value, expected):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_VALIDATE_AZP", value)
 
@@ -182,7 +190,7 @@ def test_validate_azp_is_case_insensitive(clean_env, value, expected):
 
 @pytest.mark.parametrize("value", ["1", "yes", "on"])
 def test_validate_azp_rejects_other_values(clean_env, value):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_VALIDATE_AZP", value)
 
@@ -191,7 +199,7 @@ def test_validate_azp_rejects_other_values(clean_env, value):
 
 
 def test_empty_audience_variable_means_client_id(clean_env):
-    clean_env.setenv("OIDC_DISCOVERY_URL", "d")
+    clean_env.setenv("OIDC_ISSUER", "https://op")
     clean_env.setenv("OIDC_CLIENT_ID", "cid")
     clean_env.setenv("OIDC_AUDIENCE", "")
 

@@ -20,7 +20,7 @@ from ..exceptions import (
 )
 from ..logging_config import logger
 from ..oidc_constants import TokenResponse
-from .discovery_policy import _WELL_KNOWN_PATH, DiscoveryPolicy
+from .discovery_policy import DiscoveryPolicy
 from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
@@ -131,17 +131,14 @@ def _reject_internal_ip_host(
 def _validate_endpoint_authority(
     url: str,
     parameter_name: str,
-    response_json: dict,
     policy: DiscoveryPolicy,
-    discovery_url: str = "",
+    issuer: str,
 ) -> None:
     """Validate that an endpoint URL's authority matches expected values.
 
-    The expected authority is ``policy.authority`` when set, or derived from
-    the discovery document's ``issuer``. The authority of the discovery URL
-    itself is also allowed (handles Docker/proxy setups where the fetch
-    hostname differs from the issuer). Additional allowed authorities come
-    from ``policy.additional_endpoint_base_addresses``.
+    The issuer's authority is always allowed: the document was fetched from
+    it, and its ``issuer`` equals it exactly. ``policy.authority`` adds
+    another, and ``policy.additional_endpoint_base_addresses`` adds more.
 
     Raises:
         DiscoveryValidationError: If the endpoint URL's authority does not match.
@@ -150,29 +147,12 @@ def _validate_endpoint_authority(
     ep_authority = _get_url_authority(url)
 
     # Build allowed authorities set (case-insensitive per RFC 3986 §3.2.2)
+    allowed = {_get_url_authority(issuer)}
     if policy.authority:
-        allowed = {_get_url_authority(policy.authority)}
-    else:
-        issuer = response_json.get("issuer", "")
-        allowed = {_get_url_authority(issuer)} if issuer else set()
-
-    # The discovery URL's authority is implicitly trusted — we already
-    # fetched the document from it.
-    if discovery_url:
-        allowed.add(_get_url_authority(discovery_url))
+        allowed.add(_get_url_authority(policy.authority))
 
     for addr in policy.additional_endpoint_base_addresses or []:
         allowed.add(_get_url_authority(addr))
-
-    # Discard empty string from set (from empty URLs)
-    allowed.discard("")
-
-    if not allowed:
-        raise DiscoveryValidationError(
-            f"Cannot validate {parameter_name} authority: "
-            f"no authority constraint available (issuer is empty and "
-            f"no policy.authority or additional_endpoint_base_addresses set)"
-        )
 
     if ep_authority not in allowed:
         raise DiscoveryValidationError(
@@ -183,23 +163,23 @@ def _validate_endpoint_authority(
         )
 
 
-def _validate_issuer_match(requested_address: str, issuer: str) -> None:
-    """Reject a document whose issuer is not the one the request was built from.
+def _validate_issuer_match(requested_issuer: str, issuer: str) -> None:
+    """Reject a document whose issuer is not exactly the configured issuer.
 
-    Compares against the address as the caller supplied it, not the URL httpx
-    sent: httpx normalises host case and default ports, and a redirect-following
-    client would report the redirect target.
+    OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the returned ``issuer`` MUST be
+    identical to the issuer the request was built from, compared code point
+    to code point with no normalization (§5), so a trailing-slash-only
+    difference is a mismatch.
     """
-    requested = requested_address.rstrip("/").removesuffix(_WELL_KNOWN_PATH).rstrip("/")
-    if not requested or not isinstance(issuer, str) or issuer.rstrip("/") != requested:
-        raise DiscoveryIssuerMismatchError(requested, issuer)
+    if not isinstance(issuer, str) or issuer != requested_issuer:
+        raise DiscoveryIssuerMismatchError(requested_issuer, issuer)
 
 
 def validate_and_parse_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
     *,
-    requested_address: str,
+    requested_issuer: str,
 ) -> dict:
     """
     Validate and parse discovery document HTTP response.
@@ -208,8 +188,8 @@ def validate_and_parse_discovery_response(
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
             When ``None``, strict defaults apply.
-        requested_address: The discovery URL as the caller supplied it; the
-            document's issuer must match it.
+        requested_issuer: The configured issuer the discovery URL was built
+            from; the document's issuer must equal it exactly.
 
     Returns:
         dict: Parsed discovery document JSON
@@ -240,7 +220,7 @@ def validate_and_parse_discovery_response(
 
     # OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the issuer MUST be the one the
     # discovery URL was built from. Not policy-controlled.
-    _validate_issuer_match(requested_address, response_json.get("issuer", ""))
+    _validate_issuer_match(requested_issuer, response_json.get("issuer", ""))
 
     # Validate parameter values
     validate_parameter_values(response_json)
@@ -259,17 +239,13 @@ def validate_and_parse_discovery_response(
         "end_session_endpoint",
         "pushed_authorization_request_endpoint",
     ]
-    try:
-        discovery_url = str(response.url)
-    except RuntimeError:
-        discovery_url = ""
     for ep_name in _endpoint_names:
         ep_url = response_json.get(ep_name)
         validate_https_url_with_policy(ep_url, ep_name, policy)
-        # Validate endpoint authority (derives from issuer when policy.authority not set)
+        # Validate endpoint authority against the issuer's (and policy's)
         if ep_url and effective_policy.validate_endpoints:
             _validate_endpoint_authority(
-                ep_url, ep_name, response_json, effective_policy, discovery_url
+                ep_url, ep_name, effective_policy, requested_issuer
             )
 
     # RFC 8705 §5: ``mtls_endpoint_aliases`` map endpoint names to mTLS-specific

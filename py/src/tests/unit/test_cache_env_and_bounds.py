@@ -11,9 +11,9 @@ Two pre-existing structural bugs the cache primitive shipped with:
    expectation).
 
 2. **Cache dicts grew without bound.** Any deployment with caller-influenced
-   ``disco_doc_address`` (multi-tenant gateways, attacker-supplied issuer
-   headers) could grow the dict forever. At ~5KB per entry, a few thousand
-   unique addresses leaked tens of MB.
+   ``issuer`` (multi-tenant gateways, attacker-supplied issuer headers) could
+   grow the dict forever. At ~5KB per entry, a few thousand unique issuers
+   leaked tens of MB.
 
 Settings now come from :class:`~py_identity_model.CacheConfig`, which is validated
 on creation. These tests pin the fixes:
@@ -489,12 +489,12 @@ class TestLruReadHitEviction:
     def test_read_hit_protects_hot_disco_entry_from_eviction(self, small_cache):
         """The discovery cache is LRU too (#397 calls out "same for the
         discovery cache"). End-to-end via ``_get_disco_response``: an attacker
-        driving distinct ``disco_doc_address`` reads must NOT evict a discovery
+        driving distinct ``issuer`` reads must NOT evict a discovery
         entry that was just read.
 
         Mirrors the JWKS end-to-end test but through the disco read path, so a
         regression that adds the read-hit touch to only one of the two caches is
-        caught. The cache key is ``(trust_scope, address, policy.cache_key())``
+        caught. The cache key is ``(trust_scope, issuer, policy.cache_key())``
         — a tuple, exactly the shape a multi-tenant gateway attacker
         influences."""
         cache = small_cache._disco
@@ -516,15 +516,15 @@ class TestLruReadHitEviction:
                 )
             )
 
-        keys = [disco_cache_key(addr) for addr in addresses]
+        keys = [disco_cache_key(base) for base in bases]
 
         # Fill to capacity: op-0 (oldest) .. op-3 (newest).
-        for address in addresses[:E2E_MAX_ENTRIES]:
-            _get_disco_response(address, cache=small_cache)
+        for base in bases[:E2E_MAX_ENTRIES]:
+            _get_disco_response(base, cache=small_cache)
         assert list(cache.keys()) == keys[:E2E_MAX_ENTRIES]
 
         # Re-read op-0 — a cache hit (no network) that must refresh recency.
-        _get_disco_response(addresses[0], cache=small_cache)
+        _get_disco_response(bases[0], cache=small_cache)
         assert list(cache.keys()) == [
             keys[1],
             keys[2],
@@ -534,7 +534,7 @@ class TestLruReadHitEviction:
 
         # A fifth distinct address overflows the cache; eviction targets op-1
         # (oldest unread), NOT the recently-read op-0.
-        _get_disco_response(addresses[4], cache=small_cache)
+        _get_disco_response(bases[4], cache=small_cache)
         assert keys[0] in cache
         assert keys[1] not in cache
         assert set(cache.keys()) == {keys[0], keys[2], keys[3], keys[4]}

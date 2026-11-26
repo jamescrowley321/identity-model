@@ -17,7 +17,7 @@ from py_identity_model import (
 )
 
 
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 # =============================================================================
@@ -33,7 +33,7 @@ def context_manager_example():
 
     with HTTPClient() as client:
         response = get_discovery_document(
-            DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL),
+            DiscoveryDocumentRequest(issuer=DEMO_ISSUER),
             http_client=client,
         )
 
@@ -58,7 +58,7 @@ def shared_client_example():
     with HTTPClient() as client:
         # All calls share the same connection pool
         disco = get_discovery_document(
-            DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL),
+            DiscoveryDocumentRequest(issuer=DEMO_ISSUER),
             http_client=client,
         )
 
@@ -88,7 +88,7 @@ def custom_timeout_example():
     # HTTPConfig(http_timeout=60.0, ca_bundle="/path/to/ca-bundle.crt").
     with HTTPClient(config=HTTPConfig(http_timeout=60.0)) as client:
         response = get_discovery_document(
-            DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL),
+            DiscoveryDocumentRequest(issuer=DEMO_ISSUER),
             http_client=client,
         )
 
@@ -110,9 +110,7 @@ def backward_compat_example():
     print("=" * 60)
 
     # No http_client parameter — uses the library default client
-    response = get_discovery_document(
-        DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
-    )
+    response = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     if response.is_successful:
         print(f"  Issuer: {response.issuer} (library default client)")
@@ -145,7 +143,7 @@ def framework_integration_pattern():
     @app.get("/discovery")
     async def discovery(request: Request):
         disco = await get_discovery_document(
-            DiscoveryDocumentRequest(address="..."),
+            DiscoveryDocumentRequest(issuer="..."),
             http_client=request.app.state.http_client,
         )
         return {"issuer": disco.issuer}

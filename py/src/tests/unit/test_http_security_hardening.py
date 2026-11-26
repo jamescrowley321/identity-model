@@ -42,7 +42,7 @@ from py_identity_model.sync.http_client import (
 )
 from py_identity_model.sync.managed_client import HTTPClient
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 # ============================================================================
@@ -130,7 +130,7 @@ class TestRedirectBlocking:
             )
         )
 
-        request = DiscoveryDocumentRequest(address=url)
+        request = DiscoveryDocumentRequest(issuer=ISSUER)
         result = get_discovery_document(request)
         assert result.is_successful is False
         assert result.error is not None
@@ -140,9 +140,6 @@ class TestRedirectBlocking:
 # ============================================================================
 # #354 — Endpoint authority validation from issuer
 # ============================================================================
-
-
-ADDRESS = "https://example.com/.well-known/openid-configuration"
 
 
 class TestEndpointAuthorityFromIssuer:
@@ -178,14 +175,14 @@ class TestEndpointAuthorityFromIssuer:
             DiscoveryValidationError, match=r"authority.*does not match"
         ):
             validate_and_parse_discovery_response(
-                response, policy=None, requested_address=ADDRESS
+                response, policy=None, requested_issuer=ISSUER
             )
 
     def test_allows_matching_authority_from_issuer(self):
         """Endpoints matching the issuer authority should pass."""
         response = self._make_response("https://example.com")
         result = validate_and_parse_discovery_response(
-            response, policy=None, requested_address=ADDRESS
+            response, policy=None, requested_issuer=ISSUER
         )
         assert result["issuer"] == "https://example.com"
 
@@ -199,12 +196,12 @@ class TestEndpointAuthorityFromIssuer:
             {"jwks_uri": "https://cdn.example.com/jwks"},
         )
         result = validate_and_parse_discovery_response(
-            response, policy, requested_address=ADDRESS
+            response, policy, requested_issuer=ISSUER
         )
         assert result["issuer"] == "https://example.com"
 
-    def test_explicit_policy_authority_overrides_issuer(self):
-        """When policy.authority is set, it should be used instead of issuer."""
+    def test_explicit_policy_authority_is_allowed_alongside_issuer(self):
+        """policy.authority adds an allowed authority to the issuer's."""
         policy = DiscoveryPolicy(authority="https://auth.example.com")
         response = self._make_response(
             "https://example.com",
@@ -215,7 +212,7 @@ class TestEndpointAuthorityFromIssuer:
             },
         )
         result = validate_and_parse_discovery_response(
-            response, policy, requested_address=ADDRESS
+            response, policy, requested_issuer=ISSUER
         )
         assert result["issuer"] == "https://example.com"
 
@@ -228,7 +225,7 @@ class TestEndpointAuthorityFromIssuer:
         with pytest.raises(
             DiscoveryValidationError, match=r"authority.*does not match"
         ):
-            validate_and_parse_discovery_response(response, requested_address=ADDRESS)
+            validate_and_parse_discovery_response(response, requested_issuer=ISSUER)
 
     def test_skips_authority_when_validation_disabled(self):
         """When validate_endpoints is False, authority check is skipped."""
@@ -238,7 +235,7 @@ class TestEndpointAuthorityFromIssuer:
             {"jwks_uri": "https://different.com/jwks"},
         )
         result = validate_and_parse_discovery_response(
-            response, policy, requested_address=ADDRESS
+            response, policy, requested_issuer=ISSUER
         )
         assert result["issuer"] == "https://example.com"
 

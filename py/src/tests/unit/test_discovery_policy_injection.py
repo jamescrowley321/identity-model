@@ -77,8 +77,8 @@ CDN_POLICY = DiscoveryPolicy(
 
 # The two disco cache keys these tests reason about: the strict default and the
 # CDN-allowing policy. They MUST differ, or the cache would not be partitioned.
-STRICT_KEY = disco_cache_key(DISCO_ADDR)
-CDN_KEY = disco_cache_key(DISCO_ADDR, CDN_POLICY)
+STRICT_KEY = disco_cache_key(ISSUER)
+CDN_KEY = disco_cache_key(ISSUER, CDN_POLICY)
 
 
 def _sync_disco_cache() -> dict:
@@ -153,14 +153,14 @@ class TestSyncDiscoveryPolicyInjection:
         )
 
         decoded = sync_validate_token(
-            jwt=token, token_validation_config=config, disco_doc_address=DISCO_ADDR
+            jwt=token, token_validation_config=config, issuer=ISSUER
         )
         assert decoded["sub"] == "user1"
 
         # Second call hits the cache — proves the injected policy uses the
         # built-in TTL cache rather than forcing the caller to reimplement it.
         decoded2 = sync_validate_token(
-            jwt=token, token_validation_config=config, disco_doc_address=DISCO_ADDR
+            jwt=token, token_validation_config=config, issuer=ISSUER
         )
         assert decoded2["sub"] == "user1"
         assert disco_route.call_count == 1
@@ -183,7 +183,7 @@ class TestSyncDiscoveryPolicyInjection:
             sync_validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
 
     @respx.mock
@@ -209,7 +209,7 @@ class TestSyncDiscoveryPolicyInjection:
             sync_validate_token(
                 jwt=token,
                 token_validation_config=permissive,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )["sub"]
             == "user1"
         )
@@ -220,7 +220,7 @@ class TestSyncDiscoveryPolicyInjection:
             sync_validate_token(
                 jwt=token,
                 token_validation_config=strict,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
         # The strict caller never got the permissive entry, and its own
         # rejected (unsuccessful) response was not cached.
@@ -244,12 +244,12 @@ class TestAsyncDiscoveryPolicyInjection:
         )
 
         decoded = await async_validate_token(
-            jwt=token, token_validation_config=config, disco_doc_address=DISCO_ADDR
+            jwt=token, token_validation_config=config, issuer=ISSUER
         )
         assert decoded["sub"] == "user1"
 
         decoded2 = await async_validate_token(
-            jwt=token, token_validation_config=config, disco_doc_address=DISCO_ADDR
+            jwt=token, token_validation_config=config, issuer=ISSUER
         )
         assert decoded2["sub"] == "user1"
         assert disco_route.call_count == 1
@@ -271,7 +271,7 @@ class TestAsyncDiscoveryPolicyInjection:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=permissive,
-            disco_doc_address=DISCO_ADDR,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
         assert CDN_KEY in _async_disco_cache()
@@ -281,7 +281,7 @@ class TestAsyncDiscoveryPolicyInjection:
             await async_validate_token(
                 jwt=token,
                 token_validation_config=strict,
-                disco_doc_address=DISCO_ADDR,
+                issuer=ISSUER,
             )
         assert STRICT_KEY not in _async_disco_cache()
         assert CDN_KEY in _async_disco_cache()

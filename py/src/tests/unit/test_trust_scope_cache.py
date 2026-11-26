@@ -206,12 +206,12 @@ class TestSyncTrustScopes:
 
         with httpx.Client(verify=False) as raw:
             claims = validate_token(
-                forged, _validation_config(), DISCO_URL, http_client=HTTPClient(raw)
+                forged, _validation_config(), ISSUER, http_client=HTTPClient(raw)
             )
         assert claims == CLAIMS
 
         with pytest.raises(SignatureVerificationException):
-            validate_token(forged, _validation_config(), DISCO_URL)
+            validate_token(forged, _validation_config(), ISSUER)
         assert disco.call_count == TWO_ENTRIES
         assert jwks.call_count == JWKS_FETCHES_FORGED_THEN_STRICT
 
@@ -225,15 +225,15 @@ class TestSyncTrustScopes:
         for _ in range(TWO_ENTRIES):
             with HTTPClient(config=HTTPConfig()) as per_request:
                 validate_token(
-                    token, _validation_config(), DISCO_URL, http_client=per_request
+                    token, _validation_config(), ISSUER, http_client=per_request
                 )
-        validate_token(token, _validation_config(), DISCO_URL)
+        validate_token(token, _validation_config(), ISSUER)
         with httpx.Client() as raw:
             validate_token(
-                token, _validation_config(), DISCO_URL, http_client=HTTPClient(raw)
+                token, _validation_config(), ISSUER, http_client=HTTPClient(raw)
             )
             validate_token(
-                token, _validation_config(), DISCO_URL, http_client=HTTPClient(raw)
+                token, _validation_config(), ISSUER, http_client=HTTPClient(raw)
             )
             wrapped_scope = HTTPClient(raw).trust_scope
 
@@ -251,9 +251,9 @@ class TestSyncTrustScopes:
         jwks = respx.get(JWKS_URL).mock(return_value=_jwks(key_dict))
         token = sign_jwt(pem, CLAIMS, headers={"kid": KID})
 
-        validate_token(token, _validation_config(), DISCO_URL)
+        validate_token(token, _validation_config(), ISSUER)
         with HTTPClient(config=HTTPConfig(ca_bundle=certifi.where())) as pinned:
-            validate_token(token, _validation_config(), DISCO_URL, http_client=pinned)
+            validate_token(token, _validation_config(), ISSUER, http_client=pinned)
 
         assert disco.call_count == TWO_ENTRIES
         assert jwks.call_count == TWO_ENTRIES
@@ -268,7 +268,7 @@ class TestSyncTrustScopes:
         for _ in range(TWO_ENTRIES):
             with httpx.Client() as raw, pytest.raises(KeyNotFoundException):
                 validate_token(
-                    token, _validation_config(), DISCO_URL, http_client=HTTPClient(raw)
+                    token, _validation_config(), ISSUER, http_client=HTTPClient(raw)
                 )
 
         assert jwks.call_count == JWKS_FETCHES_TWO_SCOPES_ONE_COOLDOWN
@@ -298,13 +298,13 @@ class TestAsyncTrustScopes:
             claims = await async_validate_token(
                 forged,
                 _validation_config(),
-                DISCO_URL,
+                ISSUER,
                 http_client=AsyncHTTPClient(raw),
             )
         assert claims == CLAIMS
 
         with pytest.raises(SignatureVerificationException):
-            await async_validate_token(forged, _validation_config(), DISCO_URL)
+            await async_validate_token(forged, _validation_config(), ISSUER)
         assert disco.call_count == TWO_ENTRIES
         assert jwks.call_count == JWKS_FETCHES_FORGED_THEN_STRICT
 
@@ -318,9 +318,9 @@ class TestAsyncTrustScopes:
         for _ in range(TWO_ENTRIES):
             async with AsyncHTTPClient(config=HTTPConfig()) as per_request:
                 await async_validate_token(
-                    token, _validation_config(), DISCO_URL, http_client=per_request
+                    token, _validation_config(), ISSUER, http_client=per_request
                 )
-        await async_validate_token(token, _validation_config(), DISCO_URL)
+        await async_validate_token(token, _validation_config(), ISSUER)
 
         assert disco.call_count == 1
         assert jwks.call_count == 1
@@ -338,7 +338,7 @@ class TestAsyncTrustScopes:
                     await async_validate_token(
                         token,
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=AsyncHTTPClient(raw),
                     )
 

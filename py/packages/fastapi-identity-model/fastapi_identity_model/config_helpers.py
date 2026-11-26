@@ -35,9 +35,9 @@ def _flag(name: str) -> bool:
 
 
 def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
-    """Build settings from environment variables (e.g. ``OIDC_DISCOVERY_URL``).
+    """Build settings from environment variables (e.g. ``OIDC_ISSUER``).
 
-    Required: ``{prefix}DISCOVERY_URL``, ``{prefix}CLIENT_ID``. ``REDIRECT_URI``
+    Required: ``{prefix}ISSUER``, ``{prefix}CLIENT_ID``. ``REDIRECT_URI``
     is required only for the login router; a resource-server-only deployment
     may omit it. ``EXCLUDED_PATHS`` is a comma-separated list.
     ``REQUIRED_BINDING`` is ``none``, ``dpop`` or ``mtls``.
@@ -71,7 +71,7 @@ def oidc_settings_from_env(prefix: str = "OIDC_") -> OIDCSettings:
         else {}
     )
     return OIDCSettings(
-        discovery_url=_req("DISCOVERY_URL"),
+        issuer=_req("ISSUER"),
         client_id=_req("CLIENT_ID"),
         redirect_uri=os.environ.get(f"{prefix}REDIRECT_URI", ""),
         client_secret=os.environ.get(f"{prefix}CLIENT_SECRET"),

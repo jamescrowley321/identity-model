@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 def validate_logout_token(
     logout_token: str,
     token_validation_config: TokenValidationConfig,
-    disco_doc_address: str | None = None,
+    issuer: str | None = None,
     http_client: HTTPClient | None = None,
     *,
     trusted_audiences: Iterable[str] | None = None,
@@ -52,9 +52,12 @@ def validate_logout_token(
         logout_token: The compact-serialized Logout Token JWT received at the
             RP's ``backchannel_logout_uri``.
         token_validation_config: Validation configuration. ``audience`` should
-            be the RP's ``client_id`` and ``issuer`` the OP issuer.
-        disco_doc_address: Discovery document address (required when
-            ``perform_disco`` is True).
+            be the RP's ``client_id``. Without discovery, ``issuer`` is the
+            OP issuer.
+        issuer: The OP's issuer identifier (required when ``perform_disco``
+            is True), not its discovery document URL. The discovery document's
+            ``issuer`` and the token's ``iss`` must both equal it exactly
+            (OpenID Connect Discovery 1.0 §4.3).
         http_client: Optional managed HTTP client (see ``validate_token``).
         trusted_audiences: Additional audiences the client trusts besides
             ``token_validation_config.audience``. Every ``aud`` value MUST be
@@ -79,7 +82,7 @@ def validate_logout_token(
     claims = _validate_jwt_without_binding(
         logout_token,
         token_validation_config,
-        disco_doc_address=disco_doc_address,
+        issuer=issuer,
         http_client=http_client,
         cache=cache,
     )

@@ -79,15 +79,15 @@ class TestDiscoCacheTTL:
 
 
 class TestNoneAddressRejected:
-    """Regression test for #351 -- None disco_doc_address must not reach cache."""
+    """Regression test for #351 -- None issuer must not reach cache."""
 
     def test_sync_none_address_raises(self):
-        """Sync path rejects None disco_doc_address."""
+        """Sync path rejects None issuer."""
         with pytest.raises(ConfigurationException):
             _get_disco_response(None)
 
     @pytest.mark.asyncio
     async def test_async_none_address_raises(self):
-        """Async path rejects None disco_doc_address."""
+        """Async path rejects None issuer."""
         with pytest.raises(ConfigurationException):
             await _get_disco_response_async(None)

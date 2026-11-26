@@ -227,9 +227,7 @@ from py_identity_model import DiscoveryDocumentRequest
 from py_identity_model.aio import get_discovery_document
 
 async def test_async_discovery():
-    request = DiscoveryDocumentRequest(
-        address="https://demo.duendesoftware.com/.well-known/openid-configuration"
-    )
+    request = DiscoveryDocumentRequest(issuer="https://demo.duendesoftware.com")
     response = await get_discovery_document(request)
 
     assert response.is_successful
@@ -254,7 +252,7 @@ def validate_token_wrapper(token):
     return validate_token(
         jwt=token,
         token_validation_config=config,
-        disco_doc_address="https://auth.example.com/.well-known/openid-configuration"
+        issuer="https://auth.example.com"
     )
 
 # Test with 50 concurrent threads

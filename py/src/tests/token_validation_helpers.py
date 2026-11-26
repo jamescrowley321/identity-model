@@ -47,13 +47,13 @@ def jwks_cache_key(
 
 
 def disco_cache_key(
-    address: str,
+    issuer: str,
     policy: DiscoveryPolicy | None = None,
     scope: TrustScope = DEFAULT_TRUST_SCOPE,
 ) -> tuple[TrustScope, str, tuple]:
-    """The discovery cache key for *address* under *policy* and *scope*."""
+    """The discovery cache key for *issuer* under *policy* and *scope*."""
     policy = policy if policy is not None else DiscoveryPolicy()
-    return (scope, address, policy.cache_key())
+    return (scope, issuer, policy.cache_key())
 
 
 def generate_rsa_keypair() -> tuple[dict, bytes]:

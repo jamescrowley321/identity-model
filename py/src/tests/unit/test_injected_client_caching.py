@@ -93,7 +93,7 @@ def _validation_config() -> TokenValidationConfig:
 def _disco_cache_key() -> tuple[TrustScope, str, tuple]:
     config = _validation_config()
     policy = resolve_discovery_policy(config.discovery_policy, config.require_https)
-    return disco_cache_key(DISCO_URL, policy)
+    return disco_cache_key(ISSUER, policy)
 
 
 def _signed_token(pem: bytes, kid: str = KID) -> str:
@@ -150,7 +150,7 @@ class TestSyncInjectedClientCaching:
                 validate_token(
                     _signed_token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -175,7 +175,7 @@ class TestSyncInjectedClientCaching:
                     validate_token(
                         _signed_token(pem, kid=UNKNOWN_KID),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -196,7 +196,7 @@ class TestSyncInjectedClientCaching:
                 validate_token(
                     _signed_token(pem, kid=UNKNOWN_KID),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                 )
 
@@ -220,7 +220,7 @@ class TestSyncInjectedClientCaching:
                     validate_token(
                         _signed_token(forger_pem),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -241,7 +241,7 @@ class TestSyncInjectedClientCaching:
                 validate_token(
                     _signed_token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                 )
 
@@ -256,13 +256,13 @@ class TestSyncInjectedClientCaching:
         disco, jwks = _mock_disco_and_jwks(key_dict)
         client = HTTPClient()
         validate_token(
-            _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+            _signed_token(pem), _validation_config(), ISSUER, http_client=client
         )
         client.close()
 
         with pytest.raises(RuntimeError, match="HTTPClient has been closed"):
             validate_token(
-                _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+                _signed_token(pem), _validation_config(), ISSUER, http_client=client
             )
         assert (disco.call_count, jwks.call_count) == (1, 1)
 
@@ -286,7 +286,7 @@ class TestAsyncInjectedClientCaching:
                 await async_validate_token(
                     _signed_token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -312,7 +312,7 @@ class TestAsyncInjectedClientCaching:
                     await async_validate_token(
                         _signed_token(pem, kid=UNKNOWN_KID),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -334,7 +334,7 @@ class TestAsyncInjectedClientCaching:
                     await async_validate_token(
                         _signed_token(pem, kid=UNKNOWN_KID),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                     )
 
@@ -359,7 +359,7 @@ class TestAsyncInjectedClientCaching:
                     await async_validate_token(
                         _signed_token(forger_pem),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -379,7 +379,7 @@ class TestAsyncInjectedClientCaching:
                     await async_validate_token(
                         _signed_token(pem),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         http_client=client,
                     )
 
@@ -392,12 +392,12 @@ class TestAsyncInjectedClientCaching:
         disco, jwks = _mock_disco_and_jwks(key_dict)
         client = AsyncHTTPClient()
         await async_validate_token(
-            _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+            _signed_token(pem), _validation_config(), ISSUER, http_client=client
         )
         await client.close()
 
         with pytest.raises(RuntimeError, match="AsyncHTTPClient has been closed"):
             await async_validate_token(
-                _signed_token(pem), _validation_config(), DISCO_URL, http_client=client
+                _signed_token(pem), _validation_config(), ISSUER, http_client=client
             )
         assert (disco.call_count, jwks.call_count) == (1, 1)

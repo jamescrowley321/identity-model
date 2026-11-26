@@ -77,7 +77,7 @@ from py_identity_model.core.token_exchange_logic import (
 import py_identity_model.sync.http_client as sync_http
 from py_identity_model.sync.managed_client import HTTPClient
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 ADDR = "https://as.example.com/endpoint"
@@ -557,7 +557,7 @@ class TestDiscoveryParsesMtlsFields:
                 },
             )
         )
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.tls_client_certificate_bound_access_tokens is True
@@ -568,7 +568,7 @@ class TestDiscoveryParsesMtlsFields:
     @respx.mock
     def test_absent_fields_default_none(self):
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=_BASE_DISCO))
-        result = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_URL))
+        result = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
         assert result.is_successful is True
         assert result.mtls_endpoint_aliases is None

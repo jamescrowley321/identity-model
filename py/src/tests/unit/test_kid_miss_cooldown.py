@@ -76,7 +76,7 @@ from py_identity_model.sync.validation_cache import (
     get_default_validation_cache,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -252,7 +252,7 @@ class TestKidMissCooldownBoundsAmplification:
                     validate_token(
                         jwt=token,
                         token_validation_config=config,
-                        disco_doc_address=DISCO_URL,
+                        issuer=ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -293,7 +293,7 @@ class TestKidMissCooldownBoundsAmplification:
                     await async_validate_token(
                         jwt=token,
                         token_validation_config=config,
-                        disco_doc_address=DISCO_URL,
+                        issuer=ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -342,7 +342,7 @@ class TestCooldownDoesNotBlockLegitimateTraffic:
             validate_token(
                 jwt=legitimate_token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         # Single prime fetch, no refreshes, cooldown dict never populated.
@@ -387,7 +387,7 @@ class TestCooldownDoesNotBlockLegitimateTraffic:
             validate_token(
                 jwt=rotation_token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
         assert jwks_route.call_count == 2  # noqa: PLR2004
 
@@ -396,7 +396,7 @@ class TestCooldownDoesNotBlockLegitimateTraffic:
             validate_token(
                 jwt=rotation_token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
         assert jwks_route.call_count == 2  # noqa: PLR2004
 
@@ -412,7 +412,7 @@ class TestCooldownDoesNotBlockLegitimateTraffic:
         decoded = validate_token(
             jwt=rotation_token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
         assert jwks_route.call_count == 3  # noqa: PLR2004
@@ -478,7 +478,7 @@ class TestCooldownIsolationAcrossIssuers:
                     validate_token(
                         jwt=_sign_unknown_kid_token(f"junk-{i}"),
                         token_validation_config=config_attacker,
-                        disco_doc_address=DISCO_URL,
+                        issuer=ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -488,7 +488,7 @@ class TestCooldownIsolationAcrossIssuers:
             decoded = validate_token(
                 jwt=defender_token,
                 token_validation_config=config_defender,
-                disco_doc_address=other_disco_url,
+                issuer="https://other.example",
                 http_client=client,
                 cache=cache,
             )
@@ -557,7 +557,7 @@ class TestCooldownFromConfig:
                 validate_token(
                     jwt=_sign_unknown_kid_token("unknown-1"),
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -569,7 +569,7 @@ class TestCooldownFromConfig:
                 validate_token(
                     jwt=_sign_unknown_kid_token("unknown-2"),
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -730,7 +730,7 @@ class TestAsyncCooldownStateMirrorsSync:
             await async_validate_token(
                 jwt=_sign_unknown_kid_token("unknown"),
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert JWKS_URL in _async_caches()._kid_miss_last_attempt
@@ -799,7 +799,7 @@ class TestCooldownNotWedgedByTransientError:
             validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         # Cooldown must NOT be stamped — the refresh didn't actually
@@ -839,7 +839,7 @@ class TestCooldownNotWedgedByTransientError:
             await async_validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert JWKS_URL not in _async_caches()._kid_miss_last_attempt
@@ -889,7 +889,7 @@ class TestCooldownClearedOnSuccessfulRotation:
         decoded = validate_token(
             jwt=rotation_token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
         # Critical: cooldown must NOT be set, since the refresh produced
@@ -928,7 +928,7 @@ class TestCooldownClearedOnSuccessfulRotation:
         decoded = await async_validate_token(
             jwt=rotation_token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
         assert JWKS_URL not in _async_caches()._kid_miss_last_attempt
@@ -978,7 +978,7 @@ class TestSignatureFailureRetryGatedByCooldown:
                 validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                 )
             except SignatureVerificationException:
                 rejections += 1
@@ -1017,7 +1017,7 @@ class TestSignatureFailureRetryGatedByCooldown:
                 await async_validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                 )
                 return False
             except SignatureVerificationException:
@@ -1071,7 +1071,7 @@ class TestSignatureFailureRetryGatedByCooldown:
         decoded = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
         # Real rotation absorbed; cooldown must be clear.
@@ -1127,7 +1127,7 @@ class TestEmptyRefreshDoesNotStampCooldown:
             validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         # The cache MUST still hold the primed working keys (apply_jwks_cache_outcome
@@ -1172,7 +1172,7 @@ class TestEmptyRefreshDoesNotStampCooldown:
             await async_validate_token(
                 jwt=_sign_unknown_kid_token("new-kid"),
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_cache_key(JWKS_URL) in _async_caches()._jwks
@@ -1280,7 +1280,7 @@ class TestEncKeyKidIsKidMiss:
         decoded = validate_token(
             jwt=token,
             token_validation_config=self._config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -1304,7 +1304,7 @@ class TestEncKeyKidIsKidMiss:
                     validate_token(
                         jwt=token,
                         token_validation_config=self._config(),
-                        disco_doc_address=DISCO_URL,
+                        issuer=ISSUER,
                         http_client=client,
                         cache=cache,
                     )
@@ -1330,7 +1330,7 @@ class TestEncKeyKidIsKidMiss:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=self._config(),
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -1355,7 +1355,7 @@ class TestEncKeyKidIsKidMiss:
                     await async_validate_token(
                         jwt=token,
                         token_validation_config=self._config(),
-                        disco_doc_address=DISCO_URL,
+                        issuer=ISSUER,
                         http_client=client,
                         cache=cache,
                     )

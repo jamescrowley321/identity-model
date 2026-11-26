@@ -52,6 +52,8 @@ const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
 const NOT_IMPLEMENTED_CASES: &[(&str, &str)] = &[
     // Signed introspection responses (RFC 9701).
     ("INTR-007", "#1030"),
+    // The RFC 8414 metadata location.
+    ("DISC-013", "#1155"),
 ];
 
 #[test]
@@ -441,6 +443,18 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
         builder = builder.cache_ttl(SPEC_SECOND * u32::try_from(ttl).expect("ttl fits u32"));
     }
     let client = builder.build();
+    // The configured issuer is the base URL plus `input.issuer_suffix`. Rust
+    // builds only the default OIDC location; DISC-013 (RFC 8414) is skipped.
+    let issuer = format!(
+        "{base}{}",
+        v.input
+            .get("issuer_suffix")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    );
+    if let Some(location) = v.input.get("location").and_then(Value::as_str) {
+        assert_eq!(location, "openid_configuration", "unsupported location");
+    }
     let offsets: Vec<u64> = match v.input.get("calls_at_seconds") {
         Some(at) => serde_json::from_value(at.clone()).expect("calls_at_seconds"),
         None => vec![0],
@@ -452,7 +466,7 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
     for at in offsets {
         let offset = SPEC_SECOND * u32::try_from(at).expect("offset fits u32");
         tokio::time::sleep_until(start + offset).await;
-        result = client.discover(base).await;
+        result = client.discover(&issuer).await;
         if result.is_err() {
             break;
         }

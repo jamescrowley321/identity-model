@@ -47,7 +47,7 @@ from py_identity_model import TokenValidationConfig, validate_logout_token
 claims = validate_logout_token(
     logout_token,  # the `logout_token` form field the OP POSTs to your backchannel_logout_uri
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
 )
 sid = claims.get("sid")  # terminate the matching session(s)
 ```

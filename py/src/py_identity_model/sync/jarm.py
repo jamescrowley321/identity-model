@@ -39,54 +39,38 @@ from .jwks import get_jwks
 from .managed_client import HTTPClient
 
 
-def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline resolution inputs
-    disco_doc_address: str | None,
-    issuer: str | None,
+def _resolve_jarm_context(
+    issuer: str,
     jwks: JwksResponse | None,
     algorithms: list[str] | None,
     require_https: bool,
     http_client: HTTPClient | None,
-) -> tuple[str, list[str] | None, JwksResponse]:
-    """Resolve ``(issuer, allowed_algs, jwks_response)`` for JARM verification.
+) -> tuple[list[str] | None, JwksResponse]:
+    """Resolve ``(allowed_algs, jwks_response)`` for JARM verification.
 
     Two modes:
 
-    * **Offline** — when *issuer* and *jwks* are supplied, and either
-      *algorithms* is supplied or *disco_doc_address* is not (``None``
-      *algorithms* then means ``DEFAULT_ALLOWED_ALGORITHMS``), no network
-      I/O happens.
-    * **Discovery** — otherwise, fetch the discovery document from
-      *disco_doc_address* (deriving ``issuer``, ``jwks_uri``, and, unless
-      *algorithms* overrides it, ``authorization_signing_alg_values_supported``)
-      and then fetch the JWKS.
+    * **Offline** — when *jwks* is supplied, no network I/O happens, and
+      ``None`` *algorithms* means ``DEFAULT_ALLOWED_ALGORITHMS``.
+    * **Discovery** — otherwise, fetch the discovery document for *issuer*
+      (its ``issuer`` must equal *issuer* exactly; it supplies ``jwks_uri``
+      and, unless *algorithms* overrides it,
+      ``authorization_signing_alg_values_supported``) and then the JWKS.
     """
-    offline = (
-        issuer is not None
-        and jwks is not None
-        and (algorithms is not None or disco_doc_address is None)
-    )
-    if offline:
+    # The decoder skips the iss check for a None issuer, so refuse it here,
+    # before either mode.
+    if not isinstance(issuer, str) or not issuer:
+        raise ConfigurationException("issuer is required for JARM processing")
+    if jwks is not None:
         validate_jwks_response(jwks)
-        return issuer, algorithms, jwks
-
-    if disco_doc_address is None:
-        raise ConfigurationException(
-            "disco_doc_address is required for JARM processing unless issuer "
-            "and jwks are supplied (offline mode)"
-        )
+        return algorithms, jwks
 
     policy = DiscoveryPolicy(require_https=require_https)
     disco_doc_response = get_discovery_document(
-        DiscoveryDocumentRequest(address=disco_doc_address, policy=policy),
+        DiscoveryDocumentRequest(issuer=issuer, policy=policy),
         http_client=http_client,
     )
     validate_disco_response(disco_doc_response)
-
-    resolved_issuer = issuer or disco_doc_response.issuer
-    if not resolved_issuer:
-        raise ConfigurationException(
-            "Discovery document does not advertise an issuer; cannot validate JARM"
-        )
     allowed_algs = (
         algorithms
         if algorithms is not None
@@ -100,15 +84,14 @@ def _resolve_jarm_context(  # noqa: PLR0913  # discovery + offline resolution in
         JwksRequest(address=jwks_uri, policy=policy), http_client=http_client
     )
     validate_jwks_response(jwks_response)
-    return resolved_issuer, allowed_algs, jwks_response
+    return allowed_algs, jwks_response
 
 
 def process_jarm_response(  # noqa: PLR0913  # JARM has both discovery and offline inputs
     response: str,
     *,
     client_id: str,
-    disco_doc_address: str | None = None,
-    issuer: str | None = None,
+    issuer: str,
     jwks: JwksResponse | None = None,
     algorithms: list[str] | None = None,
     require_https: bool = True,
@@ -124,11 +107,11 @@ def process_jarm_response(  # noqa: PLR0913  # JARM has both discovery and offli
             when *is_jwt* is ``True`` (``form_post.jwt``, where the JWT arrives
             in the POST body).
         client_id: The RP's client identifier — the expected ``aud`` claim.
-        disco_doc_address: The AS discovery document URL.  Required unless
-            *issuer* and *jwks* are supplied (offline mode).
-        issuer: Expected issuer.  In offline mode this is authoritative; in
-            discovery mode it defaults to the discovery ``issuer``.
-        jwks: Pre-fetched JWKS (offline mode).
+        issuer: The authorization server's issuer identifier, not its
+            discovery document URL: the expected ``iss``. Without *jwks*, the
+            discovery document is fetched for it (OpenID Connect Discovery 1.0
+            §4.1), and its ``issuer`` must equal it exactly (§4.3).
+        jwks: Pre-fetched JWKS (offline mode: no discovery).
         algorithms: Allowed signing algorithms.  In offline mode this is the
             allowlist (``None``: ``DEFAULT_ALLOWED_ALGORITHMS``); in discovery mode it overrides the AS-advertised
             ``authorization_signing_alg_values_supported`` when provided.
@@ -148,13 +131,13 @@ def process_jarm_response(  # noqa: PLR0913  # JARM has both discovery and offli
         JarmValidationException: On JARM-specific failures (no ``response``
             parameter, rejected algorithm, missing mandatory claim).
         TokenValidationException: (subclasses) on signature/iss/aud/exp failure.
-        ConfigurationException: If neither discovery nor offline inputs are
-            fully supplied.
+        ConfigurationException: If *issuer* is empty or ``None``, or (in
+            discovery mode) not a valid issuer identifier.
     """
     response_jwt = response if is_jwt else extract_jarm_response_jwt(response)
 
-    resolved_issuer, allowed_algs, jwks_response = _resolve_jarm_context(
-        disco_doc_address, issuer, jwks, algorithms, require_https, http_client
+    allowed_algs, jwks_response = _resolve_jarm_context(
+        issuer, jwks, algorithms, require_https, http_client
     )
 
     kid, header_alg = extract_jarm_header(response_jwt)
@@ -167,7 +150,7 @@ def process_jarm_response(  # noqa: PLR0913  # JARM has both discovery and offli
         response_jwt,
         key_dict,
         [selected_alg],
-        issuer=resolved_issuer,
+        issuer=issuer,
         audience=client_id,
         leeway=leeway,
     )

@@ -127,7 +127,7 @@ class TestRetriesFromConfig:
         route = respx.get(DISCO_URL).mock(return_value=httpx.Response(503))
         with HTTPClient(config=_no_sleep_config(CUSTOM_RETRIES)) as client:
             response = get_discovery_document(
-                DiscoveryDocumentRequest(address=DISCO_URL), http_client=client
+                DiscoveryDocumentRequest(issuer=ISSUER), http_client=client
             )
         assert not response.is_successful
         assert route.call_count == CUSTOM_RETRIES + 1
@@ -197,7 +197,7 @@ class TestCachesLiveOnTheValidationCache:
                 validate_token(
                     _token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -218,7 +218,7 @@ class TestCachesLiveOnTheValidationCache:
                 validate_token(
                     _token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -237,12 +237,12 @@ class TestCachesLiveOnTheValidationCache:
         cache = ValidationCache()
         with HTTPClient() as client:
             validate_token(
-                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+                _token(pem), _validation_config(), ISSUER, client, cache=cache
             )
             clear_discovery_cache(cache=cache)
             clear_jwks_cache(cache=cache)
             validate_token(
-                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+                _token(pem), _validation_config(), ISSUER, client, cache=cache
             )
         assert disco.call_count == TWO_FETCHES
         assert jwks.call_count == TWO_FETCHES
@@ -286,13 +286,17 @@ class TestCachesLiveOnTheValidationCache:
         cache = ValidationCache(config=CacheConfig(cache_max_entries=1))
         with HTTPClient() as client:
             validate_token(
-                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+                _token(pem), _validation_config(), ISSUER, client, cache=cache
             )
             validate_token(
-                other_token, _validation_config(), other_disco, client, cache=cache
+                other_token,
+                _validation_config(),
+                "https://other.example.com",
+                client,
+                cache=cache,
             )
             validate_token(
-                _token(pem), _validation_config(), DISCO_URL, client, cache=cache
+                _token(pem), _validation_config(), ISSUER, client, cache=cache
             )
         assert jwks.call_count == TWO_FETCHES
 
@@ -313,7 +317,7 @@ class TestCachesLiveOnTheValidationCache:
                     validate_token(
                         _token(pem, kid="unknown"),
                         _validation_config(),
-                        DISCO_URL,
+                        ISSUER,
                         client,
                         cache=cache,
                     )
@@ -350,7 +354,7 @@ class TestCachesLiveOnTheValidationCache:
                 await aio_validate_token(
                     _token(pem),
                     _validation_config(),
-                    DISCO_URL,
+                    ISSUER,
                     http_client=client,
                     cache=cache,
                 )
@@ -358,7 +362,7 @@ class TestCachesLiveOnTheValidationCache:
             await aio_validate_token(
                 _token(pem),
                 _validation_config(),
-                DISCO_URL,
+                ISSUER,
                 http_client=client,
                 cache=cache,
             )

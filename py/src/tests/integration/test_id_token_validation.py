@@ -133,7 +133,7 @@ class TestValidateIdTokenLive:
         claims = validate_id_token(
             id_token_flow["id_token"],
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             nonce=id_token_flow["nonce"],
         )
@@ -158,7 +158,7 @@ class TestValidateIdTokenLive:
             validate_id_token(
                 id_token_flow["id_token"],
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce=id_token_flow["nonce"],
             )
@@ -176,7 +176,7 @@ class TestValidateIdTokenLive:
             validate_id_token(
                 id_token,
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce=None,
             )
@@ -195,7 +195,7 @@ class TestValidateIdTokenLive:
         claims = validate_id_token(
             id_token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             nonce=id_token_flow["nonce"],
         )
@@ -206,7 +206,7 @@ class TestValidateIdTokenLive:
             validate_id_token(
                 id_token,
                 config,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 nonce="not-the-nonce-we-sent",
             )
@@ -224,7 +224,7 @@ class TestValidateIdTokenLive:
         claims = validate_id_token(
             id_token,
             config,
-            disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             max_age=id_token_flow["max_age"],
             nonce=id_token_flow["nonce"],
@@ -245,13 +245,13 @@ class TestValidateIdTokenLive:
         access_token = id_token_flow["access_token"]
         assert access_token, "the code flow returned no access_token"
         config = _config_for(id_token_flow["client_id"], issuer, require_https)
-        disco = test_config["TEST_DISCO_ADDRESS"]
+        op_issuer = test_config["TEST_ISSUER"]
 
         # The issued access token passes, with or without an at_hash.
         validate_id_token(
             id_token,
             config,
-            disco_doc_address=disco,
+            issuer=op_issuer,
             trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
             access_token=access_token,
             access_token_issued_with_id_token=False,
@@ -267,7 +267,7 @@ class TestValidateIdTokenLive:
                 validate_id_token(
                     id_token,
                     config,
-                    disco_doc_address=disco,
+                    issuer=op_issuer,
                     trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                     access_token=access_token + "tampered",
                     access_token_issued_with_id_token=False,
@@ -276,7 +276,7 @@ class TestValidateIdTokenLive:
             validate_id_token(
                 id_token,
                 config,
-                disco_doc_address=disco,
+                issuer=op_issuer,
                 trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                 access_token=access_token,
                 nonce=id_token_flow["nonce"],
@@ -289,7 +289,7 @@ class TestValidateIdTokenLive:
                 validate_id_token(
                     id_token,
                     config,
-                    disco_doc_address=disco,
+                    issuer=op_issuer,
                     trusted_audiences=test_config["TEST_ID_TOKEN_TRUSTED_AUDIENCES"],
                     access_token=access_token,
                     nonce=id_token_flow["nonce"],

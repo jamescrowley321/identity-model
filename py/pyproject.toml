@@ -186,16 +186,16 @@ ignore = [
 # The library reads no environment: config_helpers is the one sanctioned
 # reader, and nothing in the library imports it (test_config_helpers.py).
 "src/py_identity_model/config_helpers.py" = ["TID251"]
-# validate_token is public API: jwt, config, discovery address and client, plus
+# validate_token is public API: jwt, config, issuer and client, plus
 # the keyword-only cache= and presentation= (RFC 9449 §7.1 / RFC 8705 §3 binding).
 "src/py_identity_model/sync/token_validation.py" = ["PLR0913"]
 "src/py_identity_model/aio/token_validation.py" = ["PLR0913"]
-# validate_logout_token is public API: token, config, discovery address and
+# validate_logout_token is public API: token, config, issuer and
 # client, plus the keyword-only cache= and trusted_audiences= (Back-Channel
 # Logout 1.0 §2.6 step 4).
 "src/py_identity_model/sync/logout.py" = ["PLR0913"]
 "src/py_identity_model/aio/logout.py" = ["PLR0913"]
-# The FastAPI resource-server entry points: endpoint (discovery_url, audience,
+# The FastAPI resource-server entry points: endpoint (issuer, audience,
 # excluded paths), the F-07 marker pair, http_client, cache, settings and one
 # shared AuthOptions. New validation options go on AuthOptions, not here.
 "packages/fastapi-identity-model/fastapi_identity_model/middleware.py" = ["PLR0913"]

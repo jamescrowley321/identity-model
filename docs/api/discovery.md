@@ -2,6 +2,26 @@
 
 OpenID Connect Discovery 1.0 document fetching and parsing.
 
+Discovery takes the provider's issuer identifier, not a URL. The library builds
+the document URL from it: by default the issuer with any terminating `/`
+removed and `/.well-known/openid-configuration` appended (OpenID Connect
+Discovery 1.0 §4.1). `DiscoveryPolicy.location` selects the RFC 8414 location
+instead; see [Discovery Policy](discovery-policy.md#discovery-document-location).
+
+```python
+from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
+
+response = get_discovery_document(
+    DiscoveryDocumentRequest(issuer="https://auth.example.com")
+)
+# fetches https://auth.example.com/.well-known/openid-configuration
+```
+
+An issuer that ends with `/.well-known/openid-configuration` or
+`/.well-known/oauth-authorization-server`, or that has a query, a fragment, no
+host or a scheme other than `http`/`https`, is a configuration error: no request
+is sent and the response fails with `INVALID_CONFIGURATION`.
+
 ## Request / Response Models
 
 ::: py_identity_model.core.models.DiscoveryDocumentRequest
@@ -35,7 +55,7 @@ if response.error_kind is DiscoveryErrorKind.UNEXPECTED_STATUS:
 | `INVALID_JSON` | The response body could not be decoded as JSON | |
 | `MISSING_FIELDS` | A required-field check failed | `missing_fields` lists the fields rejected by that check |
 | `HTTPS_REQUIRED` | A URL violated the policy's HTTPS requirement | |
-| `ISSUER_MISMATCH` | The document's `issuer` is not the issuer the discovery URL was built from | `requested_issuer` and `returned_issuer` |
+| `ISSUER_MISMATCH` | The document's `issuer` is not the configured issuer | `requested_issuer` and `returned_issuer` |
 | `INVALID_CONFIGURATION` | Another URL or configuration check failed | |
 | `INVALID_DOCUMENT` | Another discovery document check failed | |
 | `NETWORK_ERROR` | The HTTP transport failed | |
@@ -50,7 +70,7 @@ On success, `error_kind`, `status_code`, `requested_issuer` and
 `DiscoveryMissingFieldsError`, `DiscoveryIssuerMismatchError` or
 `DiscoveryValidationError` (all `ValidationException`s) for an invalid
 document; `DiscoveryHTTPSRequiredError` or `ConfigurationException` for a URL
-check. See [Exceptions](exceptions.md).
+check or an invalid issuer. See [Exceptions](exceptions.md).
 
 The metadata describes the checks the library actually performs.
 
@@ -81,19 +101,16 @@ any of these fields.
 
 ## Issuer match
 
-The document's `issuer` must equal the issuer the discovery URL was built from:
-the request URL without `/.well-known/openid-configuration`, ignoring a trailing
-slash on either side (OIDC Discovery 1.0 §4.3, RFC 8414 §3.3). Comparison is
-exact otherwise: host case, an explicit port and the path all count. The
-comparison uses the address as passed, not the URL after redirects. A mismatch fails with
-`ISSUER_MISMATCH`. No `DiscoveryPolicy` setting disables it.
+The document's `issuer` must be identical to the configured issuer (OIDC
+Discovery 1.0 §4.3, RFC 8414 §3.3). The comparison is exact, code point for
+code point: a trailing slash, host case, an explicit port and the path all
+count, so `https://op.example` and `https://op.example/` are different issuers.
+Both are fetched from `https://op.example/.well-known/openid-configuration`, and
+each accepts only a document that declares exactly that issuer. A mismatch
+fails with `ISSUER_MISMATCH`. No `DiscoveryPolicy` setting disables it.
 
-The trailing slash is ignored because OIDC Discovery 1.0 §4.1 removes a path
-issuer's terminating `/` before appending `/.well-known/openid-configuration`, so
-the document at `https://server.example.com/tenant/.well-known/openid-configuration`
-may declare `https://server.example.com/tenant/`. `issuer` keeps the value the
-document declared, and token validation compares the `iss` claim against it
-exactly (OIDC Core 1.0 §3.1.3.7).
+Configure the issuer exactly as the provider declares it. Token validation
+compares the `iss` claim against the same value (OIDC Core 1.0 §3.1.3.7).
 
 Providers that serve more than one issuer, such as Descope
 (`https://api.descope.com/{project_id}` and
