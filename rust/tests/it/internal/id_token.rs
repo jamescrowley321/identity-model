@@ -10,10 +10,8 @@
 //! `#[ignore]`-gated: it runs in every bare `cargo test`.
 //!
 //! Thin-executor contract: only the mapping of each canonical `reason` label to
-//! the crate's error lives here — `untrusted_audience` to the typed
-//! [`IdentityError::IdTokenUntrustedAudience`] variant, every other reason to
-//! the stable [`IdentityError::IdTokenValidation`] message shape
-//! (`reason_marker`); the inputs and expected outcomes are the shared oracle.
+//! the crate's typed [`IdentityError`] variant lives here (`matches_reason`);
+//! the inputs and expected outcomes are the shared oracle.
 
 use rs_identity_model::{
     Claims, IdTokenValidationOptions, IdentityError, validate_id_token_claims,
@@ -119,30 +117,36 @@ struct Expect {
 
 // ── Canonical-reason mapping ────────────────────────────────────────────────
 
-/// The canonical `reason` that maps to the typed
-/// [`IdentityError::IdTokenUntrustedAudience`] variant rather than a message
-/// marker.
-const UNTRUSTED_AUDIENCE: &str = "untrusted_audience";
-
-/// The distinctive substring the crate's [`IdentityError::IdTokenValidation`]
-/// message carries for each remaining canonical `reason` in `id-token.json`.
-/// Together with [`UNTRUSTED_AUDIENCE`] this is the only language-specific
-/// mapping in the runner.
-fn reason_marker(reason: &str) -> &'static str {
+/// Whether `err` is the crate's typed variant for a canonical
+/// `id_token_profile` `reason` in `id-token.json`. This is the only
+/// language-specific mapping in the runner.
+fn matches_reason(reason: &str, err: &IdentityError) -> bool {
+    let missing =
+        |name: &str| matches!(err, IdentityError::MissingClaim { claim } if claim == name);
+    let hash_mismatch =
+        |name: &str| matches!(err, IdentityError::TokenHashMismatch { claim } if claim == name);
     match reason {
-        "missing_sub" => "required 'sub'",
-        "missing_aud" => "required 'aud'",
-        "azp_required_multi_aud" => "multiple audiences must contain an 'azp'",
-        "azp_mismatch" => "'azp' claim does not match",
-        "nonce_mismatch" => "'nonce' claim does not match",
-        "auth_time_stale" => "'auth_time' is older than",
-        "auth_time_missing" => "missing required numeric 'auth_time'",
-        "at_hash_missing" => "missing required 'at_hash'",
-        "at_hash_mismatch" => "'at_hash' claim does not match",
-        "c_hash_missing" => "missing required 'c_hash'",
-        "c_hash_mismatch" => "'c_hash' claim does not match",
-        "unsupported_alg" => "Unsupported ID token 'alg'",
-        "alg_required" => "header 'alg' is required",
+        "untrusted_audience" => {
+            matches!(err, IdentityError::IdTokenUntrustedAudience(untrusted) if !untrusted.is_empty())
+        }
+        "missing_sub" => missing("sub"),
+        "missing_aud" => missing("aud"),
+        "azp_required_multi_aud" => missing("azp"),
+        "azp_mismatch" => matches!(err, IdentityError::AuthorizedPartyMismatch { .. }),
+        "nonce_mismatch" => matches!(err, IdentityError::NonceMismatch),
+        "auth_time_stale" => matches!(err, IdentityError::MaxAgeExceeded { .. }),
+        "auth_time_missing" => missing("auth_time"),
+        "at_hash_missing" => missing("at_hash"),
+        "at_hash_mismatch" => hash_mismatch("at_hash"),
+        "c_hash_missing" => missing("c_hash"),
+        "c_hash_mismatch" => hash_mismatch("c_hash"),
+        "unsupported_alg" => {
+            matches!(
+                err,
+                IdentityError::UnsupportedHashAlgorithm { alg: Some(_) }
+            )
+        }
+        "alg_required" => matches!(err, IdentityError::UnsupportedHashAlgorithm { alg: None }),
         other => panic!("unknown canonical reason {other:?}"),
     }
 }
@@ -242,26 +246,11 @@ fn spec_id_token_internal() {
                             "{label}: unexpected canonical error family {:?}",
                             vector.expect.error
                         );
-                        if vector.expect.reason == UNTRUSTED_AUDIENCE {
-                            // Typed variant: matched by pattern, not by message.
-                            let IdentityError::IdTokenUntrustedAudience(untrusted) = &err else {
-                                panic!("{label}: expected IdTokenUntrustedAudience, got {err:?}");
-                            };
-                            assert!(
-                                !untrusted.is_empty(),
-                                "{label}: untrusted-audience rejection carries no values"
-                            );
-                        } else {
-                            let IdentityError::IdTokenValidation(msg) = &err else {
-                                panic!("{label}: expected IdTokenValidation, got {err:?}");
-                            };
-                            let marker = reason_marker(&vector.expect.reason);
-                            assert!(
-                                msg.contains(marker),
-                                "{label}: rejection {msg:?} does not match reason {:?} (marker {marker:?})",
-                                vector.expect.reason
-                            );
-                        }
+                        assert!(
+                            matches_reason(&vector.expect.reason, &err),
+                            "{label}: rejection {err:?} does not match reason {:?}",
+                            vector.expect.reason
+                        );
                     }
                 }
                 other => panic!("{label}: unknown expected outcome {other:?}"),

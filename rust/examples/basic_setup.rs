@@ -9,9 +9,16 @@ fn main() {
     println!("Modules: {}", modules.join(", "));
 
     // Demonstrate the unified error type that every capability returns.
-    let example: Result<(), IdentityError> =
-        Err(IdentityError::Validation("example: token expired".into()));
-    if let Err(e) = example {
-        println!("Example error surface: {e}");
+    // JWT failures are typed variants: match on them, not on the message.
+    let example: Result<(), IdentityError> = Err(IdentityError::Expired {
+        exp: 1_700_000_000,
+        now: 1_700_000_060,
+    });
+    match example {
+        Err(IdentityError::Expired { exp, .. }) => {
+            println!("Example error surface: token expired at {exp}");
+        }
+        Err(e) => println!("Example error surface: {e}"),
+        Ok(()) => {}
     }
 }

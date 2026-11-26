@@ -93,11 +93,17 @@ struct JoseHeader {
 ///
 /// # Errors
 ///
-/// [`IdentityError::Validation`] for a malformed token, a rejected/unsupported
-/// algorithm, a signature that does not verify, or a claim that fails its rule;
-/// [`IdentityError::WeakKey`] for an RSA key under 2048 bits or an EC key under
-/// 224 bits; [`IdentityError::Deserialization`] for a payload that is not a JSON
-/// object.
+/// - [`IdentityError::MalformedToken`] for a token that is not a well-formed
+///   compact JWS, or whose payload is not a JSON object;
+/// - [`IdentityError::AlgorithmNone`] / [`IdentityError::AlgorithmNotAllowed`]
+///   for an unsecured or disallowed header `alg`;
+/// - [`IdentityError::WeakKey`] for an RSA key under 2048 bits or an EC key
+///   under 224 bits; [`IdentityError::KeyConversion`] for an unusable key;
+/// - [`IdentityError::SignatureInvalid`] for a signature that does not verify;
+/// - [`IdentityError::MissingClaim`], [`IdentityError::MalformedClaim`],
+///   [`IdentityError::Expired`], [`IdentityError::NotYetValid`],
+///   [`IdentityError::IssuerMismatch`], [`IdentityError::AudienceMismatch`] or
+///   [`IdentityError::NonceMismatch`] for a claim that fails its rule.
 pub fn validate_token(
     token: &str,
     key: &JsonWebKey,
@@ -199,21 +205,21 @@ pub async fn validate_token_with_jwks(
 fn parse_header(token: &str) -> Result<JoseHeader> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
-        return Err(IdentityError::Validation(format!(
-            "malformed token: compact JWS must have 3 segments, got {}",
+        return Err(IdentityError::MalformedToken(format!(
+            "compact JWS must have 3 segments, got {}",
             parts.len()
         )));
     }
     if parts[0].is_empty() {
-        return Err(IdentityError::Validation(
-            "malformed token: empty header segment".to_string(),
+        return Err(IdentityError::MalformedToken(
+            "empty header segment".to_string(),
         ));
     }
     let raw = URL_SAFE_NO_PAD
         .decode(parts[0])
-        .map_err(|e| IdentityError::Validation(format!("malformed token: decode header: {e}")))?;
+        .map_err(|e| IdentityError::MalformedToken(format!("decode header: {e}")))?;
     serde_json::from_slice(&raw)
-        .map_err(|e| IdentityError::Validation(format!("malformed token: parse header JSON: {e}")))
+        .map_err(|e| IdentityError::MalformedToken(format!("parse header JSON: {e}")))
 }
 
 /// Unpadded base64url that accepts non-zero trailing bits, as the Go and Python
@@ -235,9 +241,9 @@ fn check_body_segments(token: &str) -> Result<()> {
     let mut segments = token.split('.').skip(1);
     for name in ["payload", "signature"] {
         let segment = segments.next().unwrap_or_default();
-        LENIENT_URL_SAFE_NO_PAD.decode(segment).map_err(|e| {
-            IdentityError::Validation(format!("malformed token: decode {name}: {e}"))
-        })?;
+        LENIENT_URL_SAFE_NO_PAD
+            .decode(segment)
+            .map_err(|e| IdentityError::MalformedToken(format!("decode {name}: {e}")))?;
     }
     Ok(())
 }
@@ -253,8 +259,8 @@ fn check_body_segments(token: &str) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`IdentityError::Validation`] when the token is not a well-formed compact
-/// JWS (the same parse errors as [`validate_token`]).
+/// [`IdentityError::MalformedToken`] when the token is not a well-formed
+/// compact JWS (the same parse errors as [`validate_token`]).
 pub(super) fn parse_header_alg(token: &str) -> Result<Option<String>> {
     let header = parse_header(token.trim())?;
     Ok((!header.alg.is_empty()).then_some(header.alg))
@@ -266,20 +272,17 @@ fn check_algorithm(header: &JoseHeader, options: &ValidationOptions) -> Result<A
     // JWT-003: reject the unsecured "none" algorithm unconditionally, before any
     // key resolution or signature work (RFC 7519 §7.2).
     if header.alg.eq_ignore_ascii_case("none") {
-        return Err(IdentityError::Validation(
-            "unsecured token with algorithm \"none\" is rejected".to_string(),
-        ));
+        return Err(IdentityError::AlgorithmNone);
     }
     if header.alg.is_empty() {
-        return Err(IdentityError::Validation(
-            "malformed token: header is missing the \"alg\" parameter".to_string(),
+        return Err(IdentityError::MalformedToken(
+            "header is missing the \"alg\" parameter".to_string(),
         ));
     }
     if !options.allowed_algorithms.iter().any(|a| a == &header.alg) {
-        return Err(IdentityError::Validation(format!(
-            "unsupported or disallowed algorithm {:?}",
-            header.alg
-        )));
+        return Err(IdentityError::AlgorithmNotAllowed {
+            alg: header.alg.clone(),
+        });
     }
     algorithm_from_str(&header.alg)
 }
@@ -299,9 +302,9 @@ fn algorithm_from_str(alg: &str) -> Result<Algorithm> {
         "ES384" => Algorithm::ES384,
         "EdDSA" => Algorithm::EdDSA,
         _ => {
-            return Err(IdentityError::Validation(format!(
-                "unsupported or disallowed algorithm {alg:?}"
-            )));
+            return Err(IdentityError::AlgorithmNotAllowed {
+                alg: alg.to_string(),
+            });
         }
     };
     Ok(mapped)
@@ -309,23 +312,40 @@ fn algorithm_from_str(alg: &str) -> Result<Algorithm> {
 
 /// Builds a [`DecodingKey`] from a resolved [`JsonWebKey`], selecting only the
 /// key material that belongs to the declared key type so a malformed entry
-/// carrying both RSA and EC parameters cannot present an ambiguous key.
+/// carrying both RSA and EC parameters cannot present an ambiguous key. Empty
+/// key material is refused here: the verifier would otherwise report it as a
+/// signature that does not verify.
 fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
+    let conversion = |reason: String| IdentityError::KeyConversion {
+        kid: key.kid.clone(),
+        reason,
+    };
+    let required: &[(&str, &str)] = match key.kty.as_str() {
+        "RSA" => &[("n", &key.n), ("e", &key.e)],
+        "EC" => &[("x", &key.x), ("y", &key.y)],
+        "OKP" => &[("x", &key.x)],
+        _ => &[],
+    };
+    if let Some((name, _)) = required.iter().find(|(_, value)| value.is_empty()) {
+        return Err(conversion(format!(
+            "{} key: parameter {name:?} is empty",
+            key.kty
+        )));
+    }
     match key.kty.as_str() {
         "RSA" => DecodingKey::from_rsa_components(&key.n, &key.e)
-            .map_err(|e| IdentityError::Validation(format!("convert RSA key {:?}: {e}", key.kid))),
+            .map_err(|e| conversion(format!("RSA key: {e}"))),
         "EC" => DecodingKey::from_ec_components(&key.x, &key.y)
-            .map_err(|e| IdentityError::Validation(format!("convert EC key {:?}: {e}", key.kid))),
+            .map_err(|e| conversion(format!("EC key: {e}"))),
         // jsonwebtoken's EdDSA verifier is Ed25519 only (RFC 8037 §2).
-        "OKP" if key.crv == "Ed25519" => DecodingKey::from_ed_components(&key.x)
-            .map_err(|e| IdentityError::Validation(format!("convert OKP key {:?}: {e}", key.kid))),
-        "OKP" => Err(IdentityError::Validation(format!(
-            "convert OKP key {:?}: unsupported curve {:?}",
-            key.kid, key.crv
+        "OKP" if key.crv == "Ed25519" => {
+            DecodingKey::from_ed_components(&key.x).map_err(|e| conversion(format!("OKP key: {e}")))
+        }
+        "OKP" => Err(conversion(format!(
+            "OKP key: unsupported curve {:?}",
+            key.crv
         ))),
-        other => Err(IdentityError::Validation(format!(
-            "unsupported key type {other:?}"
-        ))),
+        other => Err(conversion(format!("unsupported key type {other:?}"))),
     }
 }
 
@@ -335,15 +355,13 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
 fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
     use jsonwebtoken::errors::ErrorKind;
     match err.kind() {
-        ErrorKind::InvalidSignature => {
-            IdentityError::Validation("signature verification failed".to_string())
-        }
         // A validly signed payload that is not UTF-8 JSON is a malformed token
         // (RFC 7519 §7.2), not a signature failure.
-        ErrorKind::Json(_) | ErrorKind::Utf8(_) => {
-            IdentityError::Validation(format!("malformed token: {err}"))
-        }
-        _ => IdentityError::Validation(format!("signature verification failed: {err}")),
+        ErrorKind::Json(_) | ErrorKind::Utf8(_) => IdentityError::MalformedToken(err.to_string()),
+        // Everything else — a signature that does not verify, or one the
+        // verifier refuses to decode (a tampered final character) — is a
+        // signature failure.
+        _ => IdentityError::SignatureInvalid,
     }
 }
 
@@ -463,7 +481,7 @@ mod tests {
         let token = String::from_utf8(read_fixture("alg-none-token.txt")).expect("utf8 token");
         let err = validate_token(token.trim(), &public_key(), &ValidationOptions::new())
             .expect_err("alg none rejected");
-        assert!(err.to_string().contains("none"), "{err}");
+        assert_eq!(err, IdentityError::AlgorithmNone);
     }
 
     // JWT-009: a token whose signature is tampered fails signature verification.
@@ -478,7 +496,7 @@ mod tests {
         let tampered = format!("{head}.{}{swapped}", &sig[..sig.len() - 1]);
         let err = validate_token(&tampered, &public_key(), &ValidationOptions::new())
             .expect_err("tampered signature rejected");
-        assert!(err.to_string().contains("signature"), "{err}");
+        assert_eq!(err, IdentityError::SignatureInvalid);
     }
 
     // A correctly signed token whose header alg is not in the allowlist is
@@ -491,7 +509,12 @@ mod tests {
             .allowed_algorithms(["ES256"])
             .build();
         let err = validate_token(&token, &public_key(), &opts).expect_err("RS256 disallowed");
-        assert!(err.to_string().contains("disallowed"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::AlgorithmNotAllowed {
+                alg: "RS256".into()
+            }
+        );
     }
 
     // A token with the wrong number of segments is malformed.
@@ -499,7 +522,7 @@ mod tests {
     fn rejects_malformed_token() {
         let err = validate_token("not.a", &public_key(), &ValidationOptions::new())
             .expect_err("two-segment token rejected");
-        assert!(err.to_string().contains("malformed"), "{err}");
+        assert!(matches!(err, IdentityError::MalformedToken(_)), "{err:?}");
     }
 
     // JWT-017: every malformed fixture, including a validly signed payload that
@@ -517,12 +540,10 @@ mod tests {
             let token = String::from_utf8(read_fixture(name)).expect("utf8 token");
             let err = validate_token(token.trim(), &public_key(), &ValidationOptions::new())
                 .expect_err("malformed token rejected");
-            match err {
-                IdentityError::Validation(msg) => {
-                    assert!(msg.starts_with("malformed token"), "{name}: {msg}");
-                }
-                other => panic!("{name}: expected a Validation error, got {other:?}"),
-            }
+            assert!(
+                matches!(err, IdentityError::MalformedToken(_)),
+                "{name}: expected MalformedToken, got {err:?}"
+            );
         }
     }
 
@@ -534,7 +555,10 @@ mod tests {
         let token = mint(json!({ "iss": TEST_ISSUER, "exp": n - 10, "iat": n - 3600 }));
         let err = validate_token(&token, &public_key(), &ValidationOptions::new())
             .expect_err("expired rejected");
-        assert!(err.to_string().contains("expired"), "{err}");
+        assert!(
+            matches!(err, IdentityError::Expired { exp, .. } if exp == n - 10),
+            "{err:?}"
+        );
     }
 
     // JWT-011: an expired-within-skew token passes once the skew tolerance is
@@ -728,6 +752,34 @@ mod tests {
         assert_eq!(validated.subject.as_deref(), Some("ed-user"));
     }
 
+    // Empty key material is refused at key conversion for every key type,
+    // naming the empty parameter, rather than reaching the verifier.
+    #[test]
+    fn empty_key_parameters_are_key_conversion_errors() {
+        for (fixture, kty, param) in [
+            ("weak-rsa-1024", "RSA", "e"),
+            ("weak-ec-p192", "EC", "x"),
+            ("weak-ec-p192", "EC", "y"),
+            ("ed25519-key-1", "OKP", "x"),
+        ] {
+            let mut key = fixture_key(fixture);
+            match param {
+                "e" => key.e.clear(),
+                "x" => key.x.clear(),
+                _ => key.y.clear(),
+            }
+            let err = decoding_key_for(&key).expect_err("empty parameter rejected");
+            assert_eq!(
+                err,
+                IdentityError::KeyConversion {
+                    kid: key.kid.clone(),
+                    reason: format!("{kty} key: parameter {param:?} is empty"),
+                },
+                "{fixture} {param}"
+            );
+        }
+    }
+
     // An OKP key on a curve jsonwebtoken can't verify (Ed448) is a key
     // conversion error, not a silent Ed25519 verification.
     #[test]
@@ -735,7 +787,10 @@ mod tests {
         let mut key = fixture_key("ed25519-key-1");
         key.crv = "Ed448".to_string();
         let err = decoding_key_for(&key).expect_err("Ed448 unsupported");
-        assert!(err.to_string().contains("convert OKP key"), "{err}");
+        assert!(
+            matches!(&err, IdentityError::KeyConversion { kid, .. } if kid == "ed25519-key-1"),
+            "{err:?}"
+        );
     }
 
     // JWT-014: a token whose key is below the strength floor fails with the
@@ -813,7 +868,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                IdentityError::Validation(_) | IdentityError::WeakKey { .. }
+                IdentityError::KeyConversion { .. } | IdentityError::WeakKey { .. }
             ),
             "{err:?}"
         );
@@ -829,7 +884,10 @@ mod tests {
         assert!(check_key_strength(&key).is_ok());
         let err = validate_token(token.trim(), &key, &ValidationOptions::new())
             .expect_err("empty modulus rejected");
-        assert!(matches!(err, IdentityError::Validation(_)), "{err:?}");
+        assert!(
+            matches!(err, IdentityError::KeyConversion { .. }),
+            "{err:?}"
+        );
 
         let mut key = fixture_key("weak-ec-p192");
         key.x.clear();

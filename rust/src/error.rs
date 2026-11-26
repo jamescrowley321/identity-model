@@ -4,8 +4,20 @@ use thiserror::Error;
 
 /// The unified error type returned by all fallible identity-model operations.
 ///
-/// Every public function returns `Result<T, IdentityError>`.
-#[derive(Debug, Error)]
+/// Every public function returns `Result<T, IdentityError>`. JWT and ID Token
+/// validation failures are typed variants ([`MalformedToken`],
+/// [`AlgorithmNone`], [`SignatureInvalid`], [`Expired`], [`IssuerMismatch`],
+/// [`MissingClaim`], ...), so a caller tells them apart by matching, never by
+/// message text. New variants may be added in minor releases.
+///
+/// [`MalformedToken`]: IdentityError::MalformedToken
+/// [`AlgorithmNone`]: IdentityError::AlgorithmNone
+/// [`SignatureInvalid`]: IdentityError::SignatureInvalid
+/// [`Expired`]: IdentityError::Expired
+/// [`IssuerMismatch`]: IdentityError::IssuerMismatch
+/// [`MissingClaim`]: IdentityError::MissingClaim
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IdentityError {
     /// An HTTP transport or status error.
     #[error("http error: {0}")]
@@ -15,20 +27,157 @@ pub enum IdentityError {
     #[error("deserialization error: {0}")]
     Deserialization(String),
 
-    /// A token or document failed validation (signature, claims, issuer, etc.).
+    /// A document or request failed a validation rule outside JWT validation
+    /// (a JWK, a JWKS or endpoint URI, a UserInfo response). JWT and ID Token
+    /// validation never report this variant; they use the typed variants below.
     #[error("validation error: {0}")]
     Validation(String),
 
-    /// An ID Token failed one of the OpenID Connect ID-Token *profile* rules
-    /// layered on top of standard JWT validation — the required `sub`, or the
-    /// opt-in `azp` / `nonce` / `max_age` / `at_hash` / `c_hash` checks (OIDC
-    /// Core 1.0 §3.1.3.7 / §3.3.2.11). Kept distinct from
-    /// [`IdentityError::Validation`] (signature/iss/aud/exp) so a caller can
-    /// tell a profile violation apart from a base-JWT failure. The profile
-    /// fails **closed**: an unknown or missing header `alg` on an
-    /// `at_hash`/`c_hash` check is this error, never a silently skipped check.
-    #[error("id token validation error: {0}")]
-    IdTokenValidation(String),
+    /// The token is not a well-formed compact JWS (RFC 7515 §7.1): wrong
+    /// segment count, a segment that is not base64url, a header that is not a
+    /// JSON object or lacks `alg`, or a payload that is not a JSON object
+    /// (RFC 7519 §7.2). Carries a diagnostic detail.
+    #[error("malformed token: {0}")]
+    MalformedToken(String),
+
+    /// The token uses the unsecured `none` algorithm (RFC 7519 §6), which is
+    /// always rejected, before any key resolution.
+    #[error("unsecured token with algorithm \"none\" is rejected")]
+    AlgorithmNone,
+
+    /// The token header `alg` is not in the configured allowlist (or is not a
+    /// supported asymmetric algorithm), so it is rejected before signature
+    /// verification (algorithm-confusion defence).
+    #[error("unsupported or disallowed algorithm {alg:?}")]
+    AlgorithmNotAllowed {
+        /// The token header `alg`.
+        alg: String,
+    },
+
+    /// The JWS signature does not verify under the resolved key (RFC 7515
+    /// §5.2).
+    #[error("signature verification failed")]
+    SignatureInvalid,
+
+    /// The resolved JWK cannot be turned into a verification key: an
+    /// unsupported `kty` or curve, or unusable key material.
+    #[error("convert key {kid:?}: {reason}")]
+    KeyConversion {
+        /// The key's `kid` (empty when it has none).
+        kid: String,
+        /// Why the key cannot be used.
+        reason: String,
+    },
+
+    /// A claim the validation requires is absent: `iat`, a required `exp` or
+    /// `nbf`, a configured `required_claims` entry (absent, null or empty), or
+    /// an ID Token profile claim — `sub`, `aud`, `azp` (multiple audiences),
+    /// `auth_time` (with `max_age`), `at_hash` / `c_hash` (issued with the ID
+    /// Token).
+    #[error("claim {claim:?} invalid: required claim is missing")]
+    MissingClaim {
+        /// The claim name.
+        claim: String,
+    },
+
+    /// A claim has the wrong JSON type or an out-of-range value (RFC 7519 §2,
+    /// §4.1).
+    #[error("claim {claim:?} invalid: {reason}")]
+    MalformedClaim {
+        /// The claim name.
+        claim: String,
+        /// What is wrong with its value.
+        reason: String,
+    },
+
+    /// The token's `exp` has passed, beyond the allowed clock skew (RFC 7519
+    /// §4.1.4).
+    #[error("claim \"exp\" invalid: token expired at {exp} (now {now})")]
+    Expired {
+        /// The token's `exp`, seconds since the Unix epoch.
+        exp: i64,
+        /// The time it was checked against.
+        now: i64,
+    },
+
+    /// The token's `nbf` is in the future, beyond the allowed clock skew (RFC
+    /// 7519 §4.1.5).
+    #[error("claim \"nbf\" invalid: token is not valid before {nbf} (now {now})")]
+    NotYetValid {
+        /// The token's `nbf`, seconds since the Unix epoch.
+        nbf: i64,
+        /// The time it was checked against.
+        now: i64,
+    },
+
+    /// The token's `iss` is not the expected issuer (RFC 7519 §4.1.1, OIDC
+    /// Core 1.0 §3.1.3.7 step 2). `actual` is `None` when the claim is absent.
+    #[error("claim \"iss\" invalid: expected {expected:?}, got {actual:?}")]
+    IssuerMismatch {
+        /// The configured issuer.
+        expected: String,
+        /// The token's `iss`, if any.
+        actual: Option<String>,
+    },
+
+    /// The token's `aud` does not contain the expected audience (RFC 7519
+    /// §4.1.3, OIDC Core 1.0 §3.1.3.7 step 3).
+    #[error(
+        "claim \"aud\" invalid: does not contain expected audience {expected:?} (token audiences: {actual:?})"
+    )]
+    AudienceMismatch {
+        /// The configured audience.
+        expected: String,
+        /// The token's audiences, in token order.
+        actual: Vec<String>,
+    },
+
+    /// The token does not carry the expected `nonce`: absent or different
+    /// (OIDC Core 1.0 §3.1.3.7 step 11).
+    #[error("claim \"nonce\" invalid: does not match the expected value")]
+    NonceMismatch,
+
+    /// An ID Token's `azp` is not the configured `client_id` (OIDC Core 1.0
+    /// §3.1.3.7 step 5), with
+    /// [`validate_azp`](crate::IdTokenValidationOptionsBuilder::validate_azp).
+    #[error("claim \"azp\" invalid: expected {expected:?}, got {actual:?}")]
+    AuthorizedPartyMismatch {
+        /// The configured `client_id`.
+        expected: String,
+        /// The token's `azp`.
+        actual: String,
+    },
+
+    /// An ID Token's `auth_time` is older than the requested `max_age` plus
+    /// leeway (OIDC Core 1.0 §3.1.3.7 step 12).
+    #[error(
+        "claim \"auth_time\" invalid: {auth_time} is older than max_age {max_age}s (now {now})"
+    )]
+    MaxAgeExceeded {
+        /// The token's `auth_time`, seconds since the Unix epoch.
+        auth_time: i64,
+        /// The requested `max_age`, in seconds.
+        max_age: i64,
+        /// The time it was checked against.
+        now: i64,
+    },
+
+    /// An ID Token's `at_hash` or `c_hash` does not match the access token or
+    /// authorization code (OIDC Core 1.0 §3.3.2.11). `claim` names which.
+    #[error("claim {claim:?} invalid: does not match the bound value")]
+    TokenHashMismatch {
+        /// `at_hash` or `c_hash`.
+        claim: String,
+    },
+
+    /// An `at_hash` / `c_hash` check cannot select a hash for the ID Token
+    /// header `alg` (OIDC Core 1.0 §3.3.2.11): `None` when the header has no
+    /// `alg`. The check fails closed rather than being skipped.
+    #[error("unsupported ID token alg {alg:?} for at_hash/c_hash validation")]
+    UnsupportedHashAlgorithm {
+        /// The ID Token header `alg`, if any.
+        alg: Option<String>,
+    },
 
     /// An ID Token's `aud` carries values the client does not trust (OIDC Core
     /// 1.0 §3.1.3.7 step 3: the ID Token MUST be rejected if it contains
@@ -52,7 +201,7 @@ pub enum IdentityError {
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without
-    /// parsing a message string. Kept distinct from [`IdentityError::Validation`]
+    /// parsing a message string. Kept distinct from the built-in claim variants
     /// so a validation pipeline — and `combine_claims_validators` in `Any` mode —
     /// can tell a clean claims rejection from any other failure. Constructed from
     /// a [`crate::ClaimsValidationError`] via `From`.
@@ -207,6 +356,104 @@ mod tests {
             IdentityError::Configuration("missing token_endpoint".into()).to_string(),
             "configuration error: missing token_endpoint"
         );
+    }
+
+    #[test]
+    fn jwt_variant_display_messages() {
+        let cases = [
+            (
+                IdentityError::MalformedToken("empty header segment".into()),
+                "malformed token: empty header segment",
+            ),
+            (
+                IdentityError::AlgorithmNone,
+                r#"unsecured token with algorithm "none" is rejected"#,
+            ),
+            (
+                IdentityError::AlgorithmNotAllowed {
+                    alg: "HS256".into(),
+                },
+                r#"unsupported or disallowed algorithm "HS256""#,
+            ),
+            (
+                IdentityError::SignatureInvalid,
+                "signature verification failed",
+            ),
+            (
+                IdentityError::KeyConversion {
+                    kid: "k1".into(),
+                    reason: "RSA key: parameter \"n\" is empty".into(),
+                },
+                r#"convert key "k1": RSA key: parameter "n" is empty"#,
+            ),
+            (
+                IdentityError::MissingClaim {
+                    claim: "iat".into(),
+                },
+                r#"claim "iat" invalid: required claim is missing"#,
+            ),
+            (
+                IdentityError::MalformedClaim {
+                    claim: "exp".into(),
+                    reason: "must be a numeric date".into(),
+                },
+                r#"claim "exp" invalid: must be a numeric date"#,
+            ),
+            (
+                IdentityError::Expired { exp: 10, now: 20 },
+                r#"claim "exp" invalid: token expired at 10 (now 20)"#,
+            ),
+            (
+                IdentityError::NotYetValid { nbf: 30, now: 20 },
+                r#"claim "nbf" invalid: token is not valid before 30 (now 20)"#,
+            ),
+            (
+                IdentityError::IssuerMismatch {
+                    expected: "https://op".into(),
+                    actual: None,
+                },
+                r#"claim "iss" invalid: expected "https://op", got None"#,
+            ),
+            (
+                IdentityError::AudienceMismatch {
+                    expected: "rp".into(),
+                    actual: vec!["other".into()],
+                },
+                r#"claim "aud" invalid: does not contain expected audience "rp" (token audiences: ["other"])"#,
+            ),
+            (
+                IdentityError::NonceMismatch,
+                r#"claim "nonce" invalid: does not match the expected value"#,
+            ),
+            (
+                IdentityError::AuthorizedPartyMismatch {
+                    expected: "rp".into(),
+                    actual: "other".into(),
+                },
+                r#"claim "azp" invalid: expected "rp", got "other""#,
+            ),
+            (
+                IdentityError::MaxAgeExceeded {
+                    auth_time: 1,
+                    max_age: 60,
+                    now: 100,
+                },
+                r#"claim "auth_time" invalid: 1 is older than max_age 60s (now 100)"#,
+            ),
+            (
+                IdentityError::TokenHashMismatch {
+                    claim: "at_hash".into(),
+                },
+                r#"claim "at_hash" invalid: does not match the bound value"#,
+            ),
+            (
+                IdentityError::UnsupportedHashAlgorithm { alg: None },
+                "unsupported ID token alg None for at_hash/c_hash validation",
+            ),
+        ];
+        for (err, want) in cases {
+            assert_eq!(err.to_string(), want, "{err:?}");
+        }
     }
 
     #[test]

@@ -35,17 +35,15 @@ impl Audience {
                     match item {
                         Value::String(s) => out.push(s.clone()),
                         _ => {
-                            return Err(IdentityError::Validation(
-                                "claim \"aud\" invalid: array must contain only strings"
-                                    .to_string(),
-                            ));
+                            return Err(malformed_claim("aud", "array must contain only strings"));
                         }
                     }
                 }
                 Ok(Audience(out))
             }
-            _ => Err(IdentityError::Validation(
-                "claim \"aud\" invalid: must be a string or array of strings".to_string(),
+            _ => Err(malformed_claim(
+                "aud",
+                "must be a string or array of strings",
             )),
         }
     }
@@ -114,12 +112,12 @@ impl Claims {
     ///
     /// # Errors
     ///
-    /// [`IdentityError::Deserialization`] when the payload is not a JSON object;
-    /// [`IdentityError::Validation`] when a claim has the wrong JSON shape (e.g.
-    /// a non-numeric `exp` or a malformed `aud`).
+    /// [`IdentityError::MalformedToken`] when the payload is not a JSON object;
+    /// [`IdentityError::MalformedClaim`] when a claim has the wrong JSON shape
+    /// (e.g. a non-numeric `exp` or a malformed `aud`).
     pub(crate) fn from_value(value: Value) -> Result<Self> {
         let Value::Object(map) = value else {
-            return Err(IdentityError::Deserialization(
+            return Err(IdentityError::MalformedToken(
                 "JWT claims payload is not a JSON object".to_string(),
             ));
         };
@@ -138,8 +136,8 @@ impl Claims {
     ///
     /// # Errors
     ///
-    /// [`IdentityError::Deserialization`] when `value` is not a JSON object;
-    /// [`IdentityError::Validation`] when a claim has the wrong JSON shape.
+    /// [`IdentityError::MalformedToken`] when `value` is not a JSON object;
+    /// [`IdentityError::MalformedClaim`] when a claim has the wrong JSON shape.
     pub fn from_json(value: Value) -> Result<Self> {
         Self::from_value(value)
     }
@@ -227,29 +225,31 @@ impl Claims {
     ///
     /// # Errors
     ///
-    /// [`IdentityError::Validation`] identifying the offending claim.
+    /// [`IdentityError::MissingClaim`] for an absent required claim (`iat`, a
+    /// required `exp`/`nbf`, a `required_claims` entry);
+    /// [`IdentityError::Expired`] / [`IdentityError::NotYetValid`] for a time
+    /// claim outside the skew; [`IdentityError::IssuerMismatch`] /
+    /// [`IdentityError::AudienceMismatch`] / [`IdentityError::NonceMismatch`]
+    /// for an expected value the token does not carry.
     pub(crate) fn validate(&self, opts: &ValidationOptions, now_unix: i64) -> Result<()> {
         let skew = i64::try_from(opts.clock_skew.as_secs()).unwrap_or(i64::MAX);
 
         // iat MUST be present (JWT-002/JWT-013). Required by this validator even
         // though RFC 7519 §4.1.6 marks it optional.
         if self.issued_at.is_none() {
-            return Err(claim_err("iat", "required claim is missing"));
+            return Err(missing_claim("iat"));
         }
 
         // exp is required by default and, when present, must not be expired
         // allowing for clock skew (JWT-005/JWT-011, AC-3/AC-6, RFC 7519 §4.1.4).
         match self.expiry {
             None if opts.require_exp => {
-                return Err(claim_err("exp", "required claim is missing"));
+                return Err(missing_claim("exp"));
             }
             // AC-6: surface the exp value (and the reference now) so the
             // caller can see how far past expiry the token is.
             Some(exp) if now_unix.saturating_sub(skew) >= exp => {
-                return Err(claim_err(
-                    "exp",
-                    &format!("token expired at {exp} (now {now_unix}, skew {skew}s)"),
-                ));
+                return Err(IdentityError::Expired { exp, now: now_unix });
             }
             _ => {}
         }
@@ -258,23 +258,22 @@ impl Claims {
         // present (JWT-006, AC-3, RFC 7519 §4.1.5).
         match self.not_before {
             None if opts.require_nbf => {
-                return Err(claim_err("nbf", "required claim is missing"));
+                return Err(missing_claim("nbf"));
             }
             Some(nbf) if now_unix.saturating_add(skew) < nbf => {
-                return Err(claim_err("nbf", "token is not yet valid"));
+                return Err(IdentityError::NotYetValid { nbf, now: now_unix });
             }
             _ => {}
         }
 
         // iss exact match when expected (JWT-007, RFC 7519 §4.1.1).
-        if let Some(expected) = &opts.expected_issuer {
-            let actual = self.issuer.as_deref().unwrap_or_default();
-            if actual != expected {
-                return Err(claim_err(
-                    "iss",
-                    &format!("expected {expected:?}, got {actual:?}"),
-                ));
-            }
+        if let Some(expected) = &opts.expected_issuer
+            && self.issuer.as_deref().unwrap_or_default() != expected
+        {
+            return Err(IdentityError::IssuerMismatch {
+                expected: expected.clone(),
+                actual: self.issuer.clone(),
+            });
         }
 
         // aud must contain the expected audience when expected (JWT-008,
@@ -284,33 +283,26 @@ impl Claims {
         {
             // AC-7: list both the expected value and the token's actual
             // audience(s) so the mismatch is diagnosable.
-            return Err(claim_err(
-                "aud",
-                &format!(
-                    "does not contain expected audience {expected:?} (token audiences: {:?})",
-                    self.audience.values()
-                ),
-            ));
+            return Err(IdentityError::AudienceMismatch {
+                expected: expected.clone(),
+                actual: self.audience.values().to_vec(),
+            });
         }
 
         // nonce match when expected (JWT-004, OIDC Core 1.0 §3.1.3.7). An
         // expected nonce (even the empty string) requires the claim to be
         // present — an absent nonce must not satisfy the expectation.
-        if let Some(expected) = &opts.expected_nonce {
-            match &self.nonce {
-                None => return Err(claim_err("nonce", "required nonce claim is missing")),
-                Some(actual) if actual != expected => {
-                    return Err(claim_err("nonce", "nonce does not match expected value"));
-                }
-                Some(_) => {}
-            }
+        if let Some(expected) = &opts.expected_nonce
+            && self.nonce.as_ref() != Some(expected)
+        {
+            return Err(IdentityError::NonceMismatch);
         }
 
         // Custom required claims must be present with a meaningful (non-null,
         // non-empty) value (JWT-012, RFC 7519 §4.1).
         for claim in &opts.required_claims {
             if !self.meaningful.contains(claim) {
-                return Err(claim_err(claim, "required claim is missing or empty"));
+                return Err(missing_claim(claim));
             }
         }
 
@@ -318,10 +310,19 @@ impl Claims {
     }
 }
 
-/// Builds the standard claim-validation error, mirroring `go/pkg/jwt`
-/// `ClaimValidationError` message shape.
-fn claim_err(claim: &str, reason: &str) -> IdentityError {
-    IdentityError::Validation(format!("claim {claim:?} invalid: {reason}"))
+/// The error for an absent required claim.
+pub(super) fn missing_claim(claim: &str) -> IdentityError {
+    IdentityError::MissingClaim {
+        claim: claim.to_string(),
+    }
+}
+
+/// The error for a claim with the wrong JSON shape or an out-of-range value.
+pub(super) fn malformed_claim(claim: &str, reason: &str) -> IdentityError {
+    IdentityError::MalformedClaim {
+        claim: claim.to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 /// Extracts a string-valued registered claim, erroring on a wrong JSON type.
@@ -329,7 +330,7 @@ fn string_claim(map: &Map<String, Value>, name: &str) -> Result<Option<String>> 
     match map.get(name) {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(claim_err(name, "must be a string")),
+        Some(_) => Err(malformed_claim(name, "must be a string")),
     }
 }
 
@@ -346,15 +347,15 @@ fn numeric_date_claim(map: &Map<String, Value>, name: &str) -> Result<Option<i64
     };
     if let Some(secs) = value.as_i64() {
         if secs.unsigned_abs() > MAX_NUMERIC_DATE as u64 {
-            return Err(claim_err(name, "numeric date is out of range"));
+            return Err(malformed_claim(name, "numeric date is out of range"));
         }
         return Ok(Some(secs));
     }
     let Some(secs) = value.as_f64() else {
-        return Err(claim_err(name, "must be a numeric date"));
+        return Err(malformed_claim(name, "must be a numeric date"));
     };
     if !secs.is_finite() || secs.abs() > MAX_NUMERIC_DATE as f64 {
-        return Err(claim_err(name, "numeric date is out of range"));
+        return Err(malformed_claim(name, "numeric date is out of range"));
     }
     Ok(Some(secs.trunc() as i64))
 }
@@ -410,7 +411,12 @@ mod tests {
         let err = c
             .validate(&ValidationOptions::new(), NOW)
             .expect_err("missing iat rejected");
-        assert!(err.to_string().contains("iat"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::MissingClaim {
+                claim: "iat".into()
+            }
+        );
     }
 
     // JWT-005: a token whose exp is in the past beyond the skew is expired.
@@ -420,7 +426,13 @@ mod tests {
         let err = c
             .validate(&ValidationOptions::new(), NOW)
             .expect_err("expired rejected");
-        assert!(err.to_string().contains("expired"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::Expired {
+                exp: NOW - 3600,
+                now: NOW
+            }
+        );
     }
 
     // JWT-011: an exp marginally in the past is tolerated within the skew.
@@ -445,7 +457,13 @@ mod tests {
         let err = c
             .validate(&ValidationOptions::new(), NOW)
             .expect_err("nbf in future rejected");
-        assert!(err.to_string().contains("nbf"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::NotYetValid {
+                nbf: NOW + 3600,
+                now: NOW
+            }
+        );
     }
 
     // JWT-007: a token whose iss differs from the expected issuer is rejected.
@@ -460,7 +478,25 @@ mod tests {
             .issuer("https://issuer.example.com")
             .build();
         let err = c.validate(&opts, NOW).expect_err("wrong issuer rejected");
-        assert!(err.to_string().contains("iss"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::IssuerMismatch {
+                expected: "https://issuer.example.com".into(),
+                actual: Some("https://evil.example.com".into()),
+            }
+        );
+
+        let absent = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
+        let err = absent
+            .validate(&opts, NOW)
+            .expect_err("absent issuer rejected");
+        assert_eq!(
+            err,
+            IdentityError::IssuerMismatch {
+                expected: "https://issuer.example.com".into(),
+                actual: None,
+            }
+        );
     }
 
     // JWT-008: a token whose aud lacks the expected audience is rejected, and an
@@ -475,12 +511,25 @@ mod tests {
             "iat": NOW,
         }));
         let err = wrong.validate(&opts, NOW).expect_err("wrong aud rejected");
-        assert!(err.to_string().contains("aud"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::AudienceMismatch {
+                expected: "test-client".into(),
+                actual: vec!["other-client".into()],
+            }
+        );
 
         let absent = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
-        absent
+        let err = absent
             .validate(&opts, NOW)
             .expect_err("absent aud rejected when expected");
+        assert_eq!(
+            err,
+            IdentityError::AudienceMismatch {
+                expected: "test-client".into(),
+                actual: Vec::new(),
+            }
+        );
     }
 
     // JWT-004: with an expected nonce, a mismatch is rejected and a match passes.
@@ -493,9 +542,10 @@ mod tests {
             "exp": NOW + 3600,
             "iat": NOW,
         }));
-        mismatch
+        let err = mismatch
             .validate(&opts, NOW)
             .expect_err("nonce mismatch rejected");
+        assert_eq!(err, IdentityError::NonceMismatch);
 
         let matching = claims(serde_json::json!({
             "nonce": "n-123",
@@ -551,7 +601,12 @@ mod tests {
         let err = c
             .validate(&opts, NOW)
             .expect_err("missing required claim rejected");
-        assert!(err.to_string().contains("scope"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::MissingClaim {
+                claim: "scope".into()
+            }
+        );
 
         // Present required claim passes.
         let with = claims(serde_json::json!({
@@ -586,7 +641,10 @@ mod tests {
     fn rejects_null_audience_element() {
         let err =
             Claims::from_value(serde_json::json!({ "aud": ["a", null] })).expect_err("null aud");
-        assert!(err.to_string().contains("aud"), "{err}");
+        assert!(
+            matches!(&err, IdentityError::MalformedClaim { claim, .. } if claim == "aud"),
+            "{err:?}"
+        );
     }
 
     // A far-future exp beyond the safe numeric-date bound is rejected as
@@ -596,7 +654,10 @@ mod tests {
         let huge = (MAX_NUMERIC_DATE as f64) * 2.0;
         let err = Claims::from_value(serde_json::json!({ "exp": huge, "iat": NOW }))
             .expect_err("out-of-range exp");
-        assert!(err.to_string().contains("exp"), "{err}");
+        assert!(
+            matches!(&err, IdentityError::MalformedClaim { claim, .. } if claim == "exp"),
+            "{err:?}"
+        );
     }
 
     // An integer exp just above 2^53 is bounded on its exact value, not after a
@@ -606,7 +667,10 @@ mod tests {
         let just_over = MAX_NUMERIC_DATE + 1;
         let err = Claims::from_value(serde_json::json!({ "exp": just_over, "iat": NOW }))
             .expect_err("out-of-range integer exp");
-        assert!(err.to_string().contains("exp"), "{err}");
+        assert!(
+            matches!(&err, IdentityError::MalformedClaim { claim, .. } if claim == "exp"),
+            "{err:?}"
+        );
     }
 
     // AC-3: with require_exp(false), a token lacking exp validates; a present but
@@ -614,6 +678,15 @@ mod tests {
     #[test]
     fn require_exp_false_allows_missing_exp() {
         let opts = ValidationOptions::builder().require_exp(false).build();
+        let err = claims(serde_json::json!({ "iat": NOW }))
+            .validate(&ValidationOptions::new(), NOW)
+            .expect_err("missing exp rejected by default");
+        assert_eq!(
+            err,
+            IdentityError::MissingClaim {
+                claim: "exp".into()
+            }
+        );
 
         let no_exp = claims(serde_json::json!({ "iat": NOW }));
         no_exp.validate(&opts, NOW).expect("missing exp tolerated");
@@ -630,33 +703,61 @@ mod tests {
         let opts = ValidationOptions::builder().require_nbf(true).build();
         let c = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
         let err = c.validate(&opts, NOW).expect_err("missing nbf rejected");
-        assert!(err.to_string().contains("nbf"), "{err}");
+        assert_eq!(
+            err,
+            IdentityError::MissingClaim {
+                claim: "nbf".into()
+            }
+        );
     }
 
-    // AC-6: the expiry error carries the exp value in its context.
+    // A wrongly typed claim is a malformed claim naming it, not a missing one.
     #[test]
-    fn expired_error_includes_exp_value() {
-        let exp = NOW - 3600;
-        let c = claims(serde_json::json!({ "exp": exp, "iat": NOW - 7200 }));
-        let err = c
-            .validate(&ValidationOptions::new(), NOW)
-            .expect_err("expired rejected");
-        assert!(err.to_string().contains(&exp.to_string()), "{err}");
+    fn rejects_mistyped_claims() {
+        for (name, value) in [
+            ("iss", serde_json::json!({ "iss": 7 })),
+            ("exp", serde_json::json!({ "exp": "soon" })),
+            ("aud", serde_json::json!({ "aud": 7 })),
+        ] {
+            let err = Claims::from_value(value).expect_err("mistyped claim rejected");
+            assert!(
+                matches!(&err, IdentityError::MalformedClaim { claim, .. } if claim == name),
+                "{name}: {err:?}"
+            );
+        }
     }
 
-    // AC-7: the audience-mismatch error lists the token's actual audience(s).
+    // Boundaries: a token whose nbf is exactly now is valid (RFC 7519 §4.1.5:
+    // not accepted *before* nbf), with no skew configured.
     #[test]
-    fn audience_error_lists_actual_values() {
-        let opts = ValidationOptions::builder().audience("test-client").build();
-        let c = claims(serde_json::json!({
-            "aud": ["other-a", "other-b"],
-            "exp": NOW + 3600,
-            "iat": NOW,
-        }));
-        let err = c.validate(&opts, NOW).expect_err("aud mismatch rejected");
-        let msg = err.to_string();
-        assert!(msg.contains("test-client"), "expected value missing: {msg}");
-        assert!(msg.contains("other-a"), "actual value missing: {msg}");
+    fn nbf_equal_to_now_is_valid() {
+        let c = claims(serde_json::json!({ "exp": NOW + 3600, "nbf": NOW, "iat": NOW }));
+        c.validate(&ValidationOptions::new(), NOW)
+            .expect("nbf == now is valid");
+    }
+
+    // Boundaries: a NumericDate of exactly 2^53, integer or float, is in
+    // range; a fractional one is truncated rather than rejected.
+    #[test]
+    fn numeric_date_bound_is_inclusive_and_fractions_truncate() {
+        let at_bound = Claims::from_value(serde_json::json!({ "exp": MAX_NUMERIC_DATE }))
+            .expect("integer 2^53 in range");
+        assert_eq!(at_bound.expiry, Some(MAX_NUMERIC_DATE));
+
+        let float_bound = Claims::from_value(serde_json::json!({ "exp": MAX_NUMERIC_DATE as f64 }))
+            .expect("float 2^53 in range");
+        assert_eq!(float_bound.expiry, Some(MAX_NUMERIC_DATE));
+
+        let fractional = Claims::from_value(serde_json::json!({ "iat": 1_700_000_000.75 }))
+            .expect("fractional NumericDate accepted");
+        assert_eq!(fractional.issued_at, Some(1_700_000_000));
+    }
+
+    // A payload that is not a JSON object is a malformed token.
+    #[test]
+    fn rejects_non_object_payload() {
+        let err = Claims::from_value(serde_json::json!(["iss"])).expect_err("array payload");
+        assert!(matches!(err, IdentityError::MalformedToken(_)), "{err:?}");
     }
 
     // Blind: a required claim carrying null or an empty value does not satisfy
@@ -678,8 +779,15 @@ mod tests {
                 "iat": NOW,
                 "scope": empty,
             }));
-            c.validate(&opts, NOW)
+            let err = c
+                .validate(&opts, NOW)
                 .expect_err("null/empty required claim rejected");
+            assert_eq!(
+                err,
+                IdentityError::MissingClaim {
+                    claim: "scope".into()
+                }
+            );
         }
     }
 
@@ -690,9 +798,10 @@ mod tests {
         let opts = ValidationOptions::builder().expected_nonce("").build();
 
         let absent = claims(serde_json::json!({ "exp": NOW + 3600, "iat": NOW }));
-        absent
+        let err = absent
             .validate(&opts, NOW)
             .expect_err("absent nonce rejected when expected");
+        assert_eq!(err, IdentityError::NonceMismatch);
 
         let present = claims(serde_json::json!({
             "nonce": "",
