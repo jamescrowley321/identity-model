@@ -80,7 +80,7 @@ NON_CORE = {
     "go": "the Go library",
     "rust": "the Rust crate",
     "node": "the Node library",
-    "spec": "the shared conformance vectors",
+    "spec": "the shared spec vectors",
     "infra": "the shared IdP fixtures",
     "conformance": "the OIDF certification harness — ships nothing",
     "tools": "the repo gates and release machinery — ships nothing",
