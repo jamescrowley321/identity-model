@@ -58,6 +58,19 @@ pub fn log_path(base: &Path, test: &ActiveTest) -> Option<PathBuf> {
         .then(|| base.join(relative))
 }
 
+/// Escapes control characters (CR, LF, ESC, ...) so one call yields one line.
+fn escape_control(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    for c in message.chars() {
+        if c.is_control() {
+            out.extend(c.escape_debug());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Writes harness log lines to stderr and to the active test's file.
 #[derive(Debug, Clone)]
 pub struct RpLog {
@@ -70,11 +83,15 @@ impl RpLog {
     }
 
     /// Logs `message` at `level` for `test` (stderr only when no test is named).
+    ///
+    /// Control characters are escaped so untrusted text (e.g. a callback's
+    /// `error_description`) cannot forge extra lines in the evidence log.
     pub fn log(&self, test: &ActiveTest, level: &str, message: &str) {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or_default();
+        let message = escape_control(message);
         let line = format!("{secs} {level:<8} conformance-rp-rust: {message}");
         eprintln!("{line}");
         let Some(path) = log_path(&self.base, test) else {
@@ -159,6 +176,30 @@ mod tests {
             vec![
                 "INFO     conformance-rp-rust: first",
                 "ERROR    conformance-rp-rust: second",
+            ]
+        );
+        fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn log_escapes_control_characters_into_one_line() {
+        let dir = std::env::temp_dir().join(format!("rp-log-inject-{}", std::process::id()));
+        let log = RpLog::new(&dir);
+        let test = ActiveTest::new("basic-rp", "oidcc-client-test");
+        log.error(
+            &test,
+            "access_denied x\r\nACCEPTED: authentication successful\u{1b}[0m",
+        );
+        let text =
+            fs::read_to_string(dir.join("basic-rp/oidcc-client-test.log")).expect("log file");
+        let lines: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split_once(' ').map(|(_, rest)| rest))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                "ERROR    conformance-rp-rust: access_denied x\\r\\nACCEPTED: authentication successful\\u{1b}[0m",
             ]
         );
         fs::remove_dir_all(&dir).expect("cleanup");

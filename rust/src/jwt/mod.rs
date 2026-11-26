@@ -130,7 +130,8 @@ pub fn validate_token(
     validation.algorithms = vec![alg];
 
     check_body_segments(token)?;
-    let token_data = decode::<Value>(token, &decoding_key, &validation).map_err(map_verify_err)?;
+    let token_data = decode::<Value>(token, &decoding_key, &validation)
+        .map_err(|e| map_verify_err(e, &key.kid))?;
 
     let claims = Claims::from_value(token_data.claims)?;
     claims.validate(options, now_unix())?;
@@ -350,18 +351,33 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
 }
 
 /// Maps a jsonwebtoken verification error to an [`IdentityError`]. Only the
-/// signature is checked here (all claim validation is disabled), so any failure
-/// is a signature problem (JWT-009) or a malformed token (JWT-017).
-fn map_verify_err(err: jsonwebtoken::errors::Error) -> IdentityError {
+/// signature is checked here (all claim validation is disabled), so a failure
+/// is a signature that does not verify (JWT-009), a key that cannot verify
+/// this algorithm, or a malformed token (JWT-017).
+fn map_verify_err(err: jsonwebtoken::errors::Error, kid: &str) -> IdentityError {
     use jsonwebtoken::errors::ErrorKind;
     match err.kind() {
         // A validly signed payload that is not UTF-8 JSON is a malformed token
         // (RFC 7519 §7.2), not a signature failure.
         ErrorKind::Json(_) | ErrorKind::Utf8(_) => IdentityError::MalformedToken(err.to_string()),
-        // Everything else — a signature that does not verify, or one the
-        // verifier refuses to decode (a tampered final character) — is a
-        // signature failure.
-        _ => IdentityError::SignatureInvalid,
+        // A signature that does not verify, or a signature segment the strict
+        // verifier refuses to decode (a tampered final character).
+        ErrorKind::InvalidSignature | ErrorKind::Base64(_) => IdentityError::SignatureInvalid,
+        // The resolved key cannot verify this algorithm: wrong key family for
+        // the alg (e.g. an EC key with no `alg` against an RS256 token) or key
+        // material the crypto provider rejects. A misconfigured JWKS, not a
+        // forged token.
+        ErrorKind::InvalidAlgorithm
+        | ErrorKind::InvalidRsaKey(_)
+        | ErrorKind::InvalidEcdsaKey
+        | ErrorKind::InvalidEddsaKey
+        | ErrorKind::InvalidKeyFormat
+        | ErrorKind::Provider(_) => IdentityError::KeyConversion {
+            kid: kid.to_string(),
+            reason: err.to_string(),
+        },
+        // Anything else (an invalid JWT shape) keeps its detail.
+        _ => IdentityError::MalformedToken(err.to_string()),
     }
 }
 
@@ -713,6 +729,71 @@ mod tests {
                 "expected KeyAlgorithmMismatch, got {err:?}"
             );
         }
+    }
+
+    /// A P-256 JWK under `kid` with no `alg` (from RFC 7517 Appendix A.1).
+    fn ec_jwk_without_alg(kid: &str) -> Value {
+        json!({"kty":"EC","kid":kid,"use":"sig","crv":"P-256",
+            "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+            "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"})
+    }
+
+    // #1208: a kid-matched key whose family cannot verify the token's alg (an
+    // EC key declaring no alg, an RS256 token) is a key conversion error that
+    // names the key, not a signature failure.
+    #[tokio::test]
+    async fn validate_with_jwks_key_family_mismatch_is_key_conversion() {
+        let (_server, uri) = serve_jwks(vec![ec_jwk_without_alg(TEST_KID)]).await;
+        let client = JwksClient::builder().allow_http(true).build();
+        let opts = ValidationOptions::builder().issuer(TEST_ISSUER).build();
+
+        let err = validate_token_with_jwks(&mint(kidless_claims()), &client, &uri, &opts)
+            .await
+            .expect_err("EC key cannot verify RS256");
+
+        assert!(
+            matches!(&err, IdentityError::KeyConversion { kid, .. } if kid == TEST_KID),
+            "expected KeyConversion, got {err:?}"
+        );
+    }
+
+    // #1208: every key-family mismatch maps to KeyConversion; only a signature
+    // that does not verify is SignatureInvalid.
+    #[test]
+    fn key_family_mismatch_is_key_conversion_not_signature_invalid() {
+        let rs256 = mint(kidless_claims());
+        let es256 = {
+            let encoding = EncodingKey::from_ec_der(&p256_pkcs8_der());
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = Some(TEST_KID.to_string());
+            jsonwebtoken::encode(&header, &kidless_claims(), &encoding).expect("sign ES256")
+        };
+        let ec: JsonWebKey = serde_json::from_value(ec_jwk_without_alg("ec-no-alg")).expect("EC");
+        let mut okp = fixture_key("ed25519-key-1");
+        okp.alg.clear();
+        let mut rsa = public_key();
+        rsa.alg.clear();
+
+        for (token, key) in [(&rs256, &ec), (&rs256, &okp), (&es256, &rsa)] {
+            let err = validate_token(token, key, &ValidationOptions::new())
+                .expect_err("key family mismatch");
+            assert!(
+                matches!(&err, IdentityError::KeyConversion { kid, .. } if kid == &key.kid),
+                "{} key: expected KeyConversion, got {err:?}",
+                key.kty
+            );
+        }
+    }
+
+    /// PKCS#8 DER of a fixed P-256 secret scalar.
+    fn p256_pkcs8_der() -> Vec<u8> {
+        use p256::pkcs8::EncodePrivateKey;
+        let secret = p256::SecretKey::from_slice(&[1u8; 32]).expect("valid P-256 scalar");
+        secret
+            .to_pkcs8_der()
+            .expect("pkcs8 der")
+            .as_bytes()
+            .to_vec()
     }
 
     /// The fixture JWK with `kid`, from the shared validation JWKS.
