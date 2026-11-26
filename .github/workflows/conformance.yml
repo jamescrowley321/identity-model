@@ -17,6 +17,12 @@ on:
     - cron: '0 6 * * *' # daily conformance run off main (06:00 UTC)
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to checkout (release.yml passes the branch being released)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   conformance:
@@ -26,6 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
       # The committed results report PASSED; drop them so a plan that never
@@ -159,6 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
       # The committed results report PASSED; drop them so a plan that never
@@ -269,6 +277,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
       # The committed results report PASSED; drop them so a plan that never
@@ -381,6 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
       # The committed results report PASSED; drop them so a plan that never
