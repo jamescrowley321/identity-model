@@ -259,19 +259,14 @@ def resolve_algorithms(
     secret (RFC 8725 §2.1).
 
     Raises:
+        MalformedTokenException: If *algorithms* is ``None`` and *jwt* is not
+            a well-formed compact JWS.
         TokenValidationException: If *algorithms* is ``None`` and the header
-            cannot be read or its ``alg`` is not in the default set.
+            ``alg`` is not in the default set.
     """
     if algorithms is not None:
         return algorithms
-    try:
-        _, alg = extract_jwt_header_fields(jwt)
-    except PyJWTError as exc:
-        raise TokenValidationException(
-            f"Invalid token: {exc!s}",
-            token_part="header",
-            details={"error": str(exc)},
-        ) from exc
+    _, alg = extract_jwt_header_fields(jwt)
     return [_require_allowed_alg(alg, sorted(DEFAULT_ALLOWED_ALGORITHMS))]
 
 

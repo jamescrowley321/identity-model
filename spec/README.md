@@ -71,7 +71,7 @@ See [`vectors/validation.json`](vectors/validation.json) for the full set.
 |------------|-----------------|----------|
 | OIDC Discovery | `vectors/discovery.json` (DISC-001..010) — **executable vectors** | `test-fixtures/discovery/` |
 | JWKS | `vectors/jwks.json` (JWKS-001..011) — **executable vectors** | `test-fixtures/jwks/` |
-| Validation | `vectors/validation.json` (JWT-001..016) — **executable vectors** | `test-fixtures/validation/` |
+| Validation | `vectors/validation.json` (JWT-001..017) — **executable vectors** | `test-fixtures/validation/` |
 | ID Token | `vectors/id-token.json` (IDT-001..014) — **executable vectors** | `test-fixtures/validation/` |
 | Revocation | `vectors/revocation.json` (REV-001..005) — **executable vectors** | `test-fixtures/revocation/` |
 | UserInfo | `vectors/userinfo.json` (UI-001..007, UI-009) — **executable vectors** | `test-fixtures/userinfo/` |

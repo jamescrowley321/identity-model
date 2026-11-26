@@ -86,6 +86,7 @@ from py_identity_model.exceptions import (
     JarmValidationException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
+    MalformedTokenException,
     PyIdentityModelException,
     TokenValidationErrorKind,
     TokenValidationException,
@@ -1322,11 +1323,11 @@ def _fetch_userinfo(
                     options={"require": ["iss", "aud", "sub"]},
                 ),
             )
-        except PyIdentityModelException as exc:
-            error_msg = exc.message
-        except PyJWTError as exc:
+        except (MalformedTokenException, PyJWTError) as exc:
             logger.error("Malformed signed UserInfo: %s", exc)
             error_msg = "malformed signed UserInfo"
+        except PyIdentityModelException as exc:
+            error_msg = exc.message
     elif userinfo_response.is_successful:
         return userinfo_response.claims or {}
     else:
@@ -1792,6 +1793,14 @@ def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
             _logout_token_validation_config(flow_context),
             issuer=flow_context["issuer"],
         )
+    except (MalformedTokenException, PyJWTError) as exc:
+        # Spec §2.5 mandates 400 (not an uncaught 500) for a ``logout_token``
+        # that is not a well-formed JWT.
+        logger.error("REJECTED: logout token is not a well-formed JWT: %s", exc)
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_logout_token", "detail": "malformed token"},
+        )
     except LogoutTokenValidationException as exc:
         logger.error("REJECTED: logout token failed logout rules: %s", exc.message)
         return JSONResponse(
@@ -1809,16 +1818,6 @@ def _receive_backchannel_logout(logout_token: str | None) -> JSONResponse:
         return JSONResponse(
             status_code=400,
             content={"error": "invalid_logout_token", "detail": exc.message},
-        )
-    except PyJWTError as exc:
-        # A non-empty but malformed ``logout_token`` (not a well-formed JWT)
-        # trips PyJWT's header decode inside ``validate_token`` and raises a
-        # ``PyJWTError`` — which is NOT a ``PyIdentityModelException``. Spec
-        # §2.5 mandates 400 (not an uncaught 500) for an invalid token.
-        logger.error("REJECTED: logout token is not a well-formed JWT: %s", exc)
-        return JSONResponse(
-            status_code=400,
-            content={"error": "invalid_logout_token", "detail": "malformed token"},
         )
 
     logger.info(

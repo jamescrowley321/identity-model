@@ -81,6 +81,15 @@ class TokenValidationException(ValidationException):
         self.validation_kind = validation_kind or self._default_validation_kind
 
 
+class MalformedTokenException(TokenValidationException):
+    """Raised when a token is not a well-formed compact JWS (RFC 7515 §7.1).
+
+    The token does not have three segments, a segment is not valid base64url,
+    or the header or payload is not a JSON object. The decoder's own error is
+    chained as ``__cause__``.
+    """
+
+
 class SignatureVerificationException(TokenValidationException):
     """Raised when token signature verification fails."""
 
@@ -835,6 +844,7 @@ __all__ = [
     "KeyNotFoundException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
+    "MalformedTokenException",
     "NetworkException",
     "ProtocolParameterError",
     "ProtocolParameterErrorReason",

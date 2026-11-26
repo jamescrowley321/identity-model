@@ -4,7 +4,7 @@ JWT helper functions for py-identity-model.
 This module contains JWT-related operations used by both sync and async implementations.
 """
 
-from jwt import PyJWK, decode, get_unverified_header
+from jwt import PyJWK, decode
 from jwt.exceptions import (
     ExpiredSignatureError,
     ImmatureSignatureError,
@@ -33,6 +33,7 @@ from ..exceptions import (
 from ..logging_config import logger
 from .key_strength import enforce_key_strength
 from .models import JsonWebKey
+from .parsers import check_compact_jws, extract_jwt_header_fields
 
 
 # Options that MUST NOT be disabled — these are core security checks.
@@ -190,9 +191,9 @@ def _select_key_algorithm(jwt: str, key_data: dict, algorithms: list[str]) -> st
         KeyAlgorithmMismatchException: If the key declares an ``alg`` other
             than the token's.
         InvalidAlgorithmError: If the header ``alg`` is not in *algorithms*.
-        InvalidTokenError: If the JOSE header cannot be read.
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
     """
-    header_alg = get_unverified_header(jwt).get("alg")
+    _kid, header_alg = extract_jwt_header_fields(jwt)
     key_alg = key_data.get("alg")
     if not isinstance(header_alg, str) or header_alg not in algorithms:
         raise InvalidAlgorithmError("The specified alg value is not allowed")
@@ -234,9 +235,11 @@ def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
         Decoded claims
 
     Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
         WeakKeyException: If the key is under the strength floor for the
             algorithm it is bound to.
     """
+    check_compact_jws(jwt)
     key_algorithm = _select_key_algorithm(jwt, key_data, algorithms)
 
     # RFC 7518 §3.2/§3.3 / FAPI 2.0 SP §5.4.1: refuse a weak key before it is
@@ -310,6 +313,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         Decoded token claims
 
     Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS
         TokenExpiredException: If token has expired
         InvalidAudienceException: If audience is invalid
         InvalidIssuerException: If issuer is invalid

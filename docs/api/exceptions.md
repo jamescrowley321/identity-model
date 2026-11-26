@@ -15,6 +15,7 @@ PyIdentityModelException
 │   ├── JwksValidationError
 │   └── TokenValidationException
 │       ├── AccessTokenTypeError
+│       ├── MalformedTokenException
 │       ├── SignatureVerificationException
 │       ├── TokenExpiredException
 │       ├── InvalidAudienceException
@@ -83,6 +84,8 @@ never returned on a failed response.
 `LogoutStateValidationException`: see [Logout](logout.md#py_identity_model.exceptions.LogoutStateValidationException).
 
 ::: py_identity_model.exceptions.TokenValidationException
+
+::: py_identity_model.exceptions.MalformedTokenException
 
 ::: py_identity_model.exceptions.SignatureVerificationException
 

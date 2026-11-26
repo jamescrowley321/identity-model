@@ -23,9 +23,7 @@ OAuth 2.0 (JARM)".
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from jwt import PyJWTError
-
-from ..exceptions import JarmValidationException
+from ..exceptions import JarmValidationException, MalformedTokenException
 from ..oidc_constants import AuthorizeResponse as AuthorizeResponseParams
 from .authorize_response import (
     _PARAM_TO_FIELD,
@@ -216,7 +214,7 @@ def extract_jarm_header(response_jwt: str) -> tuple[str | None, str | None]:
     """
     try:
         return extract_jwt_header_fields(response_jwt)
-    except PyJWTError as exc:
+    except MalformedTokenException as exc:
         raise JarmValidationException(
             "JARM 'response' value is not a well-formed JWT"
         ) from exc

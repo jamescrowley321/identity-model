@@ -51,6 +51,7 @@ from .exceptions import (
     KeyNotFoundException,
     LogoutStateValidationException,
     LogoutTokenValidationException,
+    MalformedTokenException,
     NetworkException,
     ProtocolParameterError,
     ProtocolParameterErrorReason,
@@ -332,6 +333,7 @@ __all__ = [
     "KeyNotFoundException",
     "LogoutStateValidationException",
     "LogoutTokenValidationException",
+    "MalformedTokenException",
     "MtlsClientAuth",
     "NetworkException",
     # Client authentication (private_key_jwt)

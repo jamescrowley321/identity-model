@@ -6,6 +6,7 @@ chained cause, so a caller branching on any of them cannot be silently broken.
 
 from __future__ import annotations
 
+import binascii
 import logging
 
 import jwt as pyjwt
@@ -19,6 +20,7 @@ from py_identity_model.core.validators import validate_token_config
 from py_identity_model.exceptions import (
     ConfigurationException,
     JarmValidationException,
+    MalformedTokenException,
     TokenValidationException,
 )
 
@@ -56,13 +58,25 @@ def test_unreadable_header_with_default_algs_full_contract():
         resolve_algorithms("not-a-jwt", None)
 
     exc = exc_info.value
-    cause = exc.__cause__
-    assert type(exc) is TokenValidationException
-    assert isinstance(cause, pyjwt.PyJWTError)
-    assert str(cause)
-    assert exc.message == f"Invalid token: {cause!s}"
+    reason = "compact JWS must have 3 segments, got 1"
+    assert type(exc) is MalformedTokenException
+    assert exc.__cause__ is None
+    assert exc.message == f"Invalid token: {reason}"
+    assert exc.token_part is None
+    assert exc.details == {"error": reason}
+
+
+def test_undecodable_header_with_default_algs_full_contract():
+    with pytest.raises(TokenValidationException) as exc_info:
+        resolve_algorithms("e30*.e30.c2ln", None)
+
+    exc = exc_info.value
+    reason = "header is not valid base64url"
+    assert type(exc) is MalformedTokenException
+    assert isinstance(exc.__cause__, binascii.Error)
+    assert exc.message == f"Invalid token: {reason}"
     assert exc.token_part == "header"
-    assert exc.details == {"error": str(cause)}
+    assert exc.details == {"error": reason}
 
 
 def test_jarm_empty_allowlist_message():
