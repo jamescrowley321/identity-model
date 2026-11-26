@@ -211,7 +211,7 @@ def _validate_sync_discovery(token: str) -> dict:
         return validate_sync(
             token,
             _discovery_config(),
-            disco_doc_address=_OP.discovery_url,
+            issuer=_OP.issuer,
             http_client=client,
             cache=ValidationCache(),
         )
@@ -225,7 +225,7 @@ async def _validate_async_discovery(token: str) -> dict:
         return await validate_async(
             token,
             _discovery_config(),
-            disco_doc_address=_OP.discovery_url,
+            issuer=_OP.issuer,
             http_client=client,
             cache=AsyncValidationCache(),
         )
