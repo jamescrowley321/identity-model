@@ -492,3 +492,79 @@ jobs:
         if: always()
         working-directory: conformance
         run: docker compose down -v
+
+  # Go and Rust RP harnesses: the basic trio through `make conformance-test
+  # HARNESS=<h>`, one leg per harness. A harness exists once its compose overlay
+  # (conformance/docker-compose.<h>.yml) does; until then its leg passes with
+  # every step skipped. See conformance/adding-conformance-profiles.md,
+  # "Adding a harness".
+  conformance-harness:
+    name: conformance-harness (${{ matrix.harness }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [go, rust]
+    env:
+      HARNESS: ${{ matrix.harness }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Check for harness overlay
+        id: overlay
+        run: |
+          if [ -f "conformance/docker-compose.$HARNESS.yml" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::conformance/docker-compose.$HARNESS.yml does not exist; skipping the $HARNESS harness"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.overlay.outputs.present == 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        if: steps.overlay.outputs.present == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install test runner dependencies
+        if: steps.overlay.outputs.present == 'true'
+        run: uv pip install --system httpx cryptography
+
+      # Drop committed results first so a plan that never writes its JSON
+      # cannot upload a stale pass. UVROOT= runs the runner on the system
+      # Python set up above instead of syncing the whole uv workspace.
+      - name: Run conformance plans
+        if: steps.overlay.outputs.present == 'true'
+        run: |
+          rm -f conformance/results/"$HARNESS"-*-latest.json
+          make conformance-test HARNESS="$HARNESS" UVROOT=
+
+      - name: Collect suite and harness logs
+        if: always() && steps.overlay.outputs.present == 'true'
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" \
+            logs > "conformance/results/logs/$HARNESS-compose.log" 2>&1 || true
+
+      - name: Upload conformance results
+        if: always() && steps.overlay.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: conformance-${{ matrix.harness }}-results
+          path: |
+            conformance/results/${{ matrix.harness }}-*-latest.json
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always() && steps.overlay.outputs.present == 'true'
+        run: docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" down -v
