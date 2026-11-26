@@ -79,6 +79,8 @@ type TokenSpec struct {
 	// HeaderKid overrides the kid emitted in the JWS header. With an ephemeral
 	// key this forges a header kid that resolves to a non-matching public key.
 	HeaderKid string `json:"header_kid,omitempty"`
+	// HeaderTyp is the typ emitted in the JWS header (default "JWT").
+	HeaderTyp string `json:"header_typ,omitempty"`
 	// Alg is the JWS signing algorithm (default RS256).
 	Alg string `json:"alg,omitempty"`
 	// Claims is the token payload. Keys exp/nbf/iat are duration strings

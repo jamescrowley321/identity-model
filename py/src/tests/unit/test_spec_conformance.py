@@ -1,8 +1,8 @@
 """Thin Python executor for the shared /spec conformance vectors (CONS-1.5).
 
 Drives every executable vector in ``spec/vectors/validation.json`` through the
-steps ``validate_token`` runs once it has resolved the key
-(``build_resolved_config``, ``decode_with_config``) — the same language-neutral vector set the
+steps ``validate_token`` runs (``reject_non_access_token_type``, then, once
+it has resolved the key, ``build_resolved_config`` and ``decode_with_config``) — the same language-neutral vector set the
 Go (``go/internal/conformance``) and Rust (``rust/tests/it/conformance/validation.rs``)
 runners execute — so the "build conformance vectors once" constraint holds.
 
@@ -45,9 +45,11 @@ from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.core.token_validation_logic import (
     build_resolved_config,
     decode_with_config,
+    reject_non_access_token_type,
     validate_claims,
 )
 from py_identity_model.exceptions import (
+    AccessTokenTypeError,
     InvalidAudienceException,
     InvalidIssuerException,
     PyIdentityModelException,
@@ -144,7 +146,8 @@ def _mint_token(token_spec: dict) -> str:
         raise ValueError(f"unknown signing_key {signing_key!r}")
 
     claims = _resolve_claims(token_spec.get("claims", {}))
-    return pyjwt.encode(claims, key, algorithm=alg, headers={"kid": kid})
+    headers = {"kid": kid, "typ": token_spec.get("header_typ", "JWT")}
+    return pyjwt.encode(claims, key, algorithm=alg, headers=headers)
 
 
 def _resolve_verification_key(token: str) -> tuple[dict, str]:
@@ -204,6 +207,7 @@ def _execute(vector: dict) -> dict:
         # the capability treats an unexpected aud as ignorable (JWT-001).
         pyjwt_options["verify_aud"] = False
 
+    reject_non_access_token_type(token)
     # No allowed_algorithms leaves algorithms=None: the library default allowlist.
     key, alg = _resolve_verification_key(token)
     config = TokenValidationConfig(
@@ -254,6 +258,10 @@ def _assert_canonical_reject(err: PyIdentityModelException, expect: dict) -> Non
     if code == "signature":
         assert isinstance(err, SignatureVerificationException), (
             f"signature rejection surfaced as {type(err).__name__}: {message}"
+        )
+    elif code == "token_type":
+        assert isinstance(err, AccessTokenTypeError), (
+            f"token_type rejection surfaced as {type(err).__name__}: {message}"
         )
     elif code == "weak_key":
         assert isinstance(err, WeakKeyException), (

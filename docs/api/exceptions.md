@@ -14,6 +14,7 @@ PyIdentityModelException
 │   │   └── DiscoveryIssuerMismatchError
 │   ├── JwksValidationError
 │   └── TokenValidationException
+│       ├── AccessTokenTypeError
 │       ├── SignatureVerificationException
 │       ├── TokenExpiredException
 │       ├── InvalidAudienceException
@@ -98,6 +99,8 @@ never returned on a failed response.
 ::: py_identity_model.exceptions.KeyAlgorithmMismatchException
 
 ::: py_identity_model.exceptions.WeakKeyException
+
+`AccessTokenTypeError`: see [Token Validation](token-validation.md#py_identity_model.exceptions.AccessTokenTypeError).
 
 `CertificateBindingError`: see [Mutual TLS](mtls.md#py_identity_model.exceptions.CertificateBindingError).
 

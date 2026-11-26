@@ -102,6 +102,32 @@ claims = validate_token(
 trust, by their `issuer`, for callers that build the discovery address from an
 untrusted token. It never widens the `iss` values a token may carry.
 
+## Token type
+
+`validate_token` reads the JWT `typ` header before anything else and rejects a
+token whose `typ` names another kind of JWT, so a signed introspection
+response or a Logout Token that the issuer signed for your audience is not
+accepted as an access token (RFC 9701 §8.1). It raises `AccessTokenTypeError`,
+whose `kind` (an `AccessTokenTypeErrorKind`) names the rejected type:
+
+| `typ` | `kind` |
+|---|---|
+| `token-introspection+jwt` | `TOKEN_INTROSPECTION` |
+| `logout+jwt` | `LOGOUT` |
+| `secevent+jwt` | `SECURITY_EVENT` |
+| `dpop+jwt` | `DPOP_PROOF` |
+| `oauth-authz-req+jwt` | `AUTHORIZATION_REQUEST` |
+| `client-authentication+jwt` | `CLIENT_AUTHENTICATION` |
+
+`typ` is compared case-insensitively, with or without the `application/`
+prefix. Any other `typ`, including `at+jwt` (RFC 9068) and `JWT`, and a token
+without `typ`, is accepted. `validate_id_token` and `validate_logout_token` do
+not run this check.
+
+::: py_identity_model.exceptions.AccessTokenTypeError
+
+::: py_identity_model.exceptions.AccessTokenTypeErrorKind
+
 ## Configuration
 
 ::: py_identity_model.core.models.TokenValidationConfig

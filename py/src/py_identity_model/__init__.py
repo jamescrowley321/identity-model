@@ -16,6 +16,8 @@ from .core.jwt_signing import DEFAULT_ALLOWED_ALGORITHMS
 
 # Backward compatible sync exports (default)
 from .exceptions import (
+    AccessTokenTypeError,
+    AccessTokenTypeErrorKind,
     AmbiguousKeyException,
     AuthorizeCallbackException,
     AzpRequiresClientIdError,
@@ -223,6 +225,8 @@ __all__ = [
     "FAPI2_MAX_REQUEST_OBJECT_LIFETIME",
     "FAPI2_REQUIRED_PKCE_METHOD",
     "FAPI2_REQUIRED_RESPONSE_TYPE",
+    "AccessTokenTypeError",
+    "AccessTokenTypeErrorKind",
     "AmbiguousKeyException",
     "AsyncDPoPReplayCache",
     # Auth Code + PKCE

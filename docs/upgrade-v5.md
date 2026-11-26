@@ -1283,6 +1283,21 @@ settings = OIDCSettings(
 )
 ```
 
+### A JWT whose `typ` names another kind is not an access token ([#1156](https://github.com/jamescrowley321/identity-model/issues/1156))
+
+In 4.x, `validate_token` ignored the `typ` header, so a signed introspection
+response or a Logout Token that the issuer signed for your audience was
+accepted as an access token. 5.0 rejects a `typ` of `token-introspection+jwt`,
+`logout+jwt`, `secevent+jwt`, `dpop+jwt`, `oauth-authz-req+jwt` or
+`client-authentication+jwt` (case-insensitive, with or without the
+`application/` prefix) with `AccessTokenTypeError`, a
+`TokenValidationException` whose `kind` names the type: resource servers "MUST
+therefore check the typ JWT header value of received JWT-encoded access
+tokens" (RFC 9701 §8.1). Access tokens with `typ` `at+jwt` or `JWT`, or with
+no `typ`, are accepted as before, and `validate_id_token` and
+`validate_logout_token` are unchanged. The FastAPI middleware answers these
+tokens with `401`.
+
 ### Check the introspected `cnf` of an opaque token ([#1094](https://github.com/jamescrowley321/identity-model/issues/1094))
 
 A resource server that authorizes opaque tokens through `introspect_token`
