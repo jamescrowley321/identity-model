@@ -2,6 +2,710 @@
 
 <!-- version list -->
 
+## v5.0.0-a.1 (2026-11-26)
+
+### Bug Fixes
+
+- **discovery**: Reject a document whose issuer is not the requested issuer
+  ([`b11f2f2`](https://github.com/jamescrowley321/identity-model/commit/b11f2f2d606326e8add4ef955b0c381f5aa90ae4))
+
+- **fapi**: Check the DPoP key against the advertised algorithms; refuse host-less endpoints
+  ([`7d7029d`](https://github.com/jamescrowley321/identity-model/commit/7d7029d29bb04d383ef1a1464f5aaf1397f758ed))
+
+- **fapi**: Check the profile's own auth and binding against discovery
+  ([`6fd820b`](https://github.com/jamescrowley321/identity-model/commit/6fd820bce786ff8cd95ffde686e2227585bd2dbd))
+
+- **fapi**: Document that the FAPI validators are wider than the profile
+  ([`aa8a0b9`](https://github.com/jamescrowley321/identity-model/commit/aa8a0b91aff6527c8022fa57b0a9313d9929c863))
+
+- **fapi**: FAPI 2.0 discovery validator treats absent metadata as non-compliant
+  ([`751af29`](https://github.com/jamescrowley321/identity-model/commit/751af292ce6351ad53a054c096797f872f90ddc1))
+
+- **fapi**: The PAR endpoint discovery check requires a URL string
+  ([`487c649`](https://github.com/jamescrowley321/identity-model/commit/487c64959241c922dfe24a6178385159b83d2939))
+
+- **py**: Accept a provider's several issuer values in discovery mode
+  ([`7ddc426`](https://github.com/jamescrowley321/identity-model/commit/7ddc426243ca7a386e3b190c411abb99dff1b040))
+
+- **py**: Accept a replay cache method with no introspectable signature
+  ([`bacef5d`](https://github.com/jamescrowley321/identity-model/commit/bacef5d4d9bee81c65f51eafd26643eee84e049e))
+
+- **py**: Accept refresh-issued ID Tokens with nonce=RefreshNonce(original)
+  ([`272bfdd`](https://github.com/jamescrowley321/identity-model/commit/272bfddb8af513dd291ba1250dfea92e7e395098))
+
+- **py**: Address private_key_jwt assertions to the issuer when known
+  ([`85fc5f7`](https://github.com/jamescrowley321/identity-model/commit/85fc5f7d019f2e485e67f9a138d0f0b50e6310ae))
+
+- **py**: Address review of the protocol-flow MUSTs
+  ([`fe3d2a1`](https://github.com/jamescrowley321/identity-model/commit/fe3d2a1ab3862d359c1295a34c14a3a6e2bff066))
+
+- **py**: Address review on JAR and FAPI key checks
+  ([`c0e71cc`](https://github.com/jamescrowley321/identity-model/commit/c0e71ccdb9d0c391b2cca42bd33faa7b3fbddfb9))
+
+- **py**: AsyncDPoPReplayCache is not runtime_checkable; build options once in docs
+  ([`c2824cd`](https://github.com/jamescrowley321/identity-model/commit/c2824cd60d8e3d980bbe09e2f6d777710cce57e4))
+
+- **py**: Cache a JWKS without max-age for 1 hour, not 24
+  ([`cc42462`](https://github.com/jamescrowley321/identity-model/commit/cc42462c384df89eeb8d56e4ddcdcf458983ded6))
+
+- **py**: Check introspected cnf against the presentation
+  ([`148e7a1`](https://github.com/jamescrowley321/identity-model/commit/148e7a12d60adacc7b6e6e9bf837e77b23f1df43))
+
+- **py**: Check signed PAR client_id and iss, re-check a reassigned request
+  ([`fc298a6`](https://github.com/jamescrowley321/identity-model/commit/fc298a63531bb2b8f23187bd7e85345ea5ffe20d))
+
+- **py**: Check the sender constraint on access tokens only
+  ([`443db74`](https://github.com/jamescrowley321/identity-model/commit/443db7475c2026edd73e96e67b743c33dba5e8ce))
+
+- **py**: Classify a not-yet-valid token as the iat kind
+  ([`3d3d1d2`](https://github.com/jamescrowley321/identity-model/commit/3d3d1d21489b2a3be159fd6526a77a83419853c8))
+
+- **py**: Close replay and certificate-binding gaps in resource-server DPoP checks
+  ([`bfda1b9`](https://github.com/jamescrowley321/identity-model/commit/bfda1b9c388d25ec6e966d37698469e63b0b2ce4))
+
+- **py**: Copies of an in-memory replay cache are the same cache
+  ([`f462333`](https://github.com/jamescrowley321/identity-model/commit/f4623331922967f7b1aea342ffcdc4a38403d291))
+
+- **py**: Declare the discovery issuer match as a breaking change
+  ([`61ec032`](https://github.com/jamescrowley321/identity-model/commit/61ec032ff4d1ad30c244bd89df72dae5ff317482))
+
+- **py**: Default algorithm allowlist and verification key-strength floor
+  ([`c4307d5`](https://github.com/jamescrowley321/identity-model/commit/c4307d5cbc07dc2f5e9f5c6bbff0c0a65b1ef4ba))
+
+- **py**: Document awaited aio binding checks and harden replay-cache answers
+  ([`d01bc40`](https://github.com/jamescrowley321/identity-model/commit/d01bc40bfdeb5b2df01d2608608fe5bd0ee24444))
+
+- **py**: Document that a malformed introspected cnf is treated as unbound
+  ([`2fe8c8a`](https://github.com/jamescrowley321/identity-model/commit/2fe8c8aeeb3242ae03c5f6e5d0505b122c2e4830))
+
+- **py**: DPoP client options — opt-in needs a key, keep refused tokens, load keys
+  ([`04371a8`](https://github.com/jamescrowley321/identity-model/commit/04371a861d387794b21e13c54d16c18e7d15cdbb))
+
+- **py**: Drop equivalent mutants in the access-token binding path
+  ([`839b83e`](https://github.com/jamescrowley321/identity-model/commit/839b83e5e9bdd1b2ff8fc5492bac93ff34c8ac29))
+
+- **py**: Drop the duplicate key-alg check and pin key selection with tests
+  ([`9de6254`](https://github.com/jamescrowley321/identity-model/commit/9de62540b62259bd8c2b56a1794f8bfa0987f09a))
+
+- **py**: Drop the equivalent PEM-encoding mutant and pin loader messages
+  ([`7528fd0`](https://github.com/jamescrowley321/identity-model/commit/7528fd0aa2f9a4e772e1d68250693750804d2731))
+
+- **py**: Empty client_id, kid and use mean absent
+  ([`f9fa93f`](https://github.com/jamescrowley321/identity-model/commit/f9fa93f03ba0e0598805b9504a4848a046b36f62))
+
+- **py**: Empty HMAC keys fail the floor; logout tokens need a client_id
+  ([`a6b5cf8`](https://github.com/jamescrowley321/identity-model/commit/a6b5cf87fe6d63645bfb0d517cbc3d1eff1aa2a5))
+
+- **py**: Enforce a manual key's alg and type-check advertised JARM algs
+  ([`f37d1bf`](https://github.com/jamescrowley321/identity-model/commit/f37d1bfa25d91a9cbe611de906d482c038a3a071))
+
+- **py**: Enforce ID/logout token claim rules and verification-key policy
+  ([`6750aa2`](https://github.com/jamescrowley321/identity-model/commit/6750aa2ef559f37e9bc382d39895c1fde6042335))
+
+- **py**: Enforce JAR and signing-key spec MUSTs
+  ([`b15935a`](https://github.com/jamescrowley321/identity-model/commit/b15935a65c5de90695274d0719deac74e4773915))
+
+- **py**: Enforce token-response, request-parameter, DPoP nonce and UserInfo sub MUSTs
+  ([`5f0108f`](https://github.com/jamescrowley321/identity-model/commit/5f0108fcda32ce609cd349d6e2c72ac2850d649a))
+
+- **py**: Expect typed key/alg error in issuer-pinning default test
+  ([`4784ace`](https://github.com/jamescrowley321/identity-model/commit/4784aceafaf51e3ae1747baf30a09ea8d3b19174))
+
+- **py**: Fail closed on inactive or failed introspection
+  ([`4b47464`](https://github.com/jamescrowley321/identity-model/commit/4b4746491eeb4114a1d18d12c698d58327ae082f))
+
+- **py**: Keep advertised_jarm_algorithms a function
+  ([`53cf6fe`](https://github.com/jamescrowley321/identity-model/commit/53cf6fe154d964ff5ad861bef97064d50a4db2bd))
+
+- **py**: Keep cached documents per transport trust scope
+  ([`7684288`](https://github.com/jamescrowley321/identity-model/commit/7684288ca700cd1e0be5c8d19680bee84089e4cf))
+
+- **py**: Keep credentials out of request model repr
+  ([`5764136`](https://github.com/jamescrowley321/identity-model/commit/5764136dad7da5653bba01d208fe63916763d06e))
+
+- **py**: Keep require_dpop_token_type opt-in, as RFC 9449 §5 requires
+  ([`ffefae1`](https://github.com/jamescrowley321/identity-model/commit/ffefae13f554468de4900bf2301087522627f9b8))
+
+- **py**: Keep the binding check out of the shared JWT helper
+  ([`e5d6c17`](https://github.com/jamescrowley321/identity-model/commit/e5d6c178ee2afb920bb50bb3d84eff25552509de))
+
+- **py**: Keep the cached-key verdict when a JWKS refresh fails
+  ([`53ba0f9`](https://github.com/jamescrowley321/identity-model/commit/53ba0f97129753afb3f8291d963e2dae7a7b2fa5))
+
+- **py**: Key DPoP nonces by a (role, scheme, host, port) tuple
+  ([`dce43f2`](https://github.com/jamescrowley321/identity-model/commit/dce43f269ae70fb884d8a4849f33b58e16bce58d))
+
+- **py**: Kill the surviving check_compact_jws mutants
+  ([`904b310`](https://github.com/jamescrowley321/identity-model/commit/904b31055fcf1a43cc796188cd615c2fd9b083d9))
+
+- **py**: Leave keys cryptography can't load to signing in load_signing_key
+  ([`09a56f4`](https://github.com/jamescrowley321/identity-model/commit/09a56f406d3326a76bf179db15a55cb1418c2ba2))
+
+- **py**: List every exception class in py_identity_model.exceptions.__all__
+  ([`66a9e8f`](https://github.com/jamescrowley321/identity-model/commit/66a9e8f31bef42354939c41f220ca4b510bede92))
+
+- **py**: Make client_auth_method keyword-only
+  ([`4c1e3ae`](https://github.com/jamescrowley321/identity-model/commit/4c1e3ae756948a32b74ad455b026b8c546543cc3))
+
+- **py**: Make device token polling a single attempt
+  ([`b08a511`](https://github.com/jamescrowley321/identity-model/commit/b08a51120631e706361987137aad01bacd22b62c))
+
+- **py**: Measure bytes JWK members against the key-strength floor
+  ([`e7135f6`](https://github.com/jamescrowley321/identity-model/commit/e7135f60cfa6098feb0932ee94cf54dffc8aff9e))
+
+- **py**: Measure JWK members with PyJWT's base64url decoder
+  ([`6e2d109`](https://github.com/jamescrowley321/identity-model/commit/6e2d109af0cf08718ac55582b1ff9caadf93a4c1))
+
+- **py**: Move accepted_algorithms logic out of the property body
+  ([`61b3955`](https://github.com/jamescrowley321/identity-model/commit/61b395572a128909667c2d5066251dd812c2dac8))
+
+- **py**: Name malformed and mismatched keys neutrally and document the typed error
+  ([`d01b6f1`](https://github.com/jamescrowley321/identity-model/commit/d01b6f1e8b03ebb5a2b39fb127ce481715407206))
+
+- **py**: Never retry authorization_code and refresh_token requests
+  ([`560e7a0`](https://github.com/jamescrowley321/identity-model/commit/560e7a0f740a0f8f1888d82a650331dde35f3e3e))
+
+- **py**: Never verify signatures with use=enc keys
+  ([`ab4e75f`](https://github.com/jamescrowley321/identity-model/commit/ab4e75fabdfc1ad9df9b14d2c1f0be8249129edf))
+
+- **py**: One algorithm allowlist policy per purpose
+  ([`2b880ac`](https://github.com/jamescrowley321/identity-model/commit/2b880acbdf767910f245ba84e7a3f75567f3ce20))
+
+- **py**: Pin introspection DPoP options and per-kind error messages
+  ([`ffc82f9`](https://github.com/jamescrowley321/identity-model/commit/ffc82f90463825d93476a847bef04990401cae8e))
+
+- **py**: Pin the error contract of the algorithm-policy rejections
+  ([`9aa752e`](https://github.com/jamescrowley321/identity-model/commit/9aa752ed24a681f10be5c45ae643cdfab69931aa))
+
+- **py**: Pin the malformed-token contract under the security gate
+  ([`d3a2622`](https://github.com/jamescrowley321/identity-model/commit/d3a2622c8c503fcfbe37ae9fb485837f738d357f))
+
+- **py**: Pin the replay-check arguments and rehash moved waivers
+  ([`9cb10ab`](https://github.com/jamescrowley321/identity-model/commit/9cb10ab460652ac86eab38f01451c1d48fa47c96))
+
+- **py**: Raise discovery failures from signed introspection; pin typed-error contracts
+  ([`37fd3f4`](https://github.com/jamescrowley321/identity-model/commit/37fd3f493b3b3c1a84b4eda47c8152403d3bb4f9))
+
+- **py**: Raise IdTokenNonceError for a non-ASCII nonce
+  ([`1059f0f`](https://github.com/jamescrowley321/identity-model/commit/1059f0fa94818b01ca67a190881cf4762ae8c9c0))
+
+- **py**: Raise InvalidArgumentError for an invalid PrivateKeyJwt.issuer
+  ([`b994391`](https://github.com/jamescrowley321/identity-model/commit/b9943919f8d0ca2617dad579716fbdcebbdfdab7))
+
+- **py**: Raise MalformedTokenException for a token that is not a compact JWS
+  ([`93b5d05`](https://github.com/jamescrowley321/identity-model/commit/93b5d0560b23f3d1126d072a9465418bcf6f9e58))
+
+- **py**: Raise typed discovery, JWKS, configuration and argument errors
+  ([`2996884`](https://github.com/jamescrowley321/identity-model/commit/29968840f88ee255c9d6132f28af39c5400bed3a))
+
+- **py**: Read ProcessLocal's pid and value as one snapshot
+  ([`d28fbeb`](https://github.com/jamescrowley321/identity-model/commit/d28fbeb11f65c2f4538cc63c83e64d6aea560346))
+
+- **py**: Record each response's DPoP-Nonce once and test every call site
+  ([`08bad6a`](https://github.com/jamescrowley321/identity-model/commit/08bad6aec225390f914c1b13939643bcfac5b80c))
+
+- **py**: Refresh error messages never embed exception text
+  ([`d777e02`](https://github.com/jamescrowley321/identity-model/commit/d777e02fb3fba4698d5fbb7e25bc411aac479f02))
+
+- **py**: Refuse a 4.x replay cache and required DPoP without options up front
+  ([`c304cbb`](https://github.com/jamescrowley321/identity-model/commit/c304cbbaa61fc522f1b950af67010884d29ceb3c))
+
+- **py**: Refuse a blank or non-string PAR request_uri
+  ([`3e1fb13`](https://github.com/jamescrowley321/identity-model/commit/3e1fb13b2aaaf24d565dbb2beebe80b68962809b))
+
+- **py**: Refuse any other extra_metadata client_id, including None
+  ([`92d72f5`](https://github.com/jamescrowley321/identity-model/commit/92d72f5fb1500206dcde65051fc222bc756feb2a))
+
+- **py**: Refuse control characters and leading whitespace in an issuer; address review
+  ([`aa68532`](https://github.com/jamescrowley321/identity-model/commit/aa68532a3908117ca2a3a10f54c4764aebf9d152))
+
+- **py**: Reject a bare string as trusted_audiences
+  ([`1f256bd`](https://github.com/jamescrowley321/identity-model/commit/1f256bd65e0c1e899702f0700988edc740fec5f9))
+
+- **py**: Reject a JWT whose typ names another kind in validate_token
+  ([`2d5b14c`](https://github.com/jamescrowley321/identity-model/commit/2d5b14c1d85f1989009b4dfa0920fdc0b93df92e))
+
+- **py**: Reject a non-string alg before shared-kid selection; match ECDSA curve
+  ([`ef9767b`](https://github.com/jamescrowley321/identity-model/commit/ef9767b6a4ff6102d9edaaac6d29241de435196d))
+
+- **py**: Reject an explicit non-FAPI client_auth_method in FAPI validation
+  ([`711d7b2`](https://github.com/jamescrowley321/identity-model/commit/711d7b21c9f45b4af864d0b0cd3f32d2d47eb00a))
+
+- **py**: Reject an ID Token with no aud
+  ([`1e248be`](https://github.com/jamescrowley321/identity-model/commit/1e248be5f320fa8beb51ea7fb9b70b6e23ab69dd))
+
+- **py**: Reject an unlisted alg before key binding; tighten review gaps
+  ([`9260cf4`](https://github.com/jamescrowley321/identity-model/commit/9260cf45f78bac90d66cae82207eb4da27f1ac1f))
+
+- **py**: Reject nested DPoP payloads and unparseable client certificates with typed errors
+  ([`3b93014`](https://github.com/jamescrowley321/identity-model/commit/3b930149a500e38ef35b0f564e1bb75c428c855a))
+
+- **py**: Reject non-ASCII DPoP proofs as malformed instead of crashing
+  ([`89b5f4a`](https://github.com/jamescrowley321/identity-model/commit/89b5f4a1797046d512cd46e90c9241553e74e798))
+
+- **py**: Reject nonce="" and blank issuer-list entries
+  ([`f9d8c1f`](https://github.com/jamescrowley321/identity-model/commit/f9d8c1f37b4f4ce8ffb102b00485873531056f9d))
+
+- **py**: Reject padding and standard base64 characters in a JWS segment
+  ([`a7c6a78`](https://github.com/jamescrowley321/identity-model/commit/a7c6a78c9490290d26e05615054a2df82f34ef35))
+
+- **py**: Reject sender-constrained tokens presented without a proof
+  ([`32cb62b`](https://github.com/jamescrowley321/identity-model/commit/32cb62bbf8485f06c4add1ec560cfd82df512129))
+
+- **py**: Reject validate_azp without a client_id
+  ([`ab37948`](https://github.com/jamescrowley321/identity-model/commit/ab37948591e75c3a4f1e486fd33825ee5bc049fa))
+
+- **py**: Replace the trust-scope numbering lock in a forked child
+  ([`41ca30a`](https://github.com/jamescrowley321/identity-model/commit/41ca30a70c01c8cae7bd04950ad5ef46e7fff98a))
+
+- **py**: Report, not raise, on a reassigned or huge signed PAR request
+  ([`62efe7b`](https://github.com/jamescrowley321/identity-model/commit/62efe7b17a1153049438a09aea9ccf9d3390461c))
+
+- **py**: Require a hostname in discovery_document_url; address review
+  ([`b4b694c`](https://github.com/jamescrowley321/identity-model/commit/b4b694cae702fff75a1ab680a5bdae9c7609e84a))
+
+- **py**: Require the algorithm's curve on same-kid EC keys
+  ([`55a5f39`](https://github.com/jamescrowley321/identity-model/commit/55a5f392133ee8bdb205c6e010de91644557d0a1))
+
+- **py**: Scope replace advice to inputs, keep issuer out of errors; address review
+  ([`055867b`](https://github.com/jamescrowley321/identity-model/commit/055867bc8341f008eab308e964b5f33eea0624da))
+
+- **py**: Select the same-kid key whose type fits the token alg
+  ([`8cdb3b5`](https://github.com/jamescrowley321/identity-model/commit/8cdb3b5fc32beb86f85c33f7f78b44cb7bf752d9))
+
+- **py**: Tag a UserInfo response with no sub as UserInfoErrorKind.MISSING_SUB
+  ([`07dbefb`](https://github.com/jamescrowley321/identity-model/commit/07dbefb422ff8075b1774c9223f4cf860e709bff))
+
+- **py**: Treat a falsy or non-object discovery value as missing
+  ([`70b0590`](https://github.com/jamescrowley321/identity-model/commit/70b05901c3b33617aa58db2c076d687a9086d537))
+
+- **py**: Treat an empty alg or crv as absent in shared-kid selection
+  ([`01ce949`](https://github.com/jamescrowley321/identity-model/commit/01ce9497191581430a15af25e10f422e9089fdc3))
+
+- **py**: Treat an empty audience as unset in validate_id_token
+  ([`c07c43a`](https://github.com/jamescrowley321/identity-model/commit/c07c43aab66bf75cfc97797f16e761611aa4b5e4))
+
+- **py**: Typed DPoP key loader errors and retry assertion tests
+  ([`af3c4f1`](https://github.com/jamescrowley321/identity-model/commit/af3c4f10181f6303ad12411e0e7b94c5f778a9c8))
+
+### Chores
+
+- Sync uv.lock with 4.1.1
+  ([`11bb5f8`](https://github.com/jamescrowley321/identity-model/commit/11bb5f88f5d3d776db241430ac4a4eb3f1522b43))
+
+- **deps**: Bump github.com/go-jose/go-jose/v4 in /go
+  ([#1023](https://github.com/jamescrowley321/identity-model/pull/1023),
+  [`6e00673`](https://github.com/jamescrowley321/identity-model/commit/6e00673f4f4f585b583b69ef146aed0c4aad7596))
+
+- **deps)(deps**: Bump brotli from 1.2.0 to 1.2.1 in /py
+  ([#988](https://github.com/jamescrowley321/identity-model/pull/988),
+  [`3939366`](https://github.com/jamescrowley321/identity-model/commit/3939366db8804ccb55b83dfd2ddcac7d40ffd230))
+
+- **deps)(deps**: Bump certifi from 2026.5.20 to 2026.10.19 in /py
+  ([#979](https://github.com/jamescrowley321/identity-model/pull/979),
+  [`9149041`](https://github.com/jamescrowley321/identity-model/commit/914904170414fca8260e91c4d76c00d054a5ef9f))
+
+- **deps)(deps**: Bump msgpack from 1.2.1 to 1.2.3 in /py
+  ([#1024](https://github.com/jamescrowley321/identity-model/pull/1024),
+  [`47bb268`](https://github.com/jamescrowley321/identity-model/commit/47bb26835677613ee978080bf94b934d22d1c3ff))
+
+- **deps)(deps**: Bump virtualenv from 21.14.9 to 21.14.13 in /py
+  ([#989](https://github.com/jamescrowley321/identity-model/pull/989),
+  [`2b8a001`](https://github.com/jamescrowley321/identity-model/commit/2b8a001eab4e9278ee5279aa94e8862369ac6507))
+
+- **deps)(deps**: Bump virtualenv from 21.7.13 to 21.14.9 in /py
+  ([#982](https://github.com/jamescrowley321/identity-model/pull/982),
+  [`88c63ca`](https://github.com/jamescrowley321/identity-model/commit/88c63cae36d1ca3a0894dde6006cd26f42af918a))
+
+- **deps)(deps-dev**: Bump filelock from 3.29.0 to 4.2.1 in /py
+  ([#985](https://github.com/jamescrowley321/identity-model/pull/985),
+  [`67a3245`](https://github.com/jamescrowley321/identity-model/commit/67a324564f295b78d8f71ec6ec7bc26cc892393e))
+
+### Continuous Integration
+
+- Add conformance-native workflow for Go/Rust RP harnesses
+  ([`b78bb21`](https://github.com/jamescrowley321/identity-model/commit/b78bb2181b47f782d4d0e430a11b838d1227d05f))
+
+- Bump blind-peer-review to v3.12.1
+  ([#1025](https://github.com/jamescrowley321/identity-model/pull/1025),
+  [`24ca34e`](https://github.com/jamescrowley321/identity-model/commit/24ca34e20f34d17852ea83b370841f595232699f))
+
+- Bump blind-peer-review to v3.13.0 and drop the accountability checkbox
+  ([#1053](https://github.com/jamescrowley321/identity-model/pull/1053),
+  [`e306bba`](https://github.com/jamescrowley321/identity-model/commit/e306bba507407a7c4c641c5e447b99669401d5ea))
+
+- Bump blind-peer-review to v3.13.0 on release/v5
+  ([#1054](https://github.com/jamescrowley321/identity-model/pull/1054),
+  [`bc1d60c`](https://github.com/jamescrowley321/identity-model/commit/bc1d60c50b41d63d0b4d604f0f0da341868e13c4))
+
+- Drop the OpenRouter lens workflow
+  ([#1039](https://github.com/jamescrowley321/identity-model/pull/1039),
+  [`fd991f5`](https://github.com/jamescrowley321/identity-model/commit/fd991f55408299f2e57d19f8ea83bb0f07d437f6))
+
+- Run blind-peer-review lenses behind RUN_LENSES
+  ([#978](https://github.com/jamescrowley321/identity-model/pull/978),
+  [`4e472cd`](https://github.com/jamescrowley321/identity-model/commit/4e472cd4b94db731135cc07fbd3eb3bc729258ed))
+
+- Set the lens model and skip only PRs from other repositories
+  ([#978](https://github.com/jamescrowley321/identity-model/pull/978),
+  [`4e472cd`](https://github.com/jamescrowley321/identity-model/commit/4e472cd4b94db731135cc07fbd3eb3bc729258ed))
+
+- Stamp pre-release wheels with the pre-release version
+  ([`d97ffb3`](https://github.com/jamescrowley321/identity-model/commit/d97ffb3c453591cd98b017e294a9a0a015e13f5b))
+
+- Stop re-running paid lenses on PR edits
+  ([#1022](https://github.com/jamescrowley321/identity-model/pull/1022),
+  [`1a78ae4`](https://github.com/jamescrowley321/identity-model/commit/1a78ae4d4670bd3abbd6fff0ab0c15cd7d44cc50))
+
+- Sync claude.yml on release/v5 with main
+  ([#1042](https://github.com/jamescrowley321/identity-model/pull/1042),
+  [`7194083`](https://github.com/jamescrowley321/identity-model/commit/71940834589c25f60d552c9de57eb502c1ce489e))
+
+- **claude**: Port the blind-peer-review @claude workflow
+  ([#1041](https://github.com/jamescrowley321/identity-model/pull/1041),
+  [`d8c3293`](https://github.com/jamescrowley321/identity-model/commit/d8c3293278bcfef33a8a3526e275c8c060d0d17e))
+
+- **deps**: Consolidate dependabot updates
+  ([`2fee67d`](https://github.com/jamescrowley321/identity-model/commit/2fee67deb27ffb78d0327a7442b98edf779f408e))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#1118](https://github.com/jamescrowley321/identity-model/pull/1118),
+  [`8a14f3c`](https://github.com/jamescrowley321/identity-model/commit/8a14f3c188c24ac040d0c87ebbab0809f9e7f604))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#1105](https://github.com/jamescrowley321/identity-model/pull/1105),
+  [`7778116`](https://github.com/jamescrowley321/identity-model/commit/7778116c013ca47b3a511ae8ff45ec1bdc4cf495))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#1046](https://github.com/jamescrowley321/identity-model/pull/1046),
+  [`683b7c0`](https://github.com/jamescrowley321/identity-model/commit/683b7c0fa3a71bda04742660ba24d6520646034f))
+
+- **deps)(deps**: Bump anthropics/claude-code-action
+  ([#980](https://github.com/jamescrowley321/identity-model/pull/980),
+  [`e8add5c`](https://github.com/jamescrowley321/identity-model/commit/e8add5cb13fd88bec77bbe9d45a3dbcae8e74864))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#1045](https://github.com/jamescrowley321/identity-model/pull/1045),
+  [`8a4b5fa`](https://github.com/jamescrowley321/identity-model/commit/8a4b5fae958b7cb5c869c155c83ae5c5d3f2cdb8))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#983](https://github.com/jamescrowley321/identity-model/pull/983),
+  [`2a45fa6`](https://github.com/jamescrowley321/identity-model/commit/2a45fa6bc0c41de89025d5aabc5e370f65a1ec73))
+
+- **deps)(deps**: Bump the github-actions group with 2 updates
+  ([#981](https://github.com/jamescrowley321/identity-model/pull/981),
+  [`fdb8161`](https://github.com/jamescrowley321/identity-model/commit/fdb81616c4d4003efa7286022d1e1705ec8caa73))
+
+- **deps)(deps**: Bump the github-actions group with 3 updates
+  ([#1172](https://github.com/jamescrowley321/identity-model/pull/1172),
+  [`eba51b8`](https://github.com/jamescrowley321/identity-model/commit/eba51b8243c835180537111e1bf559db227af071))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#1047](https://github.com/jamescrowley321/identity-model/pull/1047),
+  [`e2b0a49`](https://github.com/jamescrowley321/identity-model/commit/e2b0a49ca31511ef492abd9a92df30a23fd0bcac))
+
+- **deps)(deps**: Bump the github-actions group with 5 updates
+  ([#977](https://github.com/jamescrowley321/identity-model/pull/977),
+  [`de93f07`](https://github.com/jamescrowley321/identity-model/commit/de93f07c715e2892ae06a1c302d69506d07097e9))
+
+- **deps)(deps**: Bump the github-actions group with 6 updates
+  ([#1101](https://github.com/jamescrowley321/identity-model/pull/1101),
+  [`9453212`](https://github.com/jamescrowley321/identity-model/commit/94532129ff796e398cbe67a1e1f601527bde01fe))
+
+- **release**: Enable alpha prereleases for Python packages
+  ([`68cf823`](https://github.com/jamescrowley321/identity-model/commit/68cf8233849f01ec56b601f58d8bf5d6e9438379))
+
+- **release**: Scope alpha releases to release/v5 and harden the dispatch path
+  ([`453af9d`](https://github.com/jamescrowley321/identity-model/commit/453af9d5d3abbba576d5d15a43aee8870f512f16))
+
+### Documentation
+
+- 4.x to 5.0 upgrade guide
+  ([`ed66be6`](https://github.com/jamescrowley321/identity-model/commit/ed66be673add2a088b1beea8524398fe37c8f6f1))
+
+- A malformed DPoP presentation is a server fault, not a bad token
+  ([`13338fa`](https://github.com/jamescrowley321/identity-model/commit/13338fa0e8ca68c349c8327211ce3ad574f70479))
+
+- A wrapped httpx client still cannot carry mTLS in 5.0
+  ([`60932d3`](https://github.com/jamescrowley321/identity-model/commit/60932d3c9c53342f135e0b4bdedd9a93b76172f6))
+
+- Aio.check_introspection_binding and aio.verify_dpop_proof are
+  ([`d01bc40`](https://github.com/jamescrowley321/identity-model/commit/d01bc40bfdeb5b2df01d2608608fe5bd0ee24444))
+
+- Bring the README and docs in line with the code
+  ([#1044](https://github.com/jamescrowley321/identity-model/pull/1044),
+  [`1ca4b47`](https://github.com/jamescrowley321/identity-model/commit/1ca4b47495c44ed0a1abea5747e847b89a4135a5))
+
+- Close 5.0 documentation gaps
+  ([`37c9120`](https://github.com/jamescrowley321/identity-model/commit/37c9120f9d5f641986aadbb06d0d8dd34839cdb3))
+
+- Link the upgrade-guide sections to #1132
+  ([`c0bd2a2`](https://github.com/jamescrowley321/identity-model/commit/c0bd2a249ac2b905b9a19ab457d630b2677f8733))
+
+- **discovery**: Cite Discovery §4.1 for the trailing-slash allowance
+  ([`cc1a779`](https://github.com/jamescrowley321/identity-model/commit/cc1a779cfceca56ab8c63166e3834c682efa5460))
+
+- **py**: Clear the caches after changing a CA bundle in place
+  ([`76d7ff2`](https://github.com/jamescrowley321/identity-model/commit/76d7ff26c23bbbef06090cfaca6fb063b32bb4b3))
+
+- **py**: Describe the real validate_id_token outcome for client_id=""
+  ([`9353788`](https://github.com/jamescrowley321/identity-model/commit/93537887e38ad42241bcc7f83b980091cdc463e5))
+
+- **py**: Document resource-server DPoP verification
+  ([`71d1b00`](https://github.com/jamescrowley321/identity-model/commit/71d1b0074efa1031dd044c1914f67c0490dc9e95))
+
+- **py**: Link the 5.0 model-shape upgrade entries to #1128
+  ([`baf4c37`](https://github.com/jamescrowley321/identity-model/commit/baf4c372fa960050175bd3861091d81e1f5203b6))
+
+- **py**: Link upgrade notes to #1124
+  ([`69e59c0`](https://github.com/jamescrowley321/identity-model/commit/69e59c0f657b43498723c63ef34bf68665003bdc))
+
+- **py**: Pass discovery by keyword in the FAPI2ClientProfile upgrade example
+  ([`ab1e23a`](https://github.com/jamescrowley321/identity-model/commit/ab1e23a7c43b85569139f1c3d9600abddd805f5d))
+
+### Features
+
+- **fapi**: Fail-closed FAPI 2.0 client profile
+  ([`9f1cd41`](https://github.com/jamescrowley321/identity-model/commit/9f1cd419d41a7e6ade59cac8b104428617d84b8d))
+
+- **py**: Add build_par_authorization_url for the PAR front channel
+  ([`c48450f`](https://github.com/jamescrowley321/identity-model/commit/c48450fcc9a8d7d0b8c81b2ba00e87a1656f5a11))
+
+- **py**: Add typed rejection kinds to token validation
+  ([`38b223e`](https://github.com/jamescrowley321/identity-model/commit/38b223e8e9026b2775d7ebf3312164fec4446c82))
+
+- **py**: Bind refreshed tokens with DPoP and refuse a Bearer downgrade
+  ([`565b183`](https://github.com/jamescrowley321/identity-model/commit/565b183303fd8ffdff6611070073f5f855653d78))
+
+- **py**: Discovery takes the issuer and matches it exactly
+  ([`2b9cbc7`](https://github.com/jamescrowley321/identity-model/commit/2b9cbc7ccaba387627760206777576711e4338d7))
+
+- **py**: DPoPReplayCacheError for an unusable replay cache
+  ([`6c71465`](https://github.com/jamescrowley321/identity-model/commit/6c71465ac0a557f674879db2eb3339fbad924ad3))
+
+- **py**: Expose the accepted DPoP proof algorithms on DPoPVerificationOptions
+  ([`549b52b`](https://github.com/jamescrowley321/identity-model/commit/549b52b35f9505c7adc038e680b5cede4e789bee))
+
+- **py**: One ClientAuthMethod enum, explicit client auth on every request
+  ([`ec48235`](https://github.com/jamescrowley321/identity-model/commit/ec48235a633f5210f8f0e611928fa72adf7c6957))
+
+- **py**: Raise IdTokenNonceError for an ID Token nonce rejection
+  ([`e694aaa`](https://github.com/jamescrowley321/identity-model/commit/e694aaa6d920b024a1d05016ce2044e4576f743b))
+
+- **py**: Request and verify signed introspection responses (RFC 9701)
+  ([`1d3ae53`](https://github.com/jamescrowley321/identity-model/commit/1d3ae5352d354f87151e8394cf5759b8b3fc7cac))
+
+- **py**: Send a signed request object to the PAR endpoint
+  ([`489dfcb`](https://github.com/jamescrowley321/identity-model/commit/489dfcb6040a6bf20db0e8959ee8429359dfabb4))
+
+- **py**: Sign the FAPI 2.0 pushed authorization request
+  ([`a5781d7`](https://github.com/jamescrowley321/identity-model/commit/a5781d763e488e64878850497231eec9c718f9c0))
+
+- **py**: Signed introspection takes discovery-driven keys and algorithms
+  ([`301cb75`](https://github.com/jamescrowley321/identity-model/commit/301cb75a85fa6a90464512ed9b6b26f2d46a120d))
+
+- **py**: Support PS256 and EdDSA DPoP keys
+  ([`a224510`](https://github.com/jamescrowley321/identity-model/commit/a224510ddfe1ea049ef7a5863e36db076a7a4dfb))
+
+- **py**: Typed FAPI violation codes and typed token-binding errors
+  ([`cdffd53`](https://github.com/jamescrowley321/identity-model/commit/cdffd53a9debcc879bc8f9ddc747ec533e802648))
+
+- **py**: Verify DPoP proofs and sender-constrained tokens at the resource server
+  ([`f086300`](https://github.com/jamescrowley321/identity-model/commit/f0863001c659b6b4ed43478b4e7df930bb44b2c2))
+
+### Refactoring
+
+- **py**: Check key-strength members with str.isascii
+  ([`7507c2a`](https://github.com/jamescrowley321/identity-model/commit/7507c2a650e6e6596672ed0436037d0b99899f24))
+
+- **py**: Export UserInfoErrorKind from the sync and aio roots only
+  ([`cc0ea69`](https://github.com/jamescrowley321/identity-model/commit/cc0ea69a74daa6366ab7fa0b95e68f89df04fd86))
+
+- **py**: Freeze public models, take discovery URLs explicitly
+  ([`61babe5`](https://github.com/jamescrowley321/identity-model/commit/61babe5dcaa1adf95c62d6240891e3b2968d86d4))
+
+- **py**: Frozen client-auth types and a separate signed PAR request type
+  ([`83f2174`](https://github.com/jamescrowley321/identity-model/commit/83f21743d79b76603d3cf36b90e11d57af7862ec))
+
+- **py**: PrivateKeyJwt requires issuer as the sole assertion aud
+  ([`f426700`](https://github.com/jamescrowley321/identity-model/commit/f426700b52136962ff49c7c5e123a3784aff7686))
+
+- **py**: Reject a padded PrivateKeyJwt issuer; address review
+  ([`2068bfc`](https://github.com/jamescrowley321/identity-model/commit/2068bfc6e0354193b73d4ebc4baf52b9f9d9d2b4))
+
+- **py**: Remove ClientAuthMethod.requires_secret
+  ([`4169046`](https://github.com/jamescrowley321/identity-model/commit/416904643e1361eb20e490da575dc0c5d45371ea))
+
+- **py**: Simplify key-strength base64 decoding and pin its message
+  ([`75658b2`](https://github.com/jamescrowley321/identity-model/commit/75658b21d8f8c6e010bd7672604d94701065c37e))
+
+- **py**: Split Config, private cache state, caller-owned DPoP replay cache
+  ([`c6ffd76`](https://github.com/jamescrowley321/identity-model/commit/c6ffd7613daf1c4b5d39111867a6ecbd140d84a8))
+
+- **py**: Split HTTP transport from cache state
+  ([`d636d52`](https://github.com/jamescrowley321/identity-model/commit/d636d52aec905c24596f9e8b0b5a56858d6b0327))
+
+### Testing
+
+- Add Zitadel as a Docker fixture provider
+  ([`0b7bde9`](https://github.com/jamescrowley321/identity-model/commit/0b7bde983653581adc8d5358662d8a2ede97d071))
+
+- Drop an unreachable token_type case and trim trusted-audience entries
+  ([`776d076`](https://github.com/jamescrowley321/identity-model/commit/776d076185816980376f27e441e67f7ea426cb25))
+
+- Harden the identifier-first login helper
+  ([`508552a`](https://github.com/jamescrowley321/identity-model/commit/508552a02ca5c87718b3d1dd89df07616915d4a9))
+
+- Run the v5 integration tests against the Zitadel and Keycloak fixtures
+  ([`4b55b4c`](https://github.com/jamescrowley321/identity-model/commit/4b55b4ca569f15a9768b04cb0fee11652eb1c3cd))
+
+- **examples**: Issue tokens under the address clients discover from
+  ([`c55ac93`](https://github.com/jamescrowley321/identity-model/commit/c55ac938d48d07aeeec012f603ffabbab415cd6e))
+
+- **fapi**: Cover the host-less issuer refusal
+  ([`08ca9c9`](https://github.com/jamescrowley321/identity-model/commit/08ca9c92bc6afab2b524d8cc532e40fc83418ace))
+
+- **fapi**: Profile integration test expects http fixtures to be refused
+  ([`4935907`](https://github.com/jamescrowley321/identity-model/commit/4935907f31f8c8b7361c4037f21bf375b45169a7))
+
+- **py**: Assert bound bearer tokens fail the WS handshake and logout ignores required_binding
+  ([`0643c65`](https://github.com/jamescrowley321/identity-model/commit/0643c65326e3ce940cfed79f57fd5478a35dd172))
+
+- **py**: Check the FastAPI env helper is never loaded or re-exported
+  ([`010eb0a`](https://github.com/jamescrowley321/identity-model/commit/010eb0ae66b83170a76e2b9ae5c7804b6eebb14e))
+
+- **py**: Check the spec settings page against Config
+  ([`aaf81b8`](https://github.com/jamescrowley321/identity-model/commit/aaf81b8140d95dcdb394e8a74d0c90272801662e))
+
+- **py**: Cite RFC 7519 in the JWT-013 parity note
+  ([`5041289`](https://github.com/jamescrowley321/identity-model/commit/50412894cd79191b16491d8ce7c7a2d90ca1c10f))
+
+- **py**: Clear the default caches after each trust-scope test
+  ([`4f64bd6`](https://github.com/jamescrowley321/identity-model/commit/4f64bd6f7355ca9a6e4570cf03d1c46cafd331d7))
+
+- **py**: Close the CC-006 vector's injected httpx client
+  ([`089fe23`](https://github.com/jamescrowley321/identity-model/commit/089fe230e0095bcf13fdfffa10618732b2894ddd))
+
+- **py**: Cover bound and unbound tokens without a presentation live
+  ([`15f6654`](https://github.com/jamescrowley321/identity-model/commit/15f6654cb2808983cf48efa28513cc3baa3f539a))
+
+- **py**: Exercise DPoP-bound refresh and the downgrade check live
+  ([`ea57422`](https://github.com/jamescrowley321/identity-model/commit/ea574223becd75de13c8c129620e4e56aa551312))
+
+- **py**: Expect typed JWKS errors in the spec-vector runner
+  ([`6fa07a3`](https://github.com/jamescrowley321/identity-model/commit/6fa07a3339a705f4bcfa68a26f9478ae4a72d5f3))
+
+- **py**: Fail if library code reads the environment
+  ([`ea7e969`](https://github.com/jamescrowley321/identity-model/commit/ea7e96956f27745205139060636be22f1fb5f03d))
+
+- **py**: Fail-closed security tests for per-request client auth
+  ([`26f2177`](https://github.com/jamescrowley321/identity-model/commit/26f21778a9f1919fa77af554d9b02df85544b1e8))
+
+- **py**: Give key-conversion contract tests a readable JOSE header
+  ([`f787d0a`](https://github.com/jamescrowley321/identity-model/commit/f787d0ae7b9c44c6eced97a38e46ace4ed0f4b5e))
+
+- **py**: Kill replay-cache shape mutants in the security suite
+  ([`ee243ba`](https://github.com/jamescrowley321/identity-model/commit/ee243bae3f4864036b02144ffaa96817ff6b0277))
+
+- **py**: Kill the surviving decode_and_validate_jwt mutants
+  ([`a88d52f`](https://github.com/jamescrowley321/identity-model/commit/a88d52fcb12633715dd99fcaea78fcefc473f89f))
+
+- **py**: Match the refresh-failure warning by module, which mutmut keeps
+  ([`1387a7b`](https://github.com/jamescrowley321/identity-model/commit/1387a7b444eeda0f30f74a7f568244c44511bd3e))
+
+- **py**: Move the #1188 and #1195 tests onto the issuer argument
+  ([`ea54932`](https://github.com/jamescrowley321/identity-model/commit/ea549327107b7687f17f066576ca18d425e8c816))
+
+- **py**: Narrow typed-error contract assertions for pyrefly
+  ([`85fe5b0`](https://github.com/jamescrowley321/identity-model/commit/85fe5b0c7c792d8cd58508c5ced7b35bafaa7680))
+
+- **py**: Pass FAPI2ClientProfile discovery by keyword in live test
+  ([`45d0ac6`](https://github.com/jamescrowley321/identity-model/commit/45d0ac6e39bee6259735d1608d0ebbbd1e37c092))
+
+- **py**: Pass the client to _retry_with_refreshed_jwks in the allowlist tests
+  ([`c3c2329`](https://github.com/jamescrowley321/identity-model/commit/c3c2329230545cfd7e8691e27e3a0613a3471826))
+
+- **py**: Pass the issuer to discovery-mode malformed-token tests
+  ([`0b16359`](https://github.com/jamescrowley321/identity-model/commit/0b16359c0b3b79a0310e309b84a098b46126d548))
+
+- **py**: Pass the sent nonce and drop unchecked audiences in live tests
+  ([`b95116f`](https://github.com/jamescrowley321/identity-model/commit/b95116fe44435b0f066cfe7d35364609edef4488))
+
+- **py**: Pin cache passthrough and the fork-safe structure lock
+  ([`7d7c65a`](https://github.com/jamescrowley321/identity-model/commit/7d7c65ad75caae92c56dba1b5f9a6fe00e7584bb))
+
+- **py**: Pin key-strength member decoding in the security suite
+  ([`a45f029`](https://github.com/jamescrowley321/identity-model/commit/a45f0298d06163db6dfb5cbc8d27cc33e899bee5))
+
+- **py**: Pin mTLS credential loading and discovery URL derivation
+  ([`ee27392`](https://github.com/jamescrowley321/identity-model/commit/ee27392c1563f2f2d3e8c4d280360118f808af1b))
+
+- **py**: Pin non-object cnf and claim-less introspection responses
+  ([`fee453d`](https://github.com/jamescrowley321/identity-model/commit/fee453d2fb1f71d39e0d4b9367746a55cbc2822e))
+
+- **py**: Pin the alg-none kind on a rejected header alg
+  ([`b51c4f9`](https://github.com/jamescrowley321/identity-model/commit/b51c4f9acd883be6b0168f2340a54bb4d1359b95))
+
+- **py**: Pin the discovery issuer checks against the mutation gate
+  ([`e018cd7`](https://github.com/jamescrowley321/identity-model/commit/e018cd747b8a19ceb6a769a0a16ec497c28551c4))
+
+- **py**: Pin the exact non-object discovery parse error message
+  ([`33992f5`](https://github.com/jamescrowley321/identity-model/commit/33992f57b5c7a4a133f7ab4f1256a9c8d41f93b2))
+
+- **py**: Pin the kid-miss refresh-failure warning on sync and async paths
+  ([`67540bf`](https://github.com/jamescrowley321/identity-model/commit/67540bfe53a58a85f71d459ef260f7ab918ffe1e))
+
+- **py**: Pin the malformed-token contract of resolve_algorithms
+  ([`96dd9ba`](https://github.com/jamescrowley321/identity-model/commit/96dd9baf407603b70fd9f602ca2657ed47050f3a))
+
+- **py**: Pin the message for a malformed DPoP presentation
+  ([`579a257`](https://github.com/jamescrowley321/identity-model/commit/579a257216f71c5f5f4eb5da0866db87dcde27cc))
+
+- **py**: Pin the scope of empty-means-absent audience handling
+  ([`7c0387f`](https://github.com/jamescrowley321/identity-model/commit/7c0387f297995bce7998056944ad7da3cea7c87f))
+
+- **py**: Pin the typed validation kind on each token rejection
+  ([`f46eee3`](https://github.com/jamescrowley321/identity-model/commit/f46eee36f5d93c5be3de8289720ee7098879fe36))
+
+- **py**: Pin the uncacheable-JWKS policy hook's invalidate branch
+  ([`c958039`](https://github.com/jamescrowley321/identity-model/commit/c958039c7fcde1419239056453ab528727c3d79b))
+
+- **py**: Pin validation_kind on the key-does-not-fit-alg rejection
+  ([`3d8fe75`](https://github.com/jamescrowley321/identity-model/commit/3d8fe7542c72886cb14fb1b3ad23b0a3d383f116))
+
+- **py**: Rename the spec-vector runners from _conformance to _internal
+  ([`7eaa6f6`](https://github.com/jamescrowley321/identity-model/commit/7eaa6f62f2d9b1e1307da8ca2bb096af55d00613))
+
+- **py**: Reset the default validation caches around TestInjectedCache
+  ([`3bc2eee`](https://github.com/jamescrowley321/identity-model/commit/3bc2eee8dac0cf4b56302664d4a315927cccb76a))
+
+- **py**: Run the RS DPoP matrix against a live DPoP-bound token
+  ([`c21ed9e`](https://github.com/jamescrowley321/identity-model/commit/c21ed9ef500eb1c83dbf288625b2baf5106c730e))
+
+- **py**: Say which credential fields the repr test discovers
+  ([`c5c830d`](https://github.com/jamescrowley321/identity-model/commit/c5c830d02003699798ef78b755ea985496ea3127))
+
+- **py**: Security contract tests for the key-strength floor and default allowlist
+  ([`e6c7a7a`](https://github.com/jamescrowley321/identity-model/commit/e6c7a7a1de626dac5169de5eb439568825fa92e3))
+
+- **py**: Use a fresh DPoP key per request in the refresh/downgrade tests
+  ([`9f19f96`](https://github.com/jamescrowley321/identity-model/commit/9f19f96b5557f3f95c21356a394e95829de3b35f))
+
+### Breaking Changes
+
+- **py**: Discovery inputs take the issuer, not the discovery document URL; the issuer match no
+  longer ignores a trailing slash.
+
+- **py**: Every *Request, *Response, TokenValidationConfig, DiscoveryPolicy,
+  SignedIntrospectionOptions, PrivateKeyJwt, MtlsClientAuth, RequestObjectKey, JsonWebKey,
+  TokenPresentation, TrustScope, DPoPProofRequest, DPoPProof, FAPI2ClientProfile,
+  FAPIValidationResult, FAPIViolation, ConfigIssue, AuthorizeCallbackResponse and
+  StateValidationResult take keyword arguments only and cannot be assigned to; use
+  dataclasses.replace. parse_discovery_url and DiscoveryEndpoint are removed; use
+  discovery_document_url(issuer). PushedAuthorizationRequest.redirect_uri has no default.
+  MtlsClientAuth.certificate / private_key are renamed certificate_path / private_key_path.
+
+
 ## v4.1.1 (2026-10-16)
 
 ### Bug Fixes
