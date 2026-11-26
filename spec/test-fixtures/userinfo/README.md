@@ -1,6 +1,6 @@
 # UserInfo endpoint test fixtures
 
-Fixtures backing the `userinfo` conformance suite
+Fixtures backing the `userinfo` spec-vector suite
 (`spec/vectors/userinfo.json`).
 
 - `standard-claims.json` — a UserInfo response covering the full OpenID Connect
