@@ -302,7 +302,7 @@ jobs:
           PLANS: ${{ inputs.plans }}
           RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
         run: |
-          if ! printf '%s' "$PLANS" | grep -Eq '^[a-z0-9, -]*$'; then
+          if ! printf '%s\n' "$PLANS" | grep -Eq '^[a-z0-9, -]*$'; then
             echo "::error::plans may contain only lowercase letters, digits, '-', ',' and spaces"; exit 1
           fi
           if [ -n "$RP_PUBLIC_URL" ] && ! printf '%s' "$RP_PUBLIC_URL" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/-]*)?$'; then
