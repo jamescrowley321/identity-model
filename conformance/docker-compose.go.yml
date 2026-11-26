@@ -1,0 +1,39 @@
+# Go RP harness overlay: docker compose -f docker-compose.yml -f docker-compose.go.yml
+# (make conformance-test HARNESS=go). See adding-conformance-profiles.md.
+services:
+  rp-go:
+    build:
+      context: ..
+      dockerfile: conformance/Dockerfile.go
+    # Loopback only: the runner and the browser it drives reach the harness at
+    # http://localhost:8890 on the host; nothing off-host needs it.
+    ports:
+      - "127.0.0.1:8890:8890"
+    environment:
+      - RP_PORT=8890
+      # The harness listens on loopback by default; inside the container it
+      # must listen on all interfaces for the loopback-published port above.
+      - RP_LISTEN_ADDR=0.0.0.0
+      - RP_BASE_URL=http://localhost:8890
+      - RP_LOG_DIR=/rp-logs
+      # The local suite's self-signed certificate, trusted in addition to the
+      # system roots; absent on a hosted (--no-deps) run, which is tolerated.
+      - RP_EXTRA_CA_FILE=/certs/nginx-selfsigned.crt
+      # The only issuers the harness contacts: the local suite and the hosted
+      # suite (run_tests.py SUITE_BASE_URL, conformance-hosted.yml).
+      - RP_ALLOWED_ISSUER_ORIGINS=https://localhost.emobix.co.uk:8443,https://www.certification.openid.net
+    volumes:
+      - certs:/certs:ro
+      - ./results/hosted/rp-logs/go:/rp-logs
+    healthcheck:
+      test: ["CMD", "conformance-rp-go", "-healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+      server:
+        condition: service_healthy
