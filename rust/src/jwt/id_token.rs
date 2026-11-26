@@ -168,9 +168,10 @@ impl IdTokenValidationOptionsBuilder {
     /// value, and with
     /// [`validate_azp`](Self::validate_azp) a present `azp` must equal it.
     /// [`validate_id_token`]
-    /// defaults it to the base audience when unset.
+    /// defaults it to the base audience when unset. An empty `client_id` is
+    /// treated as unset.
     pub fn client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.inner.client_id = Some(client_id.into());
+        self.inner.client_id = Some(client_id.into()).filter(|id| !id.is_empty());
         self
     }
 
@@ -609,9 +610,12 @@ pub async fn validate_id_token(
     profile: &IdTokenValidationOptions,
 ) -> Result<Claims> {
     let mut effective = profile.clone();
-    if effective.client_id.is_none() {
-        effective.client_id = base.expected_audience.clone();
-    }
+    // An empty client id (profile or base audience) is unset, as in Python and
+    // Go: `aud: [""]` must never bind a token to this client.
+    effective.client_id = effective
+        .client_id
+        .filter(|id| !id.is_empty())
+        .or_else(|| base.expected_audience.clone().filter(|aud| !aud.is_empty()));
     check_azp_config(&effective)?;
     // §3.1.3.7 step 3 binds the token to this client's `client_id`; with none
     // configured there is nothing to bind it to.
@@ -973,6 +977,41 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, IdentityError::IdTokenClientIdRequired);
+    }
+
+    // #1166: an empty client id — from the profile or the base audience — is
+    // unset, so a token with `aud: ["", <trusted-foreign>]` cannot pass by
+    // matching the empty string.
+    #[tokio::test]
+    async fn validate_id_token_empty_client_id_is_unset() {
+        let (_server, uri) = serve_fixture_jwks().await;
+        let jwks = JwksClient::builder().allow_http(true).build();
+        let now = super::super::now_unix();
+        let token = mint_fixture(&json!({
+            "iss": E2E_ISSUER, "sub": "u", "aud": ["", "other-client-9x"],
+            "iat": now - 5, "exp": now + 3600,
+        }));
+        let trusted = || IdTokenValidationOptions::builder().trusted_audiences(["other-client-9x"]);
+        let issuer = || ValidationOptions::builder().issuer(E2E_ISSUER);
+
+        for (base, profile) in [
+            (issuer().build(), trusted().client_id("").build()),
+            (issuer().audience("").build(), trusted().build()),
+        ] {
+            let err = validate_id_token(&token, &jwks, &uri, &base, &profile)
+                .await
+                .unwrap_err();
+            assert_eq!(err, IdentityError::IdTokenClientIdRequired);
+        }
+
+        // The pure claims check treats `client_id("")` as unset too, so the
+        // empty `aud` value is untrusted.
+        let c = claims(json!({"sub": "u", "aud": ["", "other-client-9x"]}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &trusted().client_id("").build())
+                .unwrap_err(),
+            &[""],
+        );
     }
 
     // IDT-012 ordering: step 3 runs before the azp rules, so a multi-aud token

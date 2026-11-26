@@ -12,8 +12,7 @@ import (
 // TestIDTokenSpec drives every vector in id-token.json through the pure,
 // network-free idtoken.ValidateClaims and asserts the accept/reject outcome and
 // the canonical reason. It is the Go leg of the cross-language ID-Token profile
-// parity: it MUST agree with the Python reference runner
-// (py/src/tests/unit/test_id_token_internal.py) on all vectors.
+// parity: every vector outside idTokenKnownGaps must meet its spec outcome.
 func TestIDTokenSpec(t *testing.T) {
 	suite, err := LoadIDTokenCapability(filepath.Join(specVectorsDir, "id-token.json"))
 	if err != nil {
@@ -63,6 +62,10 @@ var idTokenConfigurationErrors = map[string]error{
 // that idtoken.ValidateClaims does not meet yet, with the issue tracking each.
 // A listed vector must still be accepted: once the validator rejects it the
 // runner fails, so the gap is removed and the vector claimed with its reason.
+//
+// The IDT-015 gap is not confined to ValidateClaims: ValidateIDToken with
+// WithTrustedAudiences but no WithClientID runs no audience check at all, so it
+// accepts a token issued to a trusted other client (#1166).
 var idTokenKnownGaps = map[string]string{
 	"IDT-015 (only a trusted foreign audience)": "#1166: aud lacking the client_id is accepted when every aud value is trusted (OIDC Core 1.0 §3.1.3.7 step 3)",
 }
