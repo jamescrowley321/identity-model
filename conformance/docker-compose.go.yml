@@ -1,0 +1,31 @@
+# Go RP harness overlay: docker compose -f docker-compose.yml -f docker-compose.go.yml
+# (make conformance-test HARNESS=go). See adding-conformance-profiles.md.
+services:
+  rp-go:
+    build:
+      context: ..
+      dockerfile: conformance/Dockerfile.go
+    ports:
+      - "8890:8890"
+    environment:
+      - RP_PORT=8890
+      - RP_BASE_URL=http://localhost:8890
+      - RP_LOG_DIR=/rp-logs
+      # The local suite's self-signed certificate, trusted in addition to the
+      # system roots; absent on a hosted (--no-deps) run, which is tolerated.
+      - RP_EXTRA_CA_FILE=/certs/nginx-selfsigned.crt
+    volumes:
+      - certs:/certs:ro
+      - ./results/hosted/rp-logs/go:/rp-logs
+    healthcheck:
+      test: ["CMD", "conformance-rp-go", "-healthcheck"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+      nginx:
+        condition: service_started
+      server:
+        condition: service_healthy
