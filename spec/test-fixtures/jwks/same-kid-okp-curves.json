@@ -1,0 +1,18 @@
+{
+  "keys": [
+    {
+      "kty": "OKP",
+      "kid": "shared-kid",
+      "use": "sig",
+      "crv": "Ed448",
+      "x": "yuUG2dovP9tsunUQCW5V6CEaYMinoureUjREzcGmlDVMLwSW8uEfR_PRXMp3GuKGONzv3loii8uA"
+    },
+    {
+      "kty": "OKP",
+      "kid": "shared-kid",
+      "use": "sig",
+      "crv": "Ed25519",
+      "x": "W9ww8uyppPaS-JDwJmkrIoe0bIWDCgVY9ckTvCQx5CY"
+    }
+  ]
+}

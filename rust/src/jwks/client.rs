@@ -185,7 +185,7 @@ impl JwksClient {
     /// - [`IdentityError::KeyNotFound`] — no key with `kid` even after a refresh.
     /// - The fetch errors of [`JwksClient::fetch`].
     pub async fn resolve_key(&self, jwks_uri: &str, kid: &str) -> Result<JsonWebKey> {
-        self.resolve_key_where(jwks_uri, kid, JsonWebKeySet::find)
+        self.resolve_key_where(jwks_uri, kid, |set| set.find(kid).cloned())
             .await
     }
 
@@ -195,11 +195,11 @@ impl JwksClient {
         &self,
         jwks_uri: &str,
         kid: &str,
-        find: for<'s> fn(&'s JsonWebKeySet, &str) -> Option<&'s JsonWebKey>,
+        find: impl Fn(&JsonWebKeySet) -> Option<JsonWebKey>,
     ) -> Result<JsonWebKey> {
         let key_set = self.fetch(jwks_uri).await?;
-        if let Some(key) = find(&key_set, kid) {
-            return Ok(key.clone());
+        if let Some(key) = find(&key_set) {
+            return Ok(key);
         }
         // JWKS-004: the kid may belong to a freshly rotated key, so force one
         // refresh and retry. Throttle the automatic refresh per jwks_uri
@@ -214,9 +214,7 @@ impl JwksClient {
             return Err(IdentityError::KeyNotFound(kid.to_string()));
         }
         let refreshed = self.force_refresh(uri).await?;
-        find(&refreshed, kid)
-            .cloned()
-            .ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))
+        find(&refreshed).ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))
     }
 
     /// Resolves the key at `jwks_uri` that verifies a token whose JOSE header
@@ -225,7 +223,9 @@ impl JwksClient {
     /// Only signing keys are candidates (`use` `sig` or absent, RFC 7517
     /// §4.2); a `use` `enc` key is never returned (JWKS-011). With a `kid` it
     /// is [`JwksClient::resolve_key`] over the signing keys, forced refresh on
-    /// a miss included: a `kid` naming only an `enc` key is a miss. With no
+    /// a miss included: a `kid` naming only an `enc` key is a miss. Among
+    /// signing keys sharing the `kid` the one fitting `alg` is chosen, as
+    /// [`JsonWebKeySet::resolve_signing_key`] does. With no
     /// `kid` it selects the key as [`JsonWebKeySet::resolve_signing_key`]
     /// does, from the cached set and with no forced refresh (JWKS-009).
     /// Callers must reject `alg` `none` first.
@@ -247,7 +247,7 @@ impl JwksClient {
     ) -> Result<JsonWebKey> {
         if !kid.is_empty() {
             let key = self
-                .resolve_key_where(jwks_uri, kid, JsonWebKeySet::find_signing)
+                .resolve_key_where(jwks_uri, kid, |set| set.find_signing(kid, alg).cloned())
                 .await?;
             check_declared_alg(&key, alg)?;
             return Ok(key);
@@ -580,6 +580,67 @@ mod tests {
         }
         let received = server.received_requests().await.unwrap();
         assert_eq!(received.len(), 1, "no forced refresh");
+    }
+
+    // #1153 (RFC 7517 §4.5): among signing keys sharing the token kid the
+    // one whose kty fits the alg is chosen over an earlier decoy, from the
+    // cached set with no forced refresh.
+    #[tokio::test]
+    async fn resolve_signing_key_same_kid_picks_kty_fitting_alg() {
+        let server = MockServer::start().await;
+        let shared = r#"{ "keys": [
+            {"kty":"OKP","kid":"k","use":"sig","crv":"Ed25519","x":"a"},
+            {"kty":"EC","kid":"k","use":"sig","crv":"P-256","x":"a","y":"a"}
+        ] }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(shared)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "k", "ES256")
+            .await
+            .expect("EC key resolves");
+
+        assert_eq!((key.kty.as_str(), key.crv.as_str()), ("EC", "P-256"));
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1, "no forced refresh");
+    }
+
+    // #1153: the alg-aware same-kid choice also applies to the set fetched by
+    // the forced refresh on a kid miss: the OKP decoy listed first under the
+    // rotated kid is passed over for the EC P-256 key.
+    #[tokio::test]
+    async fn resolve_signing_key_same_kid_after_forced_refresh_picks_kty_fitting_alg() {
+        let server = MockServer::start().await;
+        let before = r#"{ "keys": [
+            {"kty":"EC","kid":"old","use":"sig","crv":"P-256","x":"a","y":"a"}
+        ] }"#;
+        let rotated = r#"{ "keys": [
+            {"kty":"OKP","kid":"k","use":"sig","crv":"Ed25519","x":"a"},
+            {"kty":"EC","kid":"k","use":"sig","crv":"P-256","x":"b","y":"b"}
+        ] }"#;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(before))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        mount(&server, ResponseTemplate::new(200).set_body_string(rotated)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "k", "ES256")
+            .await
+            .expect("EC key resolves after refresh");
+
+        assert_eq!(
+            (key.kty.as_str(), key.crv.as_str(), key.x.as_str()),
+            ("EC", "P-256", "b")
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "initial fetch + exactly one forced refresh"
+        );
     }
 
     // RFC 7517 §4.2 (#888): a kid naming only a `use` `enc` key names no
