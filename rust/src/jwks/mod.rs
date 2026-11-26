@@ -6,7 +6,7 @@
 //! by its `kid` against the cached set ([`JsonWebKeySet::resolve_key`]); a miss
 //! can force one refresh and retry to support key rotation
 //! ([`JwksClient::resolve_key`] / [`JwksClient::force_refresh`]). Behaviour is
-//! proven against the cross-language conformance IDs `JWKS-001`..`JWKS-007` in
+//! proven against the cross-language spec-vector IDs `JWKS-001`..`JWKS-007` in
 //! `spec/vectors/jwks.json`.
 //!
 //! RFC / spec references: RFC 7517 (JWK), RFC 7518 (JWA).

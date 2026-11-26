@@ -1,4 +1,4 @@
-//! Conformance runner for the cross-language injectable claims-validator vectors
+//! Internal spec-vector runner for the cross-language injectable claims-validator vectors
 //! (`spec/test-fixtures/claims-validation/vectors.json`, issue #603).
 //!
 //! One shared vector set drives the Python (#623), Go (#624), and Rust (#625)
@@ -7,7 +7,7 @@
 //! *reason* wording is language-specific and intentionally not asserted.
 //!
 //! This runner reads the bespoke vector file directly — it is deliberately *not*
-//! routed through the generic `conformance::validation` machinery — parses it with
+//! routed through the generic `internal::validation` machinery — parses it with
 //! `serde_json`, builds each validator from its `validator` spec, and runs it
 //! against the case `claims`.
 //!
@@ -153,7 +153,7 @@ fn build(spec: &Value) -> Result<BoxedClaimsValidator, String> {
 // --- the runner ---------------------------------------------------------------
 
 #[test]
-fn claims_validation_conformance_vectors() {
+fn claims_validation_internal_vectors() {
     let raw = std::fs::read_to_string(VECTORS_FILE).expect("read claims-validation vectors");
     let vectors: Vectors = serde_json::from_str(&raw).expect("parse vectors.json");
     assert!(!vectors.cases.is_empty(), "vector file declares no cases");

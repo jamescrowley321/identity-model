@@ -8,7 +8,7 @@
 //!
 //! | module          | needs                        | gate                       |
 //! |-----------------|------------------------------|----------------------------|
-//! | `conformance::` | the shared `../spec` fixtures | none — runs in `cargo test` |
+//! | `internal::` | the shared `../spec` fixtures | none — runs in `cargo test` |
 //! | `local::`       | a server this binary starts   | none — runs in `cargo test` |
 //! | `live::`        | a real OIDC provider          | `#[ignore]`; `cargo test -- --ignored` |
 //!
@@ -20,12 +20,12 @@
 //! Run one group by module path, for example:
 //!
 //! ```text
-//! cargo test --test it conformance::
+//! cargo test --test it internal::
 //! cargo test --test it local::dpop_resource_server::
 //! cargo test --test it -- --ignored live::revocation::
 //! ```
 
 mod common;
-mod conformance;
+mod internal;
 mod live;
 mod local;

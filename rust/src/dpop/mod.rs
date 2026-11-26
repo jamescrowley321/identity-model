@@ -29,7 +29,7 @@
 //!   and `ath` bindings. [`verify_proof`] is the general form, for a token
 //!   request or any check that sets [`DpopVerifyOptions`] by hand.
 //!
-//! Behaviour is proven against the cross-language conformance IDs
+//! Behaviour is proven against the cross-language spec-vector IDs
 //! `DPOP-001`..`DPOP-008` in `spec/vectors/dpop.json`, against the shared
 //! fixtures in `spec/test-fixtures/dpop/` — the same contract
 //! `go/pkg/dpop` satisfies.
