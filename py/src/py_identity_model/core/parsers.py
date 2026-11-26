@@ -346,12 +346,15 @@ def _no_kid_candidates(
     return signing_keys
 
 
-# The curve each ECDSA algorithm is defined on (RFC 7518 §3.4, RFC 8812 §3.2).
+# The curve each ECDSA or fully specified EdDSA algorithm is defined on
+# (RFC 7518 §3.4, RFC 8812 §3.2, RFC 9864). Plain "EdDSA" names no curve.
 _ALG_TO_CRV: dict[str, str] = {
     "ES256": "P-256",
     "ES384": "P-384",
     "ES512": "P-521",
     "ES256K": "secp256k1",
+    "Ed25519": "Ed25519",
+    "Ed448": "Ed448",
 }
 
 

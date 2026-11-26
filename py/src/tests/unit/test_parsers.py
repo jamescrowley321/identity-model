@@ -215,6 +215,20 @@ class TestFindKeyByKid:
             "ES256",
         )
 
+    @pytest.mark.parametrize(
+        ("alg", "decoy_crv"), [("Ed25519", "Ed448"), ("Ed448", "Ed25519")]
+    )
+    def test_find_key_by_kid_shared_kid_skips_okp_key_on_other_curve(
+        self, alg, decoy_crv
+    ):
+        decoy = JsonWebKey(kty="OKP", kid="shared", use="sig", crv=decoy_crv, x="a")
+        fitting = JsonWebKey(kty="OKP", kid="shared", use="sig", crv=alg, x="x")
+
+        assert find_key_by_kid("shared", [decoy, fitting], jwt_alg=alg) == (
+            fitting.as_dict(),
+            alg,
+        )
+
     def test_find_key_by_kid_shared_kid_non_string_alg_is_rejected(self):
         keys = [
             JsonWebKey(kty="RSA", kid="shared", use="sig", n="abc", e="def"),
