@@ -910,12 +910,14 @@
       "title": "Choose among keys that share a kid by the token alg",
       "given": "A JWK Set where more than one signing key carries the token's kid",
       "when": "The key for a token header with that kid and an alg is resolved",
-      "then": "The first same-kid signing key whose kty is the one the header alg needs, whose alg is absent or equals the header alg, and, for an ECDSA alg, whose crv is the curve that alg is defined on is used, with no forced refresh; when none fits, the first same-kid signing key is the resolved key, so a key declaring another alg is a key-alg-mismatch error (JWKS-010)",
+      "then": "The first same-kid signing key whose kty is the one the header alg needs, whose alg is absent or equals the header alg, and, for an ECDSA alg or a fully specified EdDSA alg (Ed25519, Ed448), whose crv is the curve that alg is defined on is used, with no forced refresh; when none fits, the first same-kid signing key is the resolved key, so a key declaring another alg is a key-alg-mismatch error (JWKS-010)",
       "references": [
         "RFC 7517 \u00a74.5",
         "RFC 7517 \u00a74.4",
         "RFC 7518 \u00a73.1",
-        "RFC 7518 \u00a73.4"
+        "RFC 7518 \u00a73.4",
+        "RFC 8812 \u00a73.2",
+        "RFC 9864"
       ],
       "vectors": [
         {
@@ -988,6 +990,42 @@
                 "crv": "P-256",
                 "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
                 "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+              }
+            ]
+          }
+        },
+        {
+          "name": "okp-key-on-other-curve-skipped",
+          "input": {
+            "steps": [
+              "fetch",
+              "resolve"
+            ],
+            "kid": "shared-kid",
+            "alg": "Ed25519"
+          },
+          "http": {
+            "/jwks": {
+              "status": 200,
+              "body_fixture": "jwks/same-kid-okp-curves.json"
+            },
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "jwks/discovery.json"
+            }
+          },
+          "expect_calls": {
+            "/jwks": 1
+          },
+          "expect": {
+            "outcome": "accept",
+            "keys": [
+              {
+                "kty": "OKP",
+                "kid": "shared-kid",
+                "use": "sig",
+                "crv": "Ed25519",
+                "x": "W9ww8uyppPaS-JDwJmkrIoe0bIWDCgVY9ckTvCQx5CY"
               }
             ]
           }
