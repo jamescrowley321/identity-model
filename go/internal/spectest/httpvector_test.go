@@ -1,6 +1,6 @@
 //go:build integration
 
-package conformance
+package spectest
 
 import (
 	"bytes"

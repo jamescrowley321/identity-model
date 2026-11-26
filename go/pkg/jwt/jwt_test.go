@@ -42,7 +42,7 @@ func readFixture(t *testing.T, name string) []byte {
 	return b
 }
 
-// loadSigningKey loads the RSA private signing key shared by the conformance
+// loadSigningKey loads the RSA private signing key shared by the spec
 // fixtures (kid=test-key-1).
 func loadSigningKey(t *testing.T) *jose.JSONWebKey {
 	t.Helper()

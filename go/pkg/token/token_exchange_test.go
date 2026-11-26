@@ -12,9 +12,9 @@ import (
 	"testing"
 )
 
-// exchangeFixture reads a shared conformance fixture from
+// exchangeFixture reads a shared spec fixture from
 // spec/test-fixtures/token-exchange. The token exchange unit tests are driven by
-// the same fixtures the conformance suite (token-exchange.json) references, so
+// the same fixtures the spec-vector suite (token-exchange.json) references, so
 // the Go behaviour and the cross-language contract cannot drift apart.
 func exchangeFixture(t *testing.T, name string) string {
 	t.Helper()

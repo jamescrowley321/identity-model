@@ -20,13 +20,13 @@ import (
 // advertises the grant but its token endpoint rejects it with E011003. Epic 0F
 // explicitly permits a mock-endpoint integration test for this capability, so
 // these tests drive the real token.TokenExchange client against a self-contained
-// httptest server implementing RFC 8693, replaying the same conformance fixtures
+// httptest server implementing RFC 8693, replaying the same spec fixtures
 // the unit tests and token-exchange.json use. This exercises the full HTTP
 // round-trip (form encoding, client auth header, status handling, JSON parsing)
 // end to end, which the unit tests' in-process handlers approximate but this
 // confirms over a real socket.
 
-// exchangeFixtureBytes reads a conformance fixture from
+// exchangeFixtureBytes reads a spec fixture from
 // spec/test-fixtures/token-exchange for the mock server to replay.
 func exchangeFixtureBytes(t *testing.T, name string) []byte {
 	t.Helper()

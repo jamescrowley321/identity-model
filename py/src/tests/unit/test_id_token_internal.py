@@ -1,10 +1,10 @@
-"""Thin Python executor for the shared ID-Token /spec conformance vectors.
+"""Thin Python executor for the shared ID-Token /spec vectors.
 
 Drives every vector in ``spec/vectors/id-token.json`` — the language-neutral
 source of truth for the OpenID Connect ID-Token *profile* rules (OIDC Core 1.0
 §2 / §3.1.3.7 / §3.3.2.11) — through py-identity-model's pure claim validator
 ``core.id_token_logic.validate_id_token_claims``. The Go and Rust runners
-execute the SAME vector set, so the "build the conformance vectors once"
+execute the SAME vector set, so the "build the spec vectors once"
 constraint holds across languages.
 
 The vectors are fully self-contained decoded claim sets plus caller inputs and a
@@ -41,7 +41,7 @@ from py_identity_model.exceptions import (
 def _find_repo_root() -> Path:
     """Locate the polyglot repo root by its ``/spec`` marker.
 
-    Mirrors ``test_spec_conformance.py``: walking up to the marker (rather than
+    Mirrors ``test_spec_internal.py``: walking up to the marker (rather than
     a fixed ``parents[n]``) also resolves correctly inside the mutation-testing
     sandbox, which inserts a directory level.
     """

@@ -133,7 +133,7 @@ impl Claims {
     /// Most callers obtain [`Claims`] from [`crate::validate_token`]; this is
     /// the entry point for enforcing the ID-Token profile
     /// ([`crate::validate_id_token_claims`]) against a claim set that was
-    /// decoded elsewhere (e.g. the shared cross-language conformance vectors),
+    /// decoded elsewhere (e.g. the shared cross-language spec vectors),
     /// with no network or signature step.
     ///
     /// # Errors

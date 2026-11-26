@@ -31,9 +31,9 @@
 //! comparisons (`nonce`/`at_hash`/`c_hash`) are constant-time
 //! ([`subtle::ConstantTimeEq`]).
 //!
-//! Behaviour is proven against the cross-language conformance IDs
+//! Behaviour is proven against the cross-language spec-vector IDs
 //! `IDT-001`..`IDT-012` in `spec/vectors/id-token.json`
-//! (`rust/tests/it/conformance/id_token.rs`) — the same language-neutral
+//! (`rust/tests/it/internal/id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
 //! This module positively validates the ID-Token profile; it deliberately does
@@ -391,7 +391,7 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Resul
 /// algorithm), used to select the `at_hash`/`c_hash` hash. Pass it as the
 /// already-decoded [`Claims`] plus `header_alg` plus [`IdTokenValidationOptions`]
 /// so the check is fully offline (no network, no signature step) — this is the
-/// entry point the cross-language conformance vectors drive.
+/// entry point the cross-language spec vectors drive.
 ///
 /// # Errors
 ///

@@ -1,10 +1,10 @@
-//! Thin Rust executor for the shared `/spec` conformance vectors (CONS-1.5).
+//! Thin Rust executor for the shared `/spec` vectors (CONS-1.5).
 //!
 //! Drives every executable vector in `spec/vectors/validation.json`
 //! against [`rs_identity_model::validate_token`] — the same language-neutral
-//! vector set the Go (`go/internal/conformance`) and Python
-//! (`src/tests/unit/test_spec_conformance.py`) runners execute — so the
-//! "build conformance vectors once" constraint holds. Offline (no provider),
+//! vector set the Go (`go/internal/spectest`) and Python
+//! (`src/tests/unit/test_spec_internal.py`) runners execute — so the
+//! "build spec vectors once" constraint holds. Offline (no provider),
 //! NOT `#[ignore]`-gated: it runs in every bare `cargo test`.
 //!
 //! Thin-executor contract: the vectors carry inputs and canonical expected
@@ -24,7 +24,7 @@
 //!   the same "signature does not verify under the kid-resolved key" semantic
 //!   through the same RS256 verification path.
 //!
-//! Coverage: `spec_validation_conformance` asserts every case id executes
+//! Coverage: `spec_validation_internal` asserts every case id executes
 //! every vector it declares.
 
 use std::collections::BTreeMap;
@@ -48,7 +48,7 @@ const ED25519_KID: &str = "ed25519-key-1";
 const JWKS_FIXTURE: &str = "../spec/test-fixtures/validation/jwks.json";
 const FIXTURE_KID: &str = "test-key-1";
 
-// ── Vector schema (mirrors go/internal/conformance/spec.go) ─────────────────
+// ── Vector schema (mirrors go/internal/spectest/spec.go) ─────────────────
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -383,7 +383,7 @@ fn assert_accept(label: &str, claims: &rs_identity_model::Claims, want: &Map<Str
 }
 
 #[test]
-fn spec_validation_conformance() {
+fn spec_validation_internal() {
     let raw = std::fs::read_to_string(SPEC_FILE).expect("read validation.json");
     let capability: Capability = serde_json::from_str(&raw).expect("parse validation.json");
     let jwks: JsonWebKeySet =

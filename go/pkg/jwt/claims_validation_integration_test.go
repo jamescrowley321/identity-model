@@ -22,7 +22,7 @@ import (
 )
 
 // These integration tests drive the injectable claims validators through the
-// REAL jwt.Validate pipeline: a token is signed with the shared conformance
+// REAL jwt.Validate pipeline: a token is signed with the shared spec
 // signing key, its public JWKS is served over HTTP and fetched through the real
 // jwks client, and jwt.Validate verifies the signature and the registered claims
 // before the injected validator runs. That proves the WithClaimsValidator hook

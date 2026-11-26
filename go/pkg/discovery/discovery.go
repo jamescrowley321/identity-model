@@ -86,8 +86,8 @@ type requiredField struct {
 }
 
 // requiredFields is the set of metadata fields that MUST be present per the
-// conformance contract (spec/vectors/discovery.json "required_fields",
-// DISC-002). token_endpoint is included per the conformance superset.
+// spec-vector contract (spec/vectors/discovery.json "required_fields",
+// DISC-002). token_endpoint is included per the spec-vector superset.
 var requiredFields = []requiredField{
 	{"issuer", func(c *ProviderConfiguration) bool { return c.Issuer != "" }},
 	{"authorization_endpoint", func(c *ProviderConfiguration) bool { return c.AuthorizationEndpoint != "" }},

@@ -1,4 +1,4 @@
-package conformance
+package spectest
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/jwt"
 )
 
-// Paths from go/internal/conformance to the shared spec tree at the repo root.
+// Paths from go/internal/spectest to the shared spec tree at the repo root.
 const (
 	specVectorsDir = "../../../spec/vectors"
 	fixtureRoot    = "../../../spec/test-fixtures"
@@ -34,10 +34,10 @@ var unimplementedValidationCases = map[string]string{
 	"JWT-016": "access-token typ check (RFC 9701 §8.1) is not implemented in Go (#1193)",
 }
 
-// TestValidationConformance drives every vector in validation.json against the
+// TestValidationSpec drives every vector in validation.json against the
 // Go jwt.Validate implementation, and asserts full coverage of the capability's
 // test ids so Go cannot silently skip a case another language executes.
-func TestValidationConformance(t *testing.T) {
+func TestValidationSpec(t *testing.T) {
 	suite, err := LoadCapability(filepath.Join(specVectorsDir, "validation.json"))
 	if err != nil {
 		t.Fatalf("load capability: %v", err)

@@ -20,11 +20,11 @@ linters:
       - std-error-handling
     rules:
       # gosec on tests and internal test-support harnesses (integration runner,
-      # conformance vector loader): reading fixture/vector files by a variable
+      # spec-vector loader): reading fixture/vector files by a variable
       # path (G304), writing to test HTTP-server responses (G705), and test
       # credential literals (G101) are intentional in test scaffolding, not risks.
       # Shipped library code under pkg/ stays fully scanned.
-      - path: (_test\.go$|internal/(integrationtest|conformance)/)
+      - path: (_test\.go$|internal/(integrationtest|spectest)/)
         linters:
           - gosec
       # token.go defines RFC 8693 grant-type / token-type URIs (e.g.

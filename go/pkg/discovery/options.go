@@ -64,7 +64,7 @@ func newConfig(opts ...Option) *config {
 // the cache; a value of 0 selects the unbounded escape hatch, and any positive
 // integer is the LRU cap. Matches the Rust and Python ports, which also reject
 // negative values rather than treating them as unbounded (cross-language
-// conformance on the shared env contract).
+// parity on the shared env contract).
 func maxCacheEntriesFromEnv() int {
 	raw := strings.TrimSpace(os.Getenv(maxCacheEntriesEnv))
 	if raw == "" {

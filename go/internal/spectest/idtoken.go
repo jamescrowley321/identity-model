@@ -1,4 +1,4 @@
-package conformance
+package spectest
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ type IDTokenCapability struct {
 	Tests      []IDTokenCase `json:"tests"`
 }
 
-// IDTokenCase is one IDT-* conformance id with one or more vectors.
+// IDTokenCase is one IDT-* spec-vector id with one or more vectors.
 type IDTokenCase struct {
 	ID         string          `json:"id"`
 	Title      string          `json:"title"`

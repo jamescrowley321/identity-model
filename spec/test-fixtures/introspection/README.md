@@ -1,6 +1,6 @@
 # Token Introspection test fixtures
 
-Fixtures backing the `introspection` conformance suite
+Fixtures backing the `introspection` spec-vector suite
 (`spec/vectors/introspection.json`), per RFC 7662.
 
 - `active-response.json` — a 200 introspection response with `active: true` and

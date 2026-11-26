@@ -1603,6 +1603,115 @@ def _zip_directory(src_dir: Path, output: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Harness selection (Python, Go or Rust RP harness)
+# ---------------------------------------------------------------------------
+
+CONFIG_DIR = Path(__file__).parent / "configs"
+RESULTS_DIR = Path(__file__).parent / "results"
+
+
+class Harness(StrEnum):
+    """Which RP harness the runner drives."""
+
+    PY = "py"
+    GO = "go"
+    RUST = "rust"
+
+
+# Plans the Go and Rust harnesses run. Each reuses the Python plan's manifest entry in
+# expected_modules.json: one set of expected verdicts for every language.
+HARNESS_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
+
+
+class HarnessError(Exception):
+    """A harness/plan pair has no usable plan config."""
+
+
+@dataclass(frozen=True)
+class HarnessRun:
+    """Where one plan run against one harness reads and writes."""
+
+    config_path: Path
+    # Key in expected_modules.json; also the profile sent to the harness, so its
+    # per-test logs land under <RP_LOG_DIR>/<manifest_plan>/.
+    manifest_plan: str
+    rp_base_url: str
+    # Directory under the RP-log base that --rp-logs-zip resets and zips.
+    rp_log_subdir: Path
+    # --output when none is given (None: no results file).
+    default_output: Path | None
+
+
+def _config_rp_url(config: dict, config_path: Path) -> str | None:
+    rp_url = config.get("rp_url")
+    if rp_url is None:
+        return None
+    error = HarnessError(
+        f"{config_path}: rp_url must be an http(s) URL, got {rp_url!r}"
+    )
+    if not isinstance(rp_url, str):
+        raise error
+    try:
+        parsed = urlparse(rp_url)
+        valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    except ValueError as exc:
+        raise error from exc
+    if not valid:
+        raise error
+    return rp_url.rstrip("/")
+
+
+def resolve_harness_run(
+    harness: Harness,
+    plan: str,
+    rp_url: str | None = None,
+    *,
+    hosted: bool = False,
+    config_dir: Path = CONFIG_DIR,
+    results_dir: Path = RESULTS_DIR,
+) -> HarnessRun:
+    """Resolve the config, manifest key, RP URL and output paths for a run.
+
+    The Python harness reads ``configs/<plan>.json``; the Go and Rust harnesses read
+    ``configs/<harness>-<plan>.json``, which must carry the harness's
+    ``rp_url``. ``rp_url`` (the ``--rp-url`` flag) overrides the config.
+    """
+    if harness is Harness.PY:
+        config_path = config_dir / f"{plan}.json"
+        rp_log_subdir = Path(plan)
+        default_output = None
+    else:
+        if plan not in HARNESS_PLANS:
+            raise HarnessError(
+                f"the {harness} harness runs only {', '.join(HARNESS_PLANS)}, "
+                f"not {plan!r}"
+            )
+        config_path = config_dir / f"{harness}-{plan}.json"
+        rp_log_subdir = Path(harness, plan)
+        default_output = (
+            results_dir / ("hosted" if hosted else "") / f"{harness}-{plan}-latest.json"
+        )
+    try:
+        config = json.loads(config_path.read_text())
+    except OSError as exc:
+        raise HarnessError(f"config not found: {config_path}") from exc
+    except ValueError as exc:
+        raise HarnessError(f"{config_path}: invalid JSON: {exc}") from exc
+    if not isinstance(config, dict):
+        raise HarnessError(f"{config_path}: must be an object")
+    config_url = _config_rp_url(config, config_path)
+    if harness is not Harness.PY and config_url is None:
+        raise HarnessError(f"{config_path}: a {harness} harness config needs rp_url")
+    return HarnessRun(
+        config_path=config_path,
+        manifest_plan=plan,
+        rp_base_url=rp_url or config_url or RP_BASE_URL,
+        rp_log_subdir=rp_log_subdir,
+        default_output=default_output,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1651,9 +1760,23 @@ def main() -> None:
         help=f"Conformance suite base URL (env: CONFORMANCE_SERVER, default: {SUITE_BASE_URL})",
     )
     parser.add_argument(
+        "--harness",
+        type=Harness,
+        choices=list(Harness),
+        default=Harness.PY,
+        help=(
+            "RP harness to drive (default: py). go/rust read "
+            "configs/<harness>-<plan>.json and run only "
+            f"{', '.join(HARNESS_PLANS)}."
+        ),
+    )
+    parser.add_argument(
         "--rp-url",
-        default=RP_BASE_URL,
-        help=f"RP harness base URL (default: {RP_BASE_URL})",
+        default=None,
+        help=(
+            "RP harness base URL (default: the plan config's rp_url, else "
+            f"{RP_BASE_URL})"
+        ),
     )
     parser.add_argument(
         "--rp-public-url",
@@ -1751,6 +1874,19 @@ def main() -> None:
         )
         sys.exit(1)
 
+    try:
+        run = resolve_harness_run(
+            args.harness,
+            args.plan,
+            args.rp_url,
+            hosted=not _is_local_suite(args.suite_url),
+        )
+    except HarnessError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
+    # Only the py harness runs the OP-callback plans (HARNESS_PLANS excludes
+    # them for go/rust), so these checks never touch a native harness run.
     rp_public_url = effective_rp_public_url(args.suite_url, args.rp_public_url)
     if args.rp_public_url and rp_public_url is None:
         logger.warning("Ignoring --rp-public-url for a local suite")
@@ -1760,21 +1896,17 @@ def main() -> None:
     if problem:
         logger.error("%s", problem)
         sys.exit(1)
-
-    config_path = Path(__file__).parent / "configs" / f"{args.plan}.json"
-    if not config_path.exists():
-        logger.error("Config not found: %s", config_path)
-        sys.exit(1)
+    output = args.output or run.default_output
 
     publish_value = "" if args.publish == "none" else args.publish
 
     # Reset this profile's RP-log directory so the zip only contains this run's
     # per-test logs (the harness appends, so stale files would otherwise leak in).
-    # Confine the rmtree target to the log base before deleting — args.plan is
-    # already constrained by argparse choices, but _reset_dir removes a tree, so
-    # a mistuned RP_LOG_DIR must never let it escape the intended directory.
+    # Confine the rmtree target to the log base before deleting — the subdir is
+    # built from argparse choices, but _reset_dir removes a tree, so a mistuned
+    # RP_LOG_DIR must never let it escape the intended directory.
     rp_log_base = _rp_log_dir().resolve()
-    rp_log_profile_dir = (rp_log_base / args.plan).resolve()
+    rp_log_profile_dir = (rp_log_base / run.rp_log_subdir).resolve()
     if not rp_log_profile_dir.is_relative_to(rp_log_base):
         logger.error(
             "Refusing to use RP log dir outside base: %s not under %s",
@@ -1786,23 +1918,24 @@ def main() -> None:
         _reset_dir(rp_log_profile_dir)
 
     plan_id, results = run_plan(
-        config_path=str(config_path),
+        config_path=str(run.config_path),
         suite_base_url=args.suite_url,
-        rp_base_url=args.rp_url,
+        rp_base_url=run.rp_base_url,
         token=env_token or None,
         publish=publish_value,
-        profile=args.plan,
+        profile=run.manifest_plan,
         only_module=args.only_module,
         rp_public_url=rp_public_url,
     )
 
     all_ok = print_summary(results)
 
-    if args.output:
-        output_path = Path(args.output)
+    if output:
+        output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         results_json = {
             "plan": args.plan,
+            "harness": str(args.harness),
             "plan_id": plan_id,
             "suite_url": args.suite_url,
             "results": [

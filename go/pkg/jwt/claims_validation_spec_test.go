@@ -1,6 +1,6 @@
 package jwt
 
-// Cross-language conformance for the injectable claims-validator API (issue
+// Cross-language internal spec-vector tests for the injectable claims-validator API (issue
 // #603). This is a bespoke, per-language runner: it reads the shared vector set
 // in spec/test-fixtures/claims-validation/vectors.json directly (NOT via the
 // generic spec/vectors/*.json capability machinery, which has a different
@@ -44,7 +44,7 @@ type clvSuite struct {
 	Cases       []clvCase `json:"cases"`
 }
 
-// clvCase is one conformance case. Exactly one field of Expect is set.
+// clvCase is one spec-vector case. Exactly one field of Expect is set.
 type clvCase struct {
 	ID        string           `json:"id"`
 	Desc      string           `json:"desc"`
@@ -126,9 +126,9 @@ func mustParseVectorClaims(t *testing.T, id string, raw json.RawMessage) *Claims
 	return claims
 }
 
-// TestClaimsValidationConformance runs every vector in the shared claims-
+// TestClaimsValidationSpec runs every vector in the shared claims-
 // validation set against the Go validators.
-func TestClaimsValidationConformance(t *testing.T) {
+func TestClaimsValidationSpec(t *testing.T) {
 	raw, err := os.ReadFile(claimsVectorsPath(t))
 	if err != nil {
 		t.Fatalf("read claims-validation vectors: %v", err)

@@ -9,7 +9,7 @@
 //! when `SPEC_COVERAGE_OUT` is set they write the executed case ids and the
 //! gate fails by name if any language skipped a vector. The gate runs each by
 //! its exact test path, for example
-//! `cargo test --test it -- --exact conformance::validation::spec_validation_conformance`.
+//! `cargo test --test it -- --exact internal::validation::spec_validation_internal`.
 
 mod claims_validation;
 mod dpop;

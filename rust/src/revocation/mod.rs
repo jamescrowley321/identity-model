@@ -30,7 +30,7 @@
 //! # }
 //! ```
 //!
-//! Conformance: `spec/vectors/revocation.json` (`REV-001` … `REV-005`).
+//! Spec vectors: `spec/vectors/revocation.json` (`REV-001` … `REV-005`).
 
 use std::collections::HashMap;
 use std::time::Duration;

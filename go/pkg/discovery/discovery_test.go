@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// fixture reads a shared conformance fixture from spec/test-fixtures/discovery.
+// fixture reads a shared spec fixture from spec/test-fixtures/discovery.
 // Fixtures declare issuer https://server.example.com; tests rewrite the issuer
 // field to the httptest server URL where an exact match is required.
 func fixture(t *testing.T, name string) []byte {

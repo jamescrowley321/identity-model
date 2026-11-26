@@ -1,4 +1,4 @@
-//! DPoP (RFC 9449) conformance tests against the shared cross-language fixtures.
+//! DPoP (RFC 9449) internal spec-vector tests against the shared cross-language fixtures.
 //!
 //! Covers `DPOP-001`, `DPOP-002`, `DPOP-003`, `DPOP-005`, `DPOP-006`, and
 //! `DPOP-007` from `spec/vectors/dpop.json` — the same contract
@@ -25,7 +25,7 @@ use rs_identity_model::{
 };
 use serde_json::Value;
 
-/// Reads a shared conformance fixture from `spec/test-fixtures/dpop`. Integration
+/// Reads a shared spec fixture from `spec/test-fixtures/dpop`. Integration
 /// tests run with the crate root as the working directory, so the repo's `spec/`
 /// is one level up.
 fn fixture(name: &str) -> Value {
