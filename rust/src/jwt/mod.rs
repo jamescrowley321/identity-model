@@ -357,9 +357,6 @@ fn decoding_key_for(key: &JsonWebKey) -> Result<DecodingKey> {
 fn map_verify_err(err: jsonwebtoken::errors::Error, kid: &str) -> IdentityError {
     use jsonwebtoken::errors::ErrorKind;
     match err.kind() {
-        // A validly signed payload that is not UTF-8 JSON is a malformed token
-        // (RFC 7519 §7.2), not a signature failure.
-        ErrorKind::Json(_) | ErrorKind::Utf8(_) => IdentityError::MalformedToken(err.to_string()),
         // A signature that does not verify, or a signature segment the strict
         // verifier refuses to decode (a tampered final character).
         ErrorKind::InvalidSignature | ErrorKind::Base64(_) => IdentityError::SignatureInvalid,
@@ -376,7 +373,9 @@ fn map_verify_err(err: jsonwebtoken::errors::Error, kid: &str) -> IdentityError 
             kid: kid.to_string(),
             reason: err.to_string(),
         },
-        // Anything else (an invalid JWT shape) keeps its detail.
+        // Anything else is a malformed token and keeps its detail: a validly
+        // signed payload that is not UTF-8 JSON (RFC 7519 §7.2, `Json`/`Utf8`)
+        // or an invalid JWT shape.
         _ => IdentityError::MalformedToken(err.to_string()),
     }
 }
