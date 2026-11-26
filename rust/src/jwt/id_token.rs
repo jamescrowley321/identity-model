@@ -9,8 +9,8 @@
 //! * every `aud` value must be trusted by the client — its `client_id` or one
 //!   of the caller's
 //!   [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
-//!   (§3.1.3.7 step 3). With neither configured, any `aud` value is untrusted
-//!   (fail closed).
+//!   — and `aud` must list the `client_id` itself (§3.1.3.7 step 3). With
+//!   neither configured, any `aud` value is untrusted (fail closed).
 //! * `azp` authorized-party rules, only when the caller opts in with
 //!   [`validate_azp`](IdTokenValidationOptionsBuilder::validate_azp)
 //!   (§3.1.3.7 steps 4-5; §2 says to ignore `azp` otherwise).
@@ -32,7 +32,7 @@
 //! ([`subtle::ConstantTimeEq`]).
 //!
 //! Behaviour is proven against the cross-language spec-vector IDs
-//! `IDT-001`..`IDT-012` in `spec/vectors/id-token.json`
+//! `IDT-001`..`IDT-015` in `spec/vectors/id-token.json`
 //! (`rust/tests/it/internal/id_token.rs`) — the same language-neutral
 //! vector set the Python (`core/id_token_logic.py`) and Go runners execute.
 //!
@@ -95,10 +95,11 @@ const EDDSA_ALGS: &[&str] = &["EdDSA", "Ed25519"];
 ///
 /// Construct one with [`IdTokenValidationOptions::builder`]. Every field is
 /// optional: an empty options set enforces only the always-on rules (a
-/// non-empty `sub` and every `aud` value trusted) — with no `client_id` and no
-/// trusted audiences configured, any `aud` value is untrusted, so set a
-/// `client_id` (or use [`validate_id_token`], which defaults it to the base
-/// audience). Each remaining check runs only when its input is supplied — `validate_azp(true)` (for the `azp`
+/// non-empty `sub`, every `aud` value trusted, and a configured `client_id`
+/// listed in `aud`) — with no `client_id` and no trusted audiences configured,
+/// any `aud` value is untrusted, so set a `client_id` (or use
+/// [`validate_id_token`], which defaults it to the base audience and requires
+/// one). Each remaining check runs only when its input is supplied — `validate_azp(true)` (for the `azp`
 /// rules), a `nonce`, an `access_token` (for `at_hash`), a `code` (for
 /// `c_hash`), or a `max_age` (for `auth_time`).
 #[derive(Clone, Debug)]
@@ -161,8 +162,10 @@ impl IdTokenValidationOptionsBuilder {
         Self::default()
     }
 
-    /// Sets the relying party's `client_id`. It is always a trusted `aud`
-    /// value (§3.1.3.7 step 3), and with
+    /// Sets the relying party's `client_id`. The ID Token's `aud` must list it
+    /// (§3.1.3.7 step 3), otherwise the token is rejected with
+    /// [`IdentityError::AudienceMismatch`]; it is always a trusted `aud`
+    /// value, and with
     /// [`validate_azp`](Self::validate_azp) a present `azp` must equal it.
     /// [`validate_id_token`]
     /// defaults it to the base audience when unset.
@@ -177,7 +180,9 @@ impl IdTokenValidationOptionsBuilder {
     /// rejected with [`IdentityError::IdTokenUntrustedAudience`].
     ///
     /// The list only *adds* trusted values: an empty list (the default) trusts
-    /// the `client_id` alone, and nothing here can switch the check off.
+    /// the `client_id` alone, and nothing here can switch the check off. A
+    /// trusted audience never stands in for the `client_id`, which `aud` must
+    /// still list.
     /// Replaces any previously set list.
     pub fn trusted_audiences<I, S>(mut self, audiences: I) -> Self
     where
@@ -381,8 +386,9 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Resul
 ///
 /// Assumes the JWT signature, `iss`, `aud`, `iat` and (when present) `exp` have
 /// ALREADY been verified by the base [`validate_token`](crate::validate_token)
-/// path, and that the caller's `client_id` has been enforced as an `aud` member
-/// there. This function enforces only the rules unique to ID Tokens.
+/// path. This function enforces only the rules unique to ID Tokens, including
+/// §3.1.3.7 step 3 in full: a configured `client_id` must be an `aud` member
+/// whether or not the base path checked an audience.
 ///
 /// `header_alg` is the ID Token's JOSE-header `alg` (the signature-verified
 /// algorithm), used to select the `at_hash`/`c_hash` hash. Pass it as the
@@ -398,6 +404,9 @@ fn validate_azp(claims: &Claims, audiences: &[String], client_id: &str) -> Resul
 ///   neither the `client_id` nor one of the configured trusted audiences
 ///   (§3.1.3.7 step 3), carrying the untrusted values. Checked after `sub` and
 ///   before the opt-in `azp` rules.
+/// - [`IdentityError::AudienceMismatch`] when a `client_id` is configured and
+///   `aud` does not list it (§3.1.3.7 step 3), carrying the `client_id` and
+///   the token's audiences. Checked after the untrusted-audience rule.
 /// - [`IdentityError::MissingClaim`] when `sub` is absent or empty, `aud` is
 ///   absent, null or holds only empty strings (§2, checked after `sub`), a
 ///   multi-audience token has no `azp`, `auth_time` is absent under `max_age`,
@@ -444,6 +453,19 @@ pub fn validate_id_token_claims(
         .collect();
     if !untrusted.is_empty() {
         return Err(IdentityError::IdTokenUntrustedAudience(untrusted));
+    }
+
+    // §3.1.3.7 step 3 — the ID Token MUST list the client as a valid
+    // audience: trusted additional audiences never stand in for the
+    // `client_id`. Checked after the untrusted-audience rule, so a token
+    // failing both reports the untrusted values.
+    if let Some(client_id) = options.client_id.as_deref()
+        && !audiences.iter().any(|aud| aud == client_id)
+    {
+        return Err(IdentityError::AudienceMismatch {
+            expected: client_id.to_string(),
+            actual: audiences.to_vec(),
+        });
     }
 
     // §3.1.3.7 steps 4-5 — authorized-party (`azp`) rules, opt-in only.
@@ -544,22 +566,25 @@ fn validate_hash_binding(
 ///
 /// Runs the standard JWT validation via
 /// [`validate_token_with_jwks`](crate::validate_token_with_jwks) (signature
-/// resolved from `jwks`/`jwks_uri`, plus `iss`/`aud`/`iat`/`exp` per `base` —
-/// set `base` audience to the RP's `client_id` so the `aud` check is enforced),
-/// then applies the ID-Token profile from `profile`: required `sub`, every
-/// `aud` value trusted (the `client_id` or a
+/// resolved from `jwks`/`jwks_uri`, plus `iss`/`aud`/`iat`/`exp` per `base`),
+/// then applies the ID-Token profile from `profile`: required `sub`, the
+/// `client_id` listed in `aud`, every `aud` value trusted (the `client_id` or a
 /// [`trusted_audiences`](IdTokenValidationOptionsBuilder::trusted_audiences)
 /// entry), and the opt-in `azp`/`nonce`/`max_age`/`at_hash`/`c_hash` checks,
 /// each run only when the corresponding option is supplied.
 ///
 /// When `profile.client_id` is unset it defaults to the `base` audience, so a
-/// caller that already set the audience need not repeat the `client_id`.
+/// caller that already set the audience need not repeat the `client_id`. One
+/// of the two is required.
 ///
 /// # Errors
 ///
 /// - [`IdentityError::IdTokenAzpRequiresClientId`] — `validate_azp` is set but
 ///   neither `profile` nor the `base` audience supplies a `client_id`. Reported
 ///   before the JWKS fetch.
+/// - [`IdentityError::IdTokenClientIdRequired`] — neither `profile` nor the
+///   `base` audience supplies a `client_id` (§3.1.3.7 step 3 needs one to bind
+///   the token to). Reported before the JWKS fetch.
 /// - the typed JWT errors of [`validate_token`](crate::validate_token) —
 ///   [`IdentityError::SignatureInvalid`], [`IdentityError::IssuerMismatch`],
 ///   [`IdentityError::AudienceMismatch`], [`IdentityError::Expired`], ... — when
@@ -569,6 +594,9 @@ fn validate_hash_binding(
 ///   one JWKS key could verify it.
 /// - [`IdentityError::IdTokenUntrustedAudience`] — the token's `aud` carries
 ///   a value the client does not trust (§3.1.3.7 step 3).
+/// - [`IdentityError::AudienceMismatch`] — the token's `aud` does not list the
+///   `client_id` (§3.1.3.7 step 3), from the base check when `base` sets the
+///   audience, else from the profile.
 /// - the ID-Token-profile errors of [`validate_id_token_claims`] when another
 ///   profile rule fails.
 /// - the transport/parse errors of
@@ -585,6 +613,11 @@ pub async fn validate_id_token(
         effective.client_id = base.expected_audience.clone();
     }
     check_azp_config(&effective)?;
+    // §3.1.3.7 step 3 binds the token to this client's `client_id`; with none
+    // configured there is nothing to bind it to.
+    if effective.client_id.is_none() {
+        return Err(IdentityError::IdTokenClientIdRequired);
+    }
 
     let claims = validate_token_with_jwks(id_token, jwks, jwks_uri, base).await?;
     // The signature was verified under exactly this header `alg`, so reading it
@@ -792,6 +825,154 @@ mod tests {
             .build();
         validate_id_token_claims(&c, Some("RS256"), &with_list)
             .expect("single aud validates with a trusted list");
+    }
+
+    /// The [`IdentityError::AudienceMismatch`] a token whose `aud` lacks the
+    /// `s6BhdRkqt3` client id is rejected with.
+    fn client_id_not_in_aud(actual: &[&str]) -> IdentityError {
+        IdentityError::AudienceMismatch {
+            expected: "s6BhdRkqt3".into(),
+            actual: actual.iter().map(|aud| (*aud).to_string()).collect(),
+        }
+    }
+
+    // IDT-015 (#1166): §3.1.3.7 step 3 — the ID Token MUST list the client as
+    // an audience. Trusted additional audiences never stand in for the
+    // `client_id`, whether `aud` is a string or an array.
+    #[test]
+    fn rejects_trusted_foreign_audience_without_client_id() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x", "api-7q"])
+            .build();
+        for (aud, want) in [
+            (json!(["other-client-9x"]), vec!["other-client-9x"]),
+            (json!("other-client-9x"), vec!["other-client-9x"]),
+            (
+                json!(["other-client-9x", "api-7q"]),
+                vec!["other-client-9x", "api-7q"],
+            ),
+        ] {
+            let c = claims(json!({"sub": "u", "aud": aud}));
+            assert_id_token_reject(
+                &validate_id_token_claims(&c, Some("RS256"), &opts).unwrap_err(),
+                &client_id_not_in_aud(&want),
+            );
+        }
+    }
+
+    // IDT-015 ordering: the untrusted-audience rule runs first, so a token
+    // failing both reports the untrusted values (keeps IDT-012's verdicts).
+    #[test]
+    fn untrusted_audience_checked_before_client_id_membership() {
+        let opts = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        let c = claims(json!({"sub": "u", "aud": ["other-client-9x", "unknown-api-7q"]}));
+        assert_untrusted_audience(
+            &validate_id_token_claims(&c, Some("RS256"), &opts).unwrap_err(),
+            &["unknown-api-7q"],
+        );
+    }
+
+    // Without a `client_id` there is no membership rule to apply: a token
+    // whose audiences are all trusted passes the profile (the end-to-end
+    // `validate_id_token` refuses to run without a client id).
+    #[test]
+    fn trusted_audiences_alone_accept_without_client_id() {
+        let opts = IdTokenValidationOptions::builder()
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        let c = claims(json!({"sub": "u", "aud": ["other-client-9x"]}));
+        validate_id_token_claims(&c, Some("RS256"), &opts)
+            .expect("all audiences trusted, no client_id to require");
+    }
+
+    const E2E_ISSUER: &str = "https://op.example.com";
+
+    /// Signs `claims` with the shared RS256 fixture key (`kid=test-key-1`).
+    fn mint_fixture(claims: &Value) -> String {
+        let key = jsonwebtoken::EncodingKey::from_rsa_der(
+            &std::fs::read("../spec/test-fixtures/validation/signing-key.pkcs1.der")
+                .expect("read signing key fixture"),
+        );
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some("test-key-1".into());
+        jsonwebtoken::encode(&header, claims, &key).expect("sign token")
+    }
+
+    /// Serves the shared JWKS fixture at `/jwks`; returns the server and URI.
+    async fn serve_fixture_jwks() -> (wiremock::MockServer, String) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let jwks: Value = serde_json::from_slice(
+            &std::fs::read("../spec/test-fixtures/validation/jwks.json")
+                .expect("read jwks fixture"),
+        )
+        .expect("parse jwks fixture");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(jwks))
+            .mount(&server)
+            .await;
+        let uri = format!("{}/jwks", server.uri());
+        (server, uri)
+    }
+
+    // #1166 end to end: with the profile `client_id` set and no base audience,
+    // a correctly signed token whose only (trusted) audience is another client
+    // is rejected — the profile no longer relies on the base audience check.
+    #[tokio::test]
+    async fn validate_id_token_requires_client_id_in_aud() {
+        let (_server, uri) = serve_fixture_jwks().await;
+        let jwks = JwksClient::builder().allow_http(true).build();
+        let now = super::super::now_unix();
+        let base = ValidationOptions::builder().issuer(E2E_ISSUER).build();
+        let profile = IdTokenValidationOptions::builder()
+            .client_id("s6BhdRkqt3")
+            .trusted_audiences(["other-client-9x"])
+            .build();
+
+        let foreign = mint_fixture(&json!({
+            "iss": E2E_ISSUER, "sub": "u", "aud": ["other-client-9x"],
+            "iat": now - 5, "exp": now + 3600,
+        }));
+        let err = validate_id_token(&foreign, &jwks, &uri, &base, &profile)
+            .await
+            .unwrap_err();
+        assert_id_token_reject(&err, &client_id_not_in_aud(&["other-client-9x"]));
+
+        let own = mint_fixture(&json!({
+            "iss": E2E_ISSUER, "sub": "u", "aud": ["s6BhdRkqt3", "other-client-9x"],
+            "iat": now - 5, "exp": now + 3600,
+        }));
+        let claims = validate_id_token(&own, &jwks, &uri, &base, &profile)
+            .await
+            .expect("client_id listed among trusted audiences validates");
+        assert_eq!(claims.subject.as_deref(), Some("u"));
+    }
+
+    // #1166: `validate_id_token` needs a client id to bind the token to — from
+    // the profile or, by default, the base audience. With neither it fails as
+    // a configuration error before any JWKS fetch or token parse.
+    #[tokio::test]
+    async fn validate_id_token_without_client_id_is_config_error() {
+        let base = ValidationOptions::builder().issuer(E2E_ISSUER).build();
+        let profile = IdTokenValidationOptions::builder()
+            .trusted_audiences(["other-client-9x"])
+            .build();
+        let err = validate_id_token(
+            "not-a-jwt",
+            &JwksClient::new(),
+            "http://127.0.0.1:9/jwks",
+            &base,
+            &profile,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, IdentityError::IdTokenClientIdRequired);
     }
 
     // IDT-012 ordering: step 3 runs before the azp rules, so a multi-aud token

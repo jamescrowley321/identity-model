@@ -198,6 +198,17 @@ pub enum IdentityError {
     #[error("configuration error: validate_azp requires a client_id to compare 'azp' against")]
     IdTokenAzpRequiresClientId,
 
+    /// [`validate_id_token`](crate::validate_id_token) was called with neither
+    /// a profile [`client_id`](crate::IdTokenValidationOptionsBuilder::client_id)
+    /// nor a base audience to default it from. OIDC Core 1.0 §3.1.3.7 step 3
+    /// requires the ID Token to list the client as an audience, so with no
+    /// client id the token cannot be bound to this client. A caller
+    /// misconfiguration, reported before any JWKS fetch or token parse.
+    #[error(
+        "configuration error: ID token validation requires a client_id (or a base audience) to check 'aud' against"
+    )]
+    IdTokenClientIdRequired,
+
     /// A caller-supplied claims validator (issue #603) rejected the token's
     /// claims. Carries a structured reason and the offending claim name (when
     /// the validator identified one), so a rejection surfaces *why* without
