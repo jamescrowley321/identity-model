@@ -605,6 +605,44 @@ mod tests {
         assert_eq!(received.len(), 1, "no forced refresh");
     }
 
+    // #1153: the alg-aware same-kid choice also applies to the set fetched by
+    // the forced refresh on a kid miss: the OKP decoy listed first under the
+    // rotated kid is passed over for the EC P-256 key.
+    #[tokio::test]
+    async fn resolve_signing_key_same_kid_after_forced_refresh_picks_kty_fitting_alg() {
+        let server = MockServer::start().await;
+        let before = r#"{ "keys": [
+            {"kty":"EC","kid":"old","use":"sig","crv":"P-256","x":"a","y":"a"}
+        ] }"#;
+        let rotated = r#"{ "keys": [
+            {"kty":"OKP","kid":"k","use":"sig","crv":"Ed25519","x":"a"},
+            {"kty":"EC","kid":"k","use":"sig","crv":"P-256","x":"b","y":"b"}
+        ] }"#;
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(before))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        mount(&server, ResponseTemplate::new(200).set_body_string(rotated)).await;
+
+        let client = JwksClient::builder().allow_http(true).build();
+        let key = client
+            .resolve_signing_key(&jwks_uri(&server), "k", "ES256")
+            .await
+            .expect("EC key resolves after refresh");
+
+        assert_eq!(
+            (key.kty.as_str(), key.crv.as_str(), key.x.as_str()),
+            ("EC", "P-256", "b")
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "initial fetch + exactly one forced refresh"
+        );
+    }
+
     // RFC 7517 §4.2 (#888): a kid naming only a `use` `enc` key names no
     // signing key, so it is a miss: one forced refresh, then KeyNotFound. A
     // kid-less token against a set with no signing key is KeyNotFound with no
