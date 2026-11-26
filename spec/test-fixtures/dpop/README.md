@@ -1,6 +1,6 @@
 # DPoP test fixtures
 
-Fixtures backing the `dpop` conformance suite (`spec/vectors/dpop.json`), per
+Fixtures backing the `dpop` spec-vector suite (`spec/vectors/dpop.json`), per
 RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
 
 - `dpop-proof-token-request.json` — a decoded DPoP proof JWT (header + payload)
@@ -43,11 +43,11 @@ RFC 9449 (Demonstrating Proof of Possession) and RFC 7638 (JWK Thumbprint).
 
 `spec/vectors/dpop.json` carries executable vectors. Pure-logic vectors run in
 `py/src/tests/unit/test_spec_logic_vectors.py` and
-`go/internal/conformance/logic_test.go`, with Go DPoP operations in
-`go/internal/conformance/dpop_logic_test.go`. HTTP vectors run in
+`go/internal/spectest/logic_test.go`, with Go DPoP operations in
+`go/internal/spectest/dpop_logic_test.go`. HTTP vectors run in
 `py/src/tests/spec_vectors/test_spec_http_vectors.py` and
-`go/internal/conformance/httpvector_test.go`, with the Go DPoP adapter in
-`go/internal/conformance/dpop_test.go`. They cover the token-request proof
+`go/internal/spectest/httpvector_test.go`, with the Go DPoP adapter in
+`go/internal/spectest/dpop_test.go`. They cover the token-request proof
 (DPOP-002), nonce retry and reuse (DPOP-004), and resource-request authorization
 (DPOP-008).
 
@@ -60,4 +60,4 @@ thumbprint vectors read the key-pair fixtures. The proof verification vectors
 (DPOP-006) carry their proofs inline, signed with the ES256 key pair, and may
 supply an expected `access_token` (for `ath`) and `nonce`. The decoded
 token-request proof fixture is read only by the Go `dpop` package unit tests
-and the Rust DPoP conformance tests (`rust/tests/it/conformance/dpop.rs`).
+and the Rust DPoP internal spec-vector tests (`rust/tests/it/internal/dpop.rs`).

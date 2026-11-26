@@ -350,7 +350,7 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
 // --- authorization-code -------------------------------------------------------
 //
 // The HTTP vectors (the code exchange). The pure-logic PKCE vectors
-// (input.operation) run in-process in conformance::spec_logic_vectors.
+// (input.operation) run in-process in internal::spec_logic_vectors.
 
 async fn authorization_code_call(
     base: &str,

@@ -44,7 +44,7 @@ cargo run --example combined_claims_validator
 Unit tests live inline under `src/` next to the code they cover. Everything
 else is one integration-test binary, `tests/it`, split by what a test needs:
 
-- `conformance::` — driven by the shared `../spec` fixtures; offline.
+- `internal::` — driven by the shared `../spec` fixtures; offline.
 - `local::` — a server or pipeline this binary runs itself; offline.
 - `live::` — a real provider; `#[ignore]`-gated. Run against the shared
   provider in [`../infra`](../infra) with `make test-integration-rust` from
@@ -76,7 +76,7 @@ with `ValidationOptions::builder().claims_validator(...)`. See
 for a runnable `combine` demonstration. Behavioural parity with the sibling
 libraries is enforced by the shared vectors in
 [`../spec/test-fixtures/claims-validation/vectors.json`](../spec/test-fixtures/claims-validation/vectors.json),
-driven by `tests/it/conformance/claims_validation.rs`.
+driven by `tests/it/internal/claims_validation.rs`.
 
 ## Capabilities
 
@@ -92,4 +92,4 @@ request's proof together with its `ath` and `cnf.jkt` bindings. Attaching the pr
 caller's job; see the `dpop` module docs.
 
 Behavioral parity with the Python and Go libraries is enforced by the
-cross-language conformance vectors in [`../spec`](../spec).
+cross-language spec vectors in [`../spec`](../spec).

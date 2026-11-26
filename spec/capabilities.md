@@ -1,19 +1,19 @@
 # identity-model — Capability Matrix
 
-This is the **canonical, cross-language capability specification**. Every language’s library implements these capabilities idiomatically and proves behavioral parity by passing the machine-readable conformance definitions in [`vectors/`](vectors/) against the shared provider in [`../infra`](../infra).
+This is the **canonical, cross-language capability specification**. Every language’s library implements these capabilities idiomatically and proves behavioral parity by passing the machine-readable spec-vector definitions in [`vectors/`](vectors/) against the shared provider in [`../infra`](../infra).
 
 Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## Status Legend
 
-- `implemented` — passes all conformance tests for this capability
+- `implemented` — passes all internal spec-vector tests for this capability
 - `in-progress` — partially implemented
 - `planned` — specified, not yet implemented
 - `n/a` — intentionally not applicable to this language
 
 ## Tiers & Status
 
-| Tier | Capability | Spec | Conformance | Python | Go | Rust |
+| Tier | Capability | Spec | Vectors | Python | Go | Rust |
 |------|-----------|------|-------------|--------|----|----|
 | Core | OIDC Discovery | OIDC Discovery 1.0 §3–4 | `discovery.json`¶ | implemented | implemented | implemented |
 | Core | JWKS Retrieval + Caching | RFC 7517, RFC 7518 | `jwks.json`¶ | implemented¶ | implemented | implemented |
@@ -42,7 +42,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 | Advanced | RAR | RFC 9396 | — | planned | planned | planned |
 | Advanced | CIBA | OpenID CIBA Core | — | planned | planned | planned |
 
-> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors (token vectors in its unit suite, HTTP vectors against the node-oidc fixture in its integration target) — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery`, `introspection`, `token-exchange`, `client-credentials`, `authorization-code`, `dpop` carry executable vectors (see ¶ below); the other `Conformance` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the conformance runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
+> **`implemented` above means the capability is present in that language's source.** For rows marked ¶, presence is also enforced by each language executing the shared `spec/vectors` vectors (token vectors in its unit suite, HTTP vectors against the node-oidc fixture in its integration target) — `validation`, `id-token`, `revocation`, `userinfo`, `jwks`, `discovery`, `introspection`, `token-exchange`, `client-credentials`, `authorization-code`, `dpop` carry executable vectors (see ¶ below); the other `Vectors` files are prose contracts, so their rows are hand-verified; rows with `—` are code-present but **not yet covered by cross-language vectors** (adding those vectors is P0/P2 of the reconciliation plan). This status column is **hand-maintained and has drifted before** — it long marked Python `planned` for capabilities it already ships — so it should be **regenerated from the internal spec-vector runners**. See `identity-stack-planning` → `_bmad-output/planning-artifacts/identity-model-parity-report-2026-09-05.md` for the full diff and roadmap.
 >
 > ¶ **Vector-enforced capabilities and known Python gaps.** Each capability marked ¶ carries executable vectors in `spec/vectors` that every language that implements it executes in its unit or HTTP integration suite (see [`README.md`](README.md#current-coverage)). A vector a language does not meet yet is a strict expected failure in that language's runner, linked to its issue. Go and Rust skip `INTR-007` by case id (signed introspection responses, [#1030](https://github.com/jamescrowley321/identity-model/issues/1030)) and `DISC-013` (the RFC 8414 metadata location, [#1155](https://github.com/jamescrowley321/identity-model/issues/1155)), and have no other known gaps. Python's are:
 >
@@ -58,7 +58,7 @@ Normative keywords (MUST / SHOULD / MAY) follow [RFC 2119](https://www.rfc-edito
 >
 > § **Rust DPoP is `in-progress`**: the key pairs, proof generation, and proof
 > verification are implemented and proven against `DPOP-001`, `DPOP-002`,
-> `DPOP-003`, `DPOP-005`, `DPOP-006` and `DPOP-007` (`rust/tests/it/conformance/dpop.rs`, run and
+> `DPOP-003`, `DPOP-005`, `DPOP-006` and `DPOP-007` (`rust/tests/it/internal/dpop.rs`, run and
 > passing, driven from the shared `spec/test-fixtures/dpop/` documents), and
 > against a live provider in `rust/tests/it/live/dpop.rs` — node-oidc-provider
 > accepts the generated proof, issues `token_type: DPoP`, and returns a `cnf.jkt`
@@ -518,7 +518,7 @@ capabilities:
   - name: "OIDC Discovery"
     tier: core
     spec_ref: "OpenID Connect Discovery 1.0"
-    conformance_file: "spec/vectors/discovery.json"
+    vectors_file: "spec/vectors/discovery.json"
     languages:
       python: { status: in-progress }
       go: { status: implemented }

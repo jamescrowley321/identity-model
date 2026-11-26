@@ -1,9 +1,9 @@
-//! Rust executor for the shared ID-Token profile conformance vectors.
+//! Rust executor for the shared ID-Token profile spec vectors.
 //!
 //! Drives every vector in `spec/vectors/id-token.json` (`IDT-001`..`IDT-012`)
 //! through the pure [`rs_identity_model::validate_id_token_claims`] — the same
 //! language-neutral vector set the Python
-//! (`py/src/tests/unit/test_id_token_conformance.py`) and Go runners execute —
+//! (`py/src/tests/unit/test_id_token_internal.py`) and Go runners execute —
 //! asserting the accept/reject outcome and, on rejects, the canonical `reason`.
 //! Offline (no provider, no signature step: the vectors carry already-decoded
 //! `input.claims` plus the ID-Token header `input.header_alg`), NOT
@@ -200,7 +200,7 @@ fn options_for(input: &Input) -> IdTokenValidationOptions {
 }
 
 #[test]
-fn spec_id_token_conformance() {
+fn spec_id_token_internal() {
     let raw = std::fs::read_to_string(SPEC_FILE).expect("read id-token.json");
     let capability: Capability = serde_json::from_str(&raw).expect("parse id-token.json");
 

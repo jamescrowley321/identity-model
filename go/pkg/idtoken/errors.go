@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// CanonicalError is the language-neutral error family the shared conformance
+// CanonicalError is the language-neutral error family the shared spec
 // vectors (spec/vectors/id-token.json) assign to every ID-Token profile
 // rejection. Each language maps it to its own error type; in Go that type is
 // [ProfileError].
 const CanonicalError = "id_token_profile"
 
 // Stable, language-neutral reason labels for ID-Token profile rejections. They
-// match the "reason" field of the shared conformance vectors exactly, so the Go
+// match the "reason" field of the shared spec vectors exactly, so the Go
 // runner agrees with the Python reference on the cause of every rejection.
 const (
 	// ReasonMissingSub: sub is absent or empty (§2 / §3.1.3.7).

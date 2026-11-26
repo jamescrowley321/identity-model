@@ -30,7 +30,7 @@
 // [ValidateIDToken] is the full network entry point: it runs the base JWT
 // validation via [jwt.Validate] and then applies the profile. [ValidateClaims]
 // is the pure, network-free claim validator (the analog of the reference
-// validate_id_token_claims) that the cross-language conformance vectors drive.
+// validate_id_token_claims) that the cross-language spec vectors drive.
 //
 // This package positively validates the ID-Token profile; it deliberately does
 // not reject "access-token-looking" claim sets — that discrimination belongs in

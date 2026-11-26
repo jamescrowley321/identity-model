@@ -1,6 +1,6 @@
 # Token endpoint test fixtures
 
-Fixtures backing the `client-credentials` conformance suite
+Fixtures backing the `client-credentials` spec-vector suite
 (`spec/vectors/client-credentials.json`).
 
 - `client-credentials-success.json` — a 200 RFC 6749 §5.1 token response

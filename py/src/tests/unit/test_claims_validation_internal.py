@@ -1,4 +1,4 @@
-"""Cross-language conformance for the injectable claims validators (issue #603).
+"""Cross-language internal spec-vector tests for the injectable claims validators (issue #603).
 
 Drives the shared vectors in ``spec/test-fixtures/claims-validation/vectors.json``
 against the real Python validators. The Go (#624) and Rust (#625) runners read

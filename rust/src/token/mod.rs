@@ -1115,12 +1115,12 @@ mod tests {
 
     // ---- RFC 8693 token exchange (EXCH-001..EXCH-006) --------------------
     //
-    // These drive the same shared conformance fixtures the cross-language
+    // These drive the same shared spec fixtures the cross-language
     // contract (spec/vectors/token-exchange.json) references and the Go
     // reference replays, so the two implementations cannot drift apart on the
     // wire format or the parsed response.
 
-    /// Reads a shared conformance fixture from
+    /// Reads a shared spec fixture from
     /// `spec/test-fixtures/token-exchange`. Unit tests run with `rust/` as the
     /// working directory.
     fn exchange_fixture(name: &str) -> String {

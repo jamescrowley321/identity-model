@@ -10,7 +10,7 @@
 //	}
 //	key, ok := set.ResolveKey("rsa-sig-key")
 //
-// Behaviour is governed by the cross-language conformance contract in
+// Behaviour is governed by the cross-language spec-vector contract in
 // spec/vectors/jwks.json (test IDs JWKS-001..JWKS-011) and the capability
 // definitions in spec/capabilities.md:
 //

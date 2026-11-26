@@ -19,7 +19,7 @@ import (
 	"github.com/jamescrowley321/identity-model/go/pkg/jwt"
 )
 
-// Fixed clock matching the shared conformance vectors, so the real
+// Fixed clock matching the shared spec vectors, so the real
 // at_hash/c_hash and auth_time values below are reusable.
 const fixedNowUnix = 1_700_000_000
 

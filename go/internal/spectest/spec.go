@@ -1,4 +1,4 @@
-// Package conformance is the shared, cross-language conformance harness for
+// Package spectest is the shared, cross-language internal spec-vector harness for
 // identity-model. It loads the language-neutral vector definitions in
 // spec/vectors/*.json so every language binding validates against a single
 // source of truth rather than a per-language copy of the tests.
@@ -7,7 +7,7 @@
 // codes (see the Error* constants); each language executor maps them to its own
 // error types. Expected behaviour tracks the OIDF-certified py-identity-model
 // reference implementation.
-package conformance
+package spectest
 
 import (
 	"bytes"
@@ -42,7 +42,7 @@ type Capability struct {
 	Tests      []Case `json:"tests"`
 }
 
-// Case is one conformance test id. The prose fields (Given/When/Then) are the
+// Case is one spec-vector test id. The prose fields (Given/When/Then) are the
 // human contract; Vectors are the machine-executable form.
 type Case struct {
 	ID         string   `json:"id"`

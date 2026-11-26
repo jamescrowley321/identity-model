@@ -1,4 +1,4 @@
-package conformance
+package spectest
 
 import (
 	"encoding/json"
