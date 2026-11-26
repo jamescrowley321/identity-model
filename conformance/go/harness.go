@@ -219,12 +219,29 @@ var errIssuerNotAllowed = errors.New("issuer origin is not in RP_ALLOWED_ISSUER_
 
 // fetchProvider runs discovery for issuer, matching the document's issuer
 // exactly (OIDC Discovery 1.0 §4.3). An issuer outside a configured allowlist
-// is refused before any request is made.
+// is refused before any request is made, and so is a document whose
+// endpoints the harness would follow leave the allowlist.
 func (s *server) fetchProvider(ctx context.Context, issuer string) (*discovery.ProviderConfiguration, error) {
-	if !issuerAllowed(s.cfg.allowedIssuerOrigins, issuer) {
+	allowed := s.cfg.allowedIssuerOrigins
+	if !issuerAllowed(allowed, issuer) {
 		return nil, errIssuerNotAllowed
 	}
-	return discovery.FetchConfiguration(ctx, issuer, discovery.WithHTTPClient(s.cfg.httpClient))
+	provider, err := discovery.FetchConfiguration(ctx, issuer, discovery.WithHTTPClient(s.cfg.httpClient))
+	if err != nil {
+		return nil, err
+	}
+	for _, ep := range []struct{ name, url string }{
+		{"authorization_endpoint", provider.AuthorizationEndpoint},
+		{"token_endpoint", provider.TokenEndpoint},
+		{"jwks_uri", provider.JWKSURI},
+		{"userinfo_endpoint", provider.UserInfoEndpoint},
+	} {
+		// An absent endpoint is left to the step that needs it.
+		if ep.url != "" && !issuerAllowed(allowed, ep.url) {
+			return nil, fmt.Errorf("discovered %s %q: %w", ep.name, ep.url, errIssuerNotAllowed)
+		}
+	}
+	return provider, nil
 }
 
 // discover fetches and validates discovery only (Config RP discovery modules).

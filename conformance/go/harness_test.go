@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,14 +55,16 @@ type fakeOP struct {
 
 	mu              sync.Mutex
 	discoveryIssuer string // "" = the real issuer
-	published       []signingKey
-	signer          *signingKey // nil = alg none
-	omitKid         bool
-	mutate          func(claims map[string]any)
-	userinfoSub     string
-	nonces          map[string]string // code -> nonce
-	jwksFetches     int
-	discoFetches    int
+	// endpoints overrides discovery metadata members by name.
+	endpoints    map[string]string
+	published    []signingKey
+	signer       *signingKey // nil = alg none
+	omitKid      bool
+	mutate       func(claims map[string]any)
+	userinfoSub  string
+	nonces       map[string]string // code -> nonce
+	jwksFetches  int
+	discoFetches int
 	// tokenHook, when set, runs at the start of every token request, outside
 	// op.mu, so a test can hold a callback on the token endpoint.
 	tokenHook func()
@@ -96,11 +99,12 @@ func (op *fakeOP) discovery(w http.ResponseWriter, _ *http.Request) {
 	op.mu.Lock()
 	op.discoFetches++
 	iss := op.discoveryIssuer
+	overrides := maps.Clone(op.endpoints)
 	op.mu.Unlock()
 	if iss == "" {
 		iss = op.issuer()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	doc := map[string]any{
 		"issuer":                                iss,
 		"authorization_endpoint":                op.issuer() + "/authorize",
 		"token_endpoint":                        op.issuer() + "/token",
@@ -109,7 +113,11 @@ func (op *fakeOP) discovery(w http.ResponseWriter, _ *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-	})
+	}
+	for k, v := range overrides {
+		doc[k] = v
+	}
+	writeJSON(w, http.StatusOK, doc)
 }
 
 func (op *fakeOP) jwks(w http.ResponseWriter, _ *http.Request) {
@@ -740,6 +748,45 @@ func TestIssuerAllowlist(t *testing.T) {
 			t.Fatalf("callback status %d: %s", resp.StatusCode, body)
 		}
 		rg.wantResult("t-allow", success("t-allow"))
+	})
+	for _, member := range []string{"authorization_endpoint", "token_endpoint", "jwks_uri", "userinfo_endpoint"} {
+		t.Run("refuses a discovered "+member+" outside the allowlist", func(t *testing.T) {
+			rg := newRigWith(t, func(cfg *serverConfig, op *fakeOP) {
+				cfg.allowedIssuerOrigins = []string{op.issuer()}
+				op.endpoints = map[string]string{member: "https://evil.example/" + member}
+			})
+			id := "t-ep-" + member
+			if resp := rg.get("/discover", url.Values{"issuer": {rg.op.issuer()}, "test_id": {id}, "test_name": {id}, "profile": {"config-rp"}}); resp.StatusCode != http.StatusBadGateway {
+				t.Fatalf("discover status %d, want 502", resp.StatusCode)
+			}
+			rg.wantResult(id, rejected(id, reasonIssuerNotAllowed))
+			aid := id + "-authz"
+			if resp := rg.get("/authorize", authorizeParams(rg.op.issuer(), aid, aid)); resp.StatusCode != http.StatusBadGateway {
+				t.Fatalf("authorize status %d, want 502", resp.StatusCode)
+			}
+			rg.wantResult(aid, rejected(aid, reasonIssuerNotAllowed))
+		})
+	}
+	t.Run("an empty allowlist follows off-origin endpoints", func(t *testing.T) {
+		rg := newRigWith(t, func(_ *serverConfig, op *fakeOP) {
+			op.endpoints = map[string]string{"userinfo_endpoint": "https://evil.example/userinfo"}
+		})
+		q := url.Values{"issuer": {rg.op.issuer()}, "test_id": {"t-open"}, "test_name": {"t-open"}, "profile": {"config-rp"}}
+		if resp := rg.get("/discover", q); resp.StatusCode != http.StatusOK {
+			t.Fatalf("discover status %d, want 200", resp.StatusCode)
+		}
+		rg.wantResult("t-open", success("t-open"))
+	})
+	t.Run("an allowlisted issuer without a userinfo_endpoint logs in", func(t *testing.T) {
+		rg := newRigWith(t, func(cfg *serverConfig, op *fakeOP) {
+			cfg.allowedIssuerOrigins = []string{op.issuer()}
+			op.endpoints = map[string]string{"userinfo_endpoint": ""}
+		})
+		if resp := rg.login("t-nouserinfo"); resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("callback status %d: %s", resp.StatusCode, body)
+		}
+		rg.wantResult("t-nouserinfo", success("t-nouserinfo"))
 	})
 }
 
