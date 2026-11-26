@@ -330,9 +330,9 @@ pub(crate) fn check_declared_alg(key: &JsonWebKey, alg: &str) -> Result<()> {
 
 /// Whether `key` can verify a token signed with a non-empty `alg`: its `kty`
 /// is the one `alg` needs (RFC 7518 §3.1), it declares no `alg` or `alg`
-/// itself (RFC 7517 §4.4), and for ECDSA its `crv` is the curve `alg` is
-/// defined on (RFC 7518 §3.4, RFC 8812 §3.2). An `alg` with no known key type
-/// or curve leaves that check out.
+/// itself (RFC 7517 §4.4), and for ECDSA or a fully specified EdDSA alg its
+/// `crv` is the curve `alg` is defined on (RFC 7518 §3.4, RFC 8812 §3.2,
+/// RFC 9864). An `alg` with no known key type or curve leaves that check out.
 fn key_fits_alg(key: &JsonWebKey, alg: &str) -> bool {
     !alg.is_empty()
         && alg_kty(alg).is_none_or(|kty| key.kty == kty)
@@ -340,13 +340,16 @@ fn key_fits_alg(key: &JsonWebKey, alg: &str) -> bool {
         && alg_crv(alg).is_none_or(|crv| key.crv == crv)
 }
 
-/// The curve an ECDSA `alg` is defined on (RFC 7518 §3.4, RFC 8812 §3.2).
+/// The curve an ECDSA or fully specified EdDSA `alg` is defined on (RFC 7518
+/// §3.4, RFC 8812 §3.2, RFC 9864). Plain `EdDSA` names no curve.
 fn alg_crv(alg: &str) -> Option<&'static str> {
     match alg {
         "ES256" => Some("P-256"),
         "ES384" => Some("P-384"),
         "ES512" => Some("P-521"),
         "ES256K" => Some("secp256k1"),
+        "Ed25519" => Some("Ed25519"),
+        "Ed448" => Some("Ed448"),
         _ => None,
     }
 }
@@ -756,6 +759,34 @@ mod tests {
                 same_kid_choice(&body, "k", alg).unwrap_or_else(|e| panic!("{alg}: {e}")),
                 choice("EC", crv, "", ""),
                 "{alg}"
+            );
+        }
+    }
+
+    // #1153 (RFC 8037 §2, RFC 9864): the fully specified EdDSA algs name their
+    // curve, so a same-kid OKP key on the other curve is passed over; plain
+    // EdDSA names none and keeps the first OKP key.
+    #[test]
+    fn resolve_signing_key_same_kid_picks_okp_curve_fitting_alg() {
+        for (alg, decoy, crv) in [
+            ("Ed25519", "Ed448", "Ed25519"),
+            ("Ed448", "Ed25519", "Ed448"),
+        ] {
+            let body = format!(
+                r#"{{ "keys": [
+                    {{"kty":"OKP","kid":"k","use":"sig","crv":"{decoy}","x":"a"}},
+                    {{"kty":"OKP","kid":"k","use":"sig","crv":"{crv}","x":"a"}}
+                ] }}"#
+            );
+            assert_eq!(
+                same_kid_choice(&body, "k", alg).unwrap_or_else(|e| panic!("{alg}: {e}")),
+                choice("OKP", crv, "", ""),
+                "{alg}"
+            );
+            assert_eq!(
+                same_kid_choice(&body, "k", "EdDSA").expect("EdDSA"),
+                choice("OKP", decoy, "", ""),
+                "EdDSA after {decoy}"
             );
         }
     }
