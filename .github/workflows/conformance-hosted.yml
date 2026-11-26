@@ -110,7 +110,7 @@ jobs:
           RP_PUBLIC_URL: ${{ inputs.dynamic_logout && inputs.rp_public_url || '' }}
         run: |
           if [ -n "$RP_PUBLIC_URL" ]; then
-            export RP_INTERNAL_BASE_URL="$RP_PUBLIC_URL"
+            export RP_INTERNAL_BASE_URL="${RP_PUBLIC_URL%/}"
           fi
           uvicorn app:app --host 0.0.0.0 --port 8888 &
           echo "Waiting for RP harness..."

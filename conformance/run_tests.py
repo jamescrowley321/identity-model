@@ -77,6 +77,17 @@ OP_CALLBACK_PROFILES = {
 }
 
 
+def effective_rp_public_url(suite_url: str, rp_public_url: str | None) -> str | None:
+    """Return the public RP URL to use against ``suite_url``.
+
+    A local suite reaches the harness over the docker network, so a leftover
+    public URL must not replace the config's ``backchannel_logout_uri`` there.
+    """
+    if not rp_public_url or _is_local_suite(suite_url):
+        return None
+    return rp_public_url
+
+
 def rp_public_url_problem(
     profile: str, suite_url: str, rp_public_url: str | None
 ) -> str | None:
@@ -134,7 +145,7 @@ def rp_public_url_unreachable(rp_public_url: str) -> str | None:
     base = rp_public_url.rstrip("/")
     try:
         response = httpx.get(f"{base}/health", timeout=15.0)
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
         return f"RP harness not reachable at {base}/health: {exc}"
     if response.status_code != 200:
         return f"RP harness at {base}/health answered HTTP {response.status_code}"
@@ -142,7 +153,7 @@ def rp_public_url_unreachable(rp_public_url: str) -> str | None:
         op_facing = str(response.json().get("op_facing_base_url", ""))
     except (ValueError, AttributeError):
         return f"{base}/health did not return the harness's JSON health body"
-    if op_facing.rstrip("/") != base:
+    if op_facing != base:
         return (
             f"the harness at {base} hands the OP {op_facing!r} as its base URL; "
             f"start it with RP_INTERNAL_BASE_URL={base}"
@@ -1740,9 +1751,12 @@ def main() -> None:
         )
         sys.exit(1)
 
-    problem = rp_public_url_problem(args.plan, args.suite_url, args.rp_public_url)
-    if problem is None and args.rp_public_url and args.plan in OP_CALLBACK_PROFILES:
-        problem = rp_public_url_unreachable(args.rp_public_url)
+    rp_public_url = effective_rp_public_url(args.suite_url, args.rp_public_url)
+    if args.rp_public_url and rp_public_url is None:
+        logger.warning("Ignoring --rp-public-url for a local suite")
+    problem = rp_public_url_problem(args.plan, args.suite_url, rp_public_url)
+    if problem is None and rp_public_url and args.plan in OP_CALLBACK_PROFILES:
+        problem = rp_public_url_unreachable(rp_public_url)
     if problem:
         logger.error("%s", problem)
         sys.exit(1)
@@ -1779,7 +1793,7 @@ def main() -> None:
         publish=publish_value,
         profile=args.plan,
         only_module=args.only_module,
-        rp_public_url=args.rp_public_url,
+        rp_public_url=rp_public_url,
     )
 
     all_ok = print_summary(results)

@@ -234,7 +234,8 @@ RP_BASE_URL = os.environ.get("RP_BASE_URL", "http://localhost:8888")
 # OP-facing base URL: used for request_uri, which the OP fetches server-to-server.
 # Inside docker the OP reaches the RP by its compose service name, not localhost;
 # defaults to RP_BASE_URL for non-docker runs.
-RP_INTERNAL_BASE_URL = os.environ.get("RP_INTERNAL_BASE_URL", RP_BASE_URL)
+# A trailing slash would make request_uri ``//request-object/...``, which 404s.
+RP_INTERNAL_BASE_URL = os.environ.get("RP_INTERNAL_BASE_URL", RP_BASE_URL).rstrip("/")
 
 # ---------------------------------------------------------------------------
 # RP signing key for JWT Secured Authorization Requests (JAR, RFC 9101)

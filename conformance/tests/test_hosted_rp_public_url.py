@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from run_tests import (
     OP_CALLBACK_PROFILES,
     apply_rp_public_url,
+    effective_rp_public_url,
     rp_public_url_problem,
     rp_public_url_unreachable,
 )
@@ -86,6 +87,12 @@ def test_logout_configs_register_the_public_backchannel_uri(profile):
     assert client["backchannel_logout_uri"] == "http://rp:8888/backchannel-logout"
 
 
+def test_public_url_is_ignored_for_a_local_suite():
+    assert effective_rp_public_url(LOCAL, PUBLIC) is None
+    assert effective_rp_public_url(HOSTED, PUBLIC) == PUBLIC
+    assert effective_rp_public_url(HOSTED, None) is None
+
+
 def test_client_without_backchannel_uri_is_unchanged():
     client = {"client_id": "conformance-rp"}
 
@@ -110,10 +117,24 @@ def test_health_reports_the_op_facing_base_url():
 @respx.mock
 def test_reachable_harness_with_matching_base_passes():
     respx.get(f"{PUBLIC}/health").respond(
-        json={"status": "ok", "op_facing_base_url": PUBLIC + "/"}
+        json={"status": "ok", "op_facing_base_url": PUBLIC}
     )
 
     assert rp_public_url_unreachable(PUBLIC + "/") is None
+
+
+@respx.mock
+def test_harness_base_with_trailing_slash_is_refused():
+    # It would build request_uri as https://host//request-object/<id>.
+    respx.get(f"{PUBLIC}/health").respond(
+        json={"status": "ok", "op_facing_base_url": PUBLIC + "/"}
+    )
+
+    assert rp_public_url_unreachable(PUBLIC) is not None
+
+
+def test_malformed_url_is_reported_not_raised():
+    assert "not reachable" in (rp_public_url_unreachable("http://") or "")
 
 
 @respx.mock

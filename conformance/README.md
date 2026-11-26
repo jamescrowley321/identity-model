@@ -102,6 +102,14 @@ inbound address, so that URL has to be routed to the runner by something else
 (a tunnel started in the job, or a self-hosted runner with public ingress);
 the workflow does not set one up.
 
+Expose **only** `GET /health`, `GET /request-object/*` and
+`POST /backchannel-logout` through that ingress, and only for the run. The
+harness is unauthenticated: `/discover` and `/register` make the runner fetch
+any issuer they are given (SSRF), `/register` and `/clear-cache` change the
+harness's state, and `/logout` redirects with an `id_token_hint`. Anyone who
+could reach them could tamper with a run's results. The URL is also visible in
+the dispatch inputs and the run log.
+
 ## How a module passes
 
 The suite judges the RP from the OP side: for a negative module it only sees
