@@ -20,6 +20,7 @@ from run_tests import (
     parse_plan_list,
     resolve_harness_run,
     resolve_plans,
+    resolve_rp_urls,
 )
 
 
@@ -236,6 +237,68 @@ def test_hosted_plan_without_op_callbacks_needs_no_public_url(tmp_path, harness,
     _write(tmp_path, name, {**PLAN_CONFIG, "rp_url": GO_RP_URL})
 
     assert resolve_plans(harness, plan, suite_url=HOSTED, config_dir=tmp_path) == [plan]
+
+
+@pytest.mark.parametrize("harness", [Harness.GO, Harness.RUST])
+def test_hosted_default_skips_discovered_op_callback_plans_without_public_url(
+    tmp_path, harness, caplog
+):
+    for plan in ["basic-rp", "dynamic-rp", "fapi2-rp", "backchannel-logout-rp"]:
+        _write(tmp_path, f"{harness}-{plan}", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    assert resolve_plans(harness, "", suite_url=HOSTED, config_dir=tmp_path) == [
+        "basic-rp",
+        "fapi2-rp",
+    ]
+    assert "skipping dynamic-rp, backchannel-logout-rp" in caplog.text
+    assert resolve_plans(
+        harness, "", suite_url=HOSTED, rp_public_url=PUBLIC, config_dir=tmp_path
+    ) == ["basic-rp", "fapi2-rp", "dynamic-rp", "backchannel-logout-rp"]
+    assert resolve_plans(harness, "", suite_url=LOCAL, config_dir=tmp_path) == [
+        "basic-rp",
+        "fapi2-rp",
+        "dynamic-rp",
+        "backchannel-logout-rp",
+    ]
+
+
+def test_hosted_default_with_only_op_callback_plans_is_an_error(tmp_path):
+    _write(tmp_path, "go-dynamic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    with pytest.raises(HarnessError, match="needs --rp-public-url"):
+        resolve_plans(Harness.GO, "", suite_url=HOSTED, config_dir=tmp_path)
+
+
+def test_hosted_default_still_rejects_a_malformed_public_url(tmp_path):
+    for plan in ["basic-rp", "dynamic-rp"]:
+        _write(tmp_path, f"go-{plan}", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    with pytest.raises(HarnessError, match="not an absolute http"):
+        resolve_plans(
+            Harness.GO,
+            "",
+            suite_url=HOSTED,
+            rp_public_url="ftp://x",
+            config_dir=tmp_path,
+        )
+
+
+def test_rp_urls_are_distinct_per_resolved_config(tmp_path):
+    mtls_url = "https://localhost:8891"
+    _write(tmp_path, "go-basic-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+    _write(tmp_path, "go-config-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL + "/"})
+    _write(tmp_path, "go-fapi2-mtls-rp", {**PLAN_CONFIG, "rp_url": mtls_url})
+
+    assert resolve_rp_urls(
+        Harness.GO, ["fapi2-mtls-rp", "basic-rp", "config-rp"], config_dir=tmp_path
+    ) == [mtls_url, GO_RP_URL]
+
+
+def test_rp_urls_need_no_basic_rp_config(tmp_path):
+    _write(tmp_path, "rust-fapi2-rp", {**PLAN_CONFIG, "rp_url": GO_RP_URL})
+
+    plans = resolve_plans(Harness.RUST, "", config_dir=tmp_path)
+    assert resolve_rp_urls(Harness.RUST, plans, config_dir=tmp_path) == [GO_RP_URL]
 
 
 def test_missing_go_config_is_an_error(tmp_path):

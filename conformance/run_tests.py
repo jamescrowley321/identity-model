@@ -1625,7 +1625,8 @@ class Harness(StrEnum):
 # Plans the rp-fastapi package regression runs (against :8889); no other
 # harness runs them.
 FASTAPI_PLAN_PREFIX = "fastapi-"
-# What ``make conformance-test`` runs for the Python harness when PLANS is unset.
+# ``--resolve-plans`` default for the Python harness. ``make conformance-test``
+# hardcodes the same three plans for py and does not call ``--resolve-plans``.
 DEFAULT_PY_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
 
 
@@ -1728,9 +1729,11 @@ def resolve_plans(
     Python harness, every plan with a ``configs/<harness>-*.json`` for Go and
     Rust. Every plan must resolve (:func:`resolve_harness_run`) and, on a
     hosted suite, an OP-callback plan needs a public RP URL; all of it is
-    checked before the first plan runs.
+    checked before the first plan runs. A discovered (not named) OP-callback
+    plan is skipped with a warning instead when no public RP URL is given.
     """
     plans = parse_plan_list(spec)
+    discovered = False
     if not plans:
         if harness is Harness.PY:
             plans = list(DEFAULT_PY_PLANS)
@@ -1742,6 +1745,7 @@ def resolve_plans(
                 raise HarnessError(
                     f"no {config_dir / f'{harness}-<plan>.json'} config exists"
                 )
+            discovered = True
     if harness is Harness.PY:
         known = harness_plans(manifest_path)
         unknown = [p for p in plans if p not in known]
@@ -1751,11 +1755,25 @@ def resolve_plans(
                 f"{', '.join(known)} (fastapi-* plans: make conformance-test-fastapi)"
             )
     public_url = effective_rp_public_url(suite_url, rp_public_url)
+    hosted = not _is_local_suite(suite_url)
+    if discovered and hosted and not public_url:
+        skipped = [p for p in plans if p in OP_CALLBACK_PROFILES]
+        if skipped:
+            logger.warning(
+                "skipping %s: the hosted OP calls back to the RP in these plans "
+                "and no --rp-public-url was given",
+                ", ".join(skipped),
+            )
+            plans = [p for p in plans if p not in OP_CALLBACK_PROFILES]
+            if not plans:
+                raise HarnessError(
+                    f"every {harness} plan needs --rp-public-url on a hosted suite"
+                )
     for plan in plans:
         resolve_harness_run(
             harness,
             plan,
-            hosted=not _is_local_suite(suite_url),
+            hosted=hosted,
             config_dir=config_dir,
             manifest_path=manifest_path,
         )
@@ -1763,6 +1781,28 @@ def resolve_plans(
         if problem:
             raise HarnessError(problem)
     return plans
+
+
+def resolve_rp_urls(
+    harness: Harness,
+    plans: list[str],
+    *,
+    hosted: bool = False,
+    config_dir: Path = CONFIG_DIR,
+    manifest_path: Path = MANIFEST_PATH,
+) -> list[str]:
+    """Distinct RP base URLs the given plans' configs point at, in plan order."""
+    urls = (
+        resolve_harness_run(
+            harness,
+            plan,
+            hosted=hosted,
+            config_dir=config_dir,
+            manifest_path=manifest_path,
+        ).rp_base_url
+        for plan in plans
+    )
+    return list(dict.fromkeys(urls))
 
 
 def resolve_harness_run(
@@ -1870,6 +1910,14 @@ def main() -> None:
             f"{' '.join(DEFAULT_PY_PLANS)}; go/rust: every plan with a "
             "configs/<harness>-<plan>.json). Fails if a plan has no usable "
             "config, or needs --rp-public-url on a hosted --suite-url."
+        ),
+    )
+    parser.add_argument(
+        "--print-rp-urls",
+        action="store_true",
+        help=(
+            "With --resolve-plans: print the distinct RP base URLs of the "
+            "resolved plans' configs instead of the plans."
         ),
     )
     parser.add_argument(
@@ -1981,6 +2029,12 @@ def main() -> None:
                 suite_url=args.suite_url,
                 rp_public_url=args.rp_public_url,
             )
+            if args.print_rp_urls:
+                plans = resolve_rp_urls(
+                    args.harness,
+                    plans,
+                    hosted=not _is_local_suite(args.suite_url),
+                )
         except HarnessError as exc:
             logger.error("%s", exc)
             sys.exit(1)
