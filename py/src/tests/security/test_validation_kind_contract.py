@@ -103,6 +103,25 @@ def test_empty_key_set_is_a_key_selection_rejection():
     }
 
 
+def test_key_that_does_not_fit_alg_is_a_key_selection_rejection():
+    with pytest.raises(TokenValidationException) as exc_info:
+        decode_and_validate_jwt(
+            _header_only_jwt("RS256"),
+            {"kty": "RSA"},
+            ["RS256"],
+            audience=None,
+            issuer=None,
+            options=None,
+        )
+
+    assert _contract(exc_info.value) == {
+        "type": TokenValidationException,
+        "validation_kind": TokenValidationErrorKind.KEY_SELECTION,
+        "message": "Key cannot verify the token",
+        "token_part": "header",
+    }
+
+
 def test_default_allowed_header_alg_is_accepted():
     assert resolve_algorithms(_header_only_jwt("RS256"), None) == ["RS256"]
 
