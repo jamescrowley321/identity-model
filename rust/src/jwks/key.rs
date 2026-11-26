@@ -212,11 +212,21 @@ impl JsonWebKeySet {
         self.keys.iter().find(|k| k.kid == kid)
     }
 
-    /// Returns the signing key whose `kid` matches, scanning the in-memory set
-    /// only. A key whose `use` is not `sig` or absent is skipped (RFC 7517
-    /// §4.2).
-    pub(crate) fn find_signing(&self, kid: &str) -> Option<&JsonWebKey> {
-        self.keys.iter().find(|k| k.kid == kid && is_signing_key(k))
+    /// Returns the signing key whose `kid` matches for a token signed with
+    /// `alg`, scanning the in-memory set only. A key whose `use` is not `sig`
+    /// or absent is skipped (RFC 7517 §4.2).
+    ///
+    /// Keys of different types may share a `kid` (RFC 7517 §4.5), so the
+    /// first matching key that [fits](key_fits_alg) `alg` is returned. When
+    /// none fits, the first matching key is returned so the caller's
+    /// [`check_declared_alg`] reports why it cannot verify the token.
+    pub(crate) fn find_signing(&self, kid: &str, alg: &str) -> Option<&JsonWebKey> {
+        let mut matches = self
+            .keys
+            .iter()
+            .filter(|k| k.kid == kid && is_signing_key(k));
+        let first = matches.clone().next()?;
+        Some(matches.find(|k| key_fits_alg(k, alg)).unwrap_or(first))
     }
 
     /// Resolves the key whose `kid` matches (JWKS-003, RFC 7517 §4.5),
@@ -236,7 +246,9 @@ impl JsonWebKeySet {
     /// Only signing keys are candidates: keys whose `use` is `sig` or absent
     /// (RFC 7517 §4.2). A `use` `enc` key is never returned (JWKS-011).
     ///
-    /// With a `kid` it is the signing key with that `kid`. With no `kid` (an
+    /// With a `kid` it is the signing key with that `kid`; when several share
+    /// it (RFC 7517 §4.5), the first whose `kty`, declared `alg` and, for
+    /// ECDSA, `crv` fit `alg`, else the first of them. With no `kid` (an
     /// OP may omit it when its set holds a single key, OIDC Core 1.0 §10.1)
     /// the signing keys are narrowed, while more than one remains, to keys
     /// whose `alg` is absent or equals `alg` (§4.4) and to keys whose `kty`
@@ -260,7 +272,7 @@ impl JsonWebKeySet {
         let key = if kid.is_empty() {
             self.resolve_kidless(alg)?
         } else {
-            self.find_signing(kid)
+            self.find_signing(kid, alg)
                 .ok_or_else(|| IdentityError::KeyNotFound(kid.to_string()))?
         };
         check_declared_alg(key, alg)?;
@@ -314,6 +326,29 @@ pub(crate) fn check_declared_alg(key: &JsonWebKey, alg: &str) -> Result<()> {
         key_alg: key.alg.clone(),
         alg: alg.to_string(),
     })
+}
+
+/// Whether `key` can verify a token signed with a non-empty `alg`: its `kty`
+/// is the one `alg` needs (RFC 7518 §3.1), it declares no `alg` or `alg`
+/// itself (RFC 7517 §4.4), and for ECDSA its `crv` is the curve `alg` is
+/// defined on (RFC 7518 §3.4, RFC 8812 §3.2). An `alg` with no known key type
+/// or curve leaves that check out.
+fn key_fits_alg(key: &JsonWebKey, alg: &str) -> bool {
+    !alg.is_empty()
+        && alg_kty(alg).is_none_or(|kty| key.kty == kty)
+        && (key.alg.is_empty() || key.alg == alg)
+        && alg_crv(alg).is_none_or(|crv| key.crv == crv)
+}
+
+/// The curve an ECDSA `alg` is defined on (RFC 7518 §3.4, RFC 8812 §3.2).
+fn alg_crv(alg: &str) -> Option<&'static str> {
+    match alg {
+        "ES256" => Some("P-256"),
+        "ES384" => Some("P-384"),
+        "ES512" => Some("P-521"),
+        "ES256K" => Some("secp256k1"),
+        _ => None,
+    }
 }
 
 /// Returns the keys that satisfy `keep`, or `keys` unchanged when none does.
@@ -654,6 +689,119 @@ mod tests {
                 "rsa-rs384-key"
             );
         }
+    }
+
+    /// Resolves `kid` with `alg` in `body` and returns the chosen key's
+    /// `kty`/`crv`/`alg`/`n`, which tell the same-kid keys apart.
+    fn same_kid_choice(
+        body: &str,
+        kid: &str,
+        alg: &str,
+    ) -> Result<(String, String, String, String)> {
+        let set = JsonWebKeySet::parse(body.as_bytes()).expect("parses");
+        set.resolve_signing_key(kid, alg)
+            .map(|k| (k.kty.clone(), k.crv.clone(), k.alg.clone(), k.n.clone()))
+    }
+
+    fn choice(kty: &str, crv: &str, alg: &str, n: &str) -> (String, String, String, String) {
+        (kty.into(), crv.into(), alg.into(), n.into())
+    }
+
+    // #1153 (RFC 7517 §4.5): keys of different kty may share a kid; the one
+    // whose kty fits the token alg is chosen over an earlier decoy.
+    #[test]
+    fn resolve_signing_key_same_kid_picks_kty_fitting_alg() {
+        let body = r#"{ "keys": [
+            {"kty":"OKP","kid":"k","use":"sig","crv":"Ed25519","x":"a"},
+            {"kty":"EC","kid":"k","use":"sig","crv":"P-256","x":"a","y":"a"},
+            {"kty":"RSA","kid":"k","use":"sig","n":"r","e":"AQAB"}
+        ] }"#;
+        assert_eq!(
+            same_kid_choice(body, "k", "ES256").expect("ec"),
+            choice("EC", "P-256", "", "")
+        );
+        assert_eq!(
+            same_kid_choice(body, "k", "RS256").expect("rsa"),
+            choice("RSA", "", "", "r")
+        );
+        assert_eq!(
+            same_kid_choice(body, "k", "EdDSA").expect("okp"),
+            choice("OKP", "Ed25519", "", "")
+        );
+    }
+
+    // #1153 (RFC 7518 §3.4, RFC 8812 §3.2): an ECDSA alg is defined on one
+    // curve, so same-kid EC keys on the other curves are passed over: each
+    // alg's key is listed after every other curve's key.
+    #[test]
+    fn resolve_signing_key_same_kid_picks_curve_fitting_alg() {
+        let curves = [
+            ("ES256", "P-256"),
+            ("ES384", "P-384"),
+            ("ES512", "P-521"),
+            ("ES256K", "secp256k1"),
+        ];
+        for (alg, crv) in curves {
+            let keys: Vec<String> = curves
+                .iter()
+                .map(|&(_, c)| c)
+                .filter(|&c| c != crv)
+                .chain([crv])
+                .map(|c| {
+                    format!(r#"{{"kty":"EC","kid":"k","use":"sig","crv":"{c}","x":"a","y":"a"}}"#)
+                })
+                .collect();
+            let body = format!(r#"{{ "keys": [{}] }}"#, keys.join(","));
+            assert_eq!(
+                same_kid_choice(&body, "k", alg).unwrap_or_else(|e| panic!("{alg}: {e}")),
+                choice("EC", crv, "", ""),
+                "{alg}"
+            );
+        }
+    }
+
+    // #1153 (RFC 7517 §4.4): a same-kid key declaring another alg is passed
+    // over for one declaring the token alg.
+    #[test]
+    fn resolve_signing_key_same_kid_picks_declared_alg() {
+        let body = r#"{ "keys": [
+            {"kty":"RSA","kid":"k","use":"sig","alg":"RS384","n":"first","e":"AQAB"},
+            {"kty":"RSA","kid":"k","use":"sig","alg":"RS256","n":"second","e":"AQAB"}
+        ] }"#;
+        assert_eq!(
+            same_kid_choice(body, "k", "RS256").expect("rs256"),
+            choice("RSA", "", "RS256", "second")
+        );
+        assert_eq!(
+            same_kid_choice(body, "k", "RS384").expect("rs384"),
+            choice("RSA", "", "RS384", "first")
+        );
+    }
+
+    // #1153: when no same-kid key fits, the first is chosen so JWKS-010
+    // reports why it cannot verify the token; with no alg the first is kept.
+    #[test]
+    fn resolve_signing_key_same_kid_without_fit_uses_first() {
+        let body = r#"{ "keys": [
+            {"kty":"RSA","kid":"k","use":"sig","alg":"RS384","n":"first","e":"AQAB"},
+            {"kty":"RSA","kid":"k","use":"sig","alg":"RS512","n":"second","e":"AQAB"}
+        ] }"#;
+        match same_kid_choice(body, "k", "PS256") {
+            Err(IdentityError::KeyAlgorithmMismatch { kid, key_alg, alg }) => assert_eq!(
+                (kid.as_str(), key_alg.as_str(), alg.as_str()),
+                ("k", "RS384", "PS256")
+            ),
+            other => panic!("expected KeyAlgorithmMismatch, got {other:?}"),
+        }
+
+        let plain_second = r#"{ "keys": [
+            {"kty":"RSA","kid":"k","use":"sig","alg":"RS384","n":"first","e":"AQAB"},
+            {"kty":"RSA","kid":"k","use":"sig","n":"second","e":"AQAB"}
+        ] }"#;
+        assert_eq!(
+            same_kid_choice(plain_second, "k", "").expect("no alg"),
+            choice("RSA", "", "RS384", "first")
+        );
     }
 
     // A token with a kid keeps the kid lookup.
