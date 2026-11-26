@@ -117,7 +117,9 @@ def test_native_config_without_rp_url_is_an_error(tmp_path):
         )
 
 
-@pytest.mark.parametrize("rp_url", ["localhost:8890", "ftp://x", 8890, ""])
+@pytest.mark.parametrize(
+    "rp_url", ["localhost:8890", "ftp://x", 8890, "", "http://[::1"]
+)
 def test_malformed_rp_url_is_an_error(tmp_path, rp_url):
     _write(tmp_path, "go-basic-rp", {**PLAN_CONFIG, "rp_url": rp_url})
 

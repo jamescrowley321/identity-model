@@ -1541,11 +1541,18 @@ def _config_rp_url(config: dict, config_path: Path) -> str | None:
     rp_url = config.get("rp_url")
     if rp_url is None:
         return None
-    parsed = urlparse(rp_url) if isinstance(rp_url, str) else None
-    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise HarnessError(
-            f"{config_path}: rp_url must be an http(s) URL, got {rp_url!r}"
-        )
+    error = HarnessError(
+        f"{config_path}: rp_url must be an http(s) URL, got {rp_url!r}"
+    )
+    if not isinstance(rp_url, str):
+        raise error
+    try:
+        parsed = urlparse(rp_url)
+        valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    except ValueError as exc:
+        raise error from exc
+    if not valid:
+        raise error
     return rp_url.rstrip("/")
 
 
