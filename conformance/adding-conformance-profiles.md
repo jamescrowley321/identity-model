@@ -154,7 +154,8 @@ SKIP is a coverage hole, not a pass.
 ## Adding a harness (Go, Rust)
 
 The Go and Rust RP harnesses run the same OIDF conformance plumbing as the
-Python one. A Go or Rust harness runs the `basic-rp`, `config-rp` and `form-post-basic-rp`
+Python one. A Go or Rust harness may run any plan in `expected_modules.json` except the `fastapi-*`
+regression plans: each plan it has a `configs/<harness>-<plan>.json` for runs, starting with the `basic-rp`, `config-rp` and `form-post-basic-rp`
 plans against the Go or Rust library. It is added by its own files only; the
 runner, Makefile, workflow and manifest already handle it:
 
@@ -185,6 +186,26 @@ runner, Makefile, workflow and manifest already handle it:
   CI: the `conformance-harness` matrix job in `.github/workflows/conformance.yml`
   runs one leg per harness; a leg skips until its overlay exists. Hosted:
   `gh workflow run conformance-hosted.yml -f harness=<h> -f publish=none`.
+
+### What each plan family needs from a harness
+
+A harness turns a plan on by adding `conformance/configs/<harness>-<plan>.json`; `make
+conformance-test HARNESS=<harness>` and the `conformance-harness (<harness>)` CI leg then run it
+(`PLANS="..."` picks a subset). Mirror `conformance/app.py` for each family:
+
+| Plans | The harness must provide |
+|---|---|
+| `basic-rp`, `config-rp`, `form-post-basic-rp` | the routes in "Harness protocol" below |
+| `fapi2-rp` | PAR, `private_key_jwt` client authentication, DPoP-bound tokens, FAPI 2.0 checks |
+| `fapi2-message-signing-rp` | the above plus signed request objects (JAR) and JARM responses |
+| `fapi2-mtls-rp` | mutual-TLS client authentication and certificate-bound tokens against the suite's mTLS origin |
+| `dynamic-rp` | dynamic client registration and serving signed request objects at `request_uri` |
+| `rpinitiated-logout-rp`, `backchannel-logout-rp` | RP-initiated logout to `end_session_endpoint` and a back-channel logout endpoint |
+
+On the hosted suite, `dynamic-rp` and both logout plans need the harness reachable from the
+internet (`RP_PUBLIC_URL`; the workflow's `rp_public_url` input), because the OP calls the RP
+server-to-server. Whether the hosted FAPI 2.0 plans need the same is unverified: run one and read
+its rp-logs before relying on a GitHub-hosted runner.
 
 ### Harness protocol
 

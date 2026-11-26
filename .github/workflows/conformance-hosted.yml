@@ -42,7 +42,13 @@ on:
       # runner's localhost. This is the base URL at which the RP harness on this
       # runner is reachable from the internet; see conformance/README.md.
       rp_public_url:
-        description: "Public base URL of the RP harness on the runner (required with dynamic_logout)"
+        description: "Public base URL of the RP harness on the runner (required with dynamic_logout, and for go/rust Dynamic or logout plans)"
+        type: string
+        default: ""
+      # go/rust only: space-separated plans; empty runs every plan the harness
+      # has a conformance/configs/<harness>-<plan>.json for.
+      plans:
+        description: "go/rust: plans to run (space-separated; empty = every plan with a configs/<harness>-<plan>.json)"
         type: string
         default: ""
 
@@ -293,9 +299,11 @@ jobs:
           CONFORMANCE_SERVER: https://www.certification.openid.net/
           CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
           PUBLISH: ${{ inputs.publish }}
+          PLANS: ${{ inputs.plans }}
+          RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
         run: |
           rm -f conformance/results/hosted/"$HARNESS"-*-latest.json
-          make conformance-test HARNESS="$HARNESS" HOSTED=1 UVROOT=
+          make conformance-test HARNESS="$HARNESS" HOSTED=1 UVROOT= PLANS="$PLANS" RP_PUBLIC_URL="$RP_PUBLIC_URL"
 
       - name: Collect harness logs
         if: always()
