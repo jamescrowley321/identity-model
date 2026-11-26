@@ -395,11 +395,13 @@ conformance-down: ## Tear down conformance suite
 # See conformance/adding-conformance-profiles.md, "Adding a harness".
 HARNESS ?= py
 PLANS ?=
+export PLANS RP_PUBLIC_URL
 HARNESS_COMPOSE = docker compose -f conformance/docker-compose.yml -f conformance/docker-compose.$(HARNESS).yml
 
 .PHONY: conformance-test
 conformance-test: $(if $(filter py,$(HARNESS)),$(if $(HOSTED),,conformance-up)) ## Run conformance tests (HARNESS=py|go|rust, default py; HOSTED=1 for hosted suite)
 ifeq ($(HARNESS),py)
+	@if [ -n "$$PLANS" ]; then echo "PLANS is for HARNESS=go|rust; the py harness runs basic-rp config-rp form-post-basic-rp (Dynamic/logout: make conformance-test-dynamic-logout)"; exit 1; fi
 ifdef HOSTED
 	$(UVROOT) python conformance/run_tests.py --plan basic-rp --suite-url "$(CONFORMANCE_SERVER)" --output conformance/results/hosted/basic-rp-latest.json --export-zip conformance/results/hosted/basic-rp-export.zip --rp-logs-zip conformance/results/hosted/basic-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
 	$(UVROOT) python conformance/run_tests.py --plan config-rp --suite-url "$(CONFORMANCE_SERVER)" --output conformance/results/hosted/config-rp-latest.json --export-zip conformance/results/hosted/config-rp-export.zip --rp-logs-zip conformance/results/hosted/config-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
@@ -436,7 +438,9 @@ else
 	  sleep 5; \
 	done
 endif
-	@RP_URL=$$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["rp_url"].rstrip("/"))' conformance/configs/$(HARNESS)-basic-rp.json) || exit 1; \
+	@urls=$$($(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --resolve-plans "$$PLANS" --print-rp-urls \
+	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)") $${RP_PUBLIC_URL:+--rp-public-url "$$RP_PUBLIC_URL"}) || exit 1; \
+	for RP_URL in $$urls; do \
 	echo "Waiting for $(HARNESS) RP harness at $$RP_URL/health..."; \
 	for i in $$(seq 1 60); do \
 	  if curl -sf "$$RP_URL/health" > /dev/null 2>&1; then \
@@ -449,14 +453,15 @@ endif
 	    exit 1; \
 	  fi; \
 	  sleep 2; \
+	done; \
 	done
-	@plans=$$($(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --resolve-plans "$(PLANS)" \
-	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)") $(if $(RP_PUBLIC_URL),--rp-public-url "$(RP_PUBLIC_URL)")) || exit 1; \
+	@plans=$$($(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --resolve-plans "$$PLANS" \
+	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)") $${RP_PUBLIC_URL:+--rp-public-url "$$RP_PUBLIC_URL"}) || exit 1; \
 	echo "$(HARNESS) harness plans: $$plans"; \
 	status=0; for plan in $$plans; do \
 	  $(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --plan $$plan \
 	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)" --export-zip conformance/results/hosted/$(HARNESS)-$$plan-export.zip --rp-logs-zip conformance/results/hosted/$(HARNESS)-$$plan-rp-logs.zip --publish "$(or $(PUBLISH),none)") \
-	    $(if $(RP_PUBLIC_URL),--rp-public-url "$(RP_PUBLIC_URL)") \
+	    $${RP_PUBLIC_URL:+--rp-public-url "$$RP_PUBLIC_URL"} \
 	    --verbose || status=1; \
 	done; exit $$status
 endif
