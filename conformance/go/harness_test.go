@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -57,6 +58,10 @@ type fakeOP struct {
 	userinfoSub     string
 	nonces          map[string]string // code -> nonce
 	jwksFetches     int
+	discoFetches    int
+	// tokenHook, when set, runs at the start of every token request, outside
+	// op.mu, so a test can hold a callback on the token endpoint.
+	tokenHook func()
 }
 
 func newFakeOP(t *testing.T) *fakeOP {
@@ -79,6 +84,7 @@ func (op *fakeOP) issuer() string { return op.srv.URL }
 
 func (op *fakeOP) discovery(w http.ResponseWriter, _ *http.Request) {
 	op.mu.Lock()
+	op.discoFetches++
 	iss := op.discoveryIssuer
 	op.mu.Unlock()
 	if iss == "" {
@@ -108,6 +114,12 @@ func (op *fakeOP) jwks(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (op *fakeOP) token(w http.ResponseWriter, r *http.Request) {
+	op.mu.Lock()
+	hook := op.tokenHook
+	op.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	id, secret, ok := r.BasicAuth()
 	if !ok || id != testClientID || secret != testClientSecret {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
@@ -196,16 +208,27 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
+	return newRigWith(t, nil)
+}
+
+// newRigWith is newRig with configure applied to the harness config; it gets
+// the fake OP so it can refer to the OP's issuer.
+func newRigWith(t *testing.T, configure func(cfg *serverConfig, op *fakeOP)) *rig {
+	t.Helper()
 	op := newFakeOP(t)
 	logDir := t.TempDir()
 	client := op.srv.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	h := newServer(serverConfig{
+	cfg := serverConfig{
 		rpBaseURL:       "http://rp.test",
 		opFacingBaseURL: "http://rp.test",
 		logDir:          logDir,
 		httpClient:      client,
-	})
+	}
+	if configure != nil {
+		configure(&cfg, op)
+	}
+	h := newServer(cfg)
 	rp := httptest.NewServer(h.routes())
 	t.Cleanup(rp.Close)
 	return &rig{t: t, op: op, rp: rp, logDir: logDir}
@@ -414,6 +437,9 @@ func TestLoginRejections(t *testing.T) {
 		}, status: http.StatusBadRequest, reason: reasonKeySelection},
 		"userinfo-invalid-sub": {setup: func(op *fakeOP) { op.userinfoSub = "someone-else" },
 			status: http.StatusBadRequest, reason: reasonUserInfoValidation},
+		"at-hash-mismatch": {setup: func(op *fakeOP) {
+			op.mutate = func(c map[string]any) { c["at_hash"] = atHash("some-other-access-token") }
+		}, status: http.StatusBadRequest, reason: reasonInvalidAtHash},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -427,6 +453,26 @@ func TestLoginRejections(t *testing.T) {
 			rg.wantResult(name, rejected(name, tc.reason))
 		})
 	}
+}
+
+// atHash is the OIDC Core §3.3.2.11 at_hash of accessToken under RS256.
+func atHash(accessToken string) string {
+	sum := sha256.Sum256([]byte(accessToken))
+	return base64.RawURLEncoding.EncodeToString(sum[:len(sum)/2])
+}
+
+// A token-endpoint ID Token may omit at_hash (§3.1.3.6); one that carries it
+// must match the access token returned with it.
+func TestAtHashMatchingAccepted(t *testing.T) {
+	rg := newRig(t)
+	rg.op.set(func(op *fakeOP) {
+		op.mutate = func(c map[string]any) { c["at_hash"] = atHash("at-1") }
+	})
+	if resp := rg.login("t-athash"); resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("callback status %d: %s", resp.StatusCode, body)
+	}
+	rg.wantResult("t-athash", success("t-athash"))
 }
 
 func TestKidAbsentSingleKeyAccepted(t *testing.T) {
@@ -474,6 +520,14 @@ func TestUnknownStateFiledUnderLastFlow(t *testing.T) {
 		t.Fatalf("status %d, want 400", resp.StatusCode)
 	}
 	rg.wantResult("t-state", rejected("t-state", reasonStateValidation))
+	// The rejection is in that test's rp-log, where its reason is checked.
+	data, err := os.ReadFile(filepath.Join(rg.logDir, "basic-rp", "t-state.log"))
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "REJECTED: "+reasonStateValidation) {
+		t.Fatalf("log has no state_validation rejection:\n%s", data)
+	}
 }
 
 func TestStateIsSingleUse(t *testing.T) {
@@ -489,6 +543,45 @@ func TestStateIsSingleUse(t *testing.T) {
 	}
 	// A rejection after a recorded success cannot turn the verdict into a pass.
 	rg.wantResult("t-replay", map[string]any{"test_id": "t-replay", "status": "conflict", "error": reasonStateValidation})
+}
+
+// A replay that arrives while the original callback is still waiting on the
+// OP is rejected; the original callback's later success must not erase that
+// rejection, so the test's verdict is a conflict in this order too.
+func TestReplayDuringPendingCallbackIsConflict(t *testing.T) {
+	rg := newRig(t)
+	params := rg.authorize("t-race", nil)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	rg.op.set(func(op *fakeOP) {
+		op.nonces["c"] = params.Get("nonce")
+		op.tokenHook = func() {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+	})
+	cb := url.Values{"code": {"c"}, "state": {params.Get("state")}}
+
+	first := make(chan int, 1)
+	go func() {
+		resp, err := noRedirect.Get(rg.rp.URL + "/callback?" + cb.Encode())
+		if err != nil {
+			first <- 0
+			return
+		}
+		_ = resp.Body.Close()
+		first <- resp.StatusCode
+	}()
+	<-entered
+	if resp := rg.get("/callback", cb); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("replayed callback status %d, want 400", resp.StatusCode)
+	}
+	close(release)
+	if status := <-first; status != http.StatusOK {
+		t.Fatalf("original callback status %d, want 200", status)
+	}
+	rg.wantResult("t-race", map[string]any{"test_id": "t-race", "status": "conflict", "error": reasonStateValidation})
 }
 
 func TestOPErrorResponse(t *testing.T) {
@@ -574,5 +667,112 @@ func TestPerTestLogWritten(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "ACCEPTED") {
 		t.Fatalf("log has no ACCEPTED line:\n%s", data)
+	}
+}
+
+// allowOnly restricts the harness to origin's issuers.
+func allowOnly(origin string) func(cfg *serverConfig, _ *fakeOP) {
+	return func(cfg *serverConfig, _ *fakeOP) { cfg.allowedIssuerOrigins = []string{origin} }
+}
+
+func TestIssuerAllowlist(t *testing.T) {
+	t.Run("discover refuses an issuer outside the allowlist", func(t *testing.T) {
+		rg := newRigWith(t, allowOnly("https://suite.example"))
+		q := url.Values{"issuer": {rg.op.issuer()}, "test_id": {"t-deny"}, "test_name": {"t-deny"}, "profile": {"config-rp"}}
+		if resp := rg.get("/discover", q); resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("status %d, want 502", resp.StatusCode)
+		}
+		rg.wantResult("t-deny", rejected("t-deny", reasonIssuerNotAllowed))
+		rg.op.mu.Lock()
+		fetches := rg.op.discoFetches
+		rg.op.mu.Unlock()
+		if fetches != 0 {
+			t.Fatalf("OP contacted %d times, want none", fetches)
+		}
+	})
+	t.Run("authorize refuses an issuer outside the allowlist", func(t *testing.T) {
+		rg := newRigWith(t, allowOnly("https://suite.example"))
+		if resp := rg.get("/authorize", authorizeParams(rg.op.issuer(), "t-adeny", "t-adeny")); resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("status %d, want 502", resp.StatusCode)
+		}
+		rg.wantResult("t-adeny", rejected("t-adeny", reasonIssuerNotAllowed))
+	})
+	t.Run("an allowlisted issuer logs in", func(t *testing.T) {
+		rg := newRigWith(t, func(cfg *serverConfig, op *fakeOP) {
+			cfg.allowedIssuerOrigins = []string{"https://suite.example", op.issuer()}
+		})
+		if resp := rg.login("t-allow"); resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("callback status %d: %s", resp.StatusCode, body)
+		}
+		rg.wantResult("t-allow", success("t-allow"))
+	})
+}
+
+func TestIssuerAllowed(t *testing.T) {
+	allow := []string{"https://suite.example", "https://localhost:8443"}
+	cases := map[string]struct {
+		allow  []string
+		issuer string
+		want   bool
+	}{
+		"empty allowlist allows any issuer": {allow: nil, issuer: "https://anything.example/x", want: true},
+		"origin match":                      {allow: allow, issuer: "https://suite.example/test/a/plan/", want: true},
+		"origin with port":                  {allow: allow, issuer: "https://localhost:8443/test/", want: true},
+		"host differs":                      {allow: allow, issuer: "https://suite.example.evil.test/", want: false},
+		"prefix trick with userinfo":        {allow: allow, issuer: "https://suite.example@evil.test/", want: false},
+		"port differs":                      {allow: allow, issuer: "https://localhost:9443/", want: false},
+		"scheme differs":                    {allow: allow, issuer: "http://suite.example/", want: false},
+		"host case-insensitive":             {allow: allow, issuer: "https://SUITE.example/", want: true},
+		"unparseable":                       {allow: allow, issuer: "://", want: false},
+		"empty issuer":                      {allow: allow, issuer: "", want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := issuerAllowed(tc.allow, tc.issuer); got != tc.want {
+				t.Fatalf("issuerAllowed(%v, %q) = %v, want %v", tc.allow, tc.issuer, got, tc.want)
+			}
+		})
+	}
+}
+
+// An oversized form_post body is refused before it is buffered.
+func TestCallbackBodyLimited(t *testing.T) {
+	rg := newRig(t)
+	rg.authorize("t-big", nil)
+	body := "state=" + strings.Repeat("a", maxCallbackBody+1)
+	resp, err := http.Post(rg.rp.URL+"/callback", "application/x-www-form-urlencoded", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /callback: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", resp.StatusCode)
+	}
+	rg.wantResult("t-big", rejected("t-big", reasonCallbackParse))
+}
+
+func TestParseAllowedOrigins(t *testing.T) {
+	cases := map[string]struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		"unset":                {in: "", want: nil},
+		"two origins, trimmed": {in: " https://suite.example , https://localhost:8443/ ", want: []string{"https://suite.example", "https://localhost:8443"}},
+		"path rejected":        {in: "https://suite.example/test", wantErr: true},
+		"no scheme rejected":   {in: "suite.example", wantErr: true},
+		"empty entry ignored":  {in: "https://suite.example,,", want: []string{"https://suite.example"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := parseAllowedOrigins(tc.in)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

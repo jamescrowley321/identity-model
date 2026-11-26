@@ -35,6 +35,7 @@ const (
 	reasonTokenExchange      = "token_exchange"
 	reasonUserInfoValidation = "userinfo_validation"
 	reasonStateValidation    = "state_validation"
+	reasonCallbackParse      = "callback_parse"
 	reasonMissingCode        = "missing_code"
 	reasonMissingEndpoint    = "missing_endpoint"
 	reasonUnsupportedFlow    = "unsupported_flow"
@@ -99,6 +100,8 @@ func classify(err error, fallback string) string {
 		jwksEmpty    *jwks.EmptyKeySetError
 	)
 	switch {
+	case errors.Is(err, errIssuerNotAllowed):
+		return reasonIssuerNotAllowed
 	case errors.As(err, &claimErr):
 		if reason, ok := claimReasons[claimErr.Claim]; ok {
 			return reason

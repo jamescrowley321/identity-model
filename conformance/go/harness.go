@@ -34,6 +34,9 @@ const (
 	// maxPending bounds the authorization flows awaiting a callback; the runner
 	// drives one module at a time, so older flows are abandoned.
 	maxPending = 64
+	// maxCallbackBody bounds a form_post authorization response; a real one
+	// (code, state, maybe session_state) is far smaller.
+	maxCallbackBody = 64 << 10
 	// flowTimeout bounds the OP calls one request makes.
 	flowTimeout = 60 * time.Second
 )
@@ -49,6 +52,9 @@ type serverConfig struct {
 	logDir string
 	// httpClient makes every request to the OP.
 	httpClient *http.Client
+	// allowedIssuerOrigins, when non-empty, is the only set of issuer origins
+	// the harness contacts (RP_ALLOWED_ISSUER_ORIGINS).
+	allowedIssuerOrigins []string
 }
 
 // result is a module's recorded outcome, served by /results/{test_id}.
@@ -81,8 +87,11 @@ type server struct {
 	pending []*session
 	results map[string]result
 	// lastTestID is the test of the most recent /authorize: a rejection that
-	// carries no usable state is filed under it.
-	lastTestID string
+	// carries no usable state is filed under it, and logged to that test's
+	// rp-log (lastProfile, lastTestName).
+	lastTestID   string
+	lastProfile  string
+	lastTestName string
 }
 
 func newServer(cfg serverConfig) *server {
@@ -145,13 +154,43 @@ func (s *server) record(testID, status, reason, detail string) {
 		res.Error = reason + ": " + detail
 	}
 	s.mu.Lock()
-	s.results[testID] = res
+	s.mergeLocked(res)
 	s.mu.Unlock()
 }
 
+// mergeLocked records res, called with s.mu held. Outcomes of one flow merge
+// rather than overwrite, so the verdict does not depend on arrival order: the
+// first rejection stands over later ones, and a success together with a
+// rejection, in either order, is a conflict (which the runner always fails),
+// keeping the rejection's reason. /authorize clears the slot for a new flow.
+func (s *server) mergeLocked(res result) {
+	prior, ok := s.results[res.TestID]
+	switch {
+	case !ok:
+		s.results[res.TestID] = res
+	case prior.Status == statusConflict, prior.Status == res.Status:
+		// Keep the first outcome: a conflict stays a conflict, the first
+		// rejection stands, and a repeated success changes nothing.
+	case prior.Status == statusSuccess:
+		s.results[res.TestID] = result{TestID: res.TestID, Status: statusConflict,
+			Error: res.Error + " (after a recorded success)"}
+	default:
+		s.results[res.TestID] = result{TestID: res.TestID, Status: statusConflict,
+			Error: prior.Error + " (then a success in the same flow)"}
+	}
+}
+
+// errIssuerNotAllowed is fetchProvider's refusal of an issuer outside the
+// allowlist; classify maps it to reasonIssuerNotAllowed.
+var errIssuerNotAllowed = errors.New("issuer origin is not in RP_ALLOWED_ISSUER_ORIGINS")
+
 // fetchProvider runs discovery for issuer, matching the document's issuer
-// exactly (OIDC Discovery 1.0 §4.3).
+// exactly (OIDC Discovery 1.0 §4.3). An issuer outside a configured allowlist
+// is refused before any request is made.
 func (s *server) fetchProvider(ctx context.Context, issuer string) (*discovery.ProviderConfiguration, error) {
+	if !issuerAllowed(s.cfg.allowedIssuerOrigins, issuer) {
+		return nil, errIssuerNotAllowed
+	}
 	return discovery.FetchConfiguration(ctx, issuer, discovery.WithHTTPClient(s.cfg.httpClient))
 }
 
@@ -194,6 +233,8 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	delete(s.results, testID)
 	s.lastTestID = testID
+	s.lastProfile = sess.profile
+	s.lastTestName = sess.testName
 	s.mu.Unlock()
 
 	for _, flag := range []string{"fapi2", "jarm", "mtls", "signed_request", "use_request_uri"} {
@@ -251,8 +292,9 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 // callback handles the authorization response: query string (GET) or
 // form_post body (POST).
 func (s *server) callback(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCallbackBody)
 	if err := r.ParseForm(); err != nil {
-		s.rejectUnattributed(w, "callback_parse", err.Error())
+		s.rejectUnattributed(w, reasonCallbackParse, err.Error())
 		return
 	}
 	form := r.Form
@@ -304,6 +346,10 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		idtoken.WithIssuer(sess.issuer),
 		idtoken.WithClientID(sess.clientID),
 		idtoken.WithNonce(sess.nonce),
+		// A token-endpoint ID Token may omit at_hash (§3.1.3.6); a present one
+		// must match the access token (§3.3.2.11).
+		idtoken.WithAccessToken(tokens.AccessToken),
+		idtoken.WithAccessTokenIssuedWithIDToken(false),
 	)
 	if err != nil {
 		s.reject(w, log, sess.testID, classify(err, reasonIDTokenValidation), err.Error())
@@ -346,25 +392,18 @@ func (s *server) refuse(w http.ResponseWriter, log *slog.Logger, testID, reason,
 }
 
 // rejectUnattributed handles a rejection with no usable session (unknown
-// state). It is filed under the most recent flow's test without ever turning
-// that test's verdict into a pass: nothing recorded → record the rejection; a
-// rejection recorded → the first stands; a success recorded → conflict, which
-// the runner always fails.
+// state). It is filed under the most recent flow's test and merged like any
+// other outcome, so it never turns that test's verdict into a pass: nothing
+// recorded → the rejection; a rejection recorded → the first stands; a success
+// recorded, before or after → conflict.
 func (s *server) rejectUnattributed(w http.ResponseWriter, reason, detail string) {
 	s.mu.Lock()
-	testID := s.lastTestID
+	testID, profile, testName := s.lastTestID, s.lastProfile, s.lastTestName
 	if testID != "" {
-		existing, ok := s.results[testID]
-		switch {
-		case !ok:
-			s.results[testID] = result{TestID: testID, Status: statusError, Error: reason + ": " + detail}
-		case existing.Status == statusSuccess:
-			s.results[testID] = result{TestID: testID, Status: statusConflict,
-				Error: reason + ": " + detail + " (after a recorded success)"}
-		}
+		s.mergeLocked(result{TestID: testID, Status: statusError, Error: reason + ": " + detail})
 	}
 	s.mu.Unlock()
-	slog.Error("REJECTED: "+reason, "detail", detail, "test_id", testID)
+	s.logger(profile, testName).Error("REJECTED: "+reason, "detail", detail, "unattributed", true)
 	writeError(w, reason, detail)
 }
 

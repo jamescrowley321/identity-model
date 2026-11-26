@@ -12,6 +12,8 @@
 //	RP_INTERNAL_BASE_URL OP-facing base reported by /health (default RP_BASE_URL)
 //	RP_LOG_DIR           per-test log directory ("" disables)
 //	RP_EXTRA_CA_FILE     extra trusted certificate (default /certs/nginx-selfsigned.crt)
+//	RP_ALLOWED_ISSUER_ORIGINS comma-separated issuer origins (scheme://host[:port])
+//	                     the harness may contact; unset allows any issuer
 package main
 
 import (
@@ -46,11 +48,17 @@ func main() {
 		slog.Error("trust roots", "error", err)
 		os.Exit(1)
 	}
+	allowed, err := parseAllowedOrigins(os.Getenv("RP_ALLOWED_ISSUER_ORIGINS"))
+	if err != nil {
+		slog.Error("issuer allowlist", "error", err)
+		os.Exit(1)
+	}
 	h := newServer(serverConfig{
-		rpBaseURL:       rpBaseURL,
-		opFacingBaseURL: strings.TrimRight(getenv("RP_INTERNAL_BASE_URL", rpBaseURL), "/"),
-		logDir:          os.Getenv("RP_LOG_DIR"),
-		httpClient:      newOPClient(roots),
+		rpBaseURL:            rpBaseURL,
+		opFacingBaseURL:      strings.TrimRight(getenv("RP_INTERNAL_BASE_URL", rpBaseURL), "/"),
+		logDir:               os.Getenv("RP_LOG_DIR"),
+		httpClient:           newOPClient(roots),
+		allowedIssuerOrigins: allowed,
 	})
 	srv := &http.Server{
 		Addr:              ":" + port,
