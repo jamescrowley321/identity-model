@@ -1,10 +1,10 @@
-"""Thin Python executor for the shared /spec conformance vectors (CONS-1.5).
+"""Thin Python executor for the shared /spec vectors (CONS-1.5).
 
 Drives every executable vector in ``spec/vectors/validation.json`` through the
 steps ``validate_token`` runs (``reject_non_access_token_type``, then, once
 it has resolved the key, ``build_resolved_config`` and ``decode_with_config``) — the same language-neutral vector set the
-Go (``go/internal/conformance``) and Rust (``rust/tests/it/conformance/validation.rs``)
-runners execute — so the "build conformance vectors once" constraint holds.
+Go (``go/internal/spectest``) and Rust (``rust/tests/it/internal/validation.rs``)
+runners execute — so the "build spec vectors once" constraint holds.
 
 Thin-executor contract: the vectors carry inputs and canonical expected
 outcomes; only the mapping of canonical error codes to py-identity-model's

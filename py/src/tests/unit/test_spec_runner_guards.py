@@ -1,4 +1,4 @@
-"""Regression checks for conformance assertions that must fail loudly."""
+"""Regression checks for spec-vector runner assertions that must fail loudly."""
 
 from jwt import InvalidSignatureError
 import pytest

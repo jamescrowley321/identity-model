@@ -1,6 +1,6 @@
 """Real-IdP validation of ``validate_id_token`` (OIDC Core §3.1.3.7 / §3.3.2.11).
 
-The unit + conformance suites drive ``validate_id_token_claims`` against
+The unit + internal spec-vector suites drive ``validate_id_token_claims`` against
 synthetic claim sets. This suite proves the full public entry point
 ``validate_id_token`` end-to-end against a *live* OpenID Provider: a genuine ID
 Token is minted through a real authorization-code + PKCE flow, its signature is
