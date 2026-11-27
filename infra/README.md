@@ -94,6 +94,10 @@ the real OP — see
   unnamed); `{run}` must be a **unique token per suite invocation**, using
   `[A-Za-z0-9_.-]`. Use a UUID or random token, including when multiple
   language suites share the container; a vector name alone is not unique.
+- `http://localhost:9010/.well-known/oauth-authorization-server/v/{run}/{capability}/{case_id}/{vector}`
+  is the RFC 8414 §3.1 metadata location of the issuer
+  `http://localhost:9010/v/{run}/{capability}/{case_id}/{vector}`; it answers
+  as that vector's `/.well-known/oauth-authorization-server` path.
 - `.../_check` returns `{"ok": bool, "diffs": [...]}`, comparing the requests
   received against the vector's `expect_request` and `expect_calls`. It checks
   every recorded request to `expect_request.path` and preserves the records

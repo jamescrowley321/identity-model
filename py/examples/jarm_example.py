@@ -19,8 +19,8 @@ Why JARM (over a plain query/fragment response)?
 
 This example runs fully offline: it mints its own EC signing key and JARM JWTs,
 then feeds them to ``process_jarm_response`` in *offline mode* (issuer + jwks +
-algorithms supplied directly). In production you pass ``disco_doc_address`` and
-the library fetches the issuer, JWKS, and allowed algorithms from discovery.
+algorithms supplied directly). In production you pass only the ``issuer`` and
+the library fetches the JWKS and allowed algorithms from its discovery document.
 
 **Scope:** signed JARM (JARM §4.1). Encrypted JARM (JWE, §4.2) is not yet
 supported.

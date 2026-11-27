@@ -81,7 +81,7 @@ try:
     claims = validate_token(
         jwt=token,
         token_validation_config=config,
-        disco_doc_address="https://your-idp.com/.well-known/openid-configuration"
+        issuer="https://your-idp.com"
     )
     # Token is valid
 except PyIdentityModelException:
@@ -120,7 +120,7 @@ py-identity-model handles caching internally, but for high-performance applicati
 
 ```python
 # Fetch once at startup
-disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 jwks = get_jwks(JwksRequest(address=disco.jwks_uri))
 
 # Reuse these throughout your application
@@ -161,7 +161,7 @@ def require_token(f):
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
         try:
-            claims = validate_token(token, config, disco_address)
+            claims = validate_token(token, config, issuer)
             request.user_claims = claims
             return f(*args, **kwargs)
         except PyIdentityModelException:
@@ -222,8 +222,15 @@ Yes, you can use py-identity-model in Lambda functions behind API Gateway to val
 
 ### Can I validate tokens from multiple issuers?
 
-Yes. `TokenValidationConfig` accepts a list of issuers via `issuer` /
-`allowed_issuers` — see [Token Validation](api/token-validation.md).
+Yes. Which setting depends on the mode:
+
+- Discovery mode, one provider that issues several issuer values: list them
+  in `token_issuers`.
+- Discovery mode, several providers: use one `TokenValidationConfig` per
+  provider, and `allowed_issuers` to pin which discovery documents you trust.
+- Manual mode (`perform_disco=False`): list them in `issuer`.
+
+See [Token Validation](api/token-validation.md#issuers).
 
 ## Development Questions
 
@@ -275,10 +282,10 @@ Discovery documents and JWKS are cached automatically. If it's still slow:
 
 ### My discovery document returns 404
 
-Verify your discovery URL:
-- Most providers: `https://domain/.well-known/openid-configuration`
-- Check provider documentation for exact URL
-- Test the URL in a browser first
+Verify your issuer:
+- Pass the issuer (`https://your-idp.com`), not the discovery document URL
+- The library fetches `<issuer>/.well-known/openid-configuration`; for an RFC 8414 server set `DiscoveryPolicy(location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER)`
+- Test the discovery URL in a browser first
 
 See more in the [Troubleshooting Guide](troubleshooting.md).
 

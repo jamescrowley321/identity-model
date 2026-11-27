@@ -15,8 +15,8 @@ import respx
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DiscoveryMissingFieldsError,
     SignatureVerificationException,
-    TokenValidationException,
 )
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
@@ -27,7 +27,7 @@ from py_identity_model.sync.token_validation import (
     validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
@@ -65,7 +65,7 @@ class TestSyncTokenValidation:
 
         with pytest.raises(
             ConfigurationException,
-            match=r"TokenValidationConfig\.key and TokenValidationConfig\.algorithms are required",
+            match=r"TokenValidationConfig\.key is required if perform_disco is False",
         ):
             validate_token(
                 jwt="fake.jwt.token",
@@ -79,8 +79,8 @@ class TestSyncTokenValidation:
             return_value=httpx.Response(200, json=DISCO_RESPONSE_WITH_JWKS)
         )
 
-        response1 = _get_disco_response(DISCO_URL)
-        response2 = _get_disco_response(DISCO_URL)
+        response1 = _get_disco_response(ISSUER)
+        response2 = _get_disco_response(ISSUER)
 
         assert response1.issuer == "https://example.com"
         assert response2.issuer == "https://example.com"
@@ -98,13 +98,13 @@ class TestSyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            DiscoveryMissingFieldsError,
+            match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @respx.mock
@@ -122,14 +122,14 @@ class TestSyncTokenValidation:
         with (
             HTTPClient() as client,
             pytest.raises(
-                TokenValidationException,
-                match=r"does not contain a jwks_uri.*require_key_set",
+                DiscoveryMissingFieldsError,
+                match=r"Missing required parameters: jwks_uri",
             ),
         ):
             validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 http_client=client,
             )
 
@@ -147,13 +147,13 @@ class TestSyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            DiscoveryMissingFieldsError,
+            match=r"Missing required parameters: jwks_uri",
         ):
             validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
 
@@ -187,7 +187,7 @@ class TestSyncJwksCacheTTL:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -195,7 +195,7 @@ class TestSyncJwksCacheTTL:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -226,7 +226,7 @@ class TestSyncJwksCacheTTL:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -238,7 +238,7 @@ class TestSyncJwksCacheTTL:
             validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         # Should have fetched JWKS a second time
@@ -287,7 +287,7 @@ class TestSyncSignatureRetry:
         decoded = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -341,7 +341,7 @@ class TestSyncSignatureRetry:
         decoded = validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -381,7 +381,7 @@ class TestSyncSignatureRetry:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -389,7 +389,7 @@ class TestSyncSignatureRetry:
             validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_route.call_count == 1, (
@@ -434,7 +434,7 @@ class TestSyncSignatureRetry:
             validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @respx.mock
@@ -467,7 +467,7 @@ class TestSyncSignatureRetry:
             validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 http_client=client,
             )
 

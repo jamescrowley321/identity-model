@@ -44,21 +44,28 @@ which python
 
 **Solution**:
 ```python
-# NOT RECOMMENDED for production - only for testing/development
-import os
-os.environ['CURL_CA_BUNDLE'] = ''  # Disable SSL verification (unsafe!)
-
 # RECOMMENDED: Install proper certificates
 # On macOS:
 # /Applications/Python\ 3.x/Install\ Certificates.command
 
-# Or specify a custom CA bundle
-import requests
-from py_identity_model import get_discovery_document, DiscoveryDocumentRequest
+# Or verify against a custom CA bundle
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    get_discovery_document,
+    HTTPClient,
+    HTTPConfig,
+)
 
-# Use custom CA bundle
-os.environ['REQUESTS_CA_BUNDLE'] = '/path/to/ca-bundle.crt'
+with HTTPClient(config=HTTPConfig(ca_bundle="/path/to/ca-bundle.crt")) as client:
+    response = get_discovery_document(
+        DiscoveryDocumentRequest(issuer=issuer), http_client=client
+    )
 ```
+
+The library reads no environment variables, so setting `REQUESTS_CA_BUNDLE`
+or `CURL_CA_BUNDLE` has no effect on it. To disable verification in a test
+(never in production), wrap your own client:
+`HTTPClient(httpx.Client(verify=False, follow_redirects=False))`.
 
 ### Discovery Document Returns 404
 
@@ -66,18 +73,23 @@ os.environ['REQUESTS_CA_BUNDLE'] = '/path/to/ca-bundle.crt'
 
 **Solution**:
 ```python
-# Verify the discovery URL is correct
-# Most providers use:
-# https://your-domain/.well-known/openid-configuration
+# Configure the issuer, not the document URL. The library fetches
+# <issuer>/.well-known/openid-configuration
 
-# Common provider patterns:
-# Auth0: https://your-tenant.auth0.com/.well-known/openid-configuration
-# Okta: https://your-domain.okta.com/.well-known/openid-configuration
-# Azure AD: https://login.microsoftonline.com/{tenant}/.well-known/openid-configuration
-# Google: https://accounts.google.com/.well-known/openid-configuration
+# Common provider issuers:
+# Auth0: https://your-tenant.auth0.com/
+# Okta: https://your-domain.okta.com
+# Azure AD: https://login.microsoftonline.com/{tenant}/v2.0
+# Google: https://accounts.google.com
+# AWS Cognito: https://cognito-idp.<region>.amazonaws.com/<userPoolId>
 
-# Test the URL in your browser first
+# Test <issuer>/.well-known/openid-configuration in your browser first
 ```
+
+A server that publishes only RFC 8414 metadata serves it at
+`/.well-known/oauth-authorization-server`; select that location with
+`DiscoveryPolicy(location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER)`. See
+[Discovery Policy](api/discovery-policy.md#discovery-document-location).
 
 ### Invalid Discovery Response
 
@@ -85,9 +97,9 @@ os.environ['REQUESTS_CA_BUNDLE'] = '/path/to/ca-bundle.crt'
 
 **Solution**:
 ```python
-from py_identity_model import get_discovery_document, DiscoveryDocumentRequest
+from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 
 # Check for errors
 if not disco.is_successful:
@@ -263,6 +275,19 @@ print(f"Token issuer: {claims.get('iss')}")
 # Ensure you're using the correct discovery document for your tokens
 ```
 
+### Discovery `ISSUER_MISMATCH`
+
+**Problem**: `get_discovery_document` fails with `DiscoveryErrorKind.ISSUER_MISMATCH`
+
+The document's `issuer` must equal the configured issuer exactly (OIDC
+Discovery 1.0 §4.3). A trailing slash, host case, an explicit port and the path
+all count: `https://auth.example.com` and `https://auth.example.com/` are
+different issuers. Copy the `issuer` value from the provider's discovery
+document. Another common cause is discovering through an internal hostname or
+proxy while the provider advertises its public issuer. Configure the public
+issuer, or configure the provider to advertise the address clients use. See
+[Discovery: Issuer match](api/discovery.md#issuer-match).
+
 ## Common Errors
 
 ### `PyIdentityModelException: Content did not change`
@@ -317,7 +342,7 @@ pip install --upgrade mypy
 from py_identity_model import get_discovery_document, get_jwks
 
 # At application startup
-disco = get_discovery_document(DiscoveryDocumentRequest(address=DISCO_ADDRESS))
+disco = get_discovery_document(DiscoveryDocumentRequest(issuer=ISSUER))
 jwks = get_jwks(JwksRequest(address=disco.jwks_uri))
 
 # Store these and reuse them
@@ -334,7 +359,7 @@ jwks = get_jwks(JwksRequest(address=disco.jwks_uri))
 # Tokens can be large, especially with many claims
 
 # Only store what you need:
-claims = validate_token(jwt, config, disco_address)
+claims = validate_token(jwt, config, issuer)
 user_id = claims.get('sub')  # Extract what you need
 # Don't keep the full claims dict in memory if not needed
 ```

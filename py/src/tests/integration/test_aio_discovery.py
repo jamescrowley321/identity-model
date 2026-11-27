@@ -16,7 +16,7 @@ class TestAsyncDiscovery:
         require_https = test_config.get("TEST_REQUIRE_HTTPS", True)
         policy = DiscoveryPolicy(require_https=require_https)
         request = DiscoveryDocumentRequest(
-            address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             policy=policy,
         )
         response = await get_discovery_document(request)
@@ -29,15 +29,15 @@ class TestAsyncDiscovery:
 
     async def test_get_discovery_document_failure(self):
         """Non-OIDC URL returns unsuccessful response."""
-        request = DiscoveryDocumentRequest(address="https://google.com")
+        request = DiscoveryDocumentRequest(issuer="https://google.com")
         response = await get_discovery_document(request)
 
         assert response.is_successful is False
         assert response.error is not None
 
     async def test_get_discovery_document_network_error(self):
-        """Malformed URL returns unsuccessful response with error detail."""
-        request = DiscoveryDocumentRequest(address="not-a-valid-url")
+        """Malformed issuer returns unsuccessful response with error detail."""
+        request = DiscoveryDocumentRequest(issuer="not-a-valid-url")
         response = await get_discovery_document(request)
 
         assert response.is_successful is False
@@ -48,7 +48,7 @@ class TestAsyncDiscovery:
         require_https = test_config.get("TEST_REQUIRE_HTTPS", True)
         policy = DiscoveryPolicy(require_https=require_https)
         request = DiscoveryDocumentRequest(
-            address=test_config["TEST_DISCO_ADDRESS"],
+            issuer=test_config["TEST_ISSUER"],
             policy=policy,
         )
         async_response = await get_discovery_document(request)

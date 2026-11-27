@@ -78,6 +78,7 @@ nav:
   - Getting Started: getting-started.md
   - Guides:
       - Migration Guide: migration-guide.md
+      - Upgrading to 5.0: upgrade-v5.md
       - Performance: performance.md
       - Pre-release Guide: pre-release-guide.md
       - Troubleshooting: troubleshooting.md

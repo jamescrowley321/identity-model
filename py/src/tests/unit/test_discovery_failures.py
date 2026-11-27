@@ -83,7 +83,7 @@ async def test_discovery_reports_failure_metadata(  # noqa: PLR0913
             status, text=body, headers={"content-type": content_type}
         )
     )
-    request = DiscoveryDocumentRequest(address=ADDRESS)
+    request = DiscoveryDocumentRequest(issuer="https://server.example.com")
     response = (
         await async_discover(request)
         if asynchronous
@@ -104,7 +104,7 @@ async def test_https_failure_is_distinct_from_other_configuration_failures(
     asynchronous,
 ):
     request = DiscoveryDocumentRequest(
-        address="http://localhost/.well-known/openid-configuration",
+        issuer="http://localhost",
         policy=DiscoveryPolicy(allow_http_on_loopback=False),
     )
     response = (
@@ -122,7 +122,9 @@ async def test_https_failure_is_distinct_from_other_configuration_failures(
 @respx.mock
 def test_success_has_no_failure_metadata():
     respx.get(ADDRESS).mock(return_value=httpx.Response(200, json=VALID))
-    response = get_discovery_document(DiscoveryDocumentRequest(address=ADDRESS))
+    response = get_discovery_document(
+        DiscoveryDocumentRequest(issuer="https://server.example.com")
+    )
     assert response.is_successful
     assert response.error_kind is None
     assert response.status_code is None
@@ -135,7 +137,7 @@ def test_success_has_no_failure_metadata():
 async def test_metadata_https_failure_has_the_same_category(asynchronous, field):
     document = {**VALID, field: "http://server.example.com/insecure"}
     respx.get(ADDRESS).mock(return_value=httpx.Response(200, json=document))
-    request = DiscoveryDocumentRequest(address=ADDRESS)
+    request = DiscoveryDocumentRequest(issuer="https://server.example.com")
     response = (
         await async_discover(request)
         if asynchronous

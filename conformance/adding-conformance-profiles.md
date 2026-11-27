@@ -151,6 +151,68 @@ SKIP is a coverage hole, not a pass.
 - The gap-analysis issues: close with links to the passing run.
 - Auto-memory: the profile, its variant tuple, and any gotchas discovered.
 
+## Adding a harness (Go, Rust)
+
+The Go and Rust RP harnesses run the same OIDF conformance plumbing as the
+Python one. A Go or Rust harness runs the `basic-rp`, `config-rp` and `form-post-basic-rp`
+plans against the Go or Rust library. It is added by its own files only; the
+runner, Makefile, workflow and manifest already handle it:
+
+| File | Contents |
+|---|---|
+| `conformance/<h>/` | Harness source (`<h>` is `go` or `rust`) |
+| `conformance/Dockerfile.<h>` | Harness image (build context: repo root) |
+| `conformance/docker-compose.<h>.yml` | Overlay on `docker-compose.yml` defining service `rp-<h>` |
+| `conformance/configs/<h>-<plan>.json` | One per plan: the Python plan config plus `"rp_url"` and its own `alias` |
+
+- **Port.** Go serves on `8890`, Rust on `8891`. The overlay publishes the port
+  and each config's `rp_url` names it (`"rp_url": "http://localhost:8890"`).
+  The suite redirects the runner to `<rp_url>/callback`.
+- **Overlay.** `rp-<h>` mounts the `certs` volume read-only, bind-mounts
+  `./results/hosted/rp-logs/<h>` at the harness's `RP_LOG_DIR`, and
+  `depends_on` `cert-init` (completed), `nginx` (started) and `server`
+  (healthy), as `rp-fastapi` does. Hosted runs start it with `--no-deps`, so the
+  harness must trust the local suite's self-signed
+  `/certs/nginx-selfsigned.crt` in addition to the system roots (never instead
+  of them) and tolerate the file being absent.
+- **Expected verdicts** come from the plan's existing entry in
+  `expected_modules.json`; never add `<h>-*` entries. The harness's rejection
+  reason classes must match the ones listed there.
+- **Run.** `make conformance-test HARNESS=<h>` (local suite) or add
+  `HOSTED=1` (hosted suite, needs `CONFORMANCE_TOKEN`; `PUBLISH=` as for the
+  Python harness). Results land in `results/<h>-<plan>-latest.json`
+  (`results/hosted/` for hosted, with `-export.zip` and `-rp-logs.zip`).
+  CI: the `conformance-harness` matrix job in `.github/workflows/conformance.yml`
+  runs one leg per harness; a leg skips until its overlay exists. Hosted:
+  `gh workflow run conformance-hosted.yml -f harness=<h> -f publish=none`.
+
+### Harness protocol
+
+The runner drives every harness the same way (see `app.py`):
+
+| Route | Purpose |
+|---|---|
+| `GET /health` | 200 once ready |
+| `POST /clear-cache` | Drop discovery and JWKS caches; called before every module |
+| `GET /discover` | `issuer`, `test_id`, `test_name`, `profile`: fetch and validate discovery only |
+| `GET /authorize` | `issuer`, `client_id`, `client_secret`, `test_id`, `test_name`, `profile`, `use_pkce`, `skip_userinfo` (plus flags the Go/Rust plans send as `false`): redirect to the OP |
+| `GET`/`POST /callback` | Authorization response (query, or `form_post` body): exchange the code, validate the ID token, call UserInfo unless skipped |
+| `GET /results/{test_id}` | The module's recorded outcome, or 404 if none |
+
+- **Outcome record.** `{"status": "success"}` when the flow completed, or
+  `{"status": "error", "error": "<reason_class>: <detail>"}` when the RP
+  rejected it. The runner compares the text before the first colon with the
+  manifest's `reasons`.
+- **Status codes.** A rejection the RP decided is `400`. A flow it deliberately
+  refused (discovery failure, issuer mismatch, missing endpoint) is `502`. Any
+  other 5xx from the harness, or a dropped connection, fails the module as a
+  harness crash.
+- **RP logs.** Append each test's log lines to
+  `$RP_LOG_DIR/<profile>/<test_name>.log`, with both values reduced to
+  `[A-Za-z0-9._-]` and the path kept inside `RP_LOG_DIR`. `profile` is the plan
+  name (`basic-rp`, ...); the runner zips `rp-logs/<h>/<plan>/` as the
+  `clientSideData` for a hosted run.
+
 ## Worked example — FAPI 2.0 Security Profile (client), epic #476
 
 Applying the playbook to the profile we're actually adding next.
@@ -170,7 +232,9 @@ signing option (JARM / signed request objects) if we target that add-on.
 | PKCE S256, PAR, JAR request objects | ✅ present + live-tested | — |
 | `private_key_jwt` client auth (ES256/PS256) | ✅ present + tested vs node-oidc | — |
 | DPoP proof at token endpoint (client side) | ✅ `core/dpop.py` | — |
-| **RS-side sender-constraint enforcement (`cnf`/`jkt`, mTLS `x5t#S256`)** | ❌ **missing** — `core/dpop.py` is client-only, `token_validation_logic` never reads `cnf`, middleware only accepts `Bearer` | #215 |
+| RS-side DPoP proof + `cnf.jkt` enforcement in the core library | ✅ `core/dpop_verify.py`, `validate_token(..., presentation=)`, `TokenValidationConfig.required_binding` | #478 |
+| RS-side sender-constraint enforcement in the FastAPI middleware | ❌ missing — middleware only accepts `Bearer` | #1021 |
+| RS-side mTLS `x5t#S256` beyond `validate_certificate_binding` | ❌ missing | #215 |
 | **JARM** (verify signed authorization *response*) | ❌ missing (only JAR, the request side) | #218 |
 | Response `__repr__` redaction hardening | ⏳ in progress | #431 |
 | FAPI-2 plan wired into the harness | ❌ missing | #475 |
@@ -200,6 +264,12 @@ a DPoP-bound token presented as `Bearer` is accepted with zero binding check.
 That RS guarantee is verified by our integration tests + the E2E token harness
 (#462–#474), which is why #215 must ship with explicit **negative** tests
 (mismatched `jkt`, replayed `jti`, wrong `htu`, missing proof).
+
+> **The #475 client plan does not exercise the resource-server verifier.** It
+> tests token *acquisition* (client-side DPoP). The RS checks from #478 are
+> proven by `src/tests/unit/test_dpop_verify.py`, `test_token_binding.py`, the
+> `DPOP-006` spec vectors and the live node-oidc matrix in
+> `src/tests/integration/test_dpop_rs_verification_live.py`.
 
 **Steps 5–8 — plan wiring (#475):** add
 `conformance/configs/fapi2-security-profile-rp.json` (+ `fastapi-` mirror),

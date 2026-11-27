@@ -1,11 +1,31 @@
-"""Unit tests for DiscoveryPolicy and DiscoveryEndpoint."""
+"""Unit tests for DiscoveryPolicy and discovery_document_url."""
 
+import httpx
 import pytest
+import respx
 
-from py_identity_model import DiscoveryPolicy
+import py_identity_model
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    DiscoveryErrorKind,
+    DiscoveryPolicy,
+    HTTPClient,
+    ValidationCache,
+    get_discovery_document,
+)
+from py_identity_model import aio as aio_api
+from py_identity_model import sync as sync_api
+from py_identity_model.aio import AsyncHTTPClient, AsyncValidationCache
+from py_identity_model.aio.discovery import (
+    get_discovery_document as async_get_discovery_document,
+)
+from py_identity_model.aio.token_validation import (
+    _get_disco_response as async_get_disco_response,
+)
 from py_identity_model.core.discovery_policy import (
+    DiscoveryLocation,
+    discovery_document_url,
     is_loopback,
-    parse_discovery_url,
     resolve_discovery_policy,
     validate_url_scheme,
 )
@@ -18,8 +38,9 @@ from py_identity_model.core.validators import (
 )
 from py_identity_model.exceptions import (
     ConfigurationException,
-    DiscoveryException,
+    DiscoveryValidationError,
 )
+from py_identity_model.sync.token_validation import _get_disco_response
 
 
 @pytest.mark.unit
@@ -48,55 +69,302 @@ class TestIsLoopback:
         assert is_loopback("127.0.0.1.evil.com") is False
 
 
+OIDC = DiscoveryLocation.OPENID_CONFIGURATION
+OAUTH = DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER
+
+
 @pytest.mark.unit
-class TestParseDiscoveryUrl:
-    def test_base_url(self):
-        result = parse_discovery_url("https://auth.example.com")
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
-        assert result.authority == "https://auth.example.com"
+class TestDiscoveryDocumentUrl:
+    """Issuer-to-URL derivation: OIDC Discovery 1.0 §4.1 and RFC 8414 §3.1."""
 
-    def test_full_wellknown_url(self):
-        result = parse_discovery_url(
-            "https://auth.example.com/.well-known/openid-configuration"
+    @pytest.mark.parametrize(
+        ("issuer", "expected"),
+        [
+            ("https://op", "https://op/.well-known/openid-configuration"),
+            ("https://op/", "https://op/.well-known/openid-configuration"),
+            ("https://op/t", "https://op/t/.well-known/openid-configuration"),
+            ("https://op/t/", "https://op/t/.well-known/openid-configuration"),
+            ("https://op/a/b", "https://op/a/b/.well-known/openid-configuration"),
+            (
+                "http://localhost:8080",
+                "http://localhost:8080/.well-known/openid-configuration",
+            ),
+        ],
+    )
+    def test_openid_configuration_appends_well_known_path(self, issuer, expected):
+        assert discovery_document_url(issuer) == expected
+        assert discovery_document_url(issuer, OIDC) == expected
+
+    @pytest.mark.parametrize(
+        ("issuer", "expected"),
+        [
+            ("https://op", "https://op/.well-known/oauth-authorization-server"),
+            ("https://op/", "https://op/.well-known/oauth-authorization-server"),
+            ("https://op/t", "https://op/.well-known/oauth-authorization-server/t"),
+            ("https://op/t/", "https://op/.well-known/oauth-authorization-server/t"),
+            (
+                "https://op/a/b",
+                "https://op/.well-known/oauth-authorization-server/a/b",
+            ),
+            (
+                "http://localhost:8080/t",
+                "http://localhost:8080/.well-known/oauth-authorization-server/t",
+            ),
+            (
+                "https://user@op:8443/t",
+                "https://user@op:8443/.well-known/oauth-authorization-server/t",
+            ),
+        ],
+    )
+    def test_oauth_authorization_server_inserts_well_known_path(self, issuer, expected):
+        assert discovery_document_url(issuer, OAUTH) == expected
+
+    @pytest.mark.parametrize("location", [OIDC, OAUTH], ids=["oidc", "oauth"])
+    @pytest.mark.parametrize(
+        ("issuer", "message"),
+        [
+            ("", r"^Issuer cannot be empty$"),
+            ("auth.example.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("ftp://user:secret@evil.com", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("file:///etc/passwd", r"^Issuer must be an HTTP or HTTPS URL$"),
+            ("https://", r"^Issuer must include a host$"),
+            ("https:///t", r"^Issuer must include a host$"),
+            ("https://:443", r"^Issuer must include a host$"),
+            ("https://user@", r"^Issuer must include a host$"),
+            ("https://[op.example", r"^Issuer is not a valid URL$"),
+            (" https://auth.example.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com\n", r"^Issuer is not a valid URL$"),
+            ("https://auth.ex\tample.com", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com/\x00", r"^Issuer is not a valid URL$"),
+            ("https://auth.example.com/\x7f", r"^Issuer is not a valid URL$"),
+            (
+                "https://auth.example.com?evil=1",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://auth.example.com?",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://auth.example.com#fragment",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://auth.example.com/t#",
+                r"^Issuer must not contain query or fragment components$",
+            ),
+            (
+                "https://op/.well-known/openid-configuration",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/.well-known/openid-configuration/",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/t/.well-known/openid-configuration",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/.well-known/oauth-authorization-server",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/.well-known/oauth-authorization-server/",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/t/.well-known/oauth-authorization-server",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+            (
+                "https://op/.well-known/oauth-authorization-server/t",
+                r"^Expected an issuer, got a discovery document URL$",
+            ),
+        ],
+    )
+    def test_rejects_non_issuer(self, issuer, message, location):
+        with pytest.raises(ConfigurationException, match=message) as excinfo:
+            discovery_document_url(issuer, location)
+        assert type(excinfo.value) is ConfigurationException
+
+    @pytest.mark.parametrize("issuer", [None, 5])
+    def test_rejects_non_string(self, issuer):
+        with pytest.raises(ConfigurationException, match=r"^Issuer cannot be empty$"):
+            discovery_document_url(issuer)
+
+    @pytest.mark.parametrize(
+        "issuer",
+        [
+            "https://op/.well-knownx",
+            "https://op/x.well-known/openid-configuration-x",
+            "https://op/.well-known/oauth-authorization-serverx",
+        ],
+    )
+    def test_similar_paths_are_issuers(self, issuer):
+        assert discovery_document_url(issuer) == (
+            issuer + "/.well-known/openid-configuration"
         )
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
-        assert result.authority == "https://auth.example.com"
 
-    def test_with_path(self):
-        result = parse_discovery_url("https://auth.example.com/tenant1")
-        assert "/.well-known/openid-configuration" in result.url
-        assert result.authority == "https://auth.example.com"
 
-    def test_empty_url(self):
-        with pytest.raises(ConfigurationException, match="empty"):
-            parse_discovery_url("")
+@pytest.mark.unit
+class TestDiscoveryExports:
+    @pytest.mark.parametrize(
+        "module", [py_identity_model, sync_api, aio_api], ids=["top", "sync", "aio"]
+    )
+    def test_discovery_location_is_exported(self, module):
+        assert module.DiscoveryLocation is DiscoveryLocation
+        assert "DiscoveryLocation" in module.__all__
 
-    def test_no_scheme(self):
-        with pytest.raises(ConfigurationException, match="scheme"):
-            parse_discovery_url("auth.example.com")
+    @pytest.mark.parametrize(
+        "module", [py_identity_model, sync_api, aio_api], ids=["top", "sync", "aio"]
+    )
+    def test_discovery_document_url_is_not_exported(self, module):
+        assert not hasattr(module, "discovery_document_url")
+        assert "discovery_document_url" not in module.__all__
 
-    def test_no_host(self):
-        with pytest.raises(ConfigurationException, match="host"):
-            parse_discovery_url("https://")
+    def test_default_location_is_openid_configuration(self):
+        assert DiscoveryPolicy().location is OIDC
 
-    def test_trailing_slash(self):
-        result = parse_discovery_url("https://auth.example.com/")
-        assert result.url == "https://auth.example.com/.well-known/openid-configuration"
 
-    def test_query_string_rejected(self):
-        """URLs with query strings are rejected (WARN-8)."""
-        with pytest.raises(ConfigurationException, match="query or fragment"):
-            parse_discovery_url("https://auth.example.com?evil=1")
+def _document(issuer: str) -> dict:
+    return {
+        "issuer": issuer,
+        "jwks_uri": "https://op/jwks",
+        "authorization_endpoint": "https://op/authorize",
+        "token_endpoint": "https://op/token",
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+    }
 
-    def test_fragment_rejected(self):
-        """URLs with fragments are rejected (WARN-8)."""
-        with pytest.raises(ConfigurationException, match="query or fragment"):
-            parse_discovery_url("https://auth.example.com#fragment")
 
-    def test_non_http_scheme_rejected(self):
-        """Non-HTTP(S) schemes are rejected."""
-        with pytest.raises(ConfigurationException, match="HTTP or HTTPS"):
-            parse_discovery_url("ftp://evil.com")
+@pytest.mark.unit
+class TestDiscoveryFetchLocation:
+    """``get_discovery_document`` fetches from the URL built under ``location``."""
+
+    @pytest.mark.parametrize(
+        ("issuer", "location", "url"),
+        [
+            (
+                "https://op/t",
+                OAUTH,
+                "https://op/.well-known/oauth-authorization-server/t",
+            ),
+            ("https://op", OAUTH, "https://op/.well-known/oauth-authorization-server"),
+            ("https://op/t", OIDC, "https://op/t/.well-known/openid-configuration"),
+        ],
+    )
+    @pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+    async def test_fetches_the_location_url(self, asynchronous, issuer, location, url):
+        request = DiscoveryDocumentRequest(
+            issuer=issuer, policy=DiscoveryPolicy(location=location)
+        )
+
+        with respx.mock(assert_all_mocked=True) as router:
+            route = router.get(url).mock(
+                return_value=httpx.Response(200, json=_document(issuer))
+            )
+            if asynchronous:
+                response = await async_get_discovery_document(request)
+            else:
+                response = get_discovery_document(request)
+            assert route.call_count == 1
+            assert router.calls.call_count == 1
+
+        assert response.is_successful, response.error
+        assert response.issuer == issuer
+
+
+class _CountingIssuerOP:
+    """Serves each requested issuer's document, echoing its trailing slash."""
+
+    def __init__(self, issuers: dict[str, str]) -> None:
+        self.issuers = issuers
+        self.requests: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(str(request.url))
+        return httpx.Response(200, json=_document(self.issuers[str(request.url)]))
+
+
+@pytest.mark.unit
+class TestDiscoveryCacheKeyedByIssuer:
+    """``https://op`` and ``https://op/`` share a URL (§4.1) but not a cache entry."""
+
+    URL = "https://op/.well-known/openid-configuration"
+
+    def test_sync_issuers_do_not_share_a_document(self):
+        op = _CountingIssuerOP({self.URL: "https://op"})
+        client = HTTPClient(httpx.Client(transport=httpx.MockTransport(op)))
+        cache = ValidationCache()
+
+        bare = _get_disco_response("https://op", DiscoveryPolicy(), client, cache)
+        slashed = _get_disco_response("https://op/", DiscoveryPolicy(), client, cache)
+
+        assert bare.is_successful, bare.error
+        assert bare.issuer == "https://op"
+        assert slashed.error_kind is DiscoveryErrorKind.ISSUER_MISMATCH
+        assert op.requests == [self.URL, self.URL]
+
+    def test_sync_each_issuer_gets_its_own_document(self):
+        op = _CountingIssuerOP({self.URL: "https://op/"})
+        client = HTTPClient(httpx.Client(transport=httpx.MockTransport(op)))
+        cache = ValidationCache()
+
+        slashed = _get_disco_response("https://op/", DiscoveryPolicy(), client, cache)
+        op.issuers[self.URL] = "https://op"
+        bare = _get_disco_response("https://op", DiscoveryPolicy(), client, cache)
+        slashed_again = _get_disco_response(
+            "https://op/", DiscoveryPolicy(), client, cache
+        )
+
+        assert (slashed.issuer, bare.issuer, slashed_again.issuer) == (
+            "https://op/",
+            "https://op",
+            "https://op/",
+        )
+        assert op.requests == [self.URL, self.URL]
+
+    async def test_async_issuers_do_not_share_a_document(self):
+        op = _CountingIssuerOP({self.URL: "https://op"})
+        client = AsyncHTTPClient(httpx.AsyncClient(transport=httpx.MockTransport(op)))
+        cache = AsyncValidationCache()
+
+        bare = await async_get_disco_response(
+            "https://op", DiscoveryPolicy(), client, cache
+        )
+        slashed = await async_get_disco_response(
+            "https://op/", DiscoveryPolicy(), client, cache
+        )
+
+        assert bare.is_successful, bare.error
+        assert bare.issuer == "https://op"
+        assert slashed.error_kind is DiscoveryErrorKind.ISSUER_MISMATCH
+        assert op.requests == [self.URL, self.URL]
+
+    async def test_async_each_issuer_gets_its_own_document(self):
+        op = _CountingIssuerOP({self.URL: "https://op/"})
+        client = AsyncHTTPClient(httpx.AsyncClient(transport=httpx.MockTransport(op)))
+        cache = AsyncValidationCache()
+
+        slashed = await async_get_disco_response(
+            "https://op/", DiscoveryPolicy(), client, cache
+        )
+        op.issuers[self.URL] = "https://op"
+        bare = await async_get_disco_response(
+            "https://op", DiscoveryPolicy(), client, cache
+        )
+        slashed_again = await async_get_disco_response(
+            "https://op/", DiscoveryPolicy(), client, cache
+        )
+
+        assert (slashed.issuer, bare.issuer, slashed_again.issuer) == (
+            "https://op/",
+            "https://op",
+            "https://op/",
+        )
+        assert op.requests == [self.URL, self.URL]
 
 
 @pytest.mark.unit
@@ -203,152 +471,117 @@ class TestValidateHttpsUrlWithPolicy:
         validate_https_url_with_policy("", "optional_endpoint", policy)
 
 
+ISSUER = "https://auth.example.com"
+
+
 @pytest.mark.unit
 class TestValidateEndpointAuthority:
-    """Tests for _validate_endpoint_authority (M2 & M3 coverage)."""
-
-    def _make_response(self, issuer: str = "https://auth.example.com") -> dict:
-        return {"issuer": issuer}
+    """Allowed authorities: the configured issuer's, ``policy.authority`` and
+    ``policy.additional_endpoint_base_addresses``."""
 
     def test_matching_issuer_authority_passes(self):
-        """Endpoint with same authority as issuer passes validation."""
-        policy = DiscoveryPolicy(validate_endpoints=True)
         _validate_endpoint_authority(
             "https://auth.example.com/token",
             "token_endpoint",
-            self._make_response(),
-            policy,
+            DiscoveryPolicy(),
+            ISSUER,
+        )
+
+    def test_issuer_with_path_allows_its_authority(self):
+        _validate_endpoint_authority(
+            "https://auth.example.com/other/token",
+            "token_endpoint",
+            DiscoveryPolicy(),
+            "https://auth.example.com/tenant/",
         )
 
     def test_mismatched_authority_raises(self):
-        """Endpoint from different authority than issuer is rejected."""
-        policy = DiscoveryPolicy(validate_endpoints=True)
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(
+            DiscoveryValidationError,
+            match=r"^token_endpoint authority 'https://evil\.com' does not match",
+        ):
             _validate_endpoint_authority(
-                "https://evil.com/token",
+                "https://evil.com/token", "token_endpoint", DiscoveryPolicy(), ISSUER
+            )
+
+    def test_port_is_part_of_the_authority(self):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
+            _validate_endpoint_authority(
+                "https://auth.example.com:8443/token",
                 "token_endpoint",
-                self._make_response(),
-                policy,
+                DiscoveryPolicy(),
+                ISSUER,
             )
 
     def test_additional_base_addresses_accepted(self):
-        """Endpoint from additional_endpoint_base_addresses passes (M2)."""
         policy = DiscoveryPolicy(
-            validate_endpoints=True,
             additional_endpoint_base_addresses=["https://cdn.example.com"],
         )
         _validate_endpoint_authority(
-            "https://cdn.example.com/keys",
-            "jwks_uri",
-            self._make_response(),
-            policy,
+            "https://cdn.example.com/keys", "jwks_uri", policy, ISSUER
         )
 
     def test_additional_base_addresses_trailing_slash(self):
-        """Trailing slashes on additional addresses are normalized."""
         policy = DiscoveryPolicy(
-            validate_endpoints=True,
             additional_endpoint_base_addresses=["https://cdn.example.com/"],
         )
         _validate_endpoint_authority(
-            "https://cdn.example.com/keys",
-            "jwks_uri",
-            self._make_response(),
-            policy,
+            "https://cdn.example.com/keys", "jwks_uri", policy, ISSUER
         )
 
     def test_additional_base_addresses_rejects_unlisted(self):
-        """Endpoint not in issuer or additional addresses is rejected."""
         policy = DiscoveryPolicy(
-            validate_endpoints=True,
             additional_endpoint_base_addresses=["https://cdn.example.com"],
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
-                "https://attacker.com/keys",
-                "jwks_uri",
-                self._make_response(),
-                policy,
+                "https://attacker.com/keys", "jwks_uri", policy, ISSUER
             )
 
-    def test_explicit_authority_overrides_issuer(self):
-        """policy.authority takes precedence over issuer (M3)."""
-        policy = DiscoveryPolicy(
-            validate_endpoints=True,
-            authority="https://gateway.example.com",
-        )
-        # Endpoint matches explicit authority, not issuer
+    def test_explicit_authority_is_allowed(self):
+        policy = DiscoveryPolicy(authority="https://gateway.example.com")
         _validate_endpoint_authority(
-            "https://gateway.example.com/token",
-            "token_endpoint",
-            self._make_response("https://auth.example.com"),
-            policy,
+            "https://gateway.example.com/token", "token_endpoint", policy, ISSUER
         )
 
-    def test_explicit_authority_rejects_issuer(self):
-        """When authority is set, issuer's authority alone is not enough."""
-        policy = DiscoveryPolicy(
-            validate_endpoints=True,
-            authority="https://gateway.example.com",
+    def test_explicit_authority_keeps_the_issuer_allowed(self):
+        """``policy.authority`` adds an authority; the issuer's stays allowed."""
+        policy = DiscoveryPolicy(authority="https://gateway.example.com")
+        _validate_endpoint_authority(
+            "https://auth.example.com/token", "token_endpoint", policy, ISSUER
         )
-        with pytest.raises(DiscoveryException, match="authority"):
+
+    def test_explicit_authority_rejects_others(self):
+        policy = DiscoveryPolicy(authority="https://gateway.example.com")
+        with pytest.raises(DiscoveryValidationError, match="authority"):
             _validate_endpoint_authority(
-                "https://auth.example.com/token",
-                "token_endpoint",
-                self._make_response("https://auth.example.com"),
-                policy,
+                "https://evil.com/token", "token_endpoint", policy, ISSUER
             )
 
     def test_explicit_authority_plus_additional(self):
-        """Both authority and additional_endpoint_base_addresses are checked."""
         policy = DiscoveryPolicy(
-            validate_endpoints=True,
             authority="https://gateway.example.com",
             additional_endpoint_base_addresses=["https://cdn.example.com"],
         )
-        # CDN address accepted alongside explicit authority
         _validate_endpoint_authority(
-            "https://cdn.example.com/keys",
-            "jwks_uri",
-            self._make_response(),
-            policy,
+            "https://cdn.example.com/keys", "jwks_uri", policy, ISSUER
         )
-
-    def test_empty_issuer_no_allowed_set_raises(self):
-        """Empty issuer with no authority constraint raises DiscoveryException."""
-        policy = DiscoveryPolicy(validate_endpoints=True)
-        with pytest.raises(
-            DiscoveryException, match="no authority constraint available"
-        ):
-            _validate_endpoint_authority(
-                "https://anything.com/keys",
-                "jwks_uri",
-                {"issuer": ""},
-                policy,
-            )
 
     def test_case_insensitive_authority_comparison(self):
         """Authority comparison is case-insensitive per RFC 3986 §3.2.2."""
-        policy = DiscoveryPolicy(validate_endpoints=True)
-        # Mixed-case issuer should match lowercase endpoint
         _validate_endpoint_authority(
             "https://auth.example.com/token",
             "token_endpoint",
-            {"issuer": "HTTPS://AUTH.EXAMPLE.COM"},
-            policy,
+            DiscoveryPolicy(),
+            "HTTPS://AUTH.EXAMPLE.COM",
         )
 
     def test_case_insensitive_additional_addresses(self):
-        """additional_endpoint_base_addresses comparison is case-insensitive."""
         policy = DiscoveryPolicy(
-            validate_endpoints=True,
             additional_endpoint_base_addresses=["HTTPS://CDN.EXAMPLE.COM"],
         )
         _validate_endpoint_authority(
-            "https://cdn.example.com/keys",
-            "jwks_uri",
-            self._make_response(),
-            policy,
+            "https://cdn.example.com/keys", "jwks_uri", policy, ISSUER
         )
 
 
@@ -365,6 +598,13 @@ class TestDiscoveryPolicyCacheKey:
         # Round-trips as a dict key.
         assert {(("addr",), key): 1}[(("addr",), key)] == 1
 
+    def test_location_is_part_of_the_key(self):
+        oidc = DiscoveryPolicy(location=DiscoveryLocation.OPENID_CONFIGURATION)
+        oauth = DiscoveryPolicy(location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER)
+        assert oidc.cache_key() == DiscoveryPolicy().cache_key()
+        assert oauth.cache_key() != oidc.cache_key()
+        assert DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER in oauth.cache_key()
+
     def test_equal_policies_produce_equal_keys(self):
         assert DiscoveryPolicy().cache_key() == DiscoveryPolicy().cache_key()
         a = DiscoveryPolicy(additional_endpoint_base_addresses=["https://cdn"])
@@ -378,10 +618,10 @@ class TestDiscoveryPolicyCacheKey:
             {"allow_http_on_loopback": False},
             {"validate_issuer": False},
             {"validate_endpoints": False},
-            {"require_key_set": False},
             {"additional_endpoint_base_addresses": ["https://cdn.example"]},
             {"authority": "https://auth.example"},
             {"allow_loopback_endpoints": True},
+            {"location": DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER},
         ],
     )
     def test_each_field_changes_the_key(self, kwargs):

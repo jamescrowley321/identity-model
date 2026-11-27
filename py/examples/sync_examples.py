@@ -20,7 +20,7 @@ from py_identity_model import (
 
 
 # Constants
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 # =============================================================================
@@ -34,7 +34,7 @@ def fetch_discovery_document_example():
     print("Example 1: Discovery Document")
     print("=" * 60)
 
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
 
     # Synchronous fetch - blocks until response received
     response = get_discovery_document(discovery_request)
@@ -143,7 +143,7 @@ def validate_token_example(access_token: str):
         decoded = validate_token(
             access_token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
 
         print("✓ Token validated successfully!")
@@ -190,7 +190,7 @@ def custom_claims_validation_example(access_token: str):
         decoded = validate_token(
             access_token,
             config,
-            disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+            issuer=DEMO_ISSUER,
         )
 
         print("✓ Token with custom claims validated successfully!")
@@ -206,14 +206,19 @@ def custom_claims_validation_example(access_token: str):
 # =============================================================================
 
 
-def userinfo_example(access_token: str):
-    """Fetch user claims from the UserInfo endpoint."""
+def userinfo_example(access_token: str, id_token_sub: str):
+    """Fetch user claims from the UserInfo endpoint.
+
+    Needs an end-user access token from an authorization code login and the
+    ``sub`` of that login's validated ID token: the UserInfo ``sub`` must match
+    it (OIDC Core 1.0 §5.3.2).
+    """
     print("\\n" + "=" * 60)
     print("Example 6: UserInfo Endpoint")
     print("=" * 60)
 
     # First get the discovery document to find the userinfo endpoint
-    discovery_request = DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
+    discovery_request = DiscoveryDocumentRequest(issuer=DEMO_ISSUER)
     disco_response = get_discovery_document(discovery_request)
 
     if not disco_response.is_successful:
@@ -231,6 +236,7 @@ def userinfo_example(access_token: str):
     userinfo_request = UserInfoRequest(
         address=userinfo_endpoint,
         token=access_token,
+        expected_sub=id_token_sub,
     )
 
     response = get_userinfo(userinfo_request)
@@ -242,9 +248,6 @@ def userinfo_example(access_token: str):
                 print(f"  {claim_name}: {claim_value}")
         return response
     print(f"✗ UserInfo request failed: {response.error}")
-    print(
-        "  Note: Client credentials tokens may not have a userinfo endpoint available"
-    )
     return response
 
 
@@ -260,9 +263,9 @@ def error_handling_example():
     print("=" * 60)
 
     # Test with invalid URL
-    print("\\nTesting with invalid discovery URL...")
+    print("\\nTesting with an unreachable issuer...")
     discovery_request = DiscoveryDocumentRequest(
-        address="https://invalid-url-that-does-not-exist.example.com/.well-known/openid-configuration"
+        issuer="https://invalid-url-that-does-not-exist.example.com"
     )
 
     response = get_discovery_document(discovery_request)
@@ -319,13 +322,12 @@ def flask_pattern_example():
             config = TokenValidationConfig(
                 perform_disco=True,
                 audience="api",
-                options={"verify_aud": False},
             )
 
             claims = validate_token(
                 token,
                 config,
-                disco_doc_address="https://demo.duendesoftware.com/.well-known/openid-configuration",
+                issuer=DEMO_ISSUER,
             )
 
             return {
@@ -389,8 +391,9 @@ def main():
         # Example 5: Custom Claims Validation
         custom_claims_validation_example(access_token)
 
-        # Example 6: UserInfo
-        userinfo_example(access_token)
+        # Example 6 (userinfo_example) needs an end-user login (authorization
+        # code flow) and its ID token's sub, so this client credentials token
+        # does not run it.
 
     # Example 7: Error Handling
     error_handling_example()

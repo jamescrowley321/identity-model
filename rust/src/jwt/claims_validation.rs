@@ -21,9 +21,9 @@
 //!
 //! The same interface shape is intended to be mirrored across the Python, Go,
 //! and Rust libraries so a resource server can express the same policy in any
-//! language. That parity is enforced by the shared conformance vectors in
+//! language. That parity is enforced by the shared spec vectors in
 //! `spec/test-fixtures/claims-validation/vectors.json` (driven by
-//! `tests/it/conformance/claims_validation.rs`). For a runnable end-to-end
+//! `tests/it/internal/claims_validation.rs`). For a runnable end-to-end
 //! demonstration of composing these validators, see
 //! `examples/combined_claims_validator.rs`
 //! (`cargo run --example combined_claims_validator`).

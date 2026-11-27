@@ -58,5 +58,5 @@ repo root. The env-free default profile targets node-oidc-provider on `:9010`;
 source `.env.identityserver` to run the same tests against IdentityServer.
 
 Behavioral parity with the Python and Rust libraries is enforced by the
-cross-language conformance vectors in [`../spec`](../spec), which the
-`internal/conformance` runner executes.
+cross-language spec vectors in [`../spec`](../spec), which the
+`internal/spectest` runner executes.

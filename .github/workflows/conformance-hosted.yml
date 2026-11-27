@@ -12,8 +12,17 @@ on:
     branches: [main]
   schedule:
     - cron: '0 8 * * *' # 08:00 UTC, after conformance (06:00) and nightly (07:00)
+  # A dispatch picks the harness; push and schedule always run py.
   workflow_dispatch:
     inputs:
+      harness:
+        description: "RP harness to run against the hosted suite"
+        type: choice
+        default: py
+        options:
+          - py
+          - go
+          - rust
       publish:
         description: "Publish results on the public certification.openid.net list"
         type: choice
@@ -22,6 +31,20 @@ on:
           - none
           - summary
           - everything
+      # The Dynamic, RP-Initiated Logout and Back-Channel Logout RP plans run
+      # only on demand, so the push/nightly runs keep their scope and runtime.
+      dynamic_logout:
+        description: "Also run the Dynamic, RP-Initiated Logout and Back-Channel Logout RP plans (py harness only; needs rp_public_url)"
+        type: boolean
+        default: false
+      # In those plans the hosted OP calls the RP server-to-server (request_uri
+      # fetches, back-channel Logout Token POSTs), which it cannot do at the
+      # runner's localhost. This is the base URL at which the RP harness on this
+      # runner is reachable from the internet; see conformance/README.md.
+      rp_public_url:
+        description: "Public base URL of the RP harness on the runner (required with dynamic_logout)"
+        type: string
+        default: ""
 
 # One run at a time against the shared hosted account; never cancel a run
 # mid-plan, which would leave it half-finished on the suite.
@@ -31,8 +54,11 @@ concurrency:
 
 jobs:
   conformance-hosted:
+    # inputs.harness is empty on push and schedule.
+    if: inputs.harness == '' || inputs.harness == 'py'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The three on-demand plans add 23 modules to the run.
+    timeout-minutes: ${{ inputs.dynamic_logout && 60 || 30 }}
 
     steps:
       # A stale token makes the suite answer 302 -> login, which surfaces much
@@ -53,9 +79,26 @@ jobs:
             exit 1
           fi
 
+      # Fail before the basic plans run rather than after them: without a public
+      # RP URL the hosted OP cannot reach the harness in these three plans.
+      - name: Check RP public URL
+        if: ${{ inputs.dynamic_logout }}
+        env:
+          RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
+        run: |
+          if [ -z "$RP_PUBLIC_URL" ]; then
+            echo "::error::dynamic_logout needs rp_public_url: the hosted OP fetches request_uri from and POSTs back-channel Logout Tokens to the RP, which it cannot do at the runner's localhost"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/hosted/*-latest.json
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
@@ -70,9 +113,16 @@ jobs:
           uv pip install --system -r conformance/requirements.txt
           uv pip install --system ./py
 
+      # RP_INTERNAL_BASE_URL is the base the harness gives the OP for
+      # server-to-server fetches (request_uri); only the on-demand plans use it.
       - name: Start RP harness
         working-directory: conformance
+        env:
+          RP_PUBLIC_URL: ${{ inputs.dynamic_logout && inputs.rp_public_url || '' }}
         run: |
+          if [ -n "$RP_PUBLIC_URL" ]; then
+            export RP_INTERNAL_BASE_URL="${RP_PUBLIC_URL%/}"
+          fi
           uvicorn app:app --host 0.0.0.0 --port 8888 &
           echo "Waiting for RP harness..."
           for i in $(seq 1 30); do
@@ -126,6 +176,54 @@ jobs:
             --publish "${{ inputs.publish || 'none' }}" \
             --verbose
 
+      # On-demand plans (dynamic_logout). run_tests.py points the registered
+      # backchannel_logout_uri at CONFORMANCE_RP_PUBLIC_URL and checks the
+      # harness answers there before it creates a plan.
+      - name: Run Dynamic RP conformance tests
+        if: ${{ !cancelled() && inputs.dynamic_logout }}
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+          CONFORMANCE_RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
+        run: |
+          python conformance/run_tests.py \
+            --plan dynamic-rp \
+            --output conformance/results/hosted/dynamic-rp-latest.json \
+            --export-zip conformance/results/hosted/dynamic-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/dynamic-rp-rp-logs.zip \
+            --publish "${{ inputs.publish || 'none' }}" \
+            --verbose
+
+      - name: Run RP-Initiated Logout RP conformance tests
+        if: ${{ !cancelled() && inputs.dynamic_logout }}
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+          CONFORMANCE_RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
+        run: |
+          python conformance/run_tests.py \
+            --plan rpinitiated-logout-rp \
+            --output conformance/results/hosted/rpinitiated-logout-rp-latest.json \
+            --export-zip conformance/results/hosted/rpinitiated-logout-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/rpinitiated-logout-rp-rp-logs.zip \
+            --publish "${{ inputs.publish || 'none' }}" \
+            --verbose
+
+      - name: Run Back-Channel Logout RP conformance tests
+        if: ${{ !cancelled() && inputs.dynamic_logout }}
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+          CONFORMANCE_RP_PUBLIC_URL: ${{ inputs.rp_public_url }}
+        run: |
+          python conformance/run_tests.py \
+            --plan backchannel-logout-rp \
+            --output conformance/results/hosted/backchannel-logout-rp-latest.json \
+            --export-zip conformance/results/hosted/backchannel-logout-rp-export.zip \
+            --rp-logs-zip conformance/results/hosted/backchannel-logout-rp-rp-logs.zip \
+            --publish "${{ inputs.publish || 'none' }}" \
+            --verbose
+
       - name: Upload conformance results
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
@@ -136,3 +234,88 @@ jobs:
             conformance/results/hosted/*-export.zip
             conformance/results/hosted/*-rp-logs.zip
           retention-days: 30
+
+  # Go and Rust RP harnesses (workflow_dispatch only), through
+  # `make conformance-test HARNESS=<h> HOSTED=1`.
+  conformance-hosted-harness:
+    if: inputs.harness == 'go' || inputs.harness == 'rust'
+    name: conformance-hosted-harness (${{ inputs.harness }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HARNESS: ${{ inputs.harness }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for harness overlay
+        run: |
+          if [ ! -f "conformance/docker-compose.$HARNESS.yml" ]; then
+            echo "::error::conformance/docker-compose.$HARNESS.yml does not exist; the $HARNESS harness has not landed"
+            exit 1
+          fi
+
+      # A stale token makes the suite answer 302 -> login, which surfaces much
+      # later as an opaque HTTP error. Fail up front with the actual cause.
+      - name: Check CONFORMANCE_TOKEN
+        env:
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+        run: |
+          if [ -z "$CONFORMANCE_TOKEN" ]; then
+            echo "::error::CONFORMANCE_TOKEN secret is not set"
+            exit 1
+          fi
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $CONFORMANCE_TOKEN" \
+            https://www.certification.openid.net/api/plan)
+          if [ "$status" != "200" ]; then
+            echo "::error::certification.openid.net rejected CONFORMANCE_TOKEN (HTTP $status); generate a new token and update the secret"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install test runner dependencies
+        run: uv pip install --system httpx cryptography
+
+      # Drop committed results first so a plan that never writes its JSON
+      # cannot upload a stale pass.
+      - name: Run conformance plans
+        env:
+          CONFORMANCE_SERVER: https://www.certification.openid.net/
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          rm -f conformance/results/hosted/"$HARNESS"-*-latest.json
+          make conformance-test HARNESS="$HARNESS" HOSTED=1 UVROOT=
+
+      - name: Collect harness logs
+        if: always()
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" \
+            logs > "conformance/results/logs/$HARNESS-compose.log" 2>&1 || true
+
+      - name: Upload conformance results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: conformance-hosted-${{ inputs.harness }}-results
+          path: |
+            conformance/results/hosted/${{ inputs.harness }}-*-latest.json
+            conformance/results/hosted/${{ inputs.harness }}-*-export.zip
+            conformance/results/hosted/${{ inputs.harness }}-*-rp-logs.zip
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" down -v

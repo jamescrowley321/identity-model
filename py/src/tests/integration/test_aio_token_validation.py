@@ -39,7 +39,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=async_validate_claims,
             require_https=require_https,
@@ -48,7 +47,7 @@ class TestAsyncTokenValidation:
         try:
             decoded_token = await validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -76,7 +75,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=async_validate_claims,
             require_https=require_https,
@@ -88,7 +86,7 @@ class TestAsyncTokenValidation:
             ):
                 await validate_token(
                     jwt=client_credentials_token.token["access_token"],
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
         finally:
@@ -111,7 +109,6 @@ class TestAsyncTokenValidation:
 
         validation_config = TokenValidationConfig(
             perform_disco=True,
-            audience=test_config["TEST_AUDIENCE"],
             options=DEFAULT_OPTIONS,
             claims_validator=sync_validate_claims,
             require_https=require_https,
@@ -120,7 +117,7 @@ class TestAsyncTokenValidation:
         try:
             decoded_token = await validate_token(
                 jwt=client_credentials_token.token["access_token"],
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 

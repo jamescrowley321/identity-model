@@ -20,6 +20,7 @@ import os
 from fastapi import Depends, FastAPI, WebSocket
 
 from fastapi_identity_model import (
+    AuthOptions,
     Claims,
     CurrentUser,
     TokenValidationMiddleware,
@@ -27,6 +28,7 @@ from fastapi_identity_model import (
     require_scope,
 )
 from fastapi_identity_model.config import _default_excluded_paths
+from py_identity_model import TokenBinding
 from py_identity_model.core.cache_metrics import get_cache_counters
 
 
@@ -60,12 +62,14 @@ def _excluded_paths() -> list[str] | None:
 def create_app() -> FastAPI:
     """Build the resource-server app from ``RS_*`` env config.
 
-    Required env: ``RS_DISCOVERY_URL``, ``RS_AUDIENCE``.
+    Required env: ``RS_ISSUER``, ``RS_AUDIENCE``.
     Optional env: ``RS_REQUIRE_SCOPE`` (default ``api``),
     ``RS_REQUIRE_ACCESS_TOKEN_MARKER`` (bool, F-07 opt-in),
-    ``RS_EXCLUDED_PATHS`` (comma-separated).
+    ``RS_EXCLUDED_PATHS`` (comma-separated),
+    ``RS_REQUIRED_BINDING`` (``none``/``dpop``, default ``none``; ``mtls``
+    needs a client certificate source the harness does not configure).
     """
-    discovery_url = os.environ["RS_DISCOVERY_URL"]
+    issuer = os.environ["RS_ISSUER"]
     audience = os.environ["RS_AUDIENCE"]
     required_scope = os.environ.get("RS_REQUIRE_SCOPE", "api")
 
@@ -76,15 +80,21 @@ def create_app() -> FastAPI:
     if _METRICS_PATH not in excluded:
         excluded.append(_METRICS_PATH)
 
+    # One AuthOptions for both entry points, so HTTP and WS enforce one binding.
+    auth_options = AuthOptions(
+        required_binding=TokenBinding(os.environ.get("RS_REQUIRED_BINDING", "none"))
+    )
+
     app = FastAPI(title="token-harness-rs")
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=discovery_url,
+        issuer=issuer,
         audience=audience,
         excluded_paths=excluded,
         require_access_token_marker=_truthy(
             os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
         ),
+        options=auth_options,
     )
 
     @app.get("/health")
@@ -128,11 +138,12 @@ def create_app() -> FastAPI:
     # runs the same core validate_token path + F-07 guard. A rejected token
     # closes the handshake before accept; a valid token reaches the body.
     ws_authenticator = build_ws_authenticator(
-        discovery_url=discovery_url,
+        issuer=issuer,
         audience=audience,
         require_access_token_marker=_truthy(
             os.environ.get("RS_REQUIRE_ACCESS_TOKEN_MARKER")
         ),
+        options=auth_options,
     )
 
     @app.websocket("/ws")

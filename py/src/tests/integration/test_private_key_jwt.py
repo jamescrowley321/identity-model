@@ -27,6 +27,9 @@ from py_identity_model import (
     ClientCredentialsTokenRequest,
     PrivateKeyJwt,
     PushedAuthorizationRequest,
+    SignedPushedAuthorizationRequest,
+    create_request_object,
+    generate_dpop_key,
     generate_pkce_pair,
     push_authorization_request,
     request_client_credentials_token,
@@ -91,12 +94,12 @@ def _require_node_oidc(is_node_oidc_fixture: bool) -> None:
         )
 
 
-def _private_key_jwt(audience: str | None = None) -> PrivateKeyJwt:
+def _private_key_jwt(issuer: str) -> PrivateKeyJwt:
     return PrivateKeyJwt(
         private_key=PKJWT_PRIVATE_KEY,
         algorithm=PKJWT_ALGORITHM,
         kid=PKJWT_KID,
-        audience=audience,
+        issuer=issuer,
     )
 
 
@@ -107,6 +110,7 @@ class TestPrivateKeyJwtLive:
     def test_client_credentials_with_private_key_jwt(
         self,
         is_node_oidc_fixture,
+        raw_discovery,
         token_endpoint,
     ):
         """Token endpoint authenticates the client via a signed assertion.
@@ -121,7 +125,7 @@ class TestPrivateKeyJwtLive:
                 address=token_endpoint,
                 client_id=PKJWT_CLIENT_ID,
                 scope="api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -135,6 +139,7 @@ class TestPrivateKeyJwtLive:
     def test_client_credentials_wrong_key_rejected(
         self,
         is_node_oidc_fixture,
+        raw_discovery,
         token_endpoint,
     ):
         """A mismatched signing key is rejected — proves real verification.
@@ -157,6 +162,7 @@ class TestPrivateKeyJwtLive:
                     private_key=wrong_key,
                     algorithm=PKJWT_ALGORITHM,
                     kid=PKJWT_KID,
+                    issuer=raw_discovery["issuer"],
                 ),
             )
         )
@@ -187,7 +193,7 @@ class TestPrivateKeyJwtLive:
                 code_challenge=challenge,
                 code_challenge_method="S256",
                 state=secrets.token_urlsafe(32),
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -197,10 +203,78 @@ class TestPrivateKeyJwtLive:
         assert response.expires_in is not None
         assert response.expires_in > 0
 
+    def _signed_par(
+        self, raw_discovery: dict, signing_key: str
+    ) -> SignedPushedAuthorizationRequest:
+        _verifier, challenge = generate_pkce_pair()
+        request_object = create_request_object(
+            private_key=signing_key,
+            algorithm=PKJWT_ALGORITHM,
+            kid=PKJWT_KID,
+            client_id=PKJWT_CLIENT_ID,
+            audience=raw_discovery["issuer"],
+            redirect_uri=PKJWT_REDIRECT_URI,
+            state=secrets.token_urlsafe(32),
+            code_challenge=challenge,
+            code_challenge_method="S256",
+        )
+        return SignedPushedAuthorizationRequest(
+            address=raw_discovery["pushed_authorization_request_endpoint"],
+            client_id=PKJWT_CLIENT_ID,
+            request=request_object,
+            private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
+        )
+
+    def test_par_with_signed_request_object(
+        self,
+        provider_capabilities,
+        is_node_oidc_fixture,
+        raw_discovery,
+    ):
+        """PAR accepts the authorization request as a signed request object.
+
+        RFC 9126 §3: the form carries only ``request`` and client
+        authentication; the provider verifies the JWT with the client's
+        registered key.
+        """
+        _require_node_oidc(is_node_oidc_fixture)
+        if "par" not in provider_capabilities:
+            pytest.skip("Provider does not support PAR")
+
+        response = push_authorization_request(
+            self._signed_par(raw_discovery, PKJWT_PRIVATE_KEY)
+        )
+
+        assert response.is_successful is True, f"PAR failed: {response.error}"
+        assert response.request_uri is not None
+        assert response.request_uri.startswith("urn:ietf:params:oauth:request_uri:")
+
+    def test_par_with_request_object_signed_by_other_key_rejected(
+        self,
+        provider_capabilities,
+        is_node_oidc_fixture,
+        raw_discovery,
+    ):
+        """A request object the client's registered key did not sign is refused."""
+        _require_node_oidc(is_node_oidc_fixture)
+        if "par" not in provider_capabilities:
+            pytest.skip("Provider does not support PAR")
+
+        response = push_authorization_request(
+            self._signed_par(
+                raw_discovery, generate_dpop_key("ES256").private_key_pem.decode()
+            )
+        )
+
+        assert response.is_successful is False
+        assert response.error is not None
+        assert "invalid_request_object" in response.error
+
     def test_authorization_code_with_private_key_jwt(
         self,
         provider_capabilities,
         is_node_oidc_fixture,
+        raw_discovery,
         discovery_document,
     ):
         """Full auth-code flow exchanges the code with a signed assertion.
@@ -219,7 +293,7 @@ class TestPrivateKeyJwtLive:
             config=AuthCodeFlowConfig(
                 scope="openid profile email offline_access",
                 resource="urn:test:api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             ),
         )
 
@@ -243,6 +317,7 @@ class TestPrivateKeyJwtLiveAsync:
     async def test_client_credentials_with_private_key_jwt(
         self,
         is_node_oidc_fixture,
+        raw_discovery,
         token_endpoint,
     ):
         _require_node_oidc(is_node_oidc_fixture)
@@ -252,7 +327,7 @@ class TestPrivateKeyJwtLiveAsync:
                 address=token_endpoint,
                 client_id=PKJWT_CLIENT_ID,
                 scope="api",
-                private_key_jwt=_private_key_jwt(),
+                private_key_jwt=_private_key_jwt(raw_discovery["issuer"]),
             )
         )
 
@@ -266,6 +341,7 @@ class TestPrivateKeyJwtLiveAsync:
     async def test_client_credentials_wrong_key_rejected(
         self,
         is_node_oidc_fixture,
+        raw_discovery,
         token_endpoint,
     ):
         _require_node_oidc(is_node_oidc_fixture)
@@ -283,6 +359,7 @@ class TestPrivateKeyJwtLiveAsync:
                     private_key=wrong_key,
                     algorithm=PKJWT_ALGORITHM,
                     kid=PKJWT_KID,
+                    issuer=raw_discovery["issuer"],
                 ),
             )
         )

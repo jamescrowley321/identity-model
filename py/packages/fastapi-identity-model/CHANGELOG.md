@@ -8,6 +8,175 @@ inserted below the marker.
 
 <!-- psr: next release -->
 
+## v0.4.0-a.1 (2026-11-26)
+
+### Bug Fixes
+
+- **fastapi**: A ConfigurationException during validation is a server error
+  ([`f0b3dbb`](https://github.com/jamescrowley321/identity-model/commit/f0b3dbb400b01e1e5ab6134f7a452e36a6d000ce))
+
+- **fastapi**: Accept expires_in sent as a string of digits
+  ([`03d3f53`](https://github.com/jamescrowley321/identity-model/commit/03d3f5365efebf463786af38315e38e1ec36230b))
+
+- **fastapi**: Classify token-validation failures by exception type
+  ([`653a1d5`](https://github.com/jamescrowley321/identity-model/commit/653a1d547a7298b8a628c2d990995f31928860ba))
+
+- **fastapi**: Drop default ports from expected_origin and validate the certificate header name
+  ([`854d75a`](https://github.com/jamescrowley321/identity-model/commit/854d75a3e413cf7a3db18b002b3528308c4ab7f5))
+
+- **fastapi**: Expose the failure kind via opt-in diagnostics header
+  ([`f999ba9`](https://github.com/jamescrowley321/identity-model/commit/f999ba94ce4939d92f0e6bf6c8759a554fc133cf))
+
+- **fastapi**: Fail the login closed on a signed UserInfo response
+  ([`a64f426`](https://github.com/jamescrowley321/identity-model/commit/a64f42658aae717945cf02c21ed33cbd32b37222))
+
+- **fastapi**: Fail the login when UserInfo has no sub
+  ([`287adf2`](https://github.com/jamescrowley321/identity-model/commit/287adf2bdaff08789b4a73760673c0b9dbd36b9c))
+
+- **fastapi**: Keep a rotated refresh token and map fetch outages to 502
+  ([`5197f90`](https://github.com/jamescrowley321/identity-model/commit/5197f90fa4fee555c88da3be229354fffba8e0b7))
+
+- **fastapi**: Keep a rotated refresh token from a rejected refresh response
+  ([`a44d8ea`](https://github.com/jamescrowley321/identity-model/commit/a44d8eac28b635d815f846ec9dc13a9e1697273c))
+
+- **fastapi**: Keep client_secret out of OIDCSettings repr
+  ([`c1baf06`](https://github.com/jamescrowley321/identity-model/commit/c1baf06179eee2fe057e97ee0a8099350b56c65f))
+
+- **fastapi**: Keep the rotated refresh token on a missing access token
+  ([`455c6bb`](https://github.com/jamescrowley321/identity-model/commit/455c6bb2f7e14c9aea4f52036fd5864492f2e199))
+
+- **fastapi**: Log a ConfigurationException rejection at warning level
+  ([`d2d31a4`](https://github.com/jamescrowley321/identity-model/commit/d2d31a450491845c36adeafec063ea9b4f75bc69))
+
+- **fastapi**: Look up the default replay cache on every check
+  ([`62f2971`](https://github.com/jamescrowley321/identity-model/commit/62f29715a99c24b56fd66a89118bf1fb70012ecb))
+
+- **fastapi**: One default DPoP replay cache per process
+  ([`91251e3`](https://github.com/jamescrowley321/identity-model/commit/91251e3638138d8fc8a9d4f1243f4a488a70dc16))
+
+- **fastapi**: Only an unusable replay cache is a 500
+  ([`583f525`](https://github.com/jamescrowley321/identity-model/commit/583f52503c36bc4d7b0330cb06ccde05d15f99e8))
+
+- **fastapi**: Pass the core refresh error through verbatim
+  ([`fa284f0`](https://github.com/jamescrowley321/identity-model/commit/fa284f07fbfff915c54eec227e98ffef8d85f42e))
+
+- **fastapi**: Redact refresh failure diagnostics
+  ([`7a3302e`](https://github.com/jamescrowley321/identity-model/commit/7a3302ea83b1af6f197af0693a739159f745a494))
+
+- **fastapi**: Refuse a negative expires_in and compute the expiry once
+  ([`d374fe1`](https://github.com/jamescrowley321/identity-model/commit/d374fe1846ec438f3ad5b1c4e941ddb1e07f3d28))
+
+- **fastapi**: Refuse a refresh response whose expires_in is not a number of seconds
+  ([`08fb978`](https://github.com/jamescrowley321/identity-model/commit/08fb97863e6d75fb97db8fc91305e7b875804675))
+
+- **fastapi**: Refuse an expires_in no expiry date can be computed from
+  ([`ea491eb`](https://github.com/jamescrowley321/identity-model/commit/ea491eb24f2860b3ac3a74c6f0f4440949f52034))
+
+- **fastapi**: Refuse folded certificate headers and non-ASCII origin hosts
+  ([`26cbea8`](https://github.com/jamescrowley321/identity-model/commit/26cbea846d4661bac9415d8ca0fa713c5bca2ef3))
+
+- **fastapi**: Rename OIDCSettings.audience to audience_override
+  ([`8e82c33`](https://github.com/jamescrowley321/identity-model/commit/8e82c330638353f73935df2188ff39b34f57a3ca))
+
+- **fastapi**: Report an unexplained rejected refresh response as REFRESH_FAILED
+  ([`56bb974`](https://github.com/jamescrowley321/identity-model/commit/56bb974b8490a4140dd516d450c106b7da0a3cff))
+
+- **fastapi**: Resolve the default audience on read
+  ([`7448002`](https://github.com/jamescrowley321/identity-model/commit/7448002181bcda624ccf600ce08cf6b8ae983616))
+
+- **fastapi**: RFC 6750 challenges, RFC 9207 iss check, token_type checks
+  ([`1b8185a`](https://github.com/jamescrowley321/identity-model/commit/1b8185a6fb4b81341fbef25f1cd064dac47fcb44))
+
+- **fastapi**: Share one replay cache per OIDCSettings
+  ([`c0eabc0`](https://github.com/jamescrowley321/identity-model/commit/c0eabc0129d954bd731f4f666cc1c91ff809c55e))
+
+- **fastapi**: Treat an empty OIDC_AUDIENCE as unset
+  ([`34d0bee`](https://github.com/jamescrowley321/identity-model/commit/34d0bee41184ad00ff9e5a30487233f02ca98c7f))
+
+- **fastapi**: Type-check validate_azp and recommend it with trusted_audiences
+  ([`3944495`](https://github.com/jamescrowley321/identity-model/commit/394449570b3b1d2d3a5716b81711c7e2bc660aa4))
+
+- **fastapi**: Validate client_certificate_header against the RFC 9110 token grammar
+  ([`83004e6`](https://github.com/jamescrowley321/identity-model/commit/83004e6aff25b8a69407d0fd81073e5e41541df6))
+
+### Build System
+
+- **fastapi**: Require py-identity-model 5
+  ([`754adf8`](https://github.com/jamescrowley321/identity-model/commit/754adf8d62a7e98c6b02cf77c1a682a4fb175baf))
+
+### Documentation
+
+- **fastapi**: Document oidc_settings_from_env and http_client
+  ([`c71a34f`](https://github.com/jamescrowley321/identity-model/commit/c71a34fbae6a0734871072af015bb4940bd24dc1))
+
+- **fastapi**: Link the upgrade notes to #1136
+  ([`c6ad90f`](https://github.com/jamescrowley321/identity-model/commit/c6ad90fa03f8e59142b1f69433da96fabaadb01d))
+
+- **fastapi**: Read expected_audience in the README and example app
+  ([`0fde963`](https://github.com/jamescrowley321/identity-model/commit/0fde963a5a2bb306e7bc7dd456852c5bffa13e34))
+
+- **fastapi**: The callback 502 covers fetch transport failures
+  ([`1fa60e7`](https://github.com/jamescrowley321/identity-model/commit/1fa60e724f2611be864d3f88da0fd8d37fe18b68))
+
+- **fastapi**: The certificate header must carry the leaf certificate only
+  ([`c357a19`](https://github.com/jamescrowley321/identity-model/commit/c357a196d5cfd5c4b9aaa8ea3e65f21a645ce4c6))
+
+### Features
+
+- **fastapi**: Accept the DPoP scheme and enforce sender-constrained tokens
+  ([`f486c02`](https://github.com/jamescrowley321/identity-model/commit/f486c02559df4ddf15071930c1bac476d74ec120))
+
+- **fastapi**: Answer an ID Token nonce rejection with "Nonce mismatch"
+  ([`f36f4da`](https://github.com/jamescrowley321/identity-model/commit/f36f4daea884ee1abcb65ba3e8c56025ced8c6fc))
+
+- **fastapi**: OIDCSettings takes the issuer
+  ([`de7aa3c`](https://github.com/jamescrowley321/identity-model/commit/de7aa3cd58c9c74289f8e9c17f0656f651a260d2))
+
+- **fastapi**: Pass an app-supplied http_client through to the library
+  ([`1f0fc33`](https://github.com/jamescrowley321/identity-model/commit/1f0fc33c48dddba263fac220eb15ce8fc2c21fa3))
+
+- **fastapi**: Take a validation cache on the middleware and WS authenticator
+  ([`fd403bb`](https://github.com/jamescrowley321/identity-model/commit/fd403bb30d4d8526d74bf32a8306e8c956690ee3))
+
+- **fastapi**: Trusted_audiences and validate_azp for the login callback
+  ([`f17ed24`](https://github.com/jamescrowley321/identity-model/commit/f17ed24ac451d5668c86a429da239adbc70e9ebc))
+
+- **fastapi**: Wire OIDCSettings.required_binding and share one AuthOptions
+  ([`a85c8a7`](https://github.com/jamescrowley321/identity-model/commit/a85c8a791e88d7f9a7017183514fa0b4d3525415))
+
+### Refactoring
+
+- **fastapi**: Freeze OIDCSettings and make AuthOptions keyword-only
+  ([`f909052`](https://github.com/jamescrowley321/identity-model/commit/f9090525fe097361aaa6b70eed35793dc886826a))
+
+- **fastapi**: Move OIDCSettings.from_env to an optional helper
+  ([`87c59c4`](https://github.com/jamescrowley321/identity-model/commit/87c59c4551a5e142b392161856bc12429279aa8c))
+
+### Testing
+
+- **fastapi**: Cover an absent and a non-ASCII nonce at the login callback
+  ([`72b10e9`](https://github.com/jamescrowley321/identity-model/commit/72b10e9d8b6dacc486d668d77cad89b04c485bfa))
+
+- **fastapi**: Cover OIDCSettings required_binding coercion directly
+  ([`c7b5019`](https://github.com/jamescrowley321/identity-model/commit/c7b501964c810e30d56106610f037ec8aa6b4f42))
+
+- **fastapi**: Give the fake UserInfo response an error_kind
+  ([`865ec87`](https://github.com/jamescrowley321/identity-model/commit/865ec877de9da0466ae2363a8fa5c0bacd19f360))
+
+- **fastapi**: Request the token endpoint fixture by name
+  ([`372f727`](https://github.com/jamescrowley321/identity-model/commit/372f727632510652fc9a9c91d660da031f1fdad6))
+
+### Breaking Changes
+
+- **fastapi**: Fastapi-identity-model now requires py-identity-model>=5.0.0,<6.
+
+- **fastapi**: OIDCSettings is frozen and both OIDCSettings and AuthOptions take keyword arguments
+  only. Build a changed copy with dataclasses.replace, which re-runs validation.
+
+- **fastapi**: OIDCSettings.discovery_url, the DISCOVERY_URL env var and the discovery_url=
+  arguments are replaced by the issuer.
+
+
 ## v0.3.0 (2026-09-05)
 
 ### Features

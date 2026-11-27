@@ -58,10 +58,8 @@ VALIDATION_FAIL_CLASSES = [
 ]
 
 # Validly signed, correct-audience tokens carrying the ``read`` scope — the
-# library AND the RS scope guard accept them (200). ``cnf_bound`` is here on
-# purpose: the cnf-bound-as-bearer token is ACCEPTED today (F-02, #478); this
-# suite asserts the *current* contract, it does not assume rejection.
-ACCEPTED_200_CLASSES = ["valid", "cnf_bound", "oversized", "multi_aud_untrusted"]
+# library AND the RS scope guard accept them (200).
+ACCEPTED_200_CLASSES = ["valid", "oversized", "multi_aud_untrusted"]
 
 # The middleware's always-on negative ID-token defense (F-07): a token carrying
 # an ID-token-only claim (``nonce``/``at_hash``/``c_hash``) is rejected before
@@ -71,7 +69,7 @@ ID_TOKEN_DETAIL = "ID token cannot be used as an access token"
 # What the module fixture exposes: the live mock OP (to mint bespoke tokens), the
 # booted RS base URL, the forged corpus, and the mock OP discovery URL (so a
 # second RS can be booted against the same issuer for the F-07 marker case).
-MockMatrix = namedtuple("MockMatrix", "op base_url corpus discovery_url")
+MockMatrix = namedtuple("MockMatrix", "op base_url corpus issuer")
 
 
 def _get_protected(base_url: str, token: str) -> httpx.Response:
@@ -99,17 +97,17 @@ def mock_matrix():
     with (
         serve_mock_op() as op,
         boot_rs(
-            discovery_url=op.discovery_url,
+            issuer=op.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
         ) as base_url,
     ):
-        yield MockMatrix(op, base_url, build_corpus(op), op.discovery_url)
+        yield MockMatrix(op, base_url, build_corpus(op), op.issuer)
 
 
 @pytest.mark.parametrize("name", ACCEPTED_200_CLASSES)
 def test_accepted_classes_reach_protected(mock_matrix, name):
-    """Validly signed, correctly scoped tokens → 200 (F-02 contract included)."""
+    """Validly signed, correctly scoped tokens → 200."""
     response = _get_protected(mock_matrix.base_url, mock_matrix.corpus[name].jwt)
     assert response.status_code == httpx.codes.OK
 
@@ -160,15 +158,17 @@ def test_id_as_access_rejected_by_negative_defense(mock_matrix):
     assert response.json() == {"detail": ID_TOKEN_DETAIL}
 
 
-def test_f02_cnf_bound_accepted_today(mock_matrix):
-    """F-02: a cnf-bound token presented as a plain bearer → 200 TODAY.
+def test_f02_cnf_bound_as_bearer_rejected(mock_matrix):
+    """F-02: a DPoP-bound token presented as a plain bearer → 401 (RFC 9449 §7.1).
 
-    This asserts the *current* accepted-today contract, NOT desired behaviour;
-    #478 tracks rejecting sender-constrained tokens at the RS. When #478 lands
-    this expectation flips to 401 — that is intended, not a regression here.
+    The RS challenges with the DPoP scheme; the body is the generic F-18 body.
     """
     response = _get_protected(mock_matrix.base_url, mock_matrix.corpus["cnf_bound"].jwt)
-    assert response.status_code == httpx.codes.OK
+    assert (
+        response.status_code,
+        response.headers["WWW-Authenticate"].split(",")[0],
+        response.json(),
+    ) == (httpx.codes.UNAUTHORIZED, 'DPoP error="invalid_token"', GENERIC_401_BODY)
 
 
 def test_nothing_silently_accepted(mock_matrix):
@@ -205,7 +205,7 @@ def test_cross_issuer_token_from_a_different_issuer_is_rejected(mock_matrix):
     with (
         serve_mock_op() as op_b,
         boot_rs(
-            discovery_url=op_b.discovery_url,
+            issuer=op_b.issuer,
             audience=CORPUS_AUDIENCE,
             require_scope="read",
         ) as rs_b,
@@ -309,7 +309,7 @@ def test_scopeless_access_token_marker_gate(mock_matrix):
     assert default.status_code == httpx.codes.FORBIDDEN
 
     with boot_rs(
-        discovery_url=mock_matrix.discovery_url,
+        issuer=mock_matrix.issuer,
         audience=CORPUS_AUDIENCE,
         require_scope="read",
         require_access_token_marker=True,
@@ -338,18 +338,16 @@ def _granted_scopes(access_token: str) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def node_oidc_discovery_url(test_config, is_node_oidc_fixture) -> str:
+def node_oidc_issuer(test_config, is_node_oidc_fixture) -> str:
     if not is_node_oidc_fixture:
         pytest.skip(
             "correctness-matrix real-issuer leg asserts node-oidc's "
             "urn:test:api audience; remote matrix providers mint different tokens"
         )
-    return test_config["TEST_DISCO_ADDRESS"]
+    return test_config["TEST_ISSUER"]
 
 
-def test_real_issuer_valid_token_accepted(
-    node_oidc_discovery_url, client_credentials_token
-):
+def test_real_issuer_valid_token_accepted(node_oidc_issuer, client_credentials_token):
     """A REAL node-oidc CC token → 200 through the booted RS (real HTTP DoD)."""
     access_token = client_credentials_token.token.get("access_token", "")
     assert access_token, "CC fixture returned no access_token"
@@ -357,7 +355,7 @@ def test_real_issuer_valid_token_accepted(
     assert scopes, "minted token carried no scopes to guard on"
 
     with boot_rs(
-        discovery_url=node_oidc_discovery_url,
+        issuer=node_oidc_issuer,
         audience=NODE_OIDC_AUDIENCE,
         require_scope=scopes[0],
     ) as base_url:
@@ -367,9 +365,7 @@ def test_real_issuer_valid_token_accepted(
     assert response.json()["sub"]
 
 
-def test_real_issuer_wrong_aud_rejected(
-    node_oidc_discovery_url, client_credentials_token
-):
+def test_real_issuer_wrong_aud_rejected(node_oidc_issuer, client_credentials_token):
     """A REAL node-oidc token against an RS expecting a different aud → 401.
 
     A real-issuer negative the corpus cannot forge: a genuinely signed token
@@ -380,7 +376,7 @@ def test_real_issuer_wrong_aud_rejected(
     assert access_token, "CC fixture returned no access_token"
 
     with boot_rs(
-        discovery_url=node_oidc_discovery_url,
+        issuer=node_oidc_issuer,
         audience="urn:does-not-match-any-real-token",
     ) as base_url:
         response = _get_protected(base_url, access_token)

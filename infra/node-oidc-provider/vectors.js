@@ -4,6 +4,9 @@
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_check  -> request check
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_reset  -> POST to reset
 //   {ISSUER}/v/{run}/{capability}/{case_id}/{vector}/_requests -> recorded requests
+//   {ISSUER}/.well-known/oauth-authorization-server/v/{run}/{capability}/{case_id}/{vector}
+//     -> {ISSUER}/v/.../{vector}/.well-known/oauth-authorization-server, the
+//        RFC 8414 §3.1 metadata location of the issuer {ISSUER}/v/.../{vector}
 //
 // The canned response is vector.http[path], or the n-th entry of
 // vector.http_sequence[path] for the n-th request (the last one repeats).
@@ -29,6 +32,18 @@ import Ajv from "ajv";
 const FIXTURE_HOSTS =
   /https:\/\/(?:server|provider)\.example\.com(?=[/"\s?#]|$)/g;
 const ROUTE = /^\/v\/([\w.-]+)\/([a-z0-9-]+)\/([\w.-]+)\/([\w.-]+)(\/.*)$/;
+// RFC 8414 §3.1 inserts the well-known segment between the host and the
+// issuer's path, so a vector base URL's metadata request arrives here.
+const OAUTH_METADATA = "/.well-known/oauth-authorization-server";
+
+// The vector route a request path addresses: an RFC 8414 metadata request for
+// a vector base URL maps to that vector's OAUTH_METADATA path.
+function vectorPath(requestPath) {
+  const rest = requestPath.slice(OAUTH_METADATA.length);
+  return requestPath.startsWith(OAUTH_METADATA + "/v/") && ROUTE.test(rest + "/")
+    ? rest + OAUTH_METADATA
+    : requestPath;
+}
 
 function requireValid(validate, value, label) {
   if (!validate(value)) {
@@ -199,10 +214,11 @@ export function vectorRoutes({
   const requests = new Map(); // base path -> { seen, count, updatedAt, error }
 
   return async (ctx, next) => {
-    const m = ROUTE.exec(ctx.path);
+    const routePath = vectorPath(ctx.path);
+    const m = ROUTE.exec(routePath);
     if (!m) return next();
     const [, , capability, caseId, vectorKey, subPath] = m;
-    const basePath = ctx.path.slice(0, ctx.path.length - subPath.length);
+    const basePath = routePath.slice(0, routePath.length - subPath.length);
 
     let vector;
     try {

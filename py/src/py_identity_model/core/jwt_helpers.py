@@ -7,22 +7,33 @@ This module contains JWT-related operations used by both sync and async implemen
 from jwt import PyJWK, decode
 from jwt.exceptions import (
     ExpiredSignatureError,
+    ImmatureSignatureError,
+    InvalidAlgorithmError,
     InvalidAudienceError,
+    InvalidIssuedAtError,
     InvalidIssuerError,
+    InvalidKeyError,
     InvalidSignatureError,
+    InvalidSubjectError,
     InvalidTokenError,
+    MissingRequiredClaimError,
+    PyJWKError,
 )
 
 from ..exceptions import (
     ConfigurationException,
     InvalidAudienceException,
     InvalidIssuerException,
+    KeyAlgorithmMismatchException,
     SignatureVerificationException,
     TokenExpiredException,
+    TokenValidationErrorKind,
     TokenValidationException,
 )
 from ..logging_config import logger
+from .key_strength import enforce_key_strength
 from .models import JsonWebKey
+from .parsers import check_compact_jws, extract_jwt_header_fields
 
 
 # Options that MUST NOT be disabled — these are core security checks.
@@ -37,33 +48,84 @@ _ENFORCED_VERIFICATION_OPTIONS: frozenset[str] = frozenset(
 )
 
 
-def _sanitize_options(options: dict | None) -> dict | None:
+def _reject_disabled(options: dict, key: str, reason: str) -> None:
+    if key in options and not options[key]:
+        raise ConfigurationException(
+            f"Security option '{key}' cannot be disabled{reason}."
+        )
+
+
+def _sanitize_options(
+    options: dict | None,
+    audience: str | None,
+    issuer: str | list[str] | None,
+) -> dict | None:
     """Validate caller-supplied PyJWT decode options.
 
     Prevents callers from disabling core security checks via the options
-    pass-through.  ``verify_signature``, ``verify_exp``, ``verify_nbf``,
-    and ``verify_iat`` must never be set to ``False``.
+    pass-through:
+
+    * ``verify_signature``, ``verify_exp``, ``verify_nbf`` and ``verify_iat``
+      can never be ``False``.
+    * ``verify_aud`` cannot be ``False`` when an ``audience`` is configured,
+      and ``verify_iss`` cannot be ``False`` when an ``issuer`` is configured
+      or discovered.
+    * ``require`` must be a list, tuple or set of claim-name strings. It can
+      only add required claims.
 
     Args:
         options: Caller-supplied decode options, or None.
+        audience: The audience the token is checked against, or None.
+        issuer: The issuer(s) the token is checked against (configured or
+            from discovery), or None.
 
     Returns:
         The options dict (unmodified) if all values are safe, or None.
 
     Raises:
-        ConfigurationException: If any enforced option is set to False.
+        ConfigurationException: If an option would disable a check.
     """
     if options is None:
         return None
 
     for key in _ENFORCED_VERIFICATION_OPTIONS:
-        if key in options and not options[key]:
+        _reject_disabled(options, key, "; it is always enforced")
+    if audience is not None:
+        _reject_disabled(options, "verify_aud", " while an audience is configured")
+    if issuer is not None:
+        _reject_disabled(options, "verify_iss", " while an issuer is configured")
+
+    if "require" in options:
+        required = options["require"]
+        if not isinstance(required, (list, tuple, set, frozenset)) or not all(
+            isinstance(claim, str) for claim in required
+        ):
             raise ConfigurationException(
-                f"Security option '{key}' cannot be disabled. "
-                f"JWT {key.removeprefix('verify_')} verification is always enforced."
+                "Option 'require' must be a list of claim names."
             )
 
     return options
+
+
+BLANK_ISSUER_ENTRY_MESSAGE = (
+    "issuer list entries must be non-empty strings; an empty or whitespace "
+    "entry names no issuer"
+)
+
+
+def reject_blank_issuer_entries(issuer: object) -> None:
+    """Reject an issuer list holding an empty, whitespace or non-string entry.
+
+    Such an entry names no issuer, so a list containing one is a
+    misconfiguration, never a value to compare ``iss`` against.
+
+    Raises:
+        ConfigurationException: If *issuer* is a list with such an entry.
+    """
+    if isinstance(issuer, list) and any(
+        not isinstance(entry, str) or not entry.strip() for entry in issuer
+    ):
+        raise ConfigurationException(BLANK_ISSUER_ENTRY_MESSAGE)
 
 
 def _normalize_verification_key(key: dict | JsonWebKey) -> dict:
@@ -115,6 +177,39 @@ def _get_pyjwk(key_data: dict, algorithm: str | None) -> PyJWK:
     return PyJWK(key_data, algorithm)
 
 
+def _select_key_algorithm(jwt: str, key_data: dict, algorithms: list[str]) -> str:
+    """Pick the one algorithm the verification key is used with.
+
+    RFC 8725 §3.1: the caller specifies a set of algorithms, and each key is
+    used with exactly one. The key is bound to the token's header ``alg`` when
+    that is in *algorithms*, so every algorithm in the set is usable; a key
+    that declares ``alg`` must declare that one (RFC 7517 §4.4), and the key
+    type must fit it, which key conversion checks. A header ``alg`` outside
+    the set is rejected.
+
+    Raises:
+        KeyAlgorithmMismatchException: If the key declares an ``alg`` other
+            than the token's.
+        InvalidAlgorithmError: If the header ``alg`` is not in *algorithms*.
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
+    """
+    _kid, header_alg = extract_jwt_header_fields(jwt)
+    key_alg = key_data.get("alg")
+    if not isinstance(header_alg, str) or header_alg not in algorithms:
+        raise InvalidAlgorithmError("The specified alg value is not allowed")
+    if key_alg and key_alg != header_alg:
+        raise KeyAlgorithmMismatchException(
+            f"Key algorithm '{key_alg}' does not match JWT algorithm '{header_alg}'",
+            token_part="header",
+            details={
+                "kid": key_data.get("kid"),
+                "key_alg": key_alg,
+                "jwt_alg": header_alg,
+            },
+        )
+    return header_alg
+
+
 def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
     jwt: str,
     key_data: dict,
@@ -138,8 +233,20 @@ def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
 
     Returns:
         Decoded claims
+
+    Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
+        WeakKeyException: If the key is under the strength floor for the
+            algorithm it is bound to.
     """
-    pyjwk = _get_pyjwk(key_data, algorithms[0] if algorithms else None)
+    check_compact_jws(jwt)
+    key_algorithm = _select_key_algorithm(jwt, key_data, algorithms)
+
+    # RFC 7518 §3.2/§3.3 / FAPI 2.0 SP §5.4.1: refuse a weak key before it is
+    # used to verify anything.
+    enforce_key_strength(key_data, key_algorithm)
+
+    pyjwk = _get_pyjwk(key_data, key_algorithm)
 
     kwargs: dict = {
         "audience": audience,
@@ -150,6 +257,31 @@ def _decode_jwt(  # noqa: PLR0913  # JWT validation requires these params
     }
 
     return decode(jwt, pyjwk, **kwargs)
+
+
+_REQUIRED_CLAIM_KINDS = {
+    "iss": TokenValidationErrorKind.ISSUER,
+    "aud": TokenValidationErrorKind.AUDIENCE,
+    "sub": TokenValidationErrorKind.SUBJECT,
+    "exp": TokenValidationErrorKind.EXPIRATION,
+    "iat": TokenValidationErrorKind.ISSUED_AT,
+}
+
+
+def _invalid_token_kind(e: InvalidTokenError) -> TokenValidationErrorKind:
+    kind = TokenValidationErrorKind.UNCLASSIFIED
+    if isinstance(e, MissingRequiredClaimError):
+        kind = _REQUIRED_CLAIM_KINDS.get(e.claim, kind)
+    elif isinstance(e, InvalidIssuedAtError):
+        kind = TokenValidationErrorKind.ISSUED_AT
+    elif isinstance(e, ImmatureSignatureError):
+        # A future iat/nbf: the token is not yet valid, still the iat family.
+        kind = TokenValidationErrorKind.ISSUED_AT
+    elif isinstance(e, InvalidSubjectError):
+        kind = TokenValidationErrorKind.SUBJECT
+    elif isinstance(e, InvalidAlgorithmError):
+        kind = TokenValidationErrorKind.ALGORITHM
+    return kind
 
 
 def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requires these params
@@ -181,10 +313,13 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         Decoded token claims
 
     Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS
         TokenExpiredException: If token has expired
         InvalidAudienceException: If audience is invalid
         InvalidIssuerException: If issuer is invalid
         SignatureVerificationException: If signature is invalid
+        WeakKeyException: If ``key`` is an RSA key under 2048 bits, an EC
+            key under 224 bits, or an ``oct`` key shorter than the HS* hash
         TokenValidationException: For other token validation errors
     """
     try:
@@ -197,9 +332,10 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
             raise ConfigurationException(
                 "issuer must not be an empty list; omit or set to None to skip issuer validation"
             )
+        reject_blank_issuer_entries(issuer)
 
         # Sanitize options — block attempts to disable core security checks
-        sanitized_options = _sanitize_options(options)
+        sanitized_options = _sanitize_options(options, audience, issuer)
 
         # Accept a typed JsonWebKey or a plain JWK dict, and drop None-valued
         # members so a public key is never misread as private (see
@@ -220,6 +356,7 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
         if subject is not None and decoded.get("sub") != subject:
             raise TokenValidationException(
                 "Invalid subject: token sub does not match expected value",
+                validation_kind=TokenValidationErrorKind.SUBJECT,
                 token_part="payload",
             )
 
@@ -247,10 +384,21 @@ def decode_and_validate_jwt(  # noqa: PLR0913  # RFC 7519 §7.2 validation requi
             "Invalid signature",
             details={"error": str(e)},
         ) from e
+    except (InvalidKeyError, PyJWKError) as e:
+        # The key is malformed or does not fit the token's alg (e.g. an RSA
+        # key, ES256 header).
+        logger.error(f"Key cannot verify the token: {e!s}")
+        raise TokenValidationException(
+            "Key cannot verify the token",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
+            token_part="header",
+            details={"error": str(e)},
+        ) from e
     except InvalidTokenError as e:
         logger.error(f"Invalid token: {e!s}")
         raise TokenValidationException(
             f"Invalid token: {e!s}",
+            validation_kind=_invalid_token_kind(e),
             details={"error": str(e)},
         ) from e
 

@@ -2,7 +2,7 @@
 //!
 //! Production-grade, RFC-compliant OIDC/OAuth2 **client** library for Rust —
 //! part of the cross-language [identity-model](https://github.com/jamescrowley321/identity-model)
-//! family that shares one conformance specification across languages.
+//! family that shares one capability specification across languages.
 //!
 //! ## Status
 //!
@@ -12,7 +12,7 @@
 //! Extended token introspection (RFC 7662), revocation (RFC 7009), the token
 //! exchange grant (RFC 8693), and the key/proof/verify half of DPoP
 //! (RFC 9449 — see [`dpop`] for what is not yet covered). Behavior is proven
-//! against the cross-language conformance vectors in the repository's `spec/`.
+//! against the cross-language spec vectors in the repository's `spec/`.
 //!
 //! ## Module Overview
 //!
@@ -61,9 +61,10 @@ pub use jwks::{JsonWebKey, JsonWebKeySet, JwksClient, JwksClientBuilder};
 pub use jwt::{
     Audience, BoxedClaimsValidator, Claims, ClaimsValidationError, ClaimsValidator, CombineMode,
     CombinedValidator, DEFAULT_ALLOWED_ALGORITHMS, IdTokenValidationOptions,
-    IdTokenValidationOptionsBuilder, ValidationOptions, ValidationOptionsBuilder, boxed,
-    combine_claims_validators, from_fn, require_claim_value, require_claims, require_scopes,
-    validate_id_token, validate_id_token_claims, validate_token, validate_token_with_jwks,
+    IdTokenValidationOptionsBuilder, MIN_EC_KEY_BITS, MIN_RSA_KEY_BITS, ValidationOptions,
+    ValidationOptionsBuilder, boxed, combine_claims_validators, from_fn, require_claim_value,
+    require_claims, require_scopes, validate_id_token, validate_id_token_claims, validate_token,
+    validate_token_with_jwks,
 };
 pub use revocation::{RevocationClient, RevocationClientBuilder};
 pub use token::{

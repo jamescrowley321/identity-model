@@ -44,11 +44,10 @@ def clear_validation_caches():
 
 
 @pytest.fixture
-def validation_config(test_config, require_https):
+def validation_config(require_https):
     """Create standard validation config for tests."""
     return TokenValidationConfig(
         perform_disco=True,
-        audience=test_config["TEST_AUDIENCE"],
         options=DEFAULT_OPTIONS,
         require_https=require_https,
     )
@@ -107,7 +106,7 @@ class TestMultipleTokensFromSameProvider:
             for i, token in enumerate(tokens):
                 claims = validate_token(
                     jwt=token,
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
                 assert claims is not None, f"Token {i + 1} validation failed"
@@ -161,7 +160,7 @@ class TestCacheIsolationBetweenProviders:
         with pytest.raises(TokenValidationException) as exc_info:
             validate_token(
                 jwt=alternate_provider_token,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -181,9 +180,9 @@ class TestCacheIsolationBetweenProviders:
 
         This ensures the cache doesn't bypass expiration checks.
         """
-        # Descope session tokens use a different issuer format than OIDC discovery.
-        # Disable issuer verification so we test expiration, not issuer mismatch.
-        expired_options = {**DEFAULT_OPTIONS, "verify_iss": False}
+        # Descope session tokens use a different issuer format than OIDC
+        # discovery; PyJWT checks exp before iss, so expiry is still reported.
+        expired_options = DEFAULT_OPTIONS
         validation_config = TokenValidationConfig(
             perform_disco=True,
             options=expired_options,
@@ -193,7 +192,7 @@ class TestCacheIsolationBetweenProviders:
         with pytest.raises(TokenExpiredException):
             validate_token(
                 jwt=expired_token,
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 token_validation_config=validation_config,
             )
 
@@ -242,7 +241,7 @@ class TestBenchmarkWithPreGeneratedTokens:
                 for token in tokens:
                     validate_token(
                         jwt=token,
-                        disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                        issuer=test_config["TEST_ISSUER"],
                         token_validation_config=validation_config,
                     )
         elapsed_time = datetime.datetime.now(tz=datetime.UTC) - start_time
@@ -289,7 +288,7 @@ class TestBenchmarkWithPreGeneratedTokens:
             for _ in range(num_validations):
                 validate_token(
                     jwt=token,
-                    disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     token_validation_config=validation_config,
                 )
         elapsed_time = datetime.datetime.now(tz=datetime.UTC) - start_time

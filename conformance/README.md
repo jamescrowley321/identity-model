@@ -34,8 +34,8 @@ The local conformance suite uses a self-signed TLS certificate for `localhost.em
 A `cert-init` Docker service generates this certificate at compose-up time and shares it with
 both the nginx proxy and the RP harness via a named volume.
 
-The RP container sets `SSL_CERT_FILE=/certs/nginx-selfsigned.crt` so that py-identity-model's
-HTTP client trusts the self-signed cert when making discovery and JWKS fetches to the
+The RP container sets `SSL_CERT_FILE=/certs/nginx-selfsigned.crt`; httpx (with its default
+`trust_env=True`) reads it when the library builds its default client, so that client trusts the self-signed cert when making discovery and JWKS fetches to the
 conformance suite.
 
 No certificate files are committed to the repository — they are generated dynamically on each run.
@@ -52,9 +52,103 @@ The conformance suite uses `localhost.emobix.co.uk` which resolves to `127.0.0.1
 | `config-rp` | `configs/config-rp.json` | Config RP certification (discovery-based config) |
 | `form-post-basic-rp` | `configs/form-post-basic-rp.json` | Basic RP with `form_post` response mode |
 | `fapi2-rp` | `configs/fapi2-rp.json` | FAPI 2.0 Security Profile RP (PAR + PKCE S256 + private_key_jwt + DPoP + RFC 9207 `iss`) |
+| `fapi2-mtls-rp` | `configs/fapi2-mtls-rp.json` | FAPI 2.0 Security Profile RP, mTLS variant (`self_signed_tls_client_auth` + certificate-bound tokens) |
+| `fapi2-message-signing-rp` | `configs/fapi2-message-signing-rp.json` | FAPI 2.0 Message Signing RP (JARM signed authorization responses) |
 | `fastapi-basic-rp` | `configs/fastapi-basic-rp.json` | Basic RP regression for the fastapi-identity-model router (`--rp-url http://localhost:8889`) |
 | `fastapi-config-rp` | `configs/fastapi-config-rp.json` | Config RP regression for the fastapi-identity-model router |
 | `fastapi-form-post-basic-rp` | `configs/fastapi-form-post-basic-rp.json` | Form Post Basic RP regression for the fastapi-identity-model router |
+| `dynamic-rp` | `configs/dynamic-rp.json` | Dynamic RP (RFC 7591 registration, `request_uri` request objects). The two WebFinger modules are declared unsupported |
+| `rpinitiated-logout-rp` | `configs/rpinitiated-logout-rp.json` | RP-Initiated Logout RP |
+| `backchannel-logout-rp` | `configs/backchannel-logout-rp.json` | Back-Channel Logout RP |
+
+CI runs every plan on each pull request and on each push to `release/v5`: the
+basic, config and form-post plans (`conformance` job), the three FAPI 2.0 plans
+(`conformance-fapi2` job), the dynamic and two logout plans
+(`conformance-dynamic-logout` job, locally `make
+conformance-test-dynamic-logout`) and the three `fastapi-*` plans
+(`conformance-fastapi` job).
+
+### Dynamic and logout plans on the hosted suite
+
+In these three plans the OP calls the RP **server-to-server**, which the hosted
+suite (`certification.openid.net`) cannot do at a runner's `localhost:8888`:
+
+| Plan | What the OP calls on the RP |
+| --- | --- |
+| `dynamic-rp` | `GET /request-object/{id}`: the plan forces `request_type=request_uri`, so the OP fetches every signed request object (6 modules) |
+| `rpinitiated-logout-rp` | `POST /backchannel-logout`: the suite stops the module unless the client registers a back- or front-channel logout URI, and the harness implements back-channel |
+| `backchannel-logout-rp` | `POST /backchannel-logout` with a Logout Token (all 8 modules) |
+
+The browser-facing URLs (`redirect_uri`, `post_logout_redirect_uri`) stay on
+`localhost:8888`, since `run_tests.py` itself plays the user agent. So a hosted
+run needs the harness reachable from the internet at some base URL, given as
+`--rp-public-url` (env `CONFORMANCE_RP_PUBLIC_URL`), with the harness started
+with `RP_INTERNAL_BASE_URL` set to that same URL. `run_tests.py` then registers
+`<url>/backchannel-logout` instead of the docker-network address in the config,
+and before it creates the plan checks that `<url>/health` answers and reports
+that base as its `op_facing_base_url`. Without a public URL it refuses these
+plans on a hosted suite rather than run them to a guaranteed failure.
+
+```bash
+RP_INTERNAL_BASE_URL=https://rp.example.org uvicorn app:app --port 8888  # in conformance/
+make conformance-test-dynamic-logout HOSTED=1 \
+  CONFORMANCE_SERVER=https://www.certification.openid.net/ \
+  RP_PUBLIC_URL=https://rp.example.org
+```
+
+In CI, `conformance-hosted.yml` runs them only on `workflow_dispatch` with
+`dynamic_logout: true` and `rp_public_url` set. A GitHub-hosted runner has no
+inbound address, so that URL has to be routed to the runner by something else
+(a tunnel started in the job, or a self-hosted runner with public ingress);
+the workflow does not set one up.
+
+Expose **only** `GET /health`, `GET /request-object/*` and
+`POST /backchannel-logout` through that ingress, and only for the run. The
+harness is unauthenticated: `/discover` and `/register` make the runner fetch
+any issuer they are given (SSRF), `/register` and `/clear-cache` change the
+harness's state, and `/logout` redirects with an `id_token_hint`. Anyone who
+could reach them could tamper with a run's results. The URL is also visible in
+the dispatch inputs and the run log.
+
+## How a module passes
+
+The suite judges the RP from the OP side: for a negative module it only sees
+that the RP stopped. A harness crash looks the same, so `run_tests.py` combines
+the suite's verdict with what the harness recorded for the module.
+
+`expected_modules.json` lists, for every plan, each module the plan must contain
+and what the RP has to do in it:
+
+- `"expect": "accept"` — the harness completed the flow (`/results/{test_id}`
+  reports `status: success`).
+- `"expect": "reject"` with `"reasons"` — the harness refused the flow
+  (`status: error`), and the reason class (the text before the first `:` of
+  `error`, such as `id_token_validation` or `state_validation`) is one of the
+  listed reasons.
+- `"expect": "none"` — the module records no harness verdict (the declared
+  unsupported `request-uri-signed-none`, or `dynamic-registration`, which is
+  satisfied by registration alone).
+- `"allow"` — the SKIPPED or WARNING statuses the module may end in, each with
+  the reason it is acceptable.
+
+A module is FAILED when:
+
+- the suite reports FAILED, REVIEW, INTERRUPTED or a timeout, or reports
+  FINISHED with no result;
+- the suite reports SKIPPED or WARNING and the module does not allowlist it;
+- the harness answered with an HTTP 5xx other than its deliberate 502, or could
+  not be reached;
+- the harness recorded nothing, or recorded an outcome other than the expected
+  one;
+- the harness recorded a `conflict`: a rejection it could not tie to a flow
+  (unknown callback state, failed JARM, unparseable callback) arrived after the
+  module's flow had succeeded. Such a rejection never replaces an earlier
+  rejection. A logout rejection is the exception: it follows the module's login
+  by design, so it does replace the login's success.
+
+The plan fails before running anything when its modules differ from the
+manifest (a module missing, unexpected or listed twice). After a suite upgrade,
+review the new module list and update the manifest deliberately.
 
 The `fastapi-*` plans run the identical suite plans against the package harness
 (`make conformance-test-fastapi`). They are a CI regression shield for the
@@ -98,6 +192,9 @@ building blocks previously only *produced* proofs):
 # Local suite (brings up the OP + RP harness):
 python run_tests.py --plan fapi2-rp
 
+# One module only (substring match on the module name):
+python run_tests.py --plan fapi2-rp --only-module invalid-alternate-alg
+
 # Hosted suite (evidence run — requires CONFORMANCE_TOKEN):
 python run_tests.py --plan fapi2-rp \
   --suite-url https://www.certification.openid.net \
@@ -105,13 +202,20 @@ python run_tests.py --plan fapi2-rp \
   --rp-logs-zip results/hosted/fapi2-rp-rp-logs.zip
 ```
 
-> **Variant confirmation:** `configs/fapi2-rp.json` pins the plan name and variant
-> (`client_auth_type=private_key_jwt`, `sender_constrain=dpop`,
-> `fapi_client_type=oidc`, `fapi_request_method=unsigned`,
-> `fapi_response_mode=plain_response`). The exact variant keys and plan name must
-> be reconciled against the live suite's plan metadata on the first evidence run —
-> the suite is the source of truth. mTLS (`sender_constrain=mtls`, #215) is a
-> separate future path; this profile certifies on DPoP.
+The conformance workflow runs all three FAPI 2.0 plans (`fapi2-rp`,
+`fapi2-mtls-rp`, `fapi2-message-signing-rp`) in full on every pull request, in
+the `conformance-fapi2` job.
+
+Variants, as pinned in `configs/`:
+
+| Plan | Suite plan | Variant |
+|---|---|---|
+| `fapi2-rp` | `fapi2-security-profile-final-client-test-plan` | `client_auth_type=private_key_jwt`, `sender_constrain=dpop`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi` |
+| `fapi2-mtls-rp` | `fapi2-security-profile-final-client-test-plan` | `client_auth_type=mtls`, `sender_constrain=mtls`, `authorization_request_type=simple`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi` |
+| `fapi2-message-signing-rp` | `fapi2-message-signing-final-client-test-plan` | `client_auth_type=private_key_jwt`, `sender_constrain=dpop`, `authorization_request_type=simple`, `fapi_request_method=signed_non_repudiation`, `fapi_client_type=oidc`, `fapi_profile=plain_fapi`, `fapi_response_mode=jarm` |
+
+The FAPI 2.0 plans are regression tests; the library holds no FAPI 2.0
+certification.
 
 ## Profile Test Counts
 

@@ -1,6 +1,6 @@
 # Token Revocation test fixtures
 
-Fixtures backing the `revocation` conformance suite
+Fixtures backing the `revocation` spec-vector suite
 (`spec/vectors/revocation.json`), per RFC 7009.
 
 - `revoke-success-empty.json` — an empty (0-byte) body, the most common HTTP 200

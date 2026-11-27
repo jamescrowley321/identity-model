@@ -23,9 +23,7 @@ OAuth 2.0 (JARM)".
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from jwt import PyJWTError
-
-from ..exceptions import JarmValidationException
+from ..exceptions import JarmValidationException, MalformedTokenException
 from ..oidc_constants import AuthorizeResponse as AuthorizeResponseParams
 from .authorize_response import (
     _PARAM_TO_FIELD,
@@ -33,6 +31,7 @@ from .authorize_response import (
     _map_params_to_fields,
 )
 from .jwt_helpers import decode_and_validate_jwt
+from .jwt_signing import DEFAULT_ALLOWED_ALGORITHMS, advertised_verify_algorithms
 from .parsers import extract_jwt_header_fields
 
 
@@ -133,6 +132,16 @@ def extract_jarm_response_jwt(redirect_uri: str) -> str:
     raise JarmValidationException("redirect_uri contains no JARM 'response' parameter")
 
 
+def advertised_jarm_algorithms(advertised: list[str] | None) -> list[str] | None:
+    """Return the AS-advertised JARM algorithms that are in the verify default.
+
+    ``None`` (not advertised) stays ``None``, which
+    :func:`select_jarm_algorithm` reads as ``DEFAULT_ALLOWED_ALGORITHMS``.
+    A value that is not a list allows nothing.
+    """
+    return advertised_verify_algorithms(advertised)
+
+
 def select_jarm_algorithm(
     header_alg: str | None,
     allowed_algs: list[str] | None,
@@ -147,13 +156,15 @@ def select_jarm_algorithm(
     3. It is not a symmetric MAC (``HS*``) — JARM signatures are asymmetric so
        the RP verifies with the AS public key it already trusts; accepting an
        ``HS*`` alg would let an attacker sign with a shared/guessable secret.
-    4. It appears in *allowed_algs* — the AS-advertised
-       ``authorization_signing_alg_values_supported``.
+    4. It appears in *allowed_algs*, or in ``DEFAULT_ALLOWED_ALGORITHMS``
+       when *allowed_algs* is ``None``.
 
     Args:
         header_alg: The ``alg`` value from the response JWT header.
-        allowed_algs: Algorithms the authorization server advertises as
-            supported for signing authorization responses.
+        allowed_algs: Allowed algorithms: the caller's list, or those the
+            authorization server advertises in
+            ``authorization_signing_alg_values_supported``. ``None`` means
+            ``DEFAULT_ALLOWED_ALGORITHMS``; an empty list allows nothing.
 
     Returns:
         The validated algorithm to use for signature verification.
@@ -177,11 +188,11 @@ def select_jarm_algorithm(
             "signatures are permitted"
         )
 
+    if allowed_algs is None:
+        allowed_algs = sorted(DEFAULT_ALLOWED_ALGORITHMS)
+
     if not allowed_algs:
-        raise JarmValidationException(
-            "No allowed JARM signing algorithms configured "
-            "(authorization_signing_alg_values_supported is required)"
-        )
+        raise JarmValidationException("No allowed JARM signing algorithms configured")
 
     if alg not in allowed_algs:
         raise JarmValidationException(
@@ -203,7 +214,7 @@ def extract_jarm_header(response_jwt: str) -> tuple[str | None, str | None]:
     """
     try:
         return extract_jwt_header_fields(response_jwt)
-    except PyJWTError as exc:
+    except MalformedTokenException as exc:
         raise JarmValidationException(
             "JARM 'response' value is not a well-formed JWT"
         ) from exc
@@ -313,6 +324,7 @@ def build_authorize_response_from_claims(
 
 __all__ = [
     "JARM_RESPONSE_PARAM",
+    "advertised_jarm_algorithms",
     "build_authorize_response_from_claims",
     "decode_jarm_claims",
     "extract_jarm_header",

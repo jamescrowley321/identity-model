@@ -41,10 +41,7 @@ from py_identity_model.aio import (
 
 
 # Configuration
-DISCO_ADDRESS = os.environ.get(
-    "DISCO_ADDRESS",
-    "https://demo.duendesoftware.com",
-)
+ISSUER = os.environ.get("ISSUER", "https://demo.duendesoftware.com")
 CLIENT_ID = os.environ.get("CLIENT_ID", "m2m")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET", "secret")
 AUDIENCE = os.environ.get("AUDIENCE", "api")
@@ -69,7 +66,7 @@ def sync_example():
 
     # 1. Get discovery document (synchronous)
     print("\n1. Fetching discovery document (sync)...")
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = sync_get_discovery_document(disco_request)
 
     if disco_response.is_successful:
@@ -111,7 +108,7 @@ def sync_example():
         claims = sync_validate_token(
             jwt=token_response.token["access_token"],
             token_validation_config=validation_config,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         print("✓ Token validated successfully")
         print(f"  Subject: {claims.get('sub')}")
@@ -139,7 +136,7 @@ async def async_example():
 
     # 1. Get discovery document (asynchronous)
     print("\n1. Fetching discovery document (async)...")
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = await async_get_discovery_document(disco_request)
 
     if disco_response.is_successful:
@@ -181,7 +178,7 @@ async def async_example():
         claims = await async_validate_token(
             jwt=token_response.token["access_token"],
             token_validation_config=validation_config,
-            disco_doc_address=DISCO_ADDRESS,
+            issuer=ISSUER,
         )
         print("✓ Token validated successfully")
         print(f"  Subject: {claims.get('sub')}")
@@ -209,7 +206,7 @@ async def concurrent_async_example():
     print("\nFetching multiple tokens concurrently...")
 
     # Create multiple token requests
-    disco_request = DiscoveryDocumentRequest(address=DISCO_ADDRESS)
+    disco_request = DiscoveryDocumentRequest(issuer=ISSUER)
     disco_response = await async_get_discovery_document(disco_request)
 
     if not disco_response.is_successful:
@@ -255,8 +252,8 @@ class MixedApp:
     - Sync background jobs (cron jobs, workers)
     """
 
-    def __init__(self, disco_address: str):
-        self.disco_address = disco_address
+    def __init__(self, issuer: str):
+        self.issuer = issuer
 
     def background_job(self):
         """
@@ -267,7 +264,7 @@ class MixedApp:
         """
         print("\n[Background Job] Running sync token validation...")
 
-        disco_request = DiscoveryDocumentRequest(address=self.disco_address)
+        disco_request = DiscoveryDocumentRequest(issuer=self.issuer)
         disco_response = sync_get_discovery_document(disco_request)
 
         if disco_response.is_successful:
@@ -293,7 +290,7 @@ class MixedApp:
             claims = await async_validate_token(
                 jwt=token,
                 token_validation_config=validation_config,
-                disco_doc_address=self.disco_address,
+                issuer=self.issuer,
             )
             print(f"[API Endpoint] ✓ Token valid for: {claims.get('sub')}")
             return {"status": "authorized", "claims": claims}
@@ -308,7 +305,7 @@ def mixed_app_example():
     print("MIXED SYNC/ASYNC APP EXAMPLE")
     print("=" * 60)
 
-    app = MixedApp(DISCO_ADDRESS)
+    app = MixedApp(ISSUER)
 
     # Sync background job
     disco_response = app.background_job()
@@ -347,7 +344,7 @@ def main():
     print("\n" + "=" * 60)
     print("PY-IDENTITY-MODEL: MIXED SYNC/ASYNC USAGE EXAMPLES")
     print("=" * 60)
-    print(f"\nDiscovery Address: {DISCO_ADDRESS}")
+    print(f"\nIssuer: {ISSUER}")
     print(f"Client ID: {CLIENT_ID}")
 
     # Example 1: Synchronous usage

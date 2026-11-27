@@ -11,6 +11,7 @@ import argparse
 import base64
 from dataclasses import dataclass
 from email.message import Message
+from enum import StrEnum
 from html.parser import HTMLParser
 import json
 import logging
@@ -58,6 +59,108 @@ def _is_local_suite(url: str) -> bool:
     return hostname in LOCAL_HOSTNAMES
 
 
+# Plans whose OP calls the RP server-to-server, keyed to the call it makes. A
+# hosted suite cannot reach the harness at RP_BASE_URL (the runner's localhost),
+# so these plans need the RP's publicly reachable base URL (--rp-public-url).
+# The browser-facing URLs (redirect_uri, post_logout_redirect_uri) stay on
+# RP_BASE_URL: the runner itself plays the user agent and follows them.
+OP_CALLBACK_PROFILES = {
+    "dynamic-rp": (
+        "fetches each signed request object from the RP's "
+        "/request-object/{id} (the plan forces request_type=request_uri)"
+    ),
+    "rpinitiated-logout-rp": (
+        "POSTs a Logout Token to the RP's /backchannel-logout (the plan stops "
+        "unless the client registers a back- or front-channel logout URI)"
+    ),
+    "backchannel-logout-rp": ("POSTs a Logout Token to the RP's /backchannel-logout"),
+}
+
+
+def effective_rp_public_url(suite_url: str, rp_public_url: str | None) -> str | None:
+    """Return the public RP URL to use against ``suite_url``.
+
+    A local suite reaches the harness over the docker network, so a leftover
+    public URL must not replace the config's ``backchannel_logout_uri`` there.
+    """
+    if not rp_public_url or _is_local_suite(suite_url):
+        return None
+    return rp_public_url
+
+
+def rp_public_url_problem(
+    profile: str, suite_url: str, rp_public_url: str | None
+) -> str | None:
+    """Return why ``profile`` cannot run against ``suite_url``, or ``None``.
+
+    Only a hosted suite running an OP-callback plan needs a public RP URL; a
+    local suite reaches the harness over the docker network.
+    """
+    if profile not in OP_CALLBACK_PROFILES or _is_local_suite(suite_url):
+        return None
+    if not rp_public_url:
+        return (
+            f"{profile} on a hosted suite needs --rp-public-url "
+            f"(env CONFORMANCE_RP_PUBLIC_URL): the OP "
+            f"{OP_CALLBACK_PROFILES[profile]}, and it cannot reach {RP_BASE_URL}"
+        )
+    parsed = urlparse(rp_public_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return f"--rp-public-url {rp_public_url!r} is not an absolute http(s) URL"
+    if parsed.hostname in LOCAL_HOSTNAMES:
+        return (
+            f"--rp-public-url {rp_public_url!r} is a local address the hosted "
+            "suite cannot reach"
+        )
+    return None
+
+
+def apply_rp_public_url(
+    client_overrides: dict | None, rp_public_url: str | None
+) -> dict | None:
+    """Point the registered ``backchannel_logout_uri`` at the RP's public URL.
+
+    The committed logout configs register the docker-network address the local
+    suite uses; a hosted OP must be given the public one instead.
+    """
+    if (
+        not rp_public_url
+        or not client_overrides
+        or "backchannel_logout_uri" not in client_overrides
+    ):
+        return client_overrides
+    return {
+        **client_overrides,
+        "backchannel_logout_uri": f"{rp_public_url.rstrip('/')}/backchannel-logout",
+    }
+
+
+def rp_public_url_unreachable(rp_public_url: str) -> str | None:
+    """Return why the harness is not usable at ``rp_public_url``, or ``None``.
+
+    Fetches ``/health`` through the public URL (so it proves the ingress works,
+    at least from here) and checks the harness hands the OP that same base in
+    ``request_uri``; otherwise a plan would fail module by module much later.
+    """
+    base = rp_public_url.rstrip("/")
+    try:
+        response = httpx.get(f"{base}/health", timeout=15.0)
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        return f"RP harness not reachable at {base}/health: {exc}"
+    if response.status_code != 200:
+        return f"RP harness at {base}/health answered HTTP {response.status_code}"
+    try:
+        op_facing = str(response.json().get("op_facing_base_url", ""))
+    except (ValueError, AttributeError):
+        return f"{base}/health did not return the harness's JSON health body"
+    if op_facing != base:
+        return (
+            f"the harness at {base} hands the OP {op_facing!r} as its base URL; "
+            f"start it with RP_INTERNAL_BASE_URL={base}"
+        )
+    return None
+
+
 def _parse_content_disposition_filename(disposition: str) -> str | None:
     """Extract the filename from a ``Content-Disposition`` header.
 
@@ -87,6 +190,53 @@ class TestResult:
     status: str  # PASSED, WARNING, FAILED, REVIEW, SKIPPED, INTERRUPTED
     log_url: str = ""
     detail: str = ""
+
+
+class Expectation(StrEnum):
+    """What the RP harness must have recorded for a module to pass.
+
+    ``ACCEPT``: the harness completed the flow (result ``status: success``).
+    ``REJECT``: the harness refused the flow (result ``status: error``) for one
+    of the module's listed reason classes.
+    ``NONE``: the module records no harness verdict (a declared-unsupported
+    module the runner never drives, or one satisfied by registration alone);
+    the suite's verdict stands on its own.
+    """
+
+    ACCEPT = "accept"
+    REJECT = "reject"
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class ModuleExpectation:
+    """One module's entry in the expected-module manifest."""
+
+    expect: Expectation
+    reasons: frozenset[str] = frozenset()
+    # Non-PASSED suite statuses (SKIPPED / WARNING) this module may end in,
+    # each mapped to the reason it is acceptable.
+    allowed_statuses: tuple[tuple[str, str], ...] = ()
+
+    def allows(self, status: str) -> bool:
+        return any(allowed == status for allowed, _ in self.allowed_statuses)
+
+
+@dataclass(frozen=True)
+class RPEvidence:
+    """What the RP harness reported for one module.
+
+    ``recorded`` is the harness's ``/results/{test_id}`` body (``None`` when it
+    recorded nothing). ``crashes`` lists RP responses that show the harness
+    failed rather than decided: an HTTP 5xx other than its deliberate 502, or a
+    transport error talking to it.
+    """
+
+    recorded: dict | None
+    crashes: tuple[str, ...] = ()
+    # What the harness recorded after each earlier flow of a multi-flow
+    # module (key rotation), before the last flow overwrote it.
+    earlier: tuple[dict | None, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -322,27 +472,23 @@ LOGOUT_PROFILES = frozenset(
     }
 )
 
-# RP-Initiated Logout modules that must be driven WITHOUT a ``state`` on the
-# logout request (state is optional per RP-Initiated Logout 1.0 §2). The rest
-# send a state and verify the OP echoes it back unchanged.
-NO_STATE_LOGOUT_TESTS = frozenset(
-    {
-        "oidcc-client-test-rp-init-logout-no-state",
-    }
+# Modules for an OPTIONAL feature the library does not support, with the reason.
+# The RP declares non-support rather than driving a doomed flow: the module is
+# recorded SKIPPED with the reason and never sent to the suite. This is a
+# declared non-support for OIDF certification, not a masked failure.
+_NO_WEBFINGER = (
+    "py-identity-model does not implement WebFinger issuer discovery (OpenID "
+    "Connect Discovery 1.0 §2, which is OPTIONAL); it takes the issuer as input"
 )
-
-# Modules for an OPTIONAL feature the library deliberately does not support, so
-# the RP declares non-support rather than driving a doomed flow.
-# request-uri-signed-none requires an UNSIGNED (alg=none) request object, but
-# py-identity-model excludes ``none`` from SUPPORTED_SIGNING_ALGORITHMS by design
-# (unsigned request objects are a security downgrade). This is a legitimate
-# declared non-support for OIDF certification, not a masked failure — recorded
-# SKIPPED with the reason and never sent to the suite.
-DECLARED_UNSUPPORTED_TESTS = frozenset(
-    {
-        "oidcc-client-test-request-uri-signed-none",
-    }
-)
+DECLARED_UNSUPPORTED_TESTS = {
+    # An unsigned (alg=none) request object is a security downgrade.
+    "oidcc-client-test-request-uri-signed-none": (
+        "py-identity-model does not create unsigned (alg=none) request objects "
+        "(SUPPORTED_SIGNING_ALGORITHMS excludes 'none' by design)"
+    ),
+    "oidcc-client-test-discovery-webfinger-acct": _NO_WEBFINGER,
+    "oidcc-client-test-discovery-webfinger-url": _NO_WEBFINGER,
+}
 
 
 def _get_test_type(test_name: str) -> str:
@@ -359,13 +505,47 @@ def _get_test_type(test_name: str) -> str:
     return "auth_full"
 
 
+# The harness answers a flow it deliberately refused (discovery failure, issuer
+# mismatch, missing endpoint) with 502 and records the refusal. Any other 5xx
+# from the RP is the harness failing, not the RP deciding.
+HARNESS_REJECTION_STATUS = 502
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlparse(url)
+    return parsed.scheme, parsed.hostname or "", parsed.port
+
+
+def _rp_crashes(responses: list[httpx.Response], rp_base_url: str) -> list[str]:
+    """RP responses in a driven flow that show the harness crashed."""
+    rp_origin = _origin(rp_base_url)
+    return [
+        f"RP returned HTTP {r.status_code} at {r.url.path}"
+        for r in responses
+        if _origin(str(r.url)) == rp_origin
+        and r.status_code >= httpx.codes.INTERNAL_SERVER_ERROR
+        and r.status_code != HARNESS_REJECTION_STATUS
+    ]
+
+
+def _rp_transport_crash(exc: httpx.HTTPError, rp_base_url: str) -> list[str]:
+    """A transport error is a crash when the failed request targeted the RP."""
+    try:
+        url = str(exc.request.url)
+    except RuntimeError:
+        return []
+    if _origin(url) != _origin(rp_base_url):
+        return []
+    return [f"RP request failed at {urlparse(url).path}: {exc}"]
+
+
 def drive_rp_discover(
     rp_base_url: str,
     issuer: str,
     test_id: str,
     test_name: str = "",
     profile: str = "",
-) -> None:
+) -> list[str]:
     """Hit the RP's /discover endpoint to fetch discovery without starting an auth flow.
 
     Used for Config RP discovery-only tests where the suite only needs to
@@ -387,6 +567,8 @@ def drive_rp_discover(
             )
         except httpx.HTTPError as exc:
             logger.warning("RP discover HTTP error (may be expected): %s", exc)
+            return _rp_transport_crash(exc, rp_base_url)
+    return _rp_crashes([response], rp_base_url)
 
 
 def drive_rp_register(
@@ -394,27 +576,28 @@ def drive_rp_register(
     issuer: str,
     test_name: str = "",
     profile: str = "",
-) -> str | None:
+) -> tuple[str | None, list[str]]:
     """Register the RP dynamically (RFC 7591) for a Dynamic RP test module.
 
     The Dynamic RP plan has no pre-configured client, so the RP must register
     itself with each per-test OP before the auth flow. Returns the issued
     client_id (which the runner passes to /authorize; the RP fills the matching
     secret from its remembered registration), or None if registration did not
-    complete.
+    complete, together with the harness crashes seen (see :func:`_rp_crashes`).
     """
     params = {"issuer": issuer, "test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0) as client:
         try:
             response = client.get(f"{rp_base_url}/register", params=params)
-            if response.is_success:
-                client_id = response.json().get("client_id")
-                logger.info("RP registered dynamically: client_id=%s", client_id)
-                return client_id
-            logger.warning("RP register returned status=%d", response.status_code)
         except httpx.HTTPError as exc:
             logger.warning("RP register HTTP error (may be expected): %s", exc)
-    return None
+            return None, _rp_transport_crash(exc, rp_base_url)
+    if response.is_success:
+        client_id = response.json().get("client_id")
+        logger.info("RP registered dynamically: client_id=%s", client_id)
+        return client_id, []
+    logger.warning("RP register returned status=%d", response.status_code)
+    return None, _rp_crashes([response], rp_base_url)
 
 
 class _FormPostParser(HTMLParser):
@@ -465,7 +648,8 @@ def drive_rp_authorize(
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
-) -> None:
+    signed_request: bool = False,
+) -> list[str]:
     """Hit the RP's /authorize endpoint to start an auth flow.
 
     The RP will redirect to the conformance suite's OP, which handles
@@ -475,6 +659,8 @@ def drive_rp_authorize(
     In form_post mode, the OP returns an HTML page with a self-submitting
     form instead of a redirect. We detect this and POST the form data
     to the callback URL ourselves.
+
+    Returns the harness crashes seen along the way (see :func:`_rp_crashes`).
     """
     params = {
         "issuer": issuer,
@@ -489,12 +675,15 @@ def drive_rp_authorize(
         "fapi2": str(fapi2).lower(),
         "jarm": str(jarm).lower(),
         "mtls": str(mtls).lower(),
+        "signed_request": str(signed_request).lower(),
     }
 
     # Follow all redirects through the full auth flow
+    seen: list[httpx.Response] = []
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/authorize", params=params)
+            seen.extend([*response.history, response])
             logger.info(
                 "RP flow completed: status=%d, url=%s",
                 response.status_code,
@@ -521,6 +710,7 @@ def drive_rp_authorize(
                         len(fields),
                     )
                     post_response = client.post(resolved_action, data=fields)
+                    seen.extend([*post_response.history, post_response])
                     if post_response.is_error:
                         logger.warning(
                             "Form post callback failed: status=%d, url=%s",
@@ -539,6 +729,11 @@ def drive_rp_authorize(
             # form_post handler regresses the resolution, we'd rather log
             # and continue than crash the runner process uncaught.
             logger.warning("RP flow HTTP error (may be expected): %s", exc)
+            crashes = _rp_crashes(seen, rp_base_url)
+            if isinstance(exc, httpx.HTTPError):
+                crashes += _rp_transport_crash(exc, rp_base_url)
+            return crashes
+    return _rp_crashes(seen, rp_base_url)
 
 
 def drive_rp_logout(
@@ -547,10 +742,9 @@ def drive_rp_logout(
     client_id: str,
     client_secret: str,
     test_id: str,
-    send_state: bool = True,
     test_name: str = "",
     profile: str = "",
-) -> None:
+) -> list[str]:
     """Drive a login followed by an RP-Initiated Logout for a logout profile.
 
     Both logout profiles (RP-Initiated and Back-Channel) start the same way: the
@@ -565,11 +759,11 @@ def drive_rp_logout(
     request — that is a server-to-server call the RP handles on its own, so no
     extra driving is needed here.
 
-    ``send_state=False`` tells the RP to omit ``state`` from the logout request
-    (the -no-state module); the default sends a state and expects it echoed.
+    The RP always sends a ``state`` on the logout request and checks the value
+    the OP returns.
     """
     # Step 1: log in so the RP has an id_token_hint + end_session endpoint.
-    drive_rp_authorize(
+    crashes = drive_rp_authorize(
         rp_base_url=rp_base_url,
         issuer=issuer,
         client_id=client_id,
@@ -580,11 +774,7 @@ def drive_rp_logout(
     )
 
     # Step 2: initiate RP-Initiated Logout and follow the redirect chain.
-    params = {
-        "test_name": test_name,
-        "profile": profile,
-        "send_state": str(send_state).lower(),
-    }
+    params = {"test_name": test_name, "profile": profile}
     with httpx.Client(verify=False, timeout=30.0, follow_redirects=True) as client:
         try:
             response = client.get(f"{rp_base_url}/logout", params=params)
@@ -595,6 +785,10 @@ def drive_rp_logout(
             )
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
             logger.warning("RP logout HTTP error (may be expected): %s", exc)
+            if isinstance(exc, httpx.HTTPError):
+                crashes += _rp_transport_crash(exc, rp_base_url)
+            return crashes
+    return crashes + _rp_crashes([*response.history, response], rp_base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -636,9 +830,18 @@ def _fetch_rp_jwks(rp_base_url: str, path: str = "/fapi2-jwks") -> dict:
     return jwks
 
 
-def _b64u_uint(value: int) -> str:
-    """base64url-encode an unsigned integer as a JWK field (RFC 7518 §6)."""
-    raw = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
+# Octets in a P-256 coordinate or private value (RFC 7518 §6.2.1.2, §6.2.2.1).
+P256_OCTETS = 32
+
+
+def _b64u_p256(value: int) -> str:
+    """base64url-encode a P-256 coordinate or private value at full width.
+
+    RFC 7518 §6.2.1.2: the octet string MUST be the full size of a coordinate
+    for the curve. A value with a leading zero byte encoded shorter is refused
+    by the RP ("Coords should be 32 bytes"), which failed a whole plan.
+    """
+    raw = value.to_bytes(P256_OCTETS, "big")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
@@ -663,11 +866,195 @@ def _generate_server_signing_jwks() -> dict:
         "use": "sig",
         "alg": "ES256",
         "kid": "py-idm-conformance-server-es256",
-        "x": _b64u_uint(public.x),
-        "y": _b64u_uint(public.y),
-        "d": _b64u_uint(numbers.private_value),
+        "x": _b64u_p256(public.x),
+        "y": _b64u_p256(public.y),
+        "d": _b64u_p256(numbers.private_value),
     }
     return {"keys": [private_jwk]}
+
+
+# ---------------------------------------------------------------------------
+# Expected-module manifest and per-module verdict
+# ---------------------------------------------------------------------------
+
+MANIFEST_PATH = Path(__file__).parent / "expected_modules.json"
+
+# Suite statuses a module may end in only when its manifest entry allows them.
+ALLOWLISTABLE_STATUSES = frozenset({"SKIPPED", "WARNING"})
+
+HARNESS_SUCCESS = "success"
+HARNESS_ERROR = "error"
+# The harness saw a rejection it could not tie to a flow after the module's
+# flow had succeeded; the module's outcome is unknown, so it fails.
+HARNESS_CONFLICT = "conflict"
+
+
+class ManifestError(Exception):
+    """The expected-module manifest is malformed or has no entry for a plan."""
+
+
+def _parse_module_expectation(plan: str, name: str, raw: dict) -> ModuleExpectation:
+    where = f"{plan}/{name}"
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{where}: entry must be an object")
+    unknown = set(raw) - {"expect", "reasons", "allow"}
+    if unknown:
+        raise ManifestError(f"{where}: unknown keys {sorted(unknown)}")
+    try:
+        expect = Expectation(raw.get("expect"))
+    except ValueError as exc:
+        raise ManifestError(f"{where}: invalid expect {raw.get('expect')!r}") from exc
+    raw_reasons = raw.get("reasons", [])
+    if not isinstance(raw_reasons, list) or not all(
+        isinstance(reason, str) for reason in raw_reasons
+    ):
+        raise ManifestError(f"{where}: reasons must be a list of strings")
+    reasons = frozenset(raw_reasons)
+    if expect is Expectation.REJECT and not reasons:
+        raise ManifestError(f"{where}: a reject module must list its reasons")
+    if expect is not Expectation.REJECT and reasons:
+        raise ManifestError(f"{where}: only reject modules take reasons")
+    allow = raw.get("allow", {})
+    if not isinstance(allow, dict):
+        raise ManifestError(f"{where}: allow must be an object")
+    for status, why in allow.items():
+        if status not in ALLOWLISTABLE_STATUSES:
+            raise ManifestError(f"{where}: {status!r} cannot be allowlisted")
+        if not isinstance(why, str) or not why.strip():
+            raise ManifestError(f"{where}: allowlisted {status} needs a reason")
+    return ModuleExpectation(
+        expect=expect,
+        reasons=reasons,
+        allowed_statuses=tuple(sorted(allow.items())),
+    )
+
+
+def load_manifest(
+    plan: str, path: Path = MANIFEST_PATH
+) -> dict[str, ModuleExpectation]:
+    """Load the expected modules for ``plan`` from the manifest file."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise ManifestError(f"cannot read manifest {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ManifestError(f"manifest {path} must be an object")
+    if plan not in data:
+        raise ManifestError(f"no expected-module manifest for plan {plan!r}")
+    if not isinstance(data[plan], dict):
+        raise ManifestError(f"manifest for plan {plan!r} must be an object")
+    return {
+        name: _parse_module_expectation(plan, name, raw)
+        for name, raw in data[plan].items()
+    }
+
+
+def check_plan_modules(
+    test_names: list[str], manifest: dict[str, ModuleExpectation]
+) -> list[str]:
+    """Compare the plan's modules with the manifest; return every mismatch."""
+    problems = []
+    duplicates = sorted({n for n in test_names if test_names.count(n) > 1})
+    if duplicates:
+        problems.append(f"modules listed more than once: {', '.join(duplicates)}")
+    missing = sorted(set(manifest) - set(test_names))
+    if missing:
+        problems.append(f"expected modules missing from plan: {', '.join(missing)}")
+    unexpected = sorted(set(test_names) - set(manifest))
+    if unexpected:
+        problems.append(f"unexpected modules in plan: {', '.join(unexpected)}")
+    return problems
+
+
+def _suite_status(info: dict) -> str:
+    """Map the suite's ``/api/info`` body to a module status.
+
+    A FINISHED module with no ``result`` has no verdict, so it is FAILED.
+    """
+    status = info.get("status") or "UNKNOWN"
+    if status != "FINISHED":
+        return status
+    return info.get("result") or "FAILED"
+
+
+def _reason_class(error: object) -> str:
+    """The reason class of a harness error: the text before the first colon."""
+    return str(error or "").split(":", 1)[0].strip()
+
+
+def assess_module(
+    suite_status: str,
+    expectation: ModuleExpectation,
+    evidence: RPEvidence,
+) -> tuple[str, str]:
+    """Combine the suite's verdict with the RP harness evidence.
+
+    Returns ``(status, detail)``. A passing suite status is downgraded to FAILED
+    when the status is SKIPPED/WARNING but not allowlisted for the module, the
+    harness crashed, or the harness did not record the outcome the manifest
+    expects (a completed flow, or a rejection for one of the listed reasons).
+    """
+    if suite_status not in PASSING_STATUSES:
+        return suite_status, ""
+    if suite_status != "PASSED" and not expectation.allows(suite_status):
+        return (
+            "FAILED",
+            f"suite status {suite_status} is not allowlisted for this module",
+        )
+    if evidence.crashes:
+        return "FAILED", "harness crashed: " + "; ".join(evidence.crashes)
+    recorded = evidence.recorded
+    if recorded is not None and recorded.get("status") == HARNESS_CONFLICT:
+        return (
+            "FAILED",
+            f"harness recorded conflicting outcomes: {recorded.get('error')!r}",
+        )
+    if expectation.expect is Expectation.NONE:
+        return suite_status, ""
+    if recorded is None:
+        return "FAILED", "harness recorded no result for this module"
+    outcome = recorded.get("status")
+    if expectation.expect is Expectation.ACCEPT:
+        for previous in evidence.earlier:
+            if (previous or {}).get("status") != HARNESS_SUCCESS:
+                return (
+                    "FAILED",
+                    "expected the RP to accept every flow; an earlier flow recorded "
+                    f"{(previous or {}).get('error')!r}",
+                )
+        if outcome != HARNESS_SUCCESS:
+            return (
+                "FAILED",
+                f"expected the RP to accept; harness recorded {recorded.get('error')!r}",
+            )
+        return suite_status, ""
+    if outcome != HARNESS_ERROR:
+        return "FAILED", "expected the RP to reject; harness recorded no rejection"
+    reason = _reason_class(recorded.get("error"))
+    if reason not in expectation.reasons:
+        return (
+            "FAILED",
+            f"RP rejected for {reason!r}, expected one of {sorted(expectation.reasons)}",
+        )
+    return suite_status, ""
+
+
+def _fetch_rp_result(rp_base_url: str, module_id: str) -> dict | None:
+    """The harness's recorded result for ``module_id`` (None if none)."""
+    try:
+        with httpx.Client(verify=False, timeout=10.0) as client:
+            response = client.get(f"{rp_base_url}/results/{module_id}")
+    except httpx.HTTPError as exc:
+        logger.warning("Could not fetch RP result for %s: %s", module_id, exc)
+        return None
+    if response.status_code != httpx.codes.OK:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("RP result for %s is not JSON", module_id)
+        return None
+    return body if isinstance(body, dict) else None
 
 
 def run_test_module(
@@ -677,11 +1064,13 @@ def run_test_module(
     rp_base_url: str,
     client_id: str,
     client_secret: str,
+    expectation: ModuleExpectation,
     profile: str = "",
     dynamic: bool = False,
     fapi2: bool = False,
     jarm: bool = False,
     mtls: bool = False,
+    signed_request: bool = False,
 ) -> TestResult:
     """Execute a single conformance test module."""
     logger.info("=" * 60)
@@ -690,17 +1079,14 @@ def run_test_module(
 
     # Declared non-support: record SKIPPED without touching the suite.
     if test_name in DECLARED_UNSUPPORTED_TESTS:
-        reason = (
-            "declared unsupported: py-identity-model does not create unsigned "
-            "(alg=none) request objects (SUPPORTED_SIGNING_ALGORITHMS excludes "
-            "'none' by design)"
-        )
+        reason = f"declared unsupported: {DECLARED_UNSUPPORTED_TESTS[test_name]}"
         logger.info("[SKIP] %s — %s", test_name, reason)
+        status, problem = assess_module("SKIPPED", expectation, RPEvidence(None))
         return TestResult(
             test_name=test_name,
             test_id="",
-            status="SKIPPED",
-            detail=reason,
+            status=status,
+            detail=problem or reason,
         )
 
     # Clear RP caches before each test to avoid stale JWKS/discovery
@@ -748,19 +1134,19 @@ def run_test_module(
 
     # Drive the RP based on the test type
     test_type = _get_test_type(test_name)
+    earlier: list[dict | None] = []
     logger.info("Test type: %s", test_type)
 
     if profile in LOGOUT_PROFILES:
         # Logout profiles: log in, then drive an RP-Initiated Logout. For the
         # Back-Channel profile the OP posts a Logout Token to the RP's
         # /backchannel-logout on its own while processing the end-session.
-        drive_rp_logout(
+        crashes = drive_rp_logout(
             rp_base_url=rp_base_url,
             issuer=issuer,
             client_id=client_id,
             client_secret=client_secret,
             test_id=module_id,
-            send_state=test_name not in NO_STATE_LOGOUT_TESTS,
             test_name=test_name,
             profile=profile,
         )
@@ -772,8 +1158,9 @@ def run_test_module(
         # from its registration). Discovery/webfinger modules need neither and
         # keep their normal flow.
         register_only = dynamic and test_name in DYNAMIC_REGISTER_ONLY_TESTS
+        crashes: list[str] = []
         if dynamic and (register_only or test_name in DYNAMIC_AUTH_TESTS):
-            registered_id = drive_rp_register(
+            registered_id, crashes = drive_rp_register(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_name=test_name,
@@ -792,7 +1179,7 @@ def run_test_module(
             pass
         elif test_type == "discovery_only":
             # Discovery-only tests: just fetch discovery, no auth flow
-            drive_rp_discover(
+            crashes += drive_rp_discover(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 test_id=module_id,
@@ -804,7 +1191,7 @@ def run_test_module(
             # The client is registered once (above) and reused across both flows;
             # the OP rotates its signing keys between them.
             logger.info("Driving first auth flow...")
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -816,11 +1203,13 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
+            earlier.append(_fetch_rp_result(rp_base_url, module_id))
             # Wait briefly for the suite to rotate keys
             time.sleep(1)
             logger.info("Driving second auth flow...")
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -832,10 +1221,11 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
         else:
             # Standard auth flow (with optional userinfo skip)
-            drive_rp_authorize(
+            crashes += drive_rp_authorize(
                 rp_base_url=rp_base_url,
                 issuer=issuer,
                 client_id=client_id,
@@ -848,22 +1238,30 @@ def run_test_module(
                 fapi2=fapi2,
                 jarm=jarm,
                 mtls=mtls,
+                signed_request=signed_request,
             )
 
     # Poll until the test finishes
     logger.info("Polling test status...")
     result_info = suite.poll_until_done(module_id)
-    status = result_info.get("status", "UNKNOWN")
-    result = result_info.get("result", status)
-
-    # Map status to final result
-    final_status = (result if result else "PASSED") if status == "FINISHED" else status
+    suite_status = _suite_status(result_info)
+    evidence = RPEvidence(
+        _fetch_rp_result(rp_base_url, module_id), tuple(crashes), tuple(earlier)
+    )
+    recorded = evidence.recorded or {}
+    logger.info(
+        "RP evidence: status=%s error=%s crashes=%s",
+        recorded.get("status"),
+        recorded.get("error"),
+        list(evidence.crashes),
+    )
+    final_status, problem = assess_module(suite_status, expectation, evidence)
 
     log_url = f"{suite.base_url}/log-detail.html?log={module_id}"
-    detail = ""
+    detail = problem
 
     # Fetch logs for failed tests
-    if final_status in ("FAILED", "WARNING", "REVIEW"):
+    if not problem and final_status in ("FAILED", "WARNING", "REVIEW"):
         try:
             logs = suite.get_test_log(module_id)
             # Extract failure messages
@@ -906,8 +1304,12 @@ def run_plan(
     token: str | None = None,
     publish: str = "",
     profile: str = "",
+    only_module: str | None = None,
+    rp_public_url: str | None = None,
 ) -> tuple[str, list[TestResult]]:
-    """Run all tests in a conformance test plan.
+    """Run the tests in a conformance test plan.
+
+    With ``only_module`` set, only modules whose name contains it run.
 
     Returns a tuple of (plan_id, results).
     """
@@ -919,6 +1321,7 @@ def run_plan(
     fapi2 = bool(config.get("fapi2", False))
     jarm = bool(config.get("jarm", False))
     mtls = bool(config.get("mtls", False))
+    signed_request = bool(config.get("signed_request", False))
 
     logger.info("Plan: %s (%s)", plan_name, alias)
     logger.info("Variant: %s", variant)
@@ -933,7 +1336,9 @@ def run_plan(
     # instead registers the RP's public JWKS (served at /fapi2-jwks) so the suite
     # can verify its private_key_jwt assertions, and supplies the OP's own signing
     # keys (LoadServerJWKs). The private half never leaves the RP.
-    client_overrides: dict | None = config.get("client")
+    client_overrides: dict | None = apply_rp_public_url(
+        config.get("client"), rp_public_url
+    )
     server_jwks: dict | None = None
     if fapi2:
         if mtls:
@@ -1005,6 +1410,23 @@ def run_plan(
         logger.error("No test modules found in plan")
         sys.exit(1)
 
+    try:
+        manifest = load_manifest(profile)
+    except ManifestError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+    problems = check_plan_modules(test_names, manifest)
+    if problems:
+        for problem in problems:
+            logger.error("Module manifest mismatch: %s", problem)
+        sys.exit(1)
+
+    try:
+        test_names = _select_modules(test_names, only_module)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     logger.info("Tests to run: %s", ", ".join(test_names))
 
     # Client credentials from plan config
@@ -1026,21 +1448,43 @@ def run_plan(
             rp_base_url=rp_base_url,
             client_id=client_id,
             client_secret=client_secret,
+            expectation=manifest[test_name],
             profile=profile,
             dynamic=is_dynamic,
             fapi2=fapi2,
             jarm=jarm,
             mtls=mtls,
+            signed_request=signed_request,
         )
         results.append(result)
 
     return plan_id, results
 
 
+def _select_modules(test_names: list[str], only_module: str | None) -> list[str]:
+    """Keep the plan's modules whose name contains ``only_module``.
+
+    ``None`` keeps every module. A filter that is empty or matches nothing
+    raises ``ValueError`` so a typo cannot pass as an empty, green run.
+    """
+    if only_module is None:
+        return test_names
+    if not only_module:
+        raise ValueError("--only-module must not be empty")
+    selected = [name for name in test_names if only_module in name]
+    if not selected:
+        raise ValueError(
+            f"--only-module {only_module!r} matches no module in the plan: "
+            + ", ".join(test_names)
+        )
+    return selected
+
+
 # Statuses that count as a clean, submission-worthy outcome. Everything else —
 # FAILED/INTERRUPTED/TIMEOUT, REVIEW (needs a human), and any unknown status —
-# must keep an export from being treated as passing evidence. SKIPPED is fine
-# (e.g. the expected idtoken-sig-none skip); WARNING is an accepted pass.
+# must keep an export from being treated as passing evidence. SKIPPED and
+# WARNING pass only for modules whose manifest entry allowlists them
+# (assess_module downgrades the rest to FAILED).
 PASSING_STATUSES = frozenset({"PASSED", "WARNING", "SKIPPED"})
 
 
@@ -1159,6 +1603,115 @@ def _zip_directory(src_dir: Path, output: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Harness selection (Python, Go or Rust RP harness)
+# ---------------------------------------------------------------------------
+
+CONFIG_DIR = Path(__file__).parent / "configs"
+RESULTS_DIR = Path(__file__).parent / "results"
+
+
+class Harness(StrEnum):
+    """Which RP harness the runner drives."""
+
+    PY = "py"
+    GO = "go"
+    RUST = "rust"
+
+
+# Plans the Go and Rust harnesses run. Each reuses the Python plan's manifest entry in
+# expected_modules.json: one set of expected verdicts for every language.
+HARNESS_PLANS = ("basic-rp", "config-rp", "form-post-basic-rp")
+
+
+class HarnessError(Exception):
+    """A harness/plan pair has no usable plan config."""
+
+
+@dataclass(frozen=True)
+class HarnessRun:
+    """Where one plan run against one harness reads and writes."""
+
+    config_path: Path
+    # Key in expected_modules.json; also the profile sent to the harness, so its
+    # per-test logs land under <RP_LOG_DIR>/<manifest_plan>/.
+    manifest_plan: str
+    rp_base_url: str
+    # Directory under the RP-log base that --rp-logs-zip resets and zips.
+    rp_log_subdir: Path
+    # --output when none is given (None: no results file).
+    default_output: Path | None
+
+
+def _config_rp_url(config: dict, config_path: Path) -> str | None:
+    rp_url = config.get("rp_url")
+    if rp_url is None:
+        return None
+    error = HarnessError(
+        f"{config_path}: rp_url must be an http(s) URL, got {rp_url!r}"
+    )
+    if not isinstance(rp_url, str):
+        raise error
+    try:
+        parsed = urlparse(rp_url)
+        valid = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+    except ValueError as exc:
+        raise error from exc
+    if not valid:
+        raise error
+    return rp_url.rstrip("/")
+
+
+def resolve_harness_run(
+    harness: Harness,
+    plan: str,
+    rp_url: str | None = None,
+    *,
+    hosted: bool = False,
+    config_dir: Path = CONFIG_DIR,
+    results_dir: Path = RESULTS_DIR,
+) -> HarnessRun:
+    """Resolve the config, manifest key, RP URL and output paths for a run.
+
+    The Python harness reads ``configs/<plan>.json``; the Go and Rust harnesses read
+    ``configs/<harness>-<plan>.json``, which must carry the harness's
+    ``rp_url``. ``rp_url`` (the ``--rp-url`` flag) overrides the config.
+    """
+    if harness is Harness.PY:
+        config_path = config_dir / f"{plan}.json"
+        rp_log_subdir = Path(plan)
+        default_output = None
+    else:
+        if plan not in HARNESS_PLANS:
+            raise HarnessError(
+                f"the {harness} harness runs only {', '.join(HARNESS_PLANS)}, "
+                f"not {plan!r}"
+            )
+        config_path = config_dir / f"{harness}-{plan}.json"
+        rp_log_subdir = Path(harness, plan)
+        default_output = (
+            results_dir / ("hosted" if hosted else "") / f"{harness}-{plan}-latest.json"
+        )
+    try:
+        config = json.loads(config_path.read_text())
+    except OSError as exc:
+        raise HarnessError(f"config not found: {config_path}") from exc
+    except ValueError as exc:
+        raise HarnessError(f"{config_path}: invalid JSON: {exc}") from exc
+    if not isinstance(config, dict):
+        raise HarnessError(f"{config_path}: must be an object")
+    config_url = _config_rp_url(config, config_path)
+    if harness is not Harness.PY and config_url is None:
+        raise HarnessError(f"{config_path}: a {harness} harness config needs rp_url")
+    return HarnessRun(
+        config_path=config_path,
+        manifest_plan=plan,
+        rp_base_url=rp_url or config_url or RP_BASE_URL,
+        rp_log_subdir=rp_log_subdir,
+        default_output=default_output,
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1207,9 +1760,34 @@ def main() -> None:
         help=f"Conformance suite base URL (env: CONFORMANCE_SERVER, default: {SUITE_BASE_URL})",
     )
     parser.add_argument(
+        "--harness",
+        type=Harness,
+        choices=list(Harness),
+        default=Harness.PY,
+        help=(
+            "RP harness to drive (default: py). go/rust read "
+            "configs/<harness>-<plan>.json and run only "
+            f"{', '.join(HARNESS_PLANS)}."
+        ),
+    )
+    parser.add_argument(
         "--rp-url",
-        default=RP_BASE_URL,
-        help=f"RP harness base URL (default: {RP_BASE_URL})",
+        default=None,
+        help=(
+            "RP harness base URL (default: the plan config's rp_url, else "
+            f"{RP_BASE_URL})"
+        ),
+    )
+    parser.add_argument(
+        "--rp-public-url",
+        default=os.environ.get("CONFORMANCE_RP_PUBLIC_URL", "").strip() or None,
+        help=(
+            "Publicly reachable base URL of the RP harness, for plans whose OP "
+            "calls the RP server-to-server (dynamic-rp request_uri, the logout "
+            "plans' back-channel logout). Required for those plans on a hosted "
+            "suite; the harness must run with RP_INTERNAL_BASE_URL set to it "
+            "(env: CONFORMANCE_RP_PUBLIC_URL)."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -1258,6 +1836,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--only-module",
+        default=None,
+        help=(
+            "Run only the plan's test modules whose name contains this substring "
+            "(e.g. invalid-alternate-alg). Not allowed with --export-zip or "
+            "--rp-logs-zip: a partial plan is not certification evidence."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -1281,20 +1868,45 @@ def main() -> None:
         )
         sys.exit(1)
 
-    config_path = Path(__file__).parent / "configs" / f"{args.plan}.json"
-    if not config_path.exists():
-        logger.error("Config not found: %s", config_path)
+    if args.only_module is not None and (args.export_zip or args.rp_logs_zip):
+        logger.error(
+            "--only-module cannot be combined with --export-zip or --rp-logs-zip"
+        )
         sys.exit(1)
+
+    try:
+        run = resolve_harness_run(
+            args.harness,
+            args.plan,
+            args.rp_url,
+            hosted=not _is_local_suite(args.suite_url),
+        )
+    except HarnessError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
+    # Only the py harness runs the OP-callback plans (HARNESS_PLANS excludes
+    # them for go/rust), so these checks never touch a native harness run.
+    rp_public_url = effective_rp_public_url(args.suite_url, args.rp_public_url)
+    if args.rp_public_url and rp_public_url is None:
+        logger.warning("Ignoring --rp-public-url for a local suite")
+    problem = rp_public_url_problem(args.plan, args.suite_url, rp_public_url)
+    if problem is None and rp_public_url and args.plan in OP_CALLBACK_PROFILES:
+        problem = rp_public_url_unreachable(rp_public_url)
+    if problem:
+        logger.error("%s", problem)
+        sys.exit(1)
+    output = args.output or run.default_output
 
     publish_value = "" if args.publish == "none" else args.publish
 
     # Reset this profile's RP-log directory so the zip only contains this run's
     # per-test logs (the harness appends, so stale files would otherwise leak in).
-    # Confine the rmtree target to the log base before deleting — args.plan is
-    # already constrained by argparse choices, but _reset_dir removes a tree, so
-    # a mistuned RP_LOG_DIR must never let it escape the intended directory.
+    # Confine the rmtree target to the log base before deleting — the subdir is
+    # built from argparse choices, but _reset_dir removes a tree, so a mistuned
+    # RP_LOG_DIR must never let it escape the intended directory.
     rp_log_base = _rp_log_dir().resolve()
-    rp_log_profile_dir = (rp_log_base / args.plan).resolve()
+    rp_log_profile_dir = (rp_log_base / run.rp_log_subdir).resolve()
     if not rp_log_profile_dir.is_relative_to(rp_log_base):
         logger.error(
             "Refusing to use RP log dir outside base: %s not under %s",
@@ -1306,21 +1918,24 @@ def main() -> None:
         _reset_dir(rp_log_profile_dir)
 
     plan_id, results = run_plan(
-        config_path=str(config_path),
+        config_path=str(run.config_path),
         suite_base_url=args.suite_url,
-        rp_base_url=args.rp_url,
+        rp_base_url=run.rp_base_url,
         token=env_token or None,
         publish=publish_value,
-        profile=args.plan,
+        profile=run.manifest_plan,
+        only_module=args.only_module,
+        rp_public_url=rp_public_url,
     )
 
     all_ok = print_summary(results)
 
-    if args.output:
-        output_path = Path(args.output)
+    if output:
+        output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         results_json = {
             "plan": args.plan,
+            "harness": str(args.harness),
             "plan_id": plan_id,
             "suite_url": args.suite_url,
             "results": [

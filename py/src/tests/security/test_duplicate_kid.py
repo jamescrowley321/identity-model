@@ -85,7 +85,7 @@ def test_token_signed_by_second_duplicate_kid_key_validates() -> None:
     decoded = validate_token(
         jwt=token,
         token_validation_config=config,
-        disco_doc_address=DISCO_URL,
+        issuer=ISSUER,
     )
     assert decoded["sub"] == "user"
 
@@ -111,5 +111,5 @@ def test_token_signed_by_neither_key_is_rejected() -> None:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )

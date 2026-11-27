@@ -47,6 +47,14 @@ const ADAPTERS: &[&str] = &[
 /// Capabilities rs-identity-model does not implement; their vectors are
 /// skipped rather than failing as "no adapter".
 const NOT_IMPLEMENTED: &[&str] = &["dpop"]; // #675
+/// Cases rs-identity-model does not implement yet, with the issue that tracks
+/// each. They are skipped by id, never silently.
+const NOT_IMPLEMENTED_CASES: &[(&str, &str)] = &[
+    // Signed introspection responses (RFC 9701).
+    ("INTR-007", "#1030"),
+    // The RFC 8414 metadata location.
+    ("DISC-013", "#1155"),
+];
 
 #[test]
 fn implemented_http_capabilities_cannot_be_skipped() {
@@ -312,6 +320,12 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
             }
             other => panic!("{label}: expected missing sub, got {other:?}"),
         },
+        "reject" if expect.error == "unverifiable_sub" => match result {
+            Err(IdentityError::Validation(msg)) => {
+                assert!(msg.contains("application/jwt"), "{label}: {msg}");
+            }
+            other => panic!("{label}: expected application/jwt rejection, got {other:?}"),
+        },
         "reject" if !expect.error.is_empty() => {
             panic!("{label}: unknown expected error {:?}", expect.error)
         }
@@ -336,7 +350,7 @@ fn userinfo_expect(label: &str, expect: &Expect, result: Result<UserInfoResponse
 // --- authorization-code -------------------------------------------------------
 //
 // The HTTP vectors (the code exchange). The pure-logic PKCE vectors
-// (input.operation) run in-process in conformance::spec_logic_vectors.
+// (input.operation) run in-process in internal::spec_logic_vectors.
 
 async fn authorization_code_call(
     base: &str,
@@ -429,6 +443,18 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
         builder = builder.cache_ttl(SPEC_SECOND * u32::try_from(ttl).expect("ttl fits u32"));
     }
     let client = builder.build();
+    // The configured issuer is the base URL plus `input.issuer_suffix`. Rust
+    // builds only the default OIDC location; DISC-013 (RFC 8414) is skipped.
+    let issuer = format!(
+        "{base}{}",
+        v.input
+            .get("issuer_suffix")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    );
+    if let Some(location) = v.input.get("location").and_then(Value::as_str) {
+        assert_eq!(location, "openid_configuration", "unsupported location");
+    }
     let offsets: Vec<u64> = match v.input.get("calls_at_seconds") {
         Some(at) => serde_json::from_value(at.clone()).expect("calls_at_seconds"),
         None => vec![0],
@@ -440,7 +466,7 @@ async fn discovery_call(base: &str, v: &HttpVector) -> Result<ProviderMetadata, 
     for at in offsets {
         let offset = SPEC_SECOND * u32::try_from(at).expect("offset fits u32");
         tokio::time::sleep_until(start + offset).await;
-        result = client.discover(base).await;
+        result = client.discover(&issuer).await;
         if result.is_err() {
             break;
         }
@@ -600,7 +626,9 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
     let client = JwksClient::builder().allow_http(true).build();
     let uri = format!("{base}/jwks");
     let kid = v.input_str("kid").unwrap_or_default();
-    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`.
+    let alg = v.input_str("alg").unwrap_or_default();
+    // Each `resolve` takes the next of `input.kids` when given, else `input.kid`;
+    // with neither it resolves a token header with no kid and `input.alg`.
     let mut kids = v
         .input
         .get("kids")
@@ -615,7 +643,10 @@ async fn jwks_call(base: &str, v: &HttpVector) -> Result<Vec<JsonWebKey>, Identi
             Some("fetch") => client.fetch(&uri).await.map(|set| set.keys),
             Some("resolve") => {
                 let kid = kids.next().unwrap_or(kid);
-                client.resolve_key(&uri, kid).await.map(|key| vec![key])
+                client
+                    .resolve_signing_key(&uri, kid, alg)
+                    .await
+                    .map(|key| vec![key])
             }
             Some("force_refresh") => client.force_refresh(&uri).await.map(|set| set.keys),
             other => panic!("unknown step {other:?}"),
@@ -639,7 +670,9 @@ fn jwks_expect(label: &str, expect: &Expect, result: Result<Vec<JsonWebKey>, Ide
         }
         "reject" => match (expect.error.as_str(), result) {
             ("malformed", Err(IdentityError::Deserialization(_)))
-            | ("key_not_found", Err(IdentityError::KeyNotFound(_))) => {}
+            | ("key_not_found", Err(IdentityError::KeyNotFound(_)))
+            | ("ambiguous_key", Err(IdentityError::AmbiguousKey { .. }))
+            | ("key_alg_mismatch", Err(IdentityError::KeyAlgorithmMismatch { .. })) => {}
             ("empty_key_set", Err(IdentityError::Validation(msg))) => {
                 assert!(msg.contains("contains no keys"), "{label}: {msg}");
             }
@@ -737,6 +770,10 @@ async fn spec_http_vectors() {
             .unwrap_or_else(|| panic!("{}: no tests", file.display()));
         for case in cases {
             let id = case["id"].as_str().expect("case id");
+            if let Some((_, issue)) = NOT_IMPLEMENTED_CASES.iter().find(|(c, _)| *c == id) {
+                eprintln!("skipping {id}: not implemented in Rust ({issue})");
+                continue;
+            }
             let vectors = case["vectors"].as_array().cloned().unwrap_or_default();
             if ADAPTERS.contains(&capability) {
                 assert!(!vectors.is_empty(), "{id}: case has no vectors");

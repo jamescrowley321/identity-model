@@ -3,7 +3,7 @@
 //! [`DiscoveryClient`] requests `{issuer}/.well-known/openid-configuration`,
 //! validates the required metadata fields and the issuer match, and caches the
 //! result with a configurable TTL backed by a [`tokio::sync::RwLock`]. Behaviour
-//! is proven against the cross-language conformance IDs `DISC-001`..`DISC-010`
+//! is proven against the cross-language spec-vector IDs `DISC-001`..`DISC-012`
 //! in `spec/vectors/discovery.json`.
 //!
 //! RFC / spec references: OpenID Connect Discovery 1.0 §3, §4.

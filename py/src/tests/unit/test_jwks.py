@@ -6,6 +6,7 @@ import pytest
 import respx
 
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
+from py_identity_model.core.models import JwksErrorKind
 from py_identity_model.exceptions import (
     ConfigurationException,
     FailedResponseAccessError,
@@ -124,34 +125,28 @@ class TestJsonWebKey:
         ):
             JsonWebKey.from_json(json_str)
 
-    def test_json_web_key_from_json_invalid_use_value(self):
-        """Test that invalid 'use' parameter value raises ValueError"""
+    def test_json_web_key_from_json_unregistered_use_value_accepted(self):
+        """An unregistered 'use' value is kept; the key is not a signing key."""
         json_str = '{"kty": "RSA", "n": "example_n", "e": "AQAB", "use": "invalid"}'
-        with pytest.raises(
-            ConfigurationException,
-            match="Invalid 'use' parameter",
-        ):
-            JsonWebKey.from_json(json_str)
+        assert JsonWebKey.from_json(json_str) == JsonWebKey(
+            kty="RSA", n="example_n", e="AQAB", use="invalid"
+        )
 
-    def test_json_web_key_from_json_invalid_key_ops(self):
-        """Test that invalid key_ops values raise ValueError"""
+    def test_json_web_key_from_json_unregistered_key_ops_accepted(self):
+        """Unregistered key_ops values are accepted (RFC 7517 §4.3)."""
         json_str = (
             '{"kty": "RSA", "n": "example_n", "e": "AQAB", "key_ops": ["invalid_op"]}'
         )
-        with pytest.raises(
-            ConfigurationException,
-            match="Invalid key operation",
-        ):
-            JsonWebKey.from_json(json_str)
+        assert JsonWebKey.from_json(json_str) == JsonWebKey(
+            kty="RSA", n="example_n", e="AQAB", key_ops=["invalid_op"]
+        )
 
-    def test_json_web_key_from_json_mutually_exclusive_use_and_key_ops(self):
-        """Test that having both 'use' and 'key_ops' raises ConfigurationException"""
+    def test_json_web_key_from_json_use_and_key_ops_together_accepted(self):
+        """RFC 7517 §4.3 says SHOULD NOT, so a key with both is accepted."""
         json_str = '{"kty": "RSA", "n": "example_n", "e": "AQAB", "use": "sig", "key_ops": ["sign"]}'
-        with pytest.raises(
-            ConfigurationException,
-            match="The 'use' and 'key_ops' parameters are mutually exclusive",
-        ):
-            JsonWebKey.from_json(json_str)
+        assert JsonWebKey.from_json(json_str) == JsonWebKey(
+            kty="RSA", n="example_n", e="AQAB", use="sig", key_ops=["sign"]
+        )
 
     def test_json_web_key_from_json_invalid_ec_curve(self):
         """Test that EC key with unsupported curve raises ValueError"""
@@ -669,7 +664,7 @@ class TestGetJwks:
         with pytest.raises(FailedResponseAccessError):
             _ = result.keys
         assert result.error is not None
-        assert "Unhandled exception during JWKS request" in result.error
+        assert result.error_kind is JwksErrorKind.UNEXPECTED_ERROR
         assert "Network error" in result.error
 
     @respx.mock
@@ -690,8 +685,7 @@ class TestGetJwks:
         assert result.is_successful is False
         with pytest.raises(FailedResponseAccessError):
             _ = result.keys
-        assert result.error is not None
-        assert "Unhandled exception during JWKS request" in result.error
+        assert result.error_kind is JwksErrorKind.INVALID_JSON
 
 
 _SIGNING_KEY = {

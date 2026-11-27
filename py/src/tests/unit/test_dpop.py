@@ -1,5 +1,8 @@
 """Unit tests for DPoP (RFC 9449) utilities."""
 
+from base64 import urlsafe_b64decode
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import jwt as pyjwt
 import pytest
 
@@ -9,6 +12,11 @@ from py_identity_model.core.dpop import (
     create_dpop_proof,
     generate_dpop_key,
 )
+from py_identity_model.exceptions import DPoPKeyError, InvalidArgumentError
+
+
+# RFC 8032 §5.1.5: an Ed25519 public key is 32 octets.
+ED25519_PUBLIC_KEY_BYTES = 32
 
 
 @pytest.mark.unit
@@ -35,8 +43,38 @@ class TestDPoPKeyGeneration:
         assert jwk["kty"] == "EC"
         assert jwk["crv"] == "P-521"
 
+    def test_ps256(self):
+        key = generate_dpop_key("PS256")
+        assert key.algorithm == "PS256"
+        assert set(key.public_jwk) == {"kty", "n", "e"}
+        assert key.public_jwk["kty"] == "RSA"
+
+    def test_eddsa_okp_jwk(self):
+        """RFC 8037 §2: an Ed25519 public key is an OKP JWK with crv and x."""
+        key = generate_dpop_key("EdDSA")
+        assert key.algorithm == "EdDSA"
+        jwk = key.public_jwk
+        assert set(jwk) == {"kty", "crv", "x"}
+        assert jwk["kty"] == "OKP"
+        assert jwk["crv"] == "Ed25519"
+        assert len(urlsafe_b64decode(jwk["x"] + "=")) == ED25519_PUBLIC_KEY_BYTES
+
+    def test_eddsa_thumbprint_rfc8037_vector(self):
+        """RFC 8037 Appendix A.1/A.3: the Ed25519 key's RFC 7638 thumbprint."""
+        d = "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"
+        key = generate_dpop_key("EdDSA")
+        key._private_key = Ed25519PrivateKey.from_private_bytes(  # type: ignore[assignment]
+            urlsafe_b64decode(d + "=")
+        )
+        assert key.public_jwk == {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        }
+        assert key.jwk_thumbprint == "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"
+
     def test_unsupported_algorithm(self):
-        with pytest.raises(ValueError, match="Unsupported"):
+        with pytest.raises(DPoPKeyError, match="Unsupported"):
             generate_dpop_key("HS256")
 
     def test_public_jwk_ec(self):
@@ -165,27 +203,31 @@ class TestDPoPProofCreation:
 
     def test_empty_method_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="method must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="method must not be empty"):
             create_dpop_proof(key, "", "https://example.com")
 
     def test_whitespace_method_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="method must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="method must not be empty"):
             create_dpop_proof(key, "   ", "https://example.com")
 
     def test_empty_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="uri must not be empty"):
             create_dpop_proof(key, "GET", "")
 
     def test_relative_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must be an absolute HTTP URI"):
+        with pytest.raises(
+            InvalidArgumentError, match="uri must be an absolute HTTP URI"
+        ):
             create_dpop_proof(key, "GET", "/relative/path")
 
     def test_schemeless_uri_raises(self):
         key = generate_dpop_key()
-        with pytest.raises(ValueError, match="uri must be an absolute HTTP URI"):
+        with pytest.raises(
+            InvalidArgumentError, match="uri must be an absolute HTTP URI"
+        ):
             create_dpop_proof(key, "GET", "just-a-path")
 
     def test_htu_preserves_path_params(self):
@@ -218,7 +260,9 @@ class TestDPoPProofCreation:
         decoded = pyjwt.decode(proof, options={"verify_signature": False})
         assert "nonce" not in decoded
 
-    @pytest.mark.parametrize("algorithm", ["ES256", "ES384", "ES512", "RS256"])
+    @pytest.mark.parametrize(
+        "algorithm", ["ES256", "ES384", "ES512", "RS256", "PS256", "EdDSA"]
+    )
     def test_proof_signature_verified(self, algorithm: str):
         """M2: Verify that the proof JWT has a valid signature."""
         key = generate_dpop_key(algorithm)
@@ -226,7 +270,8 @@ class TestDPoPProofCreation:
 
         # Build a PyJWK from the embedded JWK header for verification
         header = pyjwt.get_unverified_header(proof)
-        jwk_key = pyjwt.PyJWK(header["jwk"])
+        # The jwk carries no "alg"; PyJWK would assume RS256 for any RSA key.
+        jwk_key = pyjwt.PyJWK(header["jwk"], algorithm=header["alg"])
 
         # Decode WITH signature verification — this is the critical test
         decoded = pyjwt.decode(
@@ -252,15 +297,19 @@ class TestComputeAth:
         assert "=" not in ath
 
     def test_empty_string_raises(self):
-        with pytest.raises(ValueError, match="access_token must not be empty"):
+        with pytest.raises(
+            InvalidArgumentError, match="access_token must not be empty"
+        ):
             compute_ath("")
 
     def test_whitespace_only_raises(self):
-        with pytest.raises(ValueError, match="access_token must not be empty"):
+        with pytest.raises(
+            InvalidArgumentError, match="access_token must not be empty"
+        ):
             compute_ath("   ")
 
     def test_non_ascii_raises(self):
-        with pytest.raises(ValueError, match="ASCII"):
+        with pytest.raises(InvalidArgumentError, match="ASCII"):
             compute_ath("tök\u00e9n")
 
 
@@ -287,11 +336,11 @@ class TestBuildDPoPHeaders:
         assert "Authorization" not in headers
 
     def test_empty_proof_raises(self):
-        with pytest.raises(ValueError, match="proof must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="proof must not be empty"):
             build_dpop_headers("")
 
     def test_whitespace_proof_raises(self):
-        with pytest.raises(ValueError, match="proof must not be empty"):
+        with pytest.raises(InvalidArgumentError, match="proof must not be empty"):
             build_dpop_headers("   ")
 
     def test_whitespace_access_token_no_auth_header(self):

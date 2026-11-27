@@ -4,12 +4,22 @@ Parsing functions for py-identity-model.
 This module contains parsing logic used by both sync and async implementations.
 """
 
+import base64
 import copy
+import dataclasses
+import json
 import warnings
 
-from jwt import get_unverified_header
+from jwt import PyJWTError, get_unverified_header
 
-from ..exceptions import TokenValidationException
+from ..exceptions import (
+    AmbiguousKeyException,
+    KeyAlgorithmMismatchException,
+    KeyNotFoundException,
+    MalformedTokenException,
+    TokenValidationErrorKind,
+    TokenValidationException,
+)
 from ..logging_config import logger
 from .models import JsonWebKey, JsonWebKeyParameterNames
 
@@ -49,6 +59,7 @@ def _reject_non_string_alg(jwt_alg: object) -> None:
     if jwt_alg is not None and not isinstance(jwt_alg, str):
         raise TokenValidationException(
             "Invalid 'alg' header: expected a string",
+            validation_kind=TokenValidationErrorKind.ALGORITHM,
             token_part="header",
             details={"alg_type": type(jwt_alg).__name__},
         )
@@ -65,6 +76,7 @@ def _validate_key_alg_consistency(
     algorithm family (e.g. RS256).
 
     Raises:
+        KeyAlgorithmMismatchException: If the key declares a different alg.
         TokenValidationException: If the key type does not match the algorithm.
     """
     _reject_non_string_alg(jwt_alg)
@@ -78,6 +90,7 @@ def _validate_key_alg_consistency(
     if jwt_alg.lower() == "none":
         raise TokenValidationException(
             "Algorithm 'none' is not permitted for signed-token validation",
+            validation_kind=TokenValidationErrorKind.ALGORITHM_NONE,
             token_part="header",
             details={"kid": key.kid, "alg": jwt_alg},
         )
@@ -87,17 +100,103 @@ def _validate_key_alg_consistency(
         raise TokenValidationException(
             f"Key type '{key.kty}' is incompatible with algorithm '{jwt_alg}' "
             f"(expected key type '{expected_kty}')",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
             token_part="header",
             details={"kid": key.kid, "kty": key.kty, "alg": jwt_alg},
         )
 
     # If the key declares an alg, it must match the JWT header exactly
     if key.alg and key.alg != jwt_alg:
-        raise TokenValidationException(
+        raise KeyAlgorithmMismatchException(
             f"Key algorithm '{key.alg}' does not match JWT algorithm '{jwt_alg}'",
             token_part="header",
             details={"kid": key.kid, "key_alg": key.alg, "jwt_alg": jwt_alg},
         )
+
+
+def _header_kid(headers: dict) -> str | None:
+    """Return the header ``kid``; an empty ``kid`` means absent."""
+    kid = headers.get("kid")
+    return None if kid == "" else kid
+
+
+_JWS_SEGMENT_COUNT = 3
+
+
+def _malformed(reason: str, token_part: str | None) -> MalformedTokenException:
+    return MalformedTokenException(
+        f"Invalid token: {reason}",
+        token_part=token_part,
+        details={"error": reason},
+    )
+
+
+_NOT_UNPADDED_BASE64URL = frozenset("+/=")
+_BASE64URL_TO_BASE64 = str.maketrans("-_", "+/")
+
+
+def _decode_segment(segment: str, name: str) -> bytes:
+    """Decode one base64url segment, unpadded (RFC 7515 §2)."""
+    if not _NOT_UNPADDED_BASE64URL.isdisjoint(segment):
+        raise _malformed(f"{name} is not unpadded base64url", name)
+    try:
+        return base64.b64decode(
+            segment.translate(_BASE64URL_TO_BASE64) + "=" * (-len(segment) % 4),
+            validate=True,
+        )
+    except ValueError as exc:
+        # binascii.Error, or a ValueError for a non-ASCII segment.
+        raise _malformed(f"{name} is not valid base64url", name) from exc
+
+
+def _decode_json_object(raw: bytes, name: str) -> None:
+    """Check that *raw* is a UTF-8 JSON object."""
+    try:
+        value = json.loads(raw.decode())
+    except (ValueError, RecursionError) as exc:
+        raise _malformed(f"{name} is not valid JSON", name) from exc
+    if not isinstance(value, dict):
+        raise _malformed(f"{name} is not a JSON object", name)
+
+
+def check_compact_jws(jwt: str) -> None:
+    """Check that *jwt* is a well-formed compact JWS (RFC 7515 §7.1).
+
+    The token must have three segments, each valid unpadded base64url, and a
+    header and payload that are JSON objects. The signature is not verified.
+
+    Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS.
+    """
+    if not isinstance(jwt, str):
+        raise _malformed("token is not a string", None)
+    segments = jwt.split(".")
+    if len(segments) != _JWS_SEGMENT_COUNT:
+        raise _malformed(
+            f"compact JWS must have {_JWS_SEGMENT_COUNT} segments, got {len(segments)}",
+            None,
+        )
+    header, payload, signature = segments
+    header_bytes = _decode_segment(header, "header")
+    payload_bytes = _decode_segment(payload, "payload")
+    _decode_segment(signature, "signature")
+    _decode_json_object(header_bytes, "header")
+    _decode_json_object(payload_bytes, "payload")
+
+
+def _unverified_header(jwt: str) -> dict:
+    """Return the unverified JOSE header of a well-formed compact JWS.
+
+    Raises:
+        MalformedTokenException: If the token is not a well-formed compact JWS
+            or its header fails PyJWT's header checks (``kid`` or ``crit`` of
+            the wrong type).
+    """
+    check_compact_jws(jwt)
+    try:
+        return get_unverified_header(jwt)
+    except PyJWTError as exc:
+        raise _malformed(str(exc), "header") from exc
 
 
 def extract_kid_from_jwt(jwt: str) -> str | None:
@@ -108,10 +207,12 @@ def extract_kid_from_jwt(jwt: str) -> str | None:
         jwt: The JWT token string
 
     Returns:
-        str | None: The key ID from the JWT header, or None if not present
+        str | None: The key ID from the JWT header, or None if absent or empty
+
+    Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
     """
-    headers = get_unverified_header(jwt)
-    return headers.get("kid")
+    return _header_kid(_unverified_header(jwt))
 
 
 def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
@@ -122,10 +223,14 @@ def extract_jwt_header_fields(jwt: str) -> tuple[str | None, str | None]:
         jwt: The JWT token string
 
     Returns:
-        tuple: (kid, alg) — either may be None if not present
+        tuple: (kid, alg) — either may be None if not present; an empty
+        ``kid`` is returned as None
+
+    Raises:
+        MalformedTokenException: If *jwt* is not a well-formed compact JWS.
     """
-    headers = get_unverified_header(jwt)
-    return headers.get("kid"), headers.get("alg")
+    headers = _unverified_header(jwt)
+    return _header_kid(headers), headers.get("alg")
 
 
 # ============================================================================
@@ -175,6 +280,28 @@ def jwks_from_dict(keys_dict: dict) -> JsonWebKey:
     )
 
 
+def is_signing_key(key: JsonWebKey) -> bool:
+    """Return True when *key* may verify a signature.
+
+    Per RFC 7517 §4.2 a key whose ``use`` is ``sig`` or absent (an empty
+    ``use`` counts as absent) is a signing key; any other ``use`` (``enc``,
+    a URI) is not, so the key is never used to verify a signature, whether
+    named by ``kid`` or not.
+    """
+    return key.use in (None, "", "sig")
+
+
+def _key_not_found(kid: str | None, keys: list[JsonWebKey]) -> KeyNotFoundException:
+    """Build the error for a token no signing key in *keys* can verify."""
+    available_kids = [k.kid for k in keys if k.kid and is_signing_key(k)]
+    message = (
+        f"No matching kid found: {kid}"
+        if kid is not None
+        else "JWT has no kid header and JWKS contains no signing key"
+    )
+    return KeyNotFoundException(message, kid=kid, available_kids=available_kids)
+
+
 def _no_kid_candidates(
     keys: list[JsonWebKey],
     jwt_alg: str | None,
@@ -185,20 +312,22 @@ def _no_kid_candidates(
     keys the set happens to hold.
 
     Raises:
+        KeyNotFoundException: If the set holds no signing key.
         TokenValidationException: If ``jwt_alg`` is ``none``.
     """
     _reject_non_string_alg(jwt_alg)
     if jwt_alg and jwt_alg.lower() == "none":
         raise TokenValidationException(
             "Algorithm 'none' is not permitted for signed-token validation",
+            validation_kind=TokenValidationErrorKind.ALGORITHM_NONE,
             token_part="header",
             details={"alg": jwt_alg},
         )
 
-    # Per RFC 7517 §4.2, filter to signing keys (use="sig" or use omitted)
-    signing_keys = [k for k in keys if k.use in (None, "sig")]
+    # RFC 7517 §4.2: only signing keys (use="sig" or omitted) may verify.
+    signing_keys = [k for k in keys if is_signing_key(k)]
     if not signing_keys:
-        signing_keys = keys  # Fall back to all keys if none marked for signing
+        raise _key_not_found(None, keys)
 
     if len(signing_keys) > 1 and jwt_alg:
         # RFC 7517 §4.4: a key that declares a different ``alg`` cannot
@@ -217,6 +346,41 @@ def _no_kid_candidates(
     return signing_keys
 
 
+# The curve each ECDSA algorithm is defined on (RFC 7518 §3.4, RFC 8812 §3.2).
+_ALG_TO_CRV: dict[str, str] = {
+    "ES256": "P-256",
+    "ES384": "P-384",
+    "ES512": "P-521",
+    "ES256K": "secp256k1",
+}
+
+
+def _first_usable_kid_match(
+    matches: list[JsonWebKey],
+    jwt_alg: str | None,
+) -> JsonWebKey:
+    """Pick the key among those sharing the token's ``kid``.
+
+    RFC 7517 §4.5 allows keys of different ``kty`` to share a ``kid``, so the
+    first key whose ``kty``, ``alg`` and (for ECDSA) ``crv`` fit the header
+    ``alg`` is used. When
+    none fits, the first match is returned so the consistency check reports
+    why it cannot verify the token.
+    """
+    _reject_non_string_alg(jwt_alg)
+    if jwt_alg:
+        expected_kty = _ALG_TO_KTY.get(jwt_alg)
+        expected_crv = _ALG_TO_CRV.get(jwt_alg)
+        for key in matches:
+            if (
+                expected_kty in (None, key.kty)
+                and (not key.alg or key.alg == jwt_alg)
+                and (expected_crv is None or key.crv == expected_crv)
+            ):
+                return key
+    return matches[0]
+
+
 def find_key_by_kid(
     kid: str | None,
     keys: list[JsonWebKey],
@@ -227,9 +391,18 @@ def find_key_by_kid(
 
     This is the core key lookup logic shared by sync and async implementations.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
-    contains exactly one key, the RP MUST use that key.  When JWKS has multiple
-    keys and no ``kid``, filter by ``use`` and ``kty`` to find a unique match.
+    An empty ``kid`` means the token has no ``kid``.
+
+    Only signing keys (``use`` absent or ``sig``, RFC 7517 §4.2) are
+    considered: a ``use: enc`` key is never returned, so a ``kid`` naming one
+    is key-not-found.
+
+    When the JWT has no ``kid`` header (OIDC Core Section 10.1 lets the OP omit
+    it when its JWK Set holds a single key), the signing keys are narrowed,
+    while more than one remains, to keys whose ``alg`` is absent or equals the
+    header ``alg`` and whose ``kty`` matches it. Exactly one remaining key is
+    used; more than one raises :class:`AmbiguousKeyException`, and none
+    raises :class:`KeyNotFoundException`.
 
     Args:
         kid: The key ID from the JWT header
@@ -241,11 +414,20 @@ def find_key_by_kid(
         tuple: (public_key_dict, algorithm)
 
     Raises:
-        TokenValidationException: If no keys available or no matching key found
+        AmbiguousKeyException: If ``kid`` is absent and more than one key
+            could verify the token
+        KeyNotFoundException: If no signing key matches ``kid``, or ``kid``
+            is absent and the set holds no signing key
+        TokenValidationException: If no keys are available
     """
     if not keys:
-        raise TokenValidationException("No keys available in JWKS response")
+        raise TokenValidationException(
+            "No keys available in JWKS response",
+            validation_kind=TokenValidationErrorKind.KEY_SELECTION,
+        )
 
+    if kid == "":
+        kid = None
     if kid is None:
         signing_keys = _no_kid_candidates(keys, jwt_alg)
 
@@ -257,26 +439,18 @@ def find_key_by_kid(
             _validate_key_alg_consistency(public_key, jwt_alg)
             alg = public_key.alg if public_key.alg else (jwt_alg or "RS256")
             return public_key.as_dict(), alg
-        raise TokenValidationException(
+        raise AmbiguousKeyException(
             "JWT has no kid header and JWKS contains multiple signing keys; "
             "cannot determine which key to use",
-            token_part="header",
-            details={
-                "available_kids": [k.kid for k in signing_keys if k.kid],
-                "key_count": len(signing_keys),
-            },
+            available_kids=[k.kid for k in signing_keys if k.kid],
+            key_count=len(signing_keys),
         )
 
-    filtered_keys = [k for k in keys if k.kid == kid]
+    filtered_keys = [k for k in keys if k.kid == kid and is_signing_key(k)]
     if not filtered_keys:
-        available_kids = [k.kid for k in keys if k.kid]
-        raise TokenValidationException(
-            f"No matching kid found: {kid}",
-            token_part="header",
-            details={"kid": kid, "available_kids": available_kids},
-        )
+        raise _key_not_found(kid, keys)
 
-    public_key = filtered_keys[0]
+    public_key = _first_usable_kid_match(filtered_keys, jwt_alg)
     _validate_key_alg_consistency(public_key, jwt_alg)
     # Prefer the key's declared alg; otherwise fall back to the JWT header alg
     # (already checked for key-type consistency above) so non-RS256 tokens
@@ -291,8 +465,9 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
     """
     Find the public key from JWKS that matches the JWT's kid.
 
-    Per OIDC Core Section 10.1, when the JWT has no ``kid`` header and the JWKS
-    contains exactly one key, that key is used.
+    As in :func:`find_key_by_kid`, only signing keys are considered. When the
+    JWT has no ``kid`` header, the key is the single signing key left after
+    narrowing by ``alg`` and ``kty``.
 
     Args:
         jwt: The JWT token
@@ -302,7 +477,9 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
         JsonWebKey: The matching key
 
     Raises:
-        TokenValidationException: If no matching key is found
+        AmbiguousKeyException: If ``kid`` is absent and more than one key
+            could verify the token
+        KeyNotFoundException: If no signing key matches
     """
     warnings.warn(
         "get_public_key_from_jwk is deprecated and will be removed in a future "
@@ -312,8 +489,8 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
         stacklevel=2,
     )
 
-    headers = get_unverified_header(jwt)
-    kid = headers.get("kid")
+    headers = _unverified_header(jwt)
+    kid = _header_kid(headers)
     logger.debug(f"Looking for key with kid: {kid}")
 
     if kid is None:
@@ -327,43 +504,39 @@ def get_public_key_from_jwk(jwt: str, keys: list[JsonWebKey]) -> JsonWebKey:
             key = copy.deepcopy(signing_keys[0])
             _validate_key_alg_consistency(key, jwt_alg)
             if not key.alg:
-                key.alg = jwt_alg
+                key = dataclasses.replace(key, alg=jwt_alg)
             return key
-        raise TokenValidationException(
+        raise AmbiguousKeyException(
             "JWT has no kid header and JWKS contains multiple signing keys; "
             "cannot determine which key to use",
-            token_part="header",
-            details={
-                "available_kids": [k.kid for k in signing_keys if k.kid],
-                "key_count": len(signing_keys),
-            },
+            available_kids=[k.kid for k in signing_keys if k.kid],
+            key_count=len(signing_keys),
         )
 
-    filtered_keys = list(filter(lambda x: x.kid == kid, keys))
+    filtered_keys = [k for k in keys if k.kid == kid and is_signing_key(k)]
     if not filtered_keys:
-        available_kids = [k.kid for k in keys if k.kid]
+        error = _key_not_found(kid, keys)
         logger.error(
-            f"No matching kid found. Requested: {kid}, Available: {available_kids}",
+            f"No matching kid found. Requested: {kid}, "
+            f"Available: {error.details['available_kids']}",
         )
-        raise TokenValidationException(
-            f"No matching kid found: {kid}",
-            token_part="header",
-            details={"kid": kid, "available_kids": available_kids},
-        )
+        raise error
 
     key = copy.deepcopy(filtered_keys[0])
     jwt_alg = headers.get("alg")
     _validate_key_alg_consistency(key, jwt_alg)
     if not key.alg:
-        key.alg = jwt_alg
+        key = dataclasses.replace(key, alg=jwt_alg)
 
     logger.debug(f"Found matching key with kid: {kid}, alg: {key.alg}")
     return key
 
 
 __all__ = [
+    "check_compact_jws",
     "extract_jwt_header_fields",
     "extract_kid_from_jwt",
     "find_key_by_kid",
+    "is_signing_key",
     "jwks_from_dict",
 ]

@@ -12,7 +12,7 @@
 //! So this suite stands up a `wiremock` server — a real HTTP listener on a real
 //! port — that implements the RFC 8693 token endpoint: it decodes the
 //! `application/x-www-form-urlencoded` body, branches on the grant and the
-//! subject token, and replays the shared conformance fixtures from
+//! subject token, and replays the shared spec fixtures from
 //! `spec/test-fixtures/token-exchange`. That exercises the full round trip —
 //! form encoding, the client-auth header, status handling, JSON parsing — end
 //! to end, which the in-process unit tests approximate but do not prove over a
@@ -36,7 +36,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 const FIXTURE_DIR: &str = "../spec/test-fixtures/token-exchange";
 const GRANT_TOKEN_EXCHANGE: &str = "urn:ietf:params:oauth:grant-type:token-exchange";
 
-/// Reads a shared cross-language conformance fixture. Integration tests run
+/// Reads a shared cross-language spec-vector fixture. Integration tests run
 /// with `rust/` as the working directory.
 fn fixture(name: &str) -> String {
     let path = format!("{FIXTURE_DIR}/{name}");

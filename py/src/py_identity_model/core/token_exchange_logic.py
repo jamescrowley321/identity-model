@@ -10,10 +10,10 @@ import httpx
 
 from ..logging_config import logger
 from ..logging_utils import redact_url
-from .client_assertion import apply_private_key_jwt
-from .client_auth import basic_auth_credentials
+from .client_auth import apply_client_auth
+from .error_handlers import raise_configuration_error
 from .models import TokenExchangeRequest, TokenExchangeResponse
-from .mtls import apply_mtls_client_auth
+from .validators import validate_absolute_uri_without_fragment
 
 
 _TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
@@ -36,6 +36,8 @@ def _validate_request_params(request: TokenExchangeRequest) -> None:
         ValueError: If required fields are empty, ``actor_token`` is set
             without ``actor_token_type`` (or vice versa), or optional fields
             are empty strings when provided.
+        ProtocolParameterError: If ``resource`` is not an absolute URI or has
+            a fragment (RFC 8693 §2.1, RFC 8707 §2).
     """
     # Required field: client_id must not be empty
     if not request.client_id:
@@ -66,6 +68,10 @@ def _validate_request_params(request: TokenExchangeRequest) -> None:
     if request.actor_token_type is not None and not request.actor_token_type:
         raise ValueError("actor_token_type must not be empty when provided")
 
+    # RFC 8693 §2.1 / RFC 8707 §2: absolute URI, no fragment
+    if request.resource:
+        validate_absolute_uri_without_fragment(request.resource, "resource")
+
 
 def prepare_token_exchange_request_data(
     request: TokenExchangeRequest,
@@ -78,6 +84,8 @@ def prepare_token_exchange_request_data(
     Raises:
         ValueError: If required fields are empty or ``actor_token`` /
             ``actor_token_type`` pairing is invalid (RFC 8693 §2.1).
+        ProtocolParameterError: If ``resource`` is not an absolute URI or has
+            a fragment.
     """
     _validate_request_params(request)
 
@@ -104,23 +112,9 @@ def prepare_token_exchange_request_data(
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     # RFC 6749 §2.3.1 — client_id excluded from body when using Basic Auth
-    auth: tuple[str, str] | None = None
-    if request.private_key_jwt is not None:
-        # RFC 7523: private_key_jwt assertion in body, no auth header.
-        apply_private_key_jwt(
-            params,
-            request.private_key_jwt,
-            client_id=request.client_id,
-            default_audience=request.address,
-        )
-    elif request.mtls is not None:
-        # RFC 8705 §2: mTLS client auth — certificate is presented at the TLS
-        # layer, client_id goes in the body, no Authorization header.
-        apply_mtls_client_auth(params, client_id=request.client_id)
-    elif request.client_secret:
-        auth = basic_auth_credentials(request.client_id, request.client_secret)
-    else:
-        params["client_id"] = request.client_id
+    auth = apply_client_auth(
+        params, request, client_secret=request.client_secret or None
+    )
 
     return params, headers, auth
 
@@ -222,6 +216,7 @@ def process_token_exchange_response(
 
 def handle_token_exchange_error(e: Exception) -> TokenExchangeResponse:
     """Handle errors during token exchange requests."""
+    raise_configuration_error(e)
     if isinstance(e, httpx.RequestError):
         error_msg = f"Network error during token exchange: {e!s}"
         logger.error(error_msg, exc_info=True)

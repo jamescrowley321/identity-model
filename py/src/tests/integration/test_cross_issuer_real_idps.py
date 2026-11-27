@@ -37,6 +37,7 @@ from py_identity_model import (
 )
 
 from ..harness.rs_server import boot_rs
+from .test_utils import issuer_from_discovery_address
 
 
 pytest.importorskip("fastapi_identity_model")
@@ -86,7 +87,9 @@ def _mint_real_token(cfg: ProviderConfig) -> str:
     """
     env = _read_env(cfg.env_file)
     disco = get_discovery_document(
-        DiscoveryDocumentRequest(address=env["TEST_DISCO_ADDRESS"])
+        DiscoveryDocumentRequest(
+            issuer=issuer_from_discovery_address(env["TEST_DISCO_ADDRESS"])
+        )
     )
     if not disco.is_successful or not disco.token_endpoint:
         pytest.skip(f"{cfg.name} discovery unreachable: {disco.error}")
@@ -150,7 +153,7 @@ def test_real_cross_issuer_tokens_are_rejected(real_idp_tokens):
         assert audience, f"{owner} token carried no audience to bind the RS to"
 
         boot_kwargs = {
-            "discovery_url": env["TEST_DISCO_ADDRESS"],
+            "issuer": issuer_from_discovery_address(env["TEST_DISCO_ADDRESS"]),
             "audience": audience,
         }
         if scope:

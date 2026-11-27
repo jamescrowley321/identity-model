@@ -248,7 +248,7 @@
     {
       "id": "DISC-007",
       "title": "Handle invalid JSON response",
-      "given": "An issuer whose discovery endpoint returns a non-JSON body",
+      "given": "An issuer whose discovery endpoint returns a non-JSON body, or a JSON value that is not an object",
       "when": "Discovery is invoked",
       "then": "A parse/deserialization error is raised",
       "references": [
@@ -268,13 +268,41 @@
             "outcome": "reject",
             "error": "invalid_json"
           }
+        },
+        {
+          "name": "json-array-body",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/array-body.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_json"
+          }
+        },
+        {
+          "name": "json-null-body",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/null-body.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "invalid_json"
+          }
         }
       ]
     },
     {
       "id": "DISC-008",
       "title": "Handle missing required field",
-      "given": "A discovery document that omits one or more required fields",
+      "given": "A discovery document that omits one or more required fields, or leaves one empty",
       "when": "Field validation runs",
       "then": "A validation error is raised identifying the missing field(s)",
       "references": [
@@ -311,6 +339,44 @@
             "outcome": "reject",
             "error": "missing_fields",
             "fields": [
+              "token_endpoint",
+              "subject_types_supported"
+            ]
+          }
+        },
+        {
+          "name": "empty-required-arrays",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/empty-required-arrays.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "response_types_supported",
+              "subject_types_supported",
+              "id_token_signing_alg_values_supported"
+            ]
+          }
+        },
+        {
+          "name": "null-and-empty-string-required-fields",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/null-and-empty-string-required-fields.json"
+            }
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "missing_fields",
+            "fields": [
+              "authorization_endpoint",
               "token_endpoint",
               "subject_types_supported"
             ]
@@ -378,7 +444,194 @@
           }
         }
       ]
+    },
+    {
+      "id": "DISC-011",
+      "title": "Issuer match is exact",
+      "given": "A discovery document whose issuer differs from the configured issuer only by a trailing slash, or equals it exactly",
+      "when": "Discovery is invoked",
+      "then": "Only an identical issuer is accepted; a terminating / on the configured issuer is removed when building the URL",
+      "references": [
+        "\u00a74.1",
+        "\u00a74.3",
+        "\u00a75"
+      ],
+      "vectors": [
+        {
+          "name": "exact-match",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "jwks_uri": "https://server.example.com/jwks"
+            }
+          }
+        },
+        {
+          "name": "returned-trailing-slash",
+          "input": {},
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/issuer-trailing-slash.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "issuer_mismatch"
+          }
+        },
+        {
+          "name": "configured-trailing-slash",
+          "input": {
+            "issuer_suffix": "/"
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "issuer_mismatch"
+          }
+        },
+        {
+          "name": "exact-match-trailing-slash",
+          "input": {
+            "issuer_suffix": "/"
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/issuer-trailing-slash.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com/",
+              "jwks_uri": "https://server.example.com/jwks"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "DISC-012",
+      "title": "OpenID Connect location for an issuer with a path",
+      "given": "An issuer with a path component",
+      "when": "Discovery is invoked with the default location",
+      "then": "The well-known path is appended to the issuer's path and the document is accepted",
+      "references": [
+        "\u00a74.1"
+      ],
+      "vectors": [
+        {
+          "name": "issuer-with-path",
+          "input": {
+            "location": "openid_configuration"
+          },
+          "http": {
+            "/.well-known/openid-configuration": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/openid-configuration",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "jwks_uri": "https://server.example.com/jwks"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "DISC-013",
+      "title": "RFC 8414 location for an issuer with a path",
+      "given": "An issuer with a path component",
+      "when": "Discovery is invoked with the RFC 8414 oauth-authorization-server location",
+      "then": "The well-known path is inserted between the host and the issuer's path, and the returned issuer must be identical",
+      "references": [
+        "RFC 8414 \u00a73.1",
+        "RFC 8414 \u00a73.3"
+      ],
+      "vectors": [
+        {
+          "name": "issuer-with-path",
+          "input": {
+            "location": "oauth_authorization_server"
+          },
+          "http": {
+            "/.well-known/oauth-authorization-server": {
+              "status": 200,
+              "body_fixture": "discovery/valid.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/oauth-authorization-server",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "accept",
+            "result": {
+              "issuer": "https://server.example.com",
+              "jwks_uri": "https://server.example.com/jwks"
+            }
+          }
+        },
+        {
+          "name": "returned-trailing-slash",
+          "input": {
+            "location": "oauth_authorization_server"
+          },
+          "http": {
+            "/.well-known/oauth-authorization-server": {
+              "status": 200,
+              "body_fixture": "discovery/issuer-trailing-slash.json"
+            }
+          },
+          "expect_request": {
+            "path": "/.well-known/oauth-authorization-server",
+            "method": "GET"
+          },
+          "expect": {
+            "outcome": "reject",
+            "error": "issuer_mismatch"
+          }
+        }
+      ]
     }
   ],
-  "notes": "HTTP vectors (see spec/README.md). The issuer is the mock server's base URL, so every document is served at /.well-known/openid-configuration. Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, unexpected_status (with `status`), invalid_json, missing_fields (with `fields`, in required_fields order), https_required."
+  "notes": "HTTP vectors (see spec/README.md). The issuer is the vector's base URL on the mock server, which has a path, so every document is served at /.well-known/openid-configuration under it. `input.issuer_suffix` (e.g. \"/\") is appended to the base URL to form the configured issuer; the issuer match is exact, so a trailing-slash-only difference is issuer_mismatch. `input.location` selects where the document is fetched: `openid_configuration` (the default, OIDC Discovery \u00a74.1) or `oauth_authorization_server` (RFC 8414 \u00a73.1, the well-known segment inserted between the host and the base URL's path). Runners allow http:// issuers (their mock servers are plain HTTP) except where `input.require_https` is true, which calls with the default HTTPS requirement. `input.cache_ttl_seconds` sets the cache TTL and `input.calls_at_seconds` makes one call at each offset from the first; a runner without an injectable clock may map one second to a fixed wall-clock unit. `expect_calls` is the number of requests the server receives per path across all calls. An accept's `result` lists metadata fields compared by exact equality. Reject `error` codes: issuer_mismatch, unexpected_status (with `status`), invalid_json, missing_fields (with `fields`, in required_fields order), https_required. A required string field that is null or \"\", or a required array field that is null or [], counts as missing. A required field of the wrong JSON type (e.g. jwks_uri: []) is unspecified (#890)."
 }

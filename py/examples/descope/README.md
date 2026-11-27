@@ -76,8 +76,8 @@ Edit `.env` with your Descope configuration:
 # Your Descope Project ID
 DESCOPE_PROJECT_ID=P2xXXXXXXXXXXXXXXXXXXXXX
 
-# Discovery URL (auto-configured, or use custom domain)
-DISCOVERY_URL=https://api.descope.com/P2xXXXXXXXXXXXXXXXXXXXXX/.well-known/openid-configuration
+# Issuer (auto-configured, or use custom domain)
+ISSUER=https://api.descope.com/P2xXXXXXXXXXXXXXXXXXXXXX
 
 # Audience (typically your Project ID)
 AUDIENCE=P2xXXXXXXXXXXXXXXXXXXXXX
@@ -132,7 +132,7 @@ import os
 
 disco = get_discovery_document(
     DiscoveryDocumentRequest(
-        address='https://api.descope.com/{YOUR_PROJECT_ID}/.well-known/openid-configuration'
+        issuer='https://api.descope.com/{YOUR_PROJECT_ID}'
     )
 )
 
@@ -232,14 +232,14 @@ Descope uses your **Project ID** as the central identifier:
 
 ```python
 DESCOPE_PROJECT_ID = os.getenv("DESCOPE_PROJECT_ID")
-DISCOVERY_URL = f"https://api.descope.com/{DESCOPE_PROJECT_ID}/.well-known/openid-configuration"
+ISSUER = f"https://api.descope.com/{DESCOPE_PROJECT_ID}"
 AUDIENCE = DESCOPE_PROJECT_ID
 ```
 
 For **custom domains** (Pro/Enterprise plans):
 
 ```python
-DISCOVERY_URL = f"https://your-custom-domain.com/{DESCOPE_PROJECT_ID}/.well-known/openid-configuration"
+ISSUER = f"https://your-custom-domain.com/{DESCOPE_PROJECT_ID}"
 ```
 
 ### 2. Descope Scopes
@@ -346,8 +346,9 @@ docker run -p 8000:8000 \
 
 **Solution**:
 - Verify your `DESCOPE_PROJECT_ID` is correct
-- Check that the discovery URL is formatted correctly:
-  `https://api.descope.com/{PROJECT_ID}/.well-known/openid-configuration`
+- Check that `ISSUER` is the issuer, not the discovery URL:
+  `https://api.descope.com/{PROJECT_ID}` (the document is fetched from
+  `https://api.descope.com/{PROJECT_ID}/.well-known/openid-configuration`)
 - If using custom domain, ensure it's properly configured in Descope
 
 ### Issue: "Invalid client credentials" when requesting token

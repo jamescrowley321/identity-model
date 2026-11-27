@@ -83,5 +83,5 @@ def test_configured_issuer_pin_rejects_mismatched_discovery_issuer() -> None:
         validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=WRONG_ISSUER,
         )

@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import AsyncMock
 
 from fastapi import Depends, FastAPI
@@ -7,12 +8,19 @@ import pytest
 
 from fastapi_identity_model import TokenValidationMiddleware, get_claims
 import fastapi_identity_model.middleware as mw
-from py_identity_model import DiscoveryException, TokenValidationException
+from py_identity_model import (
+    ConfigurationException,
+    DiscoveryException,
+    DiscoveryIssuerMismatchError,
+    JwksException,
+    JwksValidationError,
+    TokenValidationException,
+)
 
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 
 
 def _app(monkeypatch, validate) -> FastAPI:
@@ -20,7 +28,7 @@ def _app(monkeypatch, validate) -> FastAPI:
     app = FastAPI()
     app.add_middleware(
         TokenValidationMiddleware,
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health"],
     )
@@ -95,22 +103,68 @@ async def test_network_exception_returns_503(monkeypatch):
     assert resp.status_code == 503
 
 
-async def test_upstream_fetch_failure_returns_503(monkeypatch):
-    # The real path: a discovery/JWKS fetch failure surfaces from the core as a
-    # TokenValidationException carrying the "Network error during ..." message
-    # (NOT a NetworkException), so the middleware must still map it to 503 — a
-    # transient provider outage, not an "invalid token". (The prior test mocked
-    # DiscoveryException, which the real disco/JWKS path never raises, so this
-    # 401->503 gap went uncaught.)
-    validate = AsyncMock(
-        side_effect=TokenValidationException(
-            "Network error during discovery document request: connection refused"
-        )
-    )
+@pytest.mark.parametrize(
+    "exc",
+    [
+        DiscoveryException("Discovery document request failed", status_code=503),
+        JwksException("JSON web keys request failed", status_code=503),
+    ],
+    ids=["discovery", "jwks"],
+)
+async def test_provider_fetch_failure_returns_503(monkeypatch, exc):
+    # validate_token raises a NetworkException subtype when the discovery
+    # document or JWK Set cannot be fetched: a transient provider outage, not
+    # an invalid token. Classified by type, never by message text.
+    validate = AsyncMock(side_effect=exc)
     async with _client(_app(monkeypatch, validate)) as client:
         resp = await client.get("/me", headers={"Authorization": "Bearer x"})
-    assert resp.status_code == 503
-    assert resp.json()["detail"] == "Authentication temporarily unavailable"
+    assert (resp.status_code, resp.json()) == (
+        503,
+        {"detail": "Authentication temporarily unavailable"},
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TokenValidationException(
+            "Network error during discovery document request: connection refused"
+        ),
+        DiscoveryIssuerMismatchError("https://a.example", "https://b.example"),
+        JwksValidationError("No keys available in JWKS response"),
+    ],
+    ids=["outage-like-message", "issuer-mismatch", "empty-jwks"],
+)
+async def test_validation_failures_return_401(monkeypatch, exc):
+    # A ValidationException is a rejection whatever its message says.
+    validate = AsyncMock(side_effect=exc)
+    async with _client(_app(monkeypatch, validate)) as client:
+        resp = await client.get("/me", headers={"Authorization": "Bearer x"})
+    assert (resp.status_code, resp.json()) == (
+        401,
+        {"detail": mw._GENERIC_401_DETAIL},
+    )
+
+
+async def test_configuration_error_is_401_logged_as_warning(monkeypatch, caplog):
+    # A ConfigurationException may be this server's own setup: still a uniform
+    # 401 (it may also be the provider's document), but logged at warning
+    # level so an outage of the server's own config raises an alert.
+    error = ConfigurationException("HTTPS is required by discovery policy")
+    validate = AsyncMock(side_effect=error)
+    with caplog.at_level(logging.INFO, logger="fastapi_identity_model"):
+        async with _client(_app(monkeypatch, validate)) as client:
+            resp = await client.get("/me", headers={"Authorization": "Bearer x"})
+    assert (resp.status_code, resp.json()) == (
+        401,
+        {"detail": mw._GENERIC_401_DETAIL},
+    )
+    records = [
+        (r.levelno, r.exc_info[1] if r.exc_info else None)
+        for r in caplog.records
+        if r.name == "fastapi_identity_model"
+    ]
+    assert records == [(logging.WARNING, error)]
 
 
 async def test_generic_validation_failure_still_returns_401(monkeypatch):
@@ -162,12 +216,12 @@ async def test_options_preflight_passes_through(monkeypatch):
 
 def test_audience_is_required():
     with pytest.raises(ValueError, match="audience"):
-        TokenValidationMiddleware(FastAPI(), discovery_url=DISCOVERY_URL)
+        TokenValidationMiddleware(FastAPI(), issuer=ISSUER)
 
 
 def test_explicit_empty_excluded_paths_excludes_nothing():
     mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid", excluded_paths=[]
+        FastAPI(), issuer=ISSUER, audience="cid", excluded_paths=[]
     )
     assert mw_obj.excluded_paths == []
     assert mw_obj._is_excluded("/docs") is False
@@ -177,7 +231,7 @@ def test_root_excluded_path_is_not_a_catch_all():
     # A "/" entry must match only the root, not every path via subpath prefix.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/", "/docs"],
     )
@@ -192,7 +246,7 @@ def test_exact_match_default_does_not_exclude_subpaths():
     # excluded prefix is not silently exposed.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/health", "/docs"],
     )
@@ -205,7 +259,7 @@ def test_subtree_wildcard_opt_in_excludes_prefix_and_below():
     # A trailing "/*" is the explicit opt-in for subtree exclusion.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/docs/*"],
     )
@@ -220,7 +274,7 @@ def test_bare_star_is_not_a_catch_all():
     # "/*" (root subtree) must not disable auth wholesale via a one-char typo.
     mw_obj = TokenValidationMiddleware(
         FastAPI(),
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         excluded_paths=["/*"],
     )
@@ -231,9 +285,7 @@ def test_bare_star_is_not_a_catch_all():
 def test_default_excluded_paths_cover_swagger_oauth2_redirect():
     # Exact matching no longer implies the /docs subtree, so the Swagger OAuth2
     # redirect must be listed explicitly in the defaults.
-    mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid"
-    )
+    mw_obj = TokenValidationMiddleware(FastAPI(), issuer=ISSUER, audience="cid")
     assert mw_obj._is_excluded("/docs") is True
     assert mw_obj._is_excluded("/docs/oauth2-redirect") is True
     assert mw_obj._is_excluded("/openapi.json") is True
@@ -245,9 +297,7 @@ def test_default_excluded_paths_cover_swagger_oauth2_redirect():
 def test_access_token_marker_defaults_off():
     # The F-07 defence is opt-in: default construction leaves it disabled with
     # the scope/scp marker set, so existing deployments are unaffected.
-    mw_obj = TokenValidationMiddleware(
-        FastAPI(), discovery_url=DISCOVERY_URL, audience="cid"
-    )
+    mw_obj = TokenValidationMiddleware(FastAPI(), issuer=ISSUER, audience="cid")
     assert mw_obj.require_access_token_marker is False
     assert mw_obj.access_token_marker_claims == ("scope", "scp")
 
@@ -258,7 +308,7 @@ def test_require_access_token_marker_with_empty_claims_raises():
     with pytest.raises(ValueError, match="access_token_marker_claims"):
         TokenValidationMiddleware(
             FastAPI(),
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience="cid",
             require_access_token_marker=True,
             access_token_marker_claims=(),

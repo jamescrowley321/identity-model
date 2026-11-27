@@ -1,55 +1,55 @@
 {
   "plan": "dynamic-rp",
-  "plan_id": "NgWumxDnFX0Nm",
+  "plan_id": "TdKgyK9lxA7dN",
   "suite_url": "https://localhost.emobix.co.uk:8443",
   "results": [
     {
       "test": "oidcc-client-test-discovery-webfinger-acct",
-      "status": "PASSED",
-      "test_id": "RInfUF3s1eWC2nQ",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=RInfUF3s1eWC2nQ",
-      "detail": ""
+      "status": "SKIPPED",
+      "test_id": "",
+      "log_url": "",
+      "detail": "declared unsupported: py-identity-model does not implement WebFinger issuer discovery (OpenID Connect Discovery 1.0 \u00a72, which is OPTIONAL); it takes the issuer as input"
     },
     {
       "test": "oidcc-client-test-discovery-webfinger-url",
-      "status": "PASSED",
-      "test_id": "SpxF5nO0q5kxMju",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=SpxF5nO0q5kxMju",
-      "detail": ""
+      "status": "SKIPPED",
+      "test_id": "",
+      "log_url": "",
+      "detail": "declared unsupported: py-identity-model does not implement WebFinger issuer discovery (OpenID Connect Discovery 1.0 \u00a72, which is OPTIONAL); it takes the issuer as input"
     },
     {
       "test": "oidcc-client-test-discovery-openid-config",
       "status": "PASSED",
-      "test_id": "Nv0IdTqiAmnB0zs",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=Nv0IdTqiAmnB0zs",
+      "test_id": "r1jpKjabSclstHm",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=r1jpKjabSclstHm",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-discovery-jwks-uri-keys",
       "status": "PASSED",
-      "test_id": "QMxdjHCTPlg0eFJ",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=QMxdjHCTPlg0eFJ",
+      "test_id": "MCFGdrFMFwnHcZW",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=MCFGdrFMFwnHcZW",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-discovery-issuer-mismatch",
       "status": "PASSED",
-      "test_id": "gQrwHcwB214QzZL",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=gQrwHcwB214QzZL",
+      "test_id": "1UjjAi7KZWNskpb",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=1UjjAi7KZWNskpb",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-dynamic-registration",
       "status": "PASSED",
-      "test_id": "5C2GlthpFn4DAsF",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=5C2GlthpFn4DAsF",
+      "test_id": "ue7MM1GIJbLrTSN",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=ue7MM1GIJbLrTSN",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-request-uri-signed-rs256",
       "status": "PASSED",
-      "test_id": "CvDRHDnhmL46Z5R",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=CvDRHDnhmL46Z5R",
+      "test_id": "fCLC3PVv8LcR2nV",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=fCLC3PVv8LcR2nV",
       "detail": ""
     },
     {
@@ -62,39 +62,39 @@
     {
       "test": "oidcc-client-test-idtoken-sig-none",
       "status": "SKIPPED",
-      "test_id": "UQIoqyrocWt6Yzo",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=UQIoqyrocWt6Yzo",
+      "test_id": "gzBcS7lxM2JdshK",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=gzBcS7lxM2JdshK",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-signing-key-rotation-just-before-signing",
       "status": "PASSED",
-      "test_id": "z430kHlzU1liTJN",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=z430kHlzU1liTJN",
+      "test_id": "hPs9M2jwy5C9eKo",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=hPs9M2jwy5C9eKo",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-signing-key-rotation",
       "status": "PASSED",
-      "test_id": "7Ne8ocbKVgxknvX",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=7Ne8ocbKVgxknvX",
+      "test_id": "0ZXc306hvMpo3I4",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=0ZXc306hvMpo3I4",
       "detail": ""
     },
     {
       "test": "oidcc-client-test-userinfo-signed",
       "status": "PASSED",
-      "test_id": "A1PmGORd7b841PW",
-      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=A1PmGORd7b841PW",
+      "test_id": "fDfaJKt0wq6q7JM",
+      "log_url": "https://localhost.emobix.co.uk:8443/log-detail.html?log=fDfaJKt0wq6q7JM",
       "detail": ""
     }
   ],
   "summary": {
     "total": 12,
-    "passed": 10,
+    "passed": 8,
     "warning": 0,
     "failed": 0,
     "review": 0,
-    "skipped": 2
+    "skipped": 4
   },
   "all_passed": true
 }

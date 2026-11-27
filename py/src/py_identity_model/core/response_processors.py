@@ -14,21 +14,24 @@ from urllib.parse import urlparse
 
 from ..exceptions import (
     ConfigurationException,
-    DiscoveryException,
-    DiscoveryMissingFieldsError,
+    DiscoveryIssuerMismatchError,
     DiscoveryParseError,
+    DiscoveryValidationError,
 )
 from ..logging_config import logger
+from ..oidc_constants import TokenResponse
 from .discovery_policy import DiscoveryPolicy
-from .http_utils import get_max_jwks_keys, get_max_jwks_size
 from .models import (
     AuthorizationCodeTokenResponse,
     ClientCredentialsTokenResponse,
     DiscoveryDocumentResponse,
     JsonWebKey,
+    JwksErrorKind,
     JwksResponse,
     RefreshTokenResponse,
+    TokenErrorKind,
     TokenIntrospectionResponse,
+    UserInfoErrorKind,
     UserInfoResponse,
 )
 from .parsers import jwks_from_dict
@@ -42,6 +45,8 @@ from .validators import (
 
 if TYPE_CHECKING:
     import httpx
+
+    from .config import HTTPConfig
 
 
 def _get_url_authority(url: str) -> str:
@@ -99,7 +104,7 @@ def _reject_internal_ip_host(
     and is tracked separately (T9).
 
     Raises:
-        DiscoveryException: If ``url``'s host is an internal/reserved IP literal.
+        DiscoveryValidationError: If ``url``'s host is an internal/reserved IP literal.
     """
     host = urlparse(url).hostname
     if not host:
@@ -117,7 +122,7 @@ def _reject_internal_ip_host(
         or ip.is_multicast
         or ip.is_unspecified
     ):
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"{parameter_name} host '{host}' is an internal/reserved IP address "
             f"({ip}); refusing to route a request there"
         )
@@ -126,51 +131,31 @@ def _reject_internal_ip_host(
 def _validate_endpoint_authority(
     url: str,
     parameter_name: str,
-    response_json: dict,
     policy: DiscoveryPolicy,
-    discovery_url: str = "",
+    issuer: str,
 ) -> None:
     """Validate that an endpoint URL's authority matches expected values.
 
-    The expected authority is ``policy.authority`` when set, or derived from
-    the discovery document's ``issuer``. The authority of the discovery URL
-    itself is also allowed (handles Docker/proxy setups where the fetch
-    hostname differs from the issuer). Additional allowed authorities come
-    from ``policy.additional_endpoint_base_addresses``.
+    The issuer's authority is always allowed: the document was fetched from
+    it, and its ``issuer`` equals it exactly. ``policy.authority`` adds
+    another, and ``policy.additional_endpoint_base_addresses`` adds more.
 
     Raises:
-        DiscoveryException: If the endpoint URL's authority does not match.
+        DiscoveryValidationError: If the endpoint URL's authority does not match.
     """
 
     ep_authority = _get_url_authority(url)
 
     # Build allowed authorities set (case-insensitive per RFC 3986 §3.2.2)
+    allowed = {_get_url_authority(issuer)}
     if policy.authority:
-        allowed = {_get_url_authority(policy.authority)}
-    else:
-        issuer = response_json.get("issuer", "")
-        allowed = {_get_url_authority(issuer)} if issuer else set()
-
-    # The discovery URL's authority is implicitly trusted — we already
-    # fetched the document from it.
-    if discovery_url:
-        allowed.add(_get_url_authority(discovery_url))
+        allowed.add(_get_url_authority(policy.authority))
 
     for addr in policy.additional_endpoint_base_addresses or []:
         allowed.add(_get_url_authority(addr))
 
-    # Discard empty string from set (from empty URLs)
-    allowed.discard("")
-
-    if not allowed:
-        raise DiscoveryException(
-            f"Cannot validate {parameter_name} authority: "
-            f"no authority constraint available (issuer is empty and "
-            f"no policy.authority or additional_endpoint_base_addresses set)"
-        )
-
     if ep_authority not in allowed:
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"{parameter_name} authority '{ep_authority}' does not match "
             f"expected authorities: {sorted(allowed)}. If this is a legitimate "
             f"endpoint on a different host (RFC 8414 / RFC 9126 permit this), add "
@@ -178,9 +163,23 @@ def _validate_endpoint_authority(
         )
 
 
+def _validate_issuer_match(requested_issuer: str, issuer: str) -> None:
+    """Reject a document whose issuer is not exactly the configured issuer.
+
+    OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the returned ``issuer`` MUST be
+    identical to the issuer the request was built from, compared code point
+    to code point with no normalization (§5), so a trailing-slash-only
+    difference is a mismatch.
+    """
+    if not isinstance(issuer, str) or issuer != requested_issuer:
+        raise DiscoveryIssuerMismatchError(requested_issuer, issuer)
+
+
 def validate_and_parse_discovery_response(
     response: httpx.Response,
     policy: DiscoveryPolicy | None = None,
+    *,
+    requested_issuer: str,
 ) -> dict:
     """
     Validate and parse discovery document HTTP response.
@@ -189,18 +188,20 @@ def validate_and_parse_discovery_response(
         response: HTTP response from discovery endpoint
         policy: Optional discovery policy for configurable validation.
             When ``None``, strict defaults apply.
+        requested_issuer: The configured issuer the discovery URL was built
+            from; the document's issuer must equal it exactly.
 
     Returns:
         dict: Parsed discovery document JSON
 
     Raises:
-        DiscoveryException: If response is invalid
+        DiscoveryValidationError: If response is invalid
     """
     # Check content type - extract media type before any parameters (e.g., charset)
     content_type_header = response.headers.get("Content-Type", "")
     media_type = content_type_header.split(";")[0].strip().lower()
     if media_type != "application/json":
-        raise DiscoveryException(
+        raise DiscoveryValidationError(
             f"Invalid content type. Expected application/json, got: "
             f"{response.headers.get('Content-Type', 'unknown')}"
         )
@@ -217,16 +218,12 @@ def validate_and_parse_discovery_response(
     # Validate issuer format (policy-aware)
     validate_issuer_with_policy(response_json.get("issuer", ""), policy)
 
+    # OIDC Discovery 1.0 §4.3 / RFC 8414 §3.3: the issuer MUST be the one the
+    # discovery URL was built from. Not policy-controlled.
+    _validate_issuer_match(requested_issuer, response_json.get("issuer", ""))
+
     # Validate parameter values
     validate_parameter_values(response_json)
-
-    # Enforce require_key_set policy
-    if (policy is None or policy.require_key_set) and not response_json.get("jwks_uri"):
-        raise DiscoveryMissingFieldsError(
-            "Discovery document does not contain a jwks_uri, "
-            "required by policy (require_key_set=True)",
-            ("jwks_uri",),
-        )
 
     # Normalize policy for endpoint validation: treat None as strict defaults
     effective_policy = policy if policy is not None else DiscoveryPolicy()
@@ -242,17 +239,13 @@ def validate_and_parse_discovery_response(
         "end_session_endpoint",
         "pushed_authorization_request_endpoint",
     ]
-    try:
-        discovery_url = str(response.url)
-    except RuntimeError:
-        discovery_url = ""
     for ep_name in _endpoint_names:
         ep_url = response_json.get(ep_name)
         validate_https_url_with_policy(ep_url, ep_name, policy)
-        # Validate endpoint authority (derives from issuer when policy.authority not set)
+        # Validate endpoint authority against the issuer's (and policy's)
         if ep_url and effective_policy.validate_endpoints:
             _validate_endpoint_authority(
-                ep_url, ep_name, response_json, effective_policy, discovery_url
+                ep_url, ep_name, effective_policy, requested_issuer
             )
 
     # RFC 8705 §5: ``mtls_endpoint_aliases`` map endpoint names to mTLS-specific
@@ -393,10 +386,18 @@ def build_discovery_response(
         authorization_encryption_enc_values_supported=response_json.get(
             "authorization_encryption_enc_values_supported",
         ),
+        # JWT introspection response signing (RFC 9701 §7)
+        introspection_signing_alg_values_supported=response_json.get(
+            "introspection_signing_alg_values_supported",
+        ),
         # Mutual-TLS support (RFC 8705 §3.3 / §5)
         mtls_endpoint_aliases=response_json.get("mtls_endpoint_aliases"),
         tls_client_certificate_bound_access_tokens=response_json.get(
             "tls_client_certificate_bound_access_tokens",
+        ),
+        # DPoP support (RFC 9449 §5.1)
+        dpop_signing_alg_values_supported=response_json.get(
+            "dpop_signing_alg_values_supported",
         ),
         # RP-Initiated Logout support (OpenID Connect RP-Initiated Logout 1.0 §2)
         end_session_endpoint=response_json.get("end_session_endpoint"),
@@ -421,6 +422,7 @@ _VALID_JWKS_CONTENT_TYPES = frozenset({"application/json", "application/jwk-set+
 
 def _extract_jwks_keys(
     response_json: object,
+    max_keys: int,
 ) -> tuple[list[dict], str | None]:
     """Extract and validate the 'keys' array from a parsed JWKS response.
 
@@ -444,7 +446,6 @@ def _extract_jwks_keys(
             f"got {type(raw_keys).__name__}"
         )
 
-    max_keys = get_max_jwks_keys()
     if len(raw_keys) > max_keys:
         return [], (
             f"JWKS response contains too many keys: {len(raw_keys)} "
@@ -503,64 +504,77 @@ def _build_jwks_keys(raw_keys: list[dict]) -> tuple[list[JsonWebKey], str | None
     return keys, None
 
 
-def parse_jwks_response(response: httpx.Response) -> JwksResponse:
+def _jwks_envelope_error(response: httpx.Response, config: HTTPConfig) -> str | None:
+    """Why a 2xx JWKS response's size or content type is refused, if it is."""
+    # Check response size before parsing — Content-Length first to
+    # avoid materialising the body for obviously-oversized responses.
+    max_size = config.jwks_max_size
+    content_length = response.headers.get("Content-Length")
+    try:
+        cl_too_large = content_length is not None and int(content_length) > max_size
+    except (ValueError, TypeError):
+        logger.warning("Malformed Content-Length header: %s", content_length)
+        cl_too_large = False
+    if cl_too_large:
+        size_desc = f"Content-Length {content_length}"
+    elif len(response.content) > max_size:
+        size_desc = f"{len(response.content)} bytes"
+    else:
+        size_desc = None
+    if size_desc:
+        return f"JWKS response too large: {size_desc} exceeds limit of {max_size} bytes"
+
+    content_type_header = response.headers.get("Content-Type", "")
+    media_type = content_type_header.split(";")[0].strip().lower()
+    if not media_type:
+        return "JWKS response missing Content-Type header"
+    if media_type not in _VALID_JWKS_CONTENT_TYPES:
+        return (
+            f"Invalid JWKS Content-Type: expected application/json or "
+            f"application/jwk-set+json, got: {content_type_header}"
+        )
+    return None
+
+
+def parse_jwks_response(response: httpx.Response, config: HTTPConfig) -> JwksResponse:
     """
     Parse JWKS HTTP response.
 
     Args:
         response: HTTP response from JWKS endpoint
+        config: The client's configuration; supplies ``jwks_max_size`` and
+            ``jwks_max_keys``.
 
     Returns:
         JwksResponse: Parsed JWKS response with keys
     """
     if response.is_success:
-        # Check response size before parsing — Content-Length first to
-        # avoid materialising the body for obviously-oversized responses.
-        max_size = get_max_jwks_size()
-        content_length = response.headers.get("Content-Length")
+        envelope_error = _jwks_envelope_error(response, config)
+        if envelope_error is not None:
+            return JwksResponse(
+                is_successful=False,
+                error=envelope_error,
+                error_kind=JwksErrorKind.INVALID_DOCUMENT,
+            )
+
         try:
-            cl_too_large = content_length is not None and int(content_length) > max_size
-        except (ValueError, TypeError):
-            logger.warning("Malformed Content-Length header: %s", content_length)
-            cl_too_large = False
-        if cl_too_large:
-            size_desc = f"Content-Length {content_length}"
-        elif len(response.content) > max_size:
-            size_desc = f"{len(response.content)} bytes"
-        else:
-            size_desc = None
-        if size_desc:
+            response_json = response.json()
+        except ValueError as e:
             return JwksResponse(
                 is_successful=False,
-                error=(
-                    f"JWKS response too large: {size_desc} "
-                    f"exceeds limit of {max_size} bytes"
-                ),
+                error=f"Invalid JSON in JWKS response: {e!s}",
+                error_kind=JwksErrorKind.INVALID_JSON,
             )
-
-        content_type_header = response.headers.get("Content-Type", "")
-        media_type = content_type_header.split(";")[0].strip().lower()
-        if not media_type:
-            return JwksResponse(
-                is_successful=False,
-                error="JWKS response missing Content-Type header",
-            )
-        if media_type not in _VALID_JWKS_CONTENT_TYPES:
-            return JwksResponse(
-                is_successful=False,
-                error=(
-                    f"Invalid JWKS Content-Type: expected application/json or "
-                    f"application/jwk-set+json, got: {content_type_header}"
-                ),
-            )
-
-        response_json = response.json()
-        raw_keys, keys_error = _extract_jwks_keys(response_json)
+        raw_keys, keys_error = _extract_jwks_keys(response_json, config.jwks_max_keys)
         keys: list[JsonWebKey] = []
         if not keys_error:
             keys, keys_error = _build_jwks_keys(raw_keys)
         if keys_error:
-            return JwksResponse(is_successful=False, error=keys_error)
+            return JwksResponse(
+                is_successful=False,
+                error=keys_error,
+                error_kind=JwksErrorKind.INVALID_DOCUMENT,
+            )
         cache_control = response.headers.get("cache-control")
         return JwksResponse(is_successful=True, keys=keys, cache_control=cache_control)
 
@@ -571,7 +585,37 @@ def parse_jwks_response(response: httpx.Response) -> JwksResponse:
     return JwksResponse(
         is_successful=False,
         error=error_msg,
+        error_kind=JwksErrorKind.UNEXPECTED_STATUS,
+        status_code=response.status_code,
     )
+
+
+def token_response_error(data: object) -> str | None:
+    """Why a successful token response body is not a valid access token response.
+
+    RFC 6749 §5.1: the body is a JSON object whose ``access_token`` and
+    ``token_type`` are REQUIRED. The client may not use an access token whose
+    type it does not know (RFC 6749 §7.1), so a body without one is refused.
+
+    Returns:
+        ``None`` when the body is valid, otherwise the error message.
+    """
+    if not isinstance(data, dict):
+        return f"Token response is not a JSON object: {type(data).__name__}"
+    missing = [
+        name
+        for name in (
+            TokenResponse.ACCESS_TOKEN.value,
+            TokenResponse.TOKEN_TYPE.value,
+        )
+        if not isinstance(data.get(name), str) or not data[name]
+    ]
+    if missing:
+        return (
+            "Token response is missing required fields per RFC 6749 "
+            f"Section 5.1: {', '.join(missing)}"
+        )
+    return None
 
 
 def parse_token_response(
@@ -579,6 +623,10 @@ def parse_token_response(
 ) -> ClientCredentialsTokenResponse:
     """
     Parse token HTTP response.
+
+    A success response must carry ``access_token`` and ``token_type``
+    (RFC 6749 §5.1); otherwise it fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE`.
 
     Args:
         response: HTTP response from token endpoint
@@ -588,6 +636,13 @@ def parse_token_response(
     """
     if response.is_success:
         response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return ClientCredentialsTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+            )
         return ClientCredentialsTokenResponse(
             is_successful=True,
             token=response_json,
@@ -606,11 +661,28 @@ def parse_token_response(
 def parse_auth_code_token_response(
     response: httpx.Response,
 ) -> AuthorizationCodeTokenResponse:
-    """Parse authorization code token exchange HTTP response."""
+    """Parse authorization code token exchange HTTP response.
+
+    A success response without ``access_token`` and ``token_type`` fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
+    """
     if response.is_success:
+        response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return AuthorizationCodeTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
+            )
         return AuthorizationCodeTokenResponse(
             is_successful=True,
-            token=response.json(),
+            token=response_json,
         )
 
     error_msg = (
@@ -626,14 +698,29 @@ def parse_auth_code_token_response(
 def parse_refresh_token_response(
     response: httpx.Response,
 ) -> RefreshTokenResponse:
-    """Parse refresh token grant HTTP response."""
-    if response.is_success:
-        return RefreshTokenResponse(is_successful=True, token=response.json())
+    """Parse refresh token grant HTTP response.
 
-    error_msg = (
-        f"Token refresh failed with status code: "
-        f"{response.status_code}. Response Content: {response.content}"
-    )
+    A success response without ``access_token`` and ``token_type`` fails with
+    :attr:`TokenErrorKind.INVALID_TOKEN_RESPONSE` (RFC 6749 §5.1). A JSON
+    object body is kept on ``rejected_token``, so tokens the server issued,
+    such as a rotated refresh token, are not lost.
+    """
+    if response.is_success:
+        response_json = response.json()
+        error = token_response_error(response_json)
+        if error is not None:
+            return RefreshTokenResponse(
+                is_successful=False,
+                error=error,
+                error_kind=TokenErrorKind.INVALID_TOKEN_RESPONSE,
+                rejected_token=response_json
+                if isinstance(response_json, dict)
+                else None,
+            )
+        return RefreshTokenResponse(is_successful=True, token=response_json)
+
+    # The entire body, including OAuth error descriptions, may echo secrets.
+    error_msg = f"Token refresh failed with status code: {response.status_code}"
     return RefreshTokenResponse(is_successful=False, error=error_msg)
 
 
@@ -665,7 +752,8 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
     Parse UserInfo HTTP response.
 
     Supports Content-Type detection per OIDC Core 1.0 Section 5.3.2/5.3.3:
-    - application/json: Claims extracted as dict
+    - application/json: Claims extracted as dict; a body with no non-empty string
+      ``sub`` claim is an error (Section 5.3.2)
     - application/jwt: Raw JWT string stored for caller to decode/validate
 
     Args:
@@ -695,6 +783,14 @@ def parse_userinfo_response(response: httpx.Response) -> UserInfoResponse:
 
     # Default to JSON parsing (application/json or unspecified)
     claims = response.json()
+    # OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
+    sub = claims.get("sub") if isinstance(claims, dict) else None
+    if not isinstance(sub, str) or not sub:
+        return UserInfoResponse(
+            is_successful=False,
+            error="UserInfo response is missing required 'sub' claim",
+            error_kind=UserInfoErrorKind.MISSING_SUB,
+        )
     return UserInfoResponse(
         is_successful=True,
         claims=claims,
@@ -706,7 +802,9 @@ __all__ = [
     "parse_auth_code_token_response",
     "parse_introspection_response",
     "parse_jwks_response",
+    "parse_refresh_token_response",
     "parse_token_response",
     "parse_userinfo_response",
+    "token_response_error",
     "validate_and_parse_discovery_response",
 ]

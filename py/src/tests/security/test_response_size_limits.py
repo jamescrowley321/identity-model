@@ -1,6 +1,6 @@
 """Adversarial response-body size-cap tests (F-09).
 
-Only ``parse_jwks_response`` enforces a size cap (``get_max_jwks_size``). The
+Only ``parse_jwks_response`` enforces a size cap (``Config.jwks_max_size``). The
 token / auth-code / refresh / introspection / userinfo / discovery / PAR /
 device-authorization parsers all call ``.json()``/``.content``/``.text`` on an
 attacker-influenced response with NO size gate and NO streaming read-limit, so
@@ -117,6 +117,8 @@ def test_oversized_discovery_body_is_rejected() -> None:
         "service_documentation": _PAD,
     }
     respx.get(disco_url).mock(return_value=httpx.Response(200, json=doc))
-    result = get_discovery_document(DiscoveryDocumentRequest(address=disco_url))
+    result = get_discovery_document(
+        DiscoveryDocumentRequest(issuer="https://as.example.com")
+    )
     assert result.is_successful is False
     assert "too large" in (result.error or "").lower()

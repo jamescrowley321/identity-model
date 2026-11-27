@@ -3,7 +3,7 @@
 //! `#[ignore]`-gated so a bare `cargo test` (no provider up) stays green. The
 //! `integration-tests-rust` CI job boots the local `infra/` node-oidc-provider
 //! (`:9010`, `dPoP: { enabled: true }`, `dPoPSigningAlgValues: ["RS256",
-//! "ES256"]`), runs the unit suite, then runs these with
+//! "ES256", "PS256", "EdDSA"]`), runs the unit suite, then runs these with
 //! `cargo test -- --ignored` via `make test-integration-rust` (a missing prerequisite fails).
 //!
 //! Run locally:
@@ -14,7 +14,7 @@
 //! make infra-down
 //! ```
 //!
-//! ## Why these exist when `conformance::dpop` already covers DPOP-001..008
+//! ## Why these exist when `internal::dpop` already covers DPOP-001..008
 //!
 //! The offline suite proves this crate is self-consistent: a proof it generates
 //! is one it verifies, against claims it chose. Every assertion there is
@@ -322,7 +322,7 @@ fn assert_dpop_rejection(err: &IdentityError, what: &str) {
 // token round-trips through this crate's resource-server verifier, and the
 // thumbprint that verifier reports is the one the provider put in `cnf.jkt`.
 //
-// This is the join the offline suite cannot make. `conformance::dpop` verifies
+// This is the join the offline suite cannot make. `internal::dpop` verifies
 // proofs over tokens it invented; here the token is one the provider minted and
 // bound, so a resource server following RFC 9449 §7 — compare the verified
 // proof's thumbprint against the token's `cnf.jkt`, then its `ath` against the

@@ -31,12 +31,15 @@ validate_post_logout_state(expected_state, returned_state)  # raises on mismatch
 
 `validate_logout_token` runs the standard JWT validation (signature via
 discovery/JWKS, `iss`, `aud`, `exp`) and then enforces the Logout-Token
-profile of Back-Channel Logout 1.0 §2.4: `iss`/`aud`/`iat`/`jti`/`events`
-must be present, the `events` object must contain the
+profile of Back-Channel Logout 1.0 §2.4: `iss`/`aud`/`iat`/`exp`/`jti`/`events`
+must be present (`exp` is REQUIRED as of errata set 1), the `events` object must contain the
 `http://schemas.openid.net/event/backchannel-logout` member, at least one of
 `sub` / `sid` must identify the session, and a `nonce` claim is prohibited
-(so a Logout Token can never pass as an ID Token). Set `audience` to your
-`client_id` and `issuer` to the OP issuer in the config.
+(so a Logout Token can never pass as an ID Token). Every `aud` value must be
+your `client_id` or one you list in `trusted_audiences=` (§2.6 step 4, which
+applies OIDC Core §3.1.3.7 step 3). Set `audience` to your `client_id` and
+`issuer` to the OP issuer in the config. A config without `audience`, or
+with `perform_disco=False` and no `issuer`, raises `ConfigurationException`.
 
 ```python
 from py_identity_model import TokenValidationConfig, validate_logout_token
@@ -44,7 +47,7 @@ from py_identity_model import TokenValidationConfig, validate_logout_token
 claims = validate_logout_token(
     logout_token,  # the `logout_token` form field the OP POSTs to your backchannel_logout_uri
     TokenValidationConfig(perform_disco=True, audience=CLIENT_ID, issuer=ISSUER),
-    disco_doc_address=DISCOVERY_URL,
+    issuer=ISSUER,
 )
 sid = claims.get("sid")  # terminate the matching session(s)
 ```

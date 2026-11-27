@@ -79,7 +79,9 @@ impl DiscoveryClient {
     /// Fetches, validates, and caches the OIDC provider metadata for
     /// `issuer_url`.
     ///
-    /// The request targets `{issuer_url}/.well-known/openid-configuration`. A
+    /// The request targets `{issuer_url}/.well-known/openid-configuration`, with
+    /// any terminating `/` of `issuer_url` removed (OIDC Discovery 1.0 §4.1),
+    /// and the document's `issuer` must be identical to `issuer_url` (§4.3). A
     /// fresh cache entry is served without any HTTP request (DISC-004); the
     /// entry is refreshed once its TTL elapses (DISC-005). The issuer scheme
     /// must be `https` unless [`DiscoveryClientBuilder::allow_http`] was set
@@ -100,8 +102,8 @@ impl DiscoveryClient {
         &self,
         issuer_url: &str,
     ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
-        let issuer = issuer_url.trim().trim_end_matches('/').to_string();
-        if issuer.is_empty() {
+        let issuer = issuer_url.trim().to_string();
+        if issuer.trim_end_matches('/').is_empty() {
             return Err(IdentityError::Validation("issuer URL is empty".to_string()).into());
         }
 
@@ -135,7 +137,9 @@ impl DiscoveryClient {
         &self,
         issuer: &str,
     ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
-        let endpoint = format!("{issuer}{WELL_KNOWN_PATH}");
+        // OIDC Discovery 1.0 §4.1: any terminating `/` is removed from the
+        // issuer before the well-known path is appended.
+        let endpoint = format!("{}{WELL_KNOWN_PATH}", issuer.trim_end_matches('/'));
 
         let mut response = self
             .http
@@ -188,10 +192,11 @@ impl DiscoveryClient {
             });
         }
 
-        // DISC-003: the document's issuer must match the requested issuer.
-        // Trailing slashes are trimmed on both sides so they normalise
-        // symmetrically (a trailing-slash-only difference is not a mismatch).
-        if metadata.issuer.trim_end_matches('/') != issuer {
+        // DISC-003: the document's issuer must be identical to the requested
+        // issuer (§4.3), compared code point to code point with no
+        // normalisation (§5), so a trailing-slash-only difference is a
+        // mismatch.
+        if metadata.issuer != issuer {
             return Err(DiscoveryError::IssuerMismatch {
                 requested: issuer.to_owned(),
                 actual: metadata.issuer,
@@ -473,6 +478,27 @@ mod tests {
         );
     }
 
+    // DISC-007: a JSON value that is not an object is rejected as invalid JSON,
+    // not parsed into a document with every required field missing.
+    #[tokio::test]
+    async fn maps_non_object_json_to_invalid_json() {
+        for body in ["null", "[]", "\"x\"", "1", "true"] {
+            let server = MockServer::start().await;
+            mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+            let client = DiscoveryClient::builder().allow_http(true).build();
+            let err = client
+                .discover(&server.uri())
+                .await
+                .expect_err("a non-object body must error");
+
+            assert!(
+                matches!(err, DiscoveryError::InvalidJson { .. }),
+                "{body}: expected InvalidJson, got {err:?}"
+            );
+        }
+    }
+
     // DISC-008: a document missing a required field is rejected with that field.
     #[tokio::test]
     async fn reports_missing_required_field() {
@@ -499,6 +525,120 @@ mod tests {
 
         match err {
             DiscoveryError::MissingFields { fields, .. } => assert_eq!(fields, ["jwks_uri"]),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
+    // DISC-008: empty required arrays count as missing, reported in spec order.
+    #[tokio::test]
+    async fn reports_empty_required_arrays_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = format!(
+            r#"{{
+                "issuer": "{issuer}",
+                "authorization_endpoint": "{issuer}/auth",
+                "token_endpoint": "{issuer}/token",
+                "jwks_uri": "{issuer}/jwks",
+                "response_types_supported": [],
+                "subject_types_supported": [],
+                "id_token_signing_alg_values_supported": []
+            }}"#
+        );
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("empty required arrays must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "response_types_supported",
+                    "subject_types_supported",
+                    "id_token_signing_alg_values_supported"
+                ]
+            ),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
+    // DISC-008: null and empty-string required fields count as missing, so
+    // they are reported as MissingFields rather than failing to deserialize.
+    #[tokio::test]
+    async fn reports_null_and_empty_string_required_fields_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = format!(
+            r#"{{
+                "issuer": "{issuer}",
+                "authorization_endpoint": null,
+                "token_endpoint": "",
+                "jwks_uri": "{issuer}/jwks",
+                "response_types_supported": ["code"],
+                "subject_types_supported": null,
+                "id_token_signing_alg_values_supported": ["RS256"]
+            }}"#
+        );
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("null and empty-string required fields must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "authorization_endpoint",
+                    "token_endpoint",
+                    "subject_types_supported"
+                ]
+            ),
+            other => panic!("expected MissingFields, got {other:?}"),
+        }
+    }
+
+    // DISC-008: every required field may be null; all seven are reported.
+    #[tokio::test]
+    async fn reports_every_null_required_field_as_missing() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let body = r#"{
+            "issuer": null,
+            "authorization_endpoint": null,
+            "token_endpoint": null,
+            "jwks_uri": null,
+            "response_types_supported": null,
+            "subject_types_supported": null,
+            "id_token_signing_alg_values_supported": null
+        }"#;
+        mount(&server, ResponseTemplate::new(200).set_body_string(body)).await;
+
+        let client = DiscoveryClient::builder().allow_http(true).build();
+        let err = client
+            .discover(&issuer)
+            .await
+            .expect_err("null required fields must error");
+
+        match err {
+            DiscoveryError::MissingFields { fields, .. } => assert_eq!(
+                fields,
+                [
+                    "issuer",
+                    "authorization_endpoint",
+                    "token_endpoint",
+                    "jwks_uri",
+                    "response_types_supported",
+                    "subject_types_supported",
+                    "id_token_signing_alg_values_supported"
+                ]
+            ),
             other => panic!("expected MissingFields, got {other:?}"),
         }
     }
@@ -543,31 +683,75 @@ mod tests {
         );
     }
 
-    // DISC-003: a trailing-slash-only difference between the requested issuer
-    // and the document issuer is normalised on both sides and is NOT a
-    // mismatch. This matches the merged Go reference
-    // (go/pkg/discovery/discovery.go:204 + TestFetchConfiguration_TrailingSlash);
-    // see decisions.md DEC-001 for the conflict with the epic's "no trailing
-    // slash normalization" prose.
-    #[tokio::test]
-    async fn accepts_trailing_slash_only_difference() {
-        let server = MockServer::start().await;
-        let issuer = server.uri();
-        // Document declares the issuer WITH a trailing slash...
+    /// Discovers `requested` against a server whose document declares
+    /// `declared`; the mock answers only on the well-known path.
+    async fn discover_declaring(
+        server: &MockServer,
+        requested: &str,
+        declared: &str,
+    ) -> std::result::Result<ProviderMetadata, DiscoveryError> {
         mount(
-            &server,
-            ResponseTemplate::new(200).set_body_string(valid_doc(&format!("{issuer}/"))),
+            server,
+            ResponseTemplate::new(200).set_body_string(valid_doc(declared)),
         )
         .await;
-
-        let client = DiscoveryClient::builder().allow_http(true).build();
-        // ...requested WITHOUT one: still accepted.
-        let meta = client
-            .discover(&issuer)
+        DiscoveryClient::builder()
+            .allow_http(true)
+            .build()
+            .discover(requested)
             .await
-            .expect("trailing-slash-only difference is accepted");
+    }
 
-        assert_eq!(meta.issuer, format!("{issuer}/"));
+    // DISC-011: the issuer match is exact (§4.3), so a document declaring the
+    // issuer with a trailing slash does not match a request without one.
+    #[tokio::test]
+    async fn rejects_returned_issuer_with_trailing_slash() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let err = discover_declaring(&server, &issuer, &format!("{issuer}/"))
+            .await
+            .expect_err("trailing-slash-only difference is a mismatch");
+
+        match err {
+            DiscoveryError::IssuerMismatch { requested, actual } => {
+                assert_eq!(requested, issuer);
+                assert_eq!(actual, format!("{issuer}/"));
+            }
+            other => panic!("expected IssuerMismatch, got {other:?}"),
+        }
+    }
+
+    // DISC-011: the reverse: a request with a trailing slash does not match a
+    // document declaring the issuer without one. The terminating `/` is still
+    // removed when building the URL (§4.1), so the well-known path is fetched.
+    #[tokio::test]
+    async fn rejects_requested_issuer_with_trailing_slash() {
+        let server = MockServer::start().await;
+        let issuer = server.uri();
+        let err = discover_declaring(&server, &format!("{issuer}/"), &issuer)
+            .await
+            .expect_err("trailing-slash-only difference is a mismatch");
+
+        match err {
+            DiscoveryError::IssuerMismatch { requested, actual } => {
+                assert_eq!(requested, format!("{issuer}/"));
+                assert_eq!(actual, issuer);
+            }
+            other => panic!("expected IssuerMismatch, got {other:?}"),
+        }
+    }
+
+    // DISC-011: an issuer with a trailing slash matches a document that
+    // declares exactly that issuer, fetched at the well-known path (§4.1).
+    #[tokio::test]
+    async fn accepts_identical_issuer_with_trailing_slash() {
+        let server = MockServer::start().await;
+        let issuer = format!("{}/", server.uri());
+        let meta = discover_declaring(&server, &issuer, &issuer)
+            .await
+            .expect("identical issuer is accepted");
+
+        assert_eq!(meta.issuer, issuer);
     }
 
     // DISC-010: URL schemes are case-insensitive (RFC 3986 §3.1), so a

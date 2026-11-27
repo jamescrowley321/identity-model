@@ -39,7 +39,7 @@ from py_identity_model.sync.token_validation import (
 )
 from py_identity_model.sync.userinfo import get_userinfo as sync_get_userinfo
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 
 
 # Minimum expected HTTP call count for discovery + JWKS
@@ -48,6 +48,7 @@ MIN_EXPECTED_CALL_COUNT = 2
 JWKS_URL = "https://example.com/.well-known/jwks"
 TOKEN_URL = "https://example.com/token"
 USERINFO_URL = "https://example.com/userinfo"
+SUB = "user123"
 
 DISCO_JSON = {
     "issuer": "https://example.com",
@@ -79,7 +80,7 @@ class TestSyncDI:
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=DISCO_JSON))
         with HTTPClient() as client:
             response = sync_get_disco(
-                DiscoveryDocumentRequest(address=DISCO_URL),
+                DiscoveryDocumentRequest(issuer=ISSUER),
                 http_client=client,
             )
         assert response.is_successful
@@ -112,11 +113,13 @@ class TestSyncDI:
     @respx.mock
     def test_userinfo_with_injected_client(self):
         respx.get(USERINFO_URL).mock(
-            return_value=httpx.Response(200, json={"sub": "user123"})
+            return_value=httpx.Response(200, json={"sub": SUB})
         )
         with HTTPClient() as client:
             response = sync_get_userinfo(
-                UserInfoRequest(address=USERINFO_URL, token="bearer_token"),
+                UserInfoRequest(
+                    address=USERINFO_URL, token="bearer_token", expected_sub=SUB
+                ),
                 http_client=client,
             )
         assert response.is_successful
@@ -125,20 +128,20 @@ class TestSyncDI:
     def test_discovery_without_client_backward_compat(self):
         """http_client=None uses thread-local default (backward compat)."""
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=DISCO_JSON))
-        response = sync_get_disco(DiscoveryDocumentRequest(address=DISCO_URL))
+        response = sync_get_disco(DiscoveryDocumentRequest(issuer=ISSUER))
         assert response.is_successful
 
-    def test_validate_token_di_requires_disco_address(self):
-        """validate_token with http_client raises if disco_doc_address is None."""
+    def test_validate_token_di_requires_issuer(self):
+        """validate_token with http_client raises if issuer is None."""
         config = TokenValidationConfig(perform_disco=True)
         with (
             HTTPClient() as client,
-            pytest.raises(ConfigurationException, match="disco_doc_address"),
+            pytest.raises(ConfigurationException, match="issuer is required"),
         ):
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address=None,
+                issuer=None,
                 http_client=client,
             )
 
@@ -173,7 +176,7 @@ class TestSyncDI:
             sync_validate_token(
                 jwt=fake_jwt,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
                 http_client=client,
             )
         # Verify discovery and JWKS were called via injected client
@@ -190,7 +193,7 @@ class TestAsyncDI:
         respx.get(DISCO_URL).mock(return_value=httpx.Response(200, json=DISCO_JSON))
         async with AsyncHTTPClient() as client:
             response = await aio_get_disco(
-                DiscoveryDocumentRequest(address=DISCO_URL),
+                DiscoveryDocumentRequest(issuer=ISSUER),
                 http_client=client,
             )
         assert response.is_successful
@@ -228,25 +231,27 @@ class TestAsyncDI:
     @respx.mock
     async def test_userinfo_with_injected_client(self):
         respx.get(USERINFO_URL).mock(
-            return_value=httpx.Response(200, json={"sub": "user123"})
+            return_value=httpx.Response(200, json={"sub": SUB})
         )
         async with AsyncHTTPClient() as client:
             response = await aio_get_userinfo(
-                UserInfoRequest(address=USERINFO_URL, token="bearer_token"),
+                UserInfoRequest(
+                    address=USERINFO_URL, token="bearer_token", expected_sub=SUB
+                ),
                 http_client=client,
             )
         assert response.is_successful
 
     @pytest.mark.asyncio
-    async def test_validate_token_di_requires_disco_address(self):
-        """validate_token with http_client raises if disco_doc_address is None."""
+    async def test_validate_token_di_requires_issuer(self):
+        """validate_token with http_client raises if issuer is None."""
         config = TokenValidationConfig(perform_disco=True)
         async with AsyncHTTPClient() as client:
-            with pytest.raises(ConfigurationException, match="disco_doc_address"):
+            with pytest.raises(ConfigurationException, match="issuer is required"):
                 await aio_validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=config,
-                    disco_doc_address=None,
+                    issuer=None,
                     http_client=client,
                 )
 
@@ -282,7 +287,7 @@ class TestAsyncDI:
                 await aio_validate_token(
                     jwt=fake_jwt,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                 )
         # Verify discovery and JWKS were called via injected client

@@ -5,6 +5,10 @@ permissions:
 
 on:
   pull_request:
+  # 5.0 is developed on release/v5, which release.yml does not cover: run on
+  # every merge into it as well as on every PR that targets it.
+  push:
+    branches: [release/v5]
   # Runs as a required pre-release gate too: release.yml calls this workflow
   # (workflow_call) and its release job `needs` it, so no tag/publish happens
   # unless conformance passes. That call also covers every push to main, so a
@@ -13,6 +17,12 @@ on:
     - cron: '0 6 * * *' # daily conformance run off main (06:00 UTC)
   workflow_dispatch:
   workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to checkout (release.yml passes the branch being released)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   conformance:
@@ -22,7 +32,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/*-latest.json
 
       - name: Start conformance suite
         working-directory: conformance
@@ -81,8 +97,6 @@ jobs:
             --verbose
 
       - name: Run Config RP conformance tests
-        # signing-key-rotation is a known pre-existing timeout — don't block other profiles
-        continue-on-error: true
         run: |
           python conformance/run_tests.py \
             --plan config-rp \
@@ -143,6 +157,229 @@ jobs:
         working-directory: conformance
         run: docker compose down -v
 
+  # FAPI 2.0 RP plans (security profile, mTLS variant, message signing). Own
+  # job so it runs in parallel with the basic trio rather than lengthening it.
+  conformance-fapi2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/*-latest.json
+
+      - name: Start conformance suite
+        working-directory: conformance
+        run: docker compose up -d --build --wait
+        timeout-minutes: 10
+
+      - name: Wait for conformance suite
+        run: |
+          echo "Waiting for conformance suite at https://localhost.emobix.co.uk:8443..."
+          for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost.emobix.co.uk:8443/ || true)
+            if [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 400 ] 2>/dev/null; then
+              echo "Conformance suite is ready (HTTP $HTTP_CODE)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timed out waiting for conformance suite"
+              docker compose -f conformance/docker-compose.yml logs server
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Wait for RP harness
+        run: |
+          echo "Waiting for RP harness at http://localhost:8888/health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "RP harness is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Timed out waiting for RP harness"
+              docker compose -f conformance/docker-compose.yml logs rp
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install test runner dependencies
+        run: uv pip install --system httpx cryptography
+
+      - name: Run FAPI 2.0 Security Profile RP conformance tests
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-rp \
+            --output conformance/results/fapi2-rp-latest.json \
+            --verbose
+
+      - name: Run FAPI 2.0 mTLS RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-mtls-rp \
+            --output conformance/results/fapi2-mtls-rp-latest.json \
+            --verbose
+
+      - name: Run FAPI 2.0 Message Signing RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan fapi2-message-signing-rp \
+            --output conformance/results/fapi2-message-signing-rp-latest.json \
+            --verbose
+
+      - name: Collect suite and harness logs
+        if: always()
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml logs server > conformance/results/logs/server.log 2>&1 || true
+          docker compose -f conformance/docker-compose.yml logs rp > conformance/results/logs/rp.log 2>&1 || true
+
+      - name: Upload conformance results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: conformance-fapi2-results
+          path: |
+            conformance/results/fapi2-*-latest.json
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        working-directory: conformance
+        run: docker compose down -v
+
+  # Dynamic RP (registration, request_uri) and the two logout RP plans. Own job
+  # so it runs in parallel with the others.
+  conformance-dynamic-logout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/*-latest.json
+
+      - name: Start conformance suite
+        working-directory: conformance
+        run: docker compose up -d --build --wait
+        timeout-minutes: 10
+
+      - name: Wait for conformance suite
+        run: |
+          echo "Waiting for conformance suite at https://localhost.emobix.co.uk:8443..."
+          for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost.emobix.co.uk:8443/ || true)
+            if [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 400 ] 2>/dev/null; then
+              echo "Conformance suite is ready (HTTP $HTTP_CODE)"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Timed out waiting for conformance suite"
+              docker compose -f conformance/docker-compose.yml logs server
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Wait for RP harness
+        run: |
+          echo "Waiting for RP harness at http://localhost:8888/health..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8888/health > /dev/null 2>&1; then
+              echo "RP harness is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Timed out waiting for RP harness"
+              docker compose -f conformance/docker-compose.yml logs rp
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install test runner dependencies
+        run: uv pip install --system httpx cryptography
+
+      - name: Run Dynamic RP conformance tests
+        run: |
+          python conformance/run_tests.py \
+            --plan dynamic-rp \
+            --output conformance/results/dynamic-rp-latest.json \
+            --verbose
+
+      - name: Run RP-Initiated Logout RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan rpinitiated-logout-rp \
+            --output conformance/results/rpinitiated-logout-rp-latest.json \
+            --verbose
+
+      - name: Run Back-Channel Logout RP conformance tests
+        if: ${{ !cancelled() }}
+        run: |
+          python conformance/run_tests.py \
+            --plan backchannel-logout-rp \
+            --output conformance/results/backchannel-logout-rp-latest.json \
+            --verbose
+
+      - name: Collect suite and harness logs
+        if: always()
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml logs server > conformance/results/logs/server.log 2>&1 || true
+          docker compose -f conformance/docker-compose.yml logs rp > conformance/results/logs/rp.log 2>&1 || true
+
+      - name: Upload conformance results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: conformance-dynamic-logout-results
+          path: |
+            conformance/results/dynamic-rp-latest.json
+            conformance/results/*-logout-rp-latest.json
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always()
+        working-directory: conformance
+        run: docker compose down -v
+
   # fastapi-identity-model package regression: the same local suite plans,
   # driven against the real build_oidc_router via the rp-fastapi harness.
   # Regression stage only — no hosted suite, no certification export (#242).
@@ -153,7 +390,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
+
+      # The committed results report PASSED; drop them so a plan that never
+      # writes its JSON cannot upload a stale pass as this run's artifact.
+      - name: Clear committed results
+        run: rm -f conformance/results/*-latest.json
 
       - name: Start conformance suite
         working-directory: conformance
@@ -213,8 +456,6 @@ jobs:
             --verbose
 
       - name: Run Config RP package regression
-        # signing-key-rotation is a known pre-existing timeout — don't block other profiles
-        continue-on-error: true
         run: |
           python conformance/run_tests.py \
             --plan fastapi-config-rp \
@@ -251,3 +492,79 @@ jobs:
         if: always()
         working-directory: conformance
         run: docker compose down -v
+
+  # Go and Rust RP harnesses: the basic trio through `make conformance-test
+  # HARNESS=<h>`, one leg per harness. A harness exists once its compose overlay
+  # (conformance/docker-compose.<h>.yml) does; until then its leg passes with
+  # every step skipped. See conformance/adding-conformance-profiles.md,
+  # "Adding a harness".
+  conformance-harness:
+    name: conformance-harness (${{ matrix.harness }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [go, rust]
+    env:
+      HARNESS: ${{ matrix.harness }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Check for harness overlay
+        id: overlay
+        run: |
+          if [ -f "conformance/docker-compose.$HARNESS.yml" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::conformance/docker-compose.$HARNESS.yml does not exist; skipping the $HARNESS harness"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.overlay.outputs.present == 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        if: steps.overlay.outputs.present == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install test runner dependencies
+        if: steps.overlay.outputs.present == 'true'
+        run: uv pip install --system httpx cryptography
+
+      # Drop committed results first so a plan that never writes its JSON
+      # cannot upload a stale pass. UVROOT= runs the runner on the system
+      # Python set up above instead of syncing the whole uv workspace.
+      - name: Run conformance plans
+        if: steps.overlay.outputs.present == 'true'
+        run: |
+          rm -f conformance/results/"$HARNESS"-*-latest.json
+          make conformance-test HARNESS="$HARNESS" UVROOT=
+
+      - name: Collect suite and harness logs
+        if: always() && steps.overlay.outputs.present == 'true'
+        run: |
+          mkdir -p conformance/results/logs
+          docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" \
+            logs > "conformance/results/logs/$HARNESS-compose.log" 2>&1 || true
+
+      - name: Upload conformance results
+        if: always() && steps.overlay.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: conformance-${{ matrix.harness }}-results
+          path: |
+            conformance/results/${{ matrix.harness }}-*-latest.json
+            conformance/results/logs/
+          retention-days: 30
+
+      - name: Teardown
+        if: always() && steps.overlay.outputs.present == 'true'
+        run: docker compose -f conformance/docker-compose.yml -f "conformance/docker-compose.$HARNESS.yml" down -v

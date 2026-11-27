@@ -52,13 +52,13 @@ pip install py-identity-model
 ```python
 from py_identity_model import DiscoveryDocumentRequest, get_discovery_document
 
-response = get_discovery_document(DiscoveryDocumentRequest(address="https://issuer.example.com"))
+response = get_discovery_document(DiscoveryDocumentRequest(issuer="https://issuer.example.com"))
 ```
 
 ```python
 # Async
 from py_identity_model.aio import get_discovery_document
-response = await get_discovery_document(DiscoveryDocumentRequest(address=url))
+response = await get_discovery_document(DiscoveryDocumentRequest(issuer=issuer))
 ```
 
 ## Architecture
@@ -73,6 +73,7 @@ py_identity_model/
 ## Documentation
 
 - [Getting Started](getting-started.md)
+- [Upgrading to 5.0](upgrade-v5.md): breaking changes from 4.x
 - [Migration Guide](migration-guide.md)
 - [Performance Guide](performance.md)
 - [Integration Tests](integration-tests.md)

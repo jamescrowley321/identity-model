@@ -17,7 +17,7 @@ See `app.py` for the wiring and the package README for the full API.
 cd py && uv sync --all-packages
 
 # configure your provider (Descope shown; any OIDC provider works)
-export DISCOVERY_URL="https://api.descope.com/v1/apps/<project_id>/.well-known/openid-configuration"
+export ISSUER="https://api.descope.com/v1/apps/<project_id>"
 export CLIENT_ID="<client_id>"
 export REDIRECT_URI="http://localhost:8000/auth/callback"
 export AUDIENCE="<client_id>"
@@ -57,7 +57,7 @@ Interactive docs: <http://localhost:8000/docs>.
 
 | Var | Default | Notes |
 |-----|---------|-------|
-| `DISCOVERY_URL` | `https://localhost:5001/.well-known/openid-configuration` | Provider discovery |
+| `ISSUER` | `https://localhost:5001` | Provider issuer identifier, matched exactly; discovery is fetched from its well-known URL |
 | `CLIENT_ID` | `py-identity-model-client` | OAuth client id |
 | `REDIRECT_URI` | `http://localhost:8000/auth/callback` | Must match the router's callback |
 | `CLIENT_SECRET` | _(unset)_ | Omit for public/PKCE clients |

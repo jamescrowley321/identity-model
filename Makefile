@@ -192,7 +192,7 @@ test-harness-rs: ## Boot the RS (uvicorn) against node-oidc and run the TH-1.2 r
 	@echo "Starting node-oidc-provider fixture..."
 	$(INFRA_COMPOSE) up -d --build --wait node-oidc-provider
 	@echo "Booting fastapi-identity-model RS under uvicorn (real HTTP)..."
-	$(UVPY) pytest src/tests/integration/test_rs_boot.py -m integration --env-file=../.env.node-oidc -v || \
+	$(UVPY) pytest src/tests/integration/test_rs_boot.py src/tests/integration/test_rs_dpop_live.py -m integration --env-file=../.env.node-oidc -v || \
 		($(INFRA_COMPOSE) down && exit 1)
 	$(INFRA_COMPOSE) down
 
@@ -385,8 +385,18 @@ conformance-up: ## Start conformance suite and RP harness
 conformance-down: ## Tear down conformance suite
 	docker compose -f conformance/docker-compose.yml down -v
 
+# RP harness `make conformance-test` drives: py (default), go or rust. A go/rust
+# harness adds only its own files: the overlay
+# conformance/docker-compose.$(HARNESS).yml (service rp-$(HARNESS)) and
+# conformance/configs/$(HARNESS)-<plan>.json (which carry the harness's rp_url).
+# See conformance/adding-conformance-profiles.md, "Adding a harness".
+HARNESS ?= py
+HARNESS_PLANS := basic-rp config-rp form-post-basic-rp
+HARNESS_COMPOSE = docker compose -f conformance/docker-compose.yml -f conformance/docker-compose.$(HARNESS).yml
+
 .PHONY: conformance-test
-conformance-test: $(if $(HOSTED),,conformance-up) ## Run conformance tests (HOSTED=1 for hosted suite)
+conformance-test: $(if $(filter py,$(HARNESS)),$(if $(HOSTED),,conformance-up)) ## Run conformance tests (HARNESS=py|go|rust, default py; HOSTED=1 for hosted suite)
+ifeq ($(HARNESS),py)
 ifdef HOSTED
 	$(UVROOT) python conformance/run_tests.py --plan basic-rp --suite-url "$(CONFORMANCE_SERVER)" --output conformance/results/hosted/basic-rp-latest.json --export-zip conformance/results/hosted/basic-rp-export.zip --rp-logs-zip conformance/results/hosted/basic-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
 	$(UVROOT) python conformance/run_tests.py --plan config-rp --suite-url "$(CONFORMANCE_SERVER)" --output conformance/results/hosted/config-rp-latest.json --export-zip conformance/results/hosted/config-rp-export.zip --rp-logs-zip conformance/results/hosted/config-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
@@ -398,6 +408,51 @@ else
 	$(UVROOT) python conformance/run_tests.py --plan form-post-basic-rp --output conformance/results/form-post-basic-rp-latest.json --verbose
 	@echo "Conformance tests complete. Results in conformance/results/"
 endif
+else
+	@case "$(HARNESS)" in go|rust) ;; *) echo "HARNESS must be py, go or rust (got '$(HARNESS)')"; exit 1;; esac
+	@test -f conformance/docker-compose.$(HARNESS).yml || { echo "conformance/docker-compose.$(HARNESS).yml does not exist"; exit 1; }
+	@# The overlay bind-mounts this dir as the harness's RP_LOG_DIR; create it as
+	@# the invoking user so docker does not create it root-owned.
+	mkdir -p conformance/results/hosted/rp-logs/$(HARNESS)
+ifdef HOSTED
+	$(HARNESS_COMPOSE) up -d --build --no-deps rp-$(HARNESS)
+else
+	$(HARNESS_COMPOSE) up -d --build --wait nginx rp-$(HARNESS)
+	@echo "Waiting for conformance suite at https://localhost.emobix.co.uk:8443..."
+	@for i in $$(seq 1 60); do \
+	  HTTP_CODE=$$(curl -sk -o /dev/null -w '%{http_code}' https://localhost.emobix.co.uk:8443/ || echo 000); \
+	  if [ "$$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$$HTTP_CODE" -lt 400 ] 2>/dev/null; then \
+	    echo "Conformance suite is ready (HTTP $$HTTP_CODE)"; \
+	    break; \
+	  fi; \
+	  if [ "$$i" -eq 60 ]; then \
+	    echo "Timed out waiting for conformance suite"; \
+	    $(HARNESS_COMPOSE) logs server; \
+	    exit 1; \
+	  fi; \
+	  sleep 5; \
+	done
+endif
+	@RP_URL=$$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["rp_url"].rstrip("/"))' conformance/configs/$(HARNESS)-basic-rp.json) || exit 1; \
+	echo "Waiting for $(HARNESS) RP harness at $$RP_URL/health..."; \
+	for i in $$(seq 1 60); do \
+	  if curl -sf "$$RP_URL/health" > /dev/null 2>&1; then \
+	    echo "$(HARNESS) RP harness is ready"; \
+	    break; \
+	  fi; \
+	  if [ "$$i" -eq 60 ]; then \
+	    echo "Timed out waiting for $(HARNESS) RP harness"; \
+	    $(HARNESS_COMPOSE) logs rp-$(HARNESS); \
+	    exit 1; \
+	  fi; \
+	  sleep 2; \
+	done
+	@status=0; for plan in $(HARNESS_PLANS); do \
+	  $(UVROOT) python conformance/run_tests.py --harness $(HARNESS) --plan $$plan \
+	    $(if $(HOSTED),--suite-url "$(CONFORMANCE_SERVER)" --export-zip conformance/results/hosted/$(HARNESS)-$$plan-export.zip --rp-logs-zip conformance/results/hosted/$(HARNESS)-$$plan-rp-logs.zip --publish "$(or $(PUBLISH),none)") \
+	    --verbose || status=1; \
+	done; exit $$status
+endif
 
 .PHONY: conformance-test-fastapi
 conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package regression against the local suite
@@ -405,6 +460,23 @@ conformance-test-fastapi: conformance-up ## Run fastapi-identity-model package r
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-config-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-config-rp-latest.json --verbose
 	$(UVROOT) python conformance/run_tests.py --plan fastapi-form-post-basic-rp --rp-url http://localhost:8889 --output conformance/results/fastapi-form-post-basic-rp-latest.json --verbose
 	@echo "fastapi-identity-model conformance regression complete. Results in conformance/results/"
+
+.PHONY: conformance-test-dynamic-logout
+# HOSTED=1 needs RP_PUBLIC_URL: in these plans the hosted OP calls the RP
+# server-to-server, and the RP harness (started by you on :8888) must run with
+# RP_INTERNAL_BASE_URL set to that same URL. See conformance/README.md.
+conformance-test-dynamic-logout: $(if $(HOSTED),,conformance-up) ## Run the Dynamic RP and logout RP plans (HOSTED=1 RP_PUBLIC_URL=... for hosted suite)
+ifdef HOSTED
+	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/dynamic-rp-latest.json --export-zip conformance/results/hosted/dynamic-rp-export.zip --rp-logs-zip conformance/results/hosted/dynamic-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/rpinitiated-logout-rp-latest.json --export-zip conformance/results/hosted/rpinitiated-logout-rp-export.zip --rp-logs-zip conformance/results/hosted/rpinitiated-logout-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --suite-url "$(CONFORMANCE_SERVER)" --rp-public-url "$(RP_PUBLIC_URL)" --output conformance/results/hosted/backchannel-logout-rp-latest.json --export-zip conformance/results/hosted/backchannel-logout-rp-export.zip --rp-logs-zip conformance/results/hosted/backchannel-logout-rp-rp-logs.zip --publish "$(or $(PUBLISH),none)" --verbose
+	@echo "Hosted dynamic and logout conformance tests complete. Results in conformance/results/hosted/"
+else
+	$(UVROOT) python conformance/run_tests.py --plan dynamic-rp --output conformance/results/dynamic-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan rpinitiated-logout-rp --output conformance/results/rpinitiated-logout-rp-latest.json --verbose
+	$(UVROOT) python conformance/run_tests.py --plan backchannel-logout-rp --output conformance/results/backchannel-logout-rp-latest.json --verbose
+	@echo "Dynamic and logout conformance tests complete. Results in conformance/results/"
+endif
 
 .PHONY: conformance-test-harness
 conformance-test-harness: ## Run conformance harness unit tests (parser + callback)

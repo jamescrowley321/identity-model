@@ -13,19 +13,26 @@ middleware tests use. Driving a real handshake via ``starlette.testclient`` is
 avoided on purpose: it pulls in the deprecated httpx TestClient path.
 """
 
+import logging
 from types import SimpleNamespace
 
-from fastapi import WebSocketException
+from fastapi import WebSocketException, status
 from jwt import DecodeError
 import pytest
+from starlette.datastructures import URL, Headers
 
 from fastapi_identity_model import build_ws_authenticator, ws
-from py_identity_model import NetworkException, TokenValidationException
+from py_identity_model import (
+    ConfigurationException,
+    DiscoveryException,
+    NetworkException,
+    TokenValidationException,
+)
 
 
 pytestmark = pytest.mark.unit
 
-DISCOVERY_URL = "https://op/.well-known/openid-configuration"
+ISSUER = "https://op"
 _ACCESS_CLAIMS = {"sub": "u1", "scope": "read"}
 
 
@@ -33,8 +40,10 @@ class _FakeWebSocket:
     """Minimal stand-in for starlette's WebSocket for the dependency under test."""
 
     def __init__(self, *, headers=None, query_params=None):
-        self.headers = headers or {}
+        self.headers = Headers(headers or {})
         self.query_params = query_params or {}
+        self.url = URL("ws://testserver/ws")
+        self.scope = {}
         self.state = SimpleNamespace()
 
 
@@ -45,7 +54,7 @@ def _authenticator(monkeypatch, *, returns=None, raises=None, **kwargs):
         return dict(returns)
 
     monkeypatch.setattr(ws, "validate_token", fake_validate_token)
-    return build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid", **kwargs)
+    return build_ws_authenticator(issuer=ISSUER, audience="cid", **kwargs)
 
 
 async def test_valid_token_via_query_param(monkeypatch):
@@ -83,7 +92,7 @@ async def test_malformed_authorization_header_does_not_fall_through(monkeypatch)
         return dict(_ACCESS_CLAIMS)
 
     monkeypatch.setattr(ws, "validate_token", fake_validate_token)
-    auth = build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="cid")
+    auth = build_ws_authenticator(issuer=ISSUER, audience="cid")
     sock = _FakeWebSocket(
         headers={"Authorization": "Token abc"}, query_params={"access_token": "good"}
     )
@@ -121,16 +130,47 @@ async def test_upstream_outage_closes_try_again_later(monkeypatch):
     assert exc.value.code == 1013
 
 
-async def test_upstream_fetch_failure_prefix_maps_to_try_again_later(monkeypatch):
-    # A discovery/JWKS fetch failure surfaces as a TokenValidationException whose
-    # message carries a known prefix; it must map to 1013, not a 1008 rejection.
+async def test_discovery_fetch_failure_maps_to_try_again_later(monkeypatch):
+    auth = _authenticator(
+        monkeypatch,
+        raises=DiscoveryException("Discovery request failed", status_code=503),
+    )
+    with pytest.raises(WebSocketException) as exc:
+        await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+    assert exc.value.code == status.WS_1013_TRY_AGAIN_LATER
+
+
+async def test_outage_like_message_is_still_a_rejection(monkeypatch):
+    # Classified by type: a TokenValidationException is a 1008 rejection even
+    # when its message reads like an outage.
     auth = _authenticator(
         monkeypatch,
         raises=TokenValidationException("Network error during discovery: boom"),
     )
     with pytest.raises(WebSocketException) as exc:
         await auth(_FakeWebSocket(query_params={"access_token": "good"}))
-    assert exc.value.code == 1013
+    assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+
+
+async def test_configuration_error_closes_policy_violation_logged_as_warning(
+    monkeypatch, caplog
+):
+    # As in the HTTP middleware: a 1008 rejection, logged at warning level
+    # with its traceback because it may be this server's own setup.
+    error = ConfigurationException("HTTPS is required by discovery policy")
+    auth = _authenticator(monkeypatch, raises=error)
+    with (
+        caplog.at_level(logging.INFO, logger="fastapi_identity_model"),
+        pytest.raises(WebSocketException) as exc,
+    ):
+        await auth(_FakeWebSocket(query_params={"access_token": "good"}))
+    assert exc.value.code == status.WS_1008_POLICY_VIOLATION
+    records = [
+        (r.levelno, r.exc_info[1] if r.exc_info else None)
+        for r in caplog.records
+        if r.name == "fastapi_identity_model"
+    ]
+    assert records == [(logging.WARNING, error)]
 
 
 async def test_unexpected_error_closes_internal_error(monkeypatch):
@@ -179,16 +219,14 @@ async def test_custom_query_param(monkeypatch):
 
 
 async def test_threads_config_into_validate_token(monkeypatch):
-    # The authenticator must thread audience, discovery URL, perform_disco AND
+    # The authenticator must thread audience, issuer, perform_disco AND
     # the injected custom_claims_validator into TokenValidationConfig — a
     # regression dropping any of these would otherwise pass silently.
     captured = {}
 
-    async def capturing_validate_token(
-        *, token_validation_config, disco_doc_address, **_
-    ):
+    async def capturing_validate_token(*, token_validation_config, issuer, **_):
         captured["cfg"] = token_validation_config
-        captured["disco"] = disco_doc_address
+        captured["issuer"] = issuer
         return dict(_ACCESS_CLAIMS)
 
     monkeypatch.setattr(ws, "validate_token", capturing_validate_token)
@@ -197,7 +235,7 @@ async def test_threads_config_into_validate_token(monkeypatch):
         return None
 
     auth = build_ws_authenticator(
-        discovery_url=DISCOVERY_URL,
+        issuer=ISSUER,
         audience="cid",
         custom_claims_validator=my_validator,
     )
@@ -207,7 +245,7 @@ async def test_threads_config_into_validate_token(monkeypatch):
     assert cfg.audience == "cid"
     assert cfg.perform_disco is True
     assert cfg.claims_validator is my_validator
-    assert captured["disco"] == DISCOVERY_URL
+    assert captured["issuer"] == ISSUER
 
 
 async def test_to_principal_failure_closes_internal_error(monkeypatch):
@@ -226,13 +264,13 @@ async def test_to_principal_failure_closes_internal_error(monkeypatch):
 
 def test_empty_audience_raises():
     with pytest.raises(ValueError, match="audience"):
-        build_ws_authenticator(discovery_url=DISCOVERY_URL, audience="")
+        build_ws_authenticator(issuer=ISSUER, audience="")
 
 
 def test_require_marker_with_empty_claims_raises():
     with pytest.raises(ValueError, match="access_token_marker_claims"):
         build_ws_authenticator(
-            discovery_url=DISCOVERY_URL,
+            issuer=ISSUER,
             audience="cid",
             require_access_token_marker=True,
             access_token_marker_claims=(),

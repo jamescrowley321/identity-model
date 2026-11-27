@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from py_identity_model.aio import token_validation as aio_tv
+from py_identity_model import CacheConfig
 from py_identity_model.aio.managed_client import AsyncHTTPClient
 from py_identity_model.aio.token_validation import (
     _get_cached_jwks,
@@ -21,23 +21,25 @@ from py_identity_model.aio.token_validation import (
     clear_jwks_cache,
     validate_token,
 )
-from py_identity_model.core.jwks_cache import _reset_env_for_testing
+from py_identity_model.aio.validation_cache import AsyncValidationCache
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.exceptions import (
     ConfigurationException,
+    DiscoveryMissingFieldsError,
     InvalidIssuerException,
     SignatureVerificationException,
     TokenExpiredException,
     TokenValidationException,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_NO_JWKS,
     DISCO_RESPONSE_WITH_JWKS,
     JWKS_FETCH_AFTER_EXPIRY,
     JWKS_FETCH_WITH_RETRY,
     generate_rsa_keypair,
+    jwks_cache_key,
     sign_jwt,
 )
 
@@ -74,7 +76,7 @@ class TestAsyncTokenValidation:
 
         with pytest.raises(
             ConfigurationException,
-            match=r"TokenValidationConfig\.key and TokenValidationConfig\.algorithms are required",
+            match=r"TokenValidationConfig\.key is required if perform_disco is False",
         ):
             await validate_token(
                 jwt="fake.jwt.token",
@@ -95,13 +97,13 @@ class TestAsyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            DiscoveryMissingFieldsError,
+            match=r"Missing required parameters: jwks_uri",
         ):
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @pytest.mark.asyncio
@@ -119,13 +121,13 @@ class TestAsyncTokenValidation:
 
         async with AsyncHTTPClient() as client:
             with pytest.raises(
-                TokenValidationException,
-                match=r"does not contain a jwks_uri.*require_key_set",
+                DiscoveryMissingFieldsError,
+                match=r"Missing required parameters: jwks_uri",
             ):
                 await validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=validation_config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                 )
 
@@ -144,13 +146,13 @@ class TestAsyncTokenValidation:
         )
 
         with pytest.raises(
-            TokenValidationException,
-            match=r"does not contain a jwks_uri.*require_key_set",
+            DiscoveryMissingFieldsError,
+            match=r"Missing required parameters: jwks_uri",
         ):
             await validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=validation_config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
 
@@ -185,7 +187,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -193,7 +195,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -225,7 +227,7 @@ class TestAsyncJwksCacheTTL:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -236,7 +238,7 @@ class TestAsyncJwksCacheTTL:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_route.call_count == JWKS_FETCH_AFTER_EXPIRY
@@ -280,7 +282,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -331,7 +333,7 @@ class TestAsyncSignatureRetry:
         decoded = await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
 
         assert decoded["sub"] == "user1"
@@ -372,7 +374,7 @@ class TestAsyncSignatureRetry:
         await validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert jwks_route.call_count == 1
 
@@ -380,7 +382,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
         assert jwks_route.call_count == 1, (
@@ -424,7 +426,7 @@ class TestAsyncSignatureRetry:
             await validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address=DISCO_URL,
+                issuer=ISSUER,
             )
 
     @pytest.mark.asyncio
@@ -459,7 +461,7 @@ class TestAsyncSignatureRetry:
                 await validate_token(
                     jwt=token,
                     token_validation_config=config,
-                    disco_doc_address=DISCO_URL,
+                    issuer=ISSUER,
                     http_client=client,
                 )
 
@@ -678,45 +680,45 @@ class TestAsyncLruReadHitEviction:
 
     @pytest.mark.asyncio
     @respx.mock
-    async def test_read_hit_protects_hot_entry_from_eviction(self, monkeypatch):
-        monkeypatch.setenv("JWKS_CACHE_MAX_ENTRIES", "4")
-        _reset_env_for_testing()
-        try:
-            urls = [f"https://op-{i}.example/jwks" for i in range(5)]
-            key_dict = generate_rsa_keypair()[0]
-            for url in urls:
-                respx.get(url).mock(
-                    return_value=httpx.Response(
-                        200,
-                        json={"keys": [key_dict]},
-                        headers={"Cache-Control": "max-age=3600"},
-                    )
+    async def test_read_hit_protects_hot_entry_from_eviction(self):
+        hot_url = "https://op-hot.example/jwks"
+        oldest_unread_url = "https://op-1.example/jwks"
+        warm_urls = ["https://op-2.example/jwks", "https://op-3.example/jwks"]
+        overflow_url = "https://op-overflow.example/jwks"
+        capacity_urls = [hot_url, oldest_unread_url, *warm_urls]
+        key_dict = generate_rsa_keypair()[0]
+        for url in [*capacity_urls, overflow_url]:
+            respx.get(url).mock(
+                return_value=httpx.Response(
+                    200,
+                    json={"keys": [key_dict]},
+                    headers={"Cache-Control": "max-age=3600"},
                 )
+            )
 
-            # Fill to capacity: op-0 (oldest) .. op-3 (newest).
-            for url in urls[:4]:
-                await _get_cached_jwks(url)
-            assert list(aio_tv._jwks_cache.keys()) == urls[:4]
+        validation_cache = AsyncValidationCache(
+            config=CacheConfig(cache_max_entries=len(capacity_urls))
+        )
+        async with AsyncHTTPClient() as client:
+            cache = validation_cache._jwks
 
-            # Re-read op-0 — a cache hit (no network) that refreshes recency.
-            await _get_cached_jwks(urls[0])
-            assert list(aio_tv._jwks_cache.keys()) == [
-                urls[1],
-                urls[2],
-                urls[3],
-                urls[0],
+            # Fill to capacity: hot (oldest) .. op-3 (newest).
+            for url in capacity_urls:
+                await _get_cached_jwks(url, http_client=client, cache=validation_cache)
+            assert list(cache) == [jwks_cache_key(url) for url in capacity_urls]
+
+            # Re-read the hot entry — a cache hit (no network) that refreshes
+            # recency.
+            await _get_cached_jwks(hot_url, http_client=client, cache=validation_cache)
+            assert list(cache) == [
+                jwks_cache_key(url) for url in [oldest_unread_url, *warm_urls, hot_url]
             ]
 
-            # A fifth distinct URI overflows; eviction targets op-1 (oldest
-            # unread), NOT the recently-read op-0.
-            await _get_cached_jwks(urls[4])
-            assert urls[0] in aio_tv._jwks_cache
-            assert urls[1] not in aio_tv._jwks_cache
-            assert set(aio_tv._jwks_cache.keys()) == {
-                urls[0],
-                urls[2],
-                urls[3],
-                urls[4],
-            }
-        finally:
-            _reset_env_for_testing()
+            # A further distinct URI overflows; eviction targets op-1 (oldest
+            # unread), NOT the recently-read hot entry.
+            await _get_cached_jwks(
+                overflow_url, http_client=client, cache=validation_cache
+            )
+            assert list(cache) == [
+                jwks_cache_key(url) for url in [*warm_urls, hot_url, overflow_url]
+            ]

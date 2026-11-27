@@ -44,25 +44,23 @@ def _granted_scopes(access_token: str) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def rs_discovery_url(test_config, is_node_oidc_fixture) -> str:
+def rs_issuer(test_config, is_node_oidc_fixture) -> str:
     if not is_node_oidc_fixture:
         pytest.skip(
             "RS boot suite asserts node-oidc's urn:test:api audience / api "
             "scope; remote matrix providers mint different tokens"
         )
-    return test_config["TEST_DISCO_ADDRESS"]
+    return test_config["TEST_ISSUER"]
 
 
-def test_valid_token_reaches_protected_route(
-    rs_discovery_url, client_credentials_token
-):
+def test_valid_token_reaches_protected_route(rs_issuer, client_credentials_token):
     """Valid CC token → 200, body echoes the validated claims."""
     access_token = _access_token(client_credentials_token)
     scopes = _granted_scopes(access_token)
     assert scopes, "minted token carried no scopes to guard on"
 
     with boot_rs(
-        discovery_url=rs_discovery_url,
+        issuer=rs_issuer,
         audience=RS_AUDIENCE,
         require_scope=scopes[0],
     ) as base_url:
@@ -78,18 +76,18 @@ def test_valid_token_reaches_protected_route(
     assert scopes[0] in (body["scope"] or "")
 
 
-def test_missing_authorization_is_uniform_401(rs_discovery_url):
+def test_missing_authorization_is_uniform_401(rs_issuer):
     """No Authorization header → 401 with the middleware's own detail."""
-    with boot_rs(discovery_url=rs_discovery_url, audience=RS_AUDIENCE) as base_url:
+    with boot_rs(issuer=rs_issuer, audience=RS_AUDIENCE) as base_url:
         response = httpx.get(f"{base_url}/protected", timeout=10.0)
 
     assert response.status_code == httpx.codes.UNAUTHORIZED
     assert response.json() == {"detail": "Missing Authorization header"}
 
 
-def test_malformed_bearer_is_uniform_401(rs_discovery_url):
+def test_malformed_bearer_is_uniform_401(rs_issuer):
     """Garbage bearer → 401 with the generic (F-18) uniform body."""
-    with boot_rs(discovery_url=rs_discovery_url, audience=RS_AUDIENCE) as base_url:
+    with boot_rs(issuer=rs_issuer, audience=RS_AUDIENCE) as base_url:
         response = httpx.get(
             f"{base_url}/protected",
             headers={"Authorization": "Bearer not-a-real-jwt"},
@@ -100,14 +98,14 @@ def test_malformed_bearer_is_uniform_401(rs_discovery_url):
     assert response.json() == {"detail": GENERIC_401_DETAIL}
 
 
-def test_missing_required_scope_is_403(rs_discovery_url, client_credentials_token):
+def test_missing_required_scope_is_403(rs_issuer, client_credentials_token):
     """Valid token but RS requires a scope the token lacks → 403 (require_scope)."""
     access_token = _access_token(client_credentials_token)
     absent_scope = "scope-the-token-does-not-carry"
     assert absent_scope not in _granted_scopes(access_token)
 
     with boot_rs(
-        discovery_url=rs_discovery_url,
+        issuer=rs_issuer,
         audience=RS_AUDIENCE,
         require_scope=absent_scope,
     ) as base_url:
@@ -121,23 +119,23 @@ def test_missing_required_scope_is_403(rs_discovery_url, client_credentials_toke
     assert absent_scope in response.json()["detail"]
 
 
-def test_health_route_is_unauthenticated(rs_discovery_url):
+def test_health_route_is_unauthenticated(rs_issuer):
     """Excluded /health answers 200 with no Authorization (readiness proof)."""
-    with boot_rs(discovery_url=rs_discovery_url, audience=RS_AUDIENCE) as base_url:
+    with boot_rs(issuer=rs_issuer, audience=RS_AUDIENCE) as base_url:
         response = httpx.get(f"{base_url}/health", timeout=10.0)
 
     assert response.status_code == httpx.codes.OK
     assert response.json() == {"status": "ok"}
 
 
-def test_boots_under_multiple_workers(rs_discovery_url, client_credentials_token):
+def test_boots_under_multiple_workers(rs_issuer, client_credentials_token):
     """uvicorn --workers 2 boots and serves a valid token → 200."""
     access_token = _access_token(client_credentials_token)
     scopes = _granted_scopes(access_token)
     assert scopes, "minted token carried no scopes to guard on"
 
     with boot_rs(
-        discovery_url=rs_discovery_url,
+        issuer=rs_issuer,
         audience=RS_AUDIENCE,
         require_scope=scopes[0],
         workers=2,

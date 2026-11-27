@@ -5,11 +5,15 @@ import pytest
 from py_identity_model import (
     DiscoveryDocumentRequest,
     HTTPClient,
+    HTTPConfig,
     JwksRequest,
     get_discovery_document,
     get_jwks,
 )
 from py_identity_model.core.discovery_policy import DiscoveryPolicy
+
+
+CUSTOM_TIMEOUT = 60.0
 
 
 @pytest.mark.integration
@@ -21,7 +25,7 @@ class TestSyncDIIntegration:
         with HTTPClient() as client:
             response = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),
@@ -37,7 +41,7 @@ class TestSyncDIIntegration:
         with HTTPClient() as client:
             disco = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),
@@ -54,10 +58,10 @@ class TestSyncDIIntegration:
 
     def test_custom_timeout_client(self, test_config):
         """Use client with custom timeout."""
-        with HTTPClient(timeout=60.0) as client:
+        with HTTPClient(config=HTTPConfig(http_timeout=CUSTOM_TIMEOUT)) as client:
             response = get_discovery_document(
                 DiscoveryDocumentRequest(
-                    address=test_config["TEST_DISCO_ADDRESS"],
+                    issuer=test_config["TEST_ISSUER"],
                     policy=DiscoveryPolicy(
                         require_https=test_config.get("TEST_REQUIRE_HTTPS", True)
                     ),

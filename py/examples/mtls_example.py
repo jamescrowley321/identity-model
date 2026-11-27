@@ -32,6 +32,7 @@ from cryptography.x509.oid import NameOID
 
 from py_identity_model import (
     CertificateBindingError,
+    ClientAuthMethod,
     ClientCredentialsTokenRequest,
     DiscoveryDocumentRequest,
     MtlsClientAuth,
@@ -44,7 +45,7 @@ from py_identity_model.core.mtls import resolve_mtls_endpoint
 
 # A placeholder issuer; swap for a provider that advertises mTLS when running
 # for real (e.g. one exposing ``mtls_endpoint_aliases``).
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 def generate_self_signed_client_cert(tmp_dir: Path) -> tuple[str, str, bytes]:
@@ -90,9 +91,7 @@ def discover_mtls_metadata_example():
     print("Discover mTLS metadata (RFC 8705 §4/§5)")
     print("=" * 60)
 
-    response = get_discovery_document(
-        DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
-    )
+    response = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     if not response.is_successful:
         print(f"  Discovery failed: {response.error}")
@@ -128,11 +127,11 @@ def mtls_token_request_example(token_endpoint: str, cert_path: str, key_path: st
     # Step 1: Build the mTLS authentication config from the cert/key file paths.
     #   - auth_method "tls_client_auth" (default) is the PKI/CA-issued variant;
     #     use "self_signed_tls_client_auth" for a self-registered certificate.
-    #   - certificate/private_key are filesystem paths to PEM files.
+    #   - certificate_path/private_key_path are filesystem paths to PEM files.
     mtls = MtlsClientAuth(
-        certificate=cert_path,
-        private_key=key_path,
-        auth_method="self_signed_tls_client_auth",
+        certificate_path=cert_path,
+        private_key_path=key_path,
+        auth_method=ClientAuthMethod.SELF_SIGNED_TLS_CLIENT_AUTH,
     )
 
     # Step 2: Attach the config to a token request. A client_secret is included

@@ -25,7 +25,9 @@ from py_identity_model.aio.token_validation import (
 )
 from py_identity_model.core.models import TokenValidationConfig
 from py_identity_model.core.token_validation_logic import build_resolved_config
-from py_identity_model.exceptions import TokenValidationException
+from py_identity_model.exceptions import (
+    DiscoveryHTTPSRequiredError,
+)
 from py_identity_model.sync.managed_client import HTTPClient
 from py_identity_model.sync.token_validation import (
     clear_discovery_cache as sync_clear_discovery_cache,
@@ -37,7 +39,7 @@ from py_identity_model.sync.token_validation import (
     validate_token as sync_validate_token,
 )
 
-from ..constants import DISCO_URL
+from ..constants import DISCO_URL, ISSUER
 from ..token_validation_helpers import (
     DISCO_RESPONSE_WITH_JWKS,
     generate_rsa_keypair,
@@ -93,11 +95,11 @@ class TestSyncRequireHttpsWiring:
             # require_https defaults to True
         )
 
-        with pytest.raises(TokenValidationException, match="HTTPS is required"):
+        with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
             )
 
     @respx.mock
@@ -114,12 +116,12 @@ class TestSyncRequireHttpsWiring:
 
         with (
             HTTPClient() as client,
-            pytest.raises(TokenValidationException, match="HTTPS is required"),
+            pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"),
         ):
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
                 http_client=client,
             )
 
@@ -153,7 +155,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+            issuer="http://localhost:8080",
         )
         assert decoded["sub"] == "user1"
 
@@ -185,7 +187,7 @@ class TestSyncRequireHttpsWiring:
             decoded = sync_validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+                issuer="http://localhost:8080",
                 http_client=client,
             )
         assert decoded["sub"] == "user1"
@@ -217,7 +219,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
 
@@ -266,7 +268,7 @@ class TestSyncRequireHttpsWiring:
         decoded = sync_validate_token(
             jwt=token,
             token_validation_config=config_permissive,
-            disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+            issuer="http://external.example.com",
         )
         assert decoded["sub"] == "user1"
 
@@ -276,11 +278,11 @@ class TestSyncRequireHttpsWiring:
             audience="test-audience",
             require_https=True,
         )
-        with pytest.raises(TokenValidationException, match="HTTPS is required"):
+        with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
             sync_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config_strict,
-                disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+                issuer="http://external.example.com",
             )
 
 
@@ -300,11 +302,11 @@ class TestAsyncRequireHttpsWiring:
             audience="test-audience",
         )
 
-        with pytest.raises(TokenValidationException, match="HTTPS is required"):
+        with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
             await async_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config,
-                disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                issuer="http://evil.example.com",
             )
 
     @pytest.mark.asyncio
@@ -318,11 +320,11 @@ class TestAsyncRequireHttpsWiring:
         )
 
         async with AsyncHTTPClient() as client:
-            with pytest.raises(TokenValidationException, match="HTTPS is required"):
+            with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
                 await async_validate_token(
                     jwt="fake.jwt.token",
                     token_validation_config=config,
-                    disco_doc_address="http://evil.example.com/.well-known/openid-configuration",
+                    issuer="http://evil.example.com",
                     http_client=client,
                 )
 
@@ -356,7 +358,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+            issuer="http://localhost:8080",
         )
         assert decoded["sub"] == "user1"
 
@@ -389,7 +391,7 @@ class TestAsyncRequireHttpsWiring:
             decoded = await async_validate_token(
                 jwt=token,
                 token_validation_config=config,
-                disco_doc_address="http://localhost:8080/.well-known/openid-configuration",
+                issuer="http://localhost:8080",
                 http_client=client,
             )
         assert decoded["sub"] == "user1"
@@ -422,7 +424,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config,
-            disco_doc_address=DISCO_URL,
+            issuer=ISSUER,
         )
         assert decoded["sub"] == "user1"
 
@@ -470,7 +472,7 @@ class TestAsyncRequireHttpsWiring:
         decoded = await async_validate_token(
             jwt=token,
             token_validation_config=config_permissive,
-            disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+            issuer="http://external.example.com",
         )
         assert decoded["sub"] == "user1"
 
@@ -480,11 +482,11 @@ class TestAsyncRequireHttpsWiring:
             audience="test-audience",
             require_https=True,
         )
-        with pytest.raises(TokenValidationException, match="HTTPS is required"):
+        with pytest.raises(DiscoveryHTTPSRequiredError, match="HTTPS is required"):
             await async_validate_token(
                 jwt="fake.jwt.token",
                 token_validation_config=config_strict,
-                disco_doc_address="http://external.example.com/.well-known/openid-configuration",
+                issuer="http://external.example.com",
             )
 
 

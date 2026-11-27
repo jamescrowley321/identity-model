@@ -47,6 +47,9 @@ token introspection and revocation, token exchange, and DPoP — see the
 per-language READMEs and the [capability matrix](spec/capabilities.md) for the
 authoritative, RFC-referenced status of each in each language.
 
+Upgrading the Python library from 4.x? See
+[Upgrading to 5.0](https://jamescrowley321.github.io/identity-model/upgrade-v5/).
+
 ## What makes the guarantee real
 
 The claim "every library behaves the same" is only worth anything if it's

@@ -12,7 +12,7 @@ router survives the same OIDF RP suite (invalid iss/aud/sig, nonce,
 missing-sub, kid, key rotation, form_post) the library passes.
 
 How it works — the OIDF suite varies the issuer per test module, while the
-router binds one ``OIDCSettings.discovery_url`` at build time. So the harness
+router binds one ``OIDCSettings.issuer`` at build time. So the harness
 builds a fresh FastAPI app (SessionMiddleware + router) per ``/authorize``,
 drives its ``/login`` in-process over ``httpx.ASGITransport``, and keeps the
 ``(client, cookie jar)`` pair keyed by the flow's ``state`` — the same
@@ -35,24 +35,26 @@ import html
 import logging
 import os
 import secrets
+import threading
 from urllib.parse import parse_qs, parse_qsl, urlparse
 
 # Shared per-test log plumbing from the library harness: the ContextVar-based
 # active-test pointer and the handler that routes records to per-test files.
 # Importing ``app`` also installs its handler on the ``py_identity_model``
 # logger (and raises it to DEBUG), so only the package loggers need wiring here.
-from app import _PerTestLogRouter, _set_active_test
+from app import _PerTestLogRouter, _set_active_test, merge_unattributed_rejection
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import httpx
 from starlette.middleware.sessions import SessionMiddleware
 
 from fastapi_identity_model import OIDCSettings, build_oidc_router
-from py_identity_model import parse_discovery_url
+from py_identity_model import DiscoveryErrorKind, TokenValidationErrorKind
 from py_identity_model.aio.token_validation import (
     clear_discovery_cache,
     clear_jwks_cache,
 )
+from py_identity_model.core.discovery_policy import discovery_document_url
 from py_identity_model.exceptions import ConfigurationException
 
 
@@ -114,6 +116,72 @@ def _store_test_result(flow: FlowSession) -> None:
         test_results[flow.test_id] = flow.result
 
 
+# Reason classes for the router's fixed HTTPException details, so the runner can
+# check a negative module was refused for the right reason (same classes as
+# app.py records).
+_ROUTER_REASONS = {
+    "Identity provider discovery failed": "discovery_failed",
+    "Identity provider configuration error": "issuer_mismatch",
+    "Authorization code exchange failed": "token_exchange",
+    "ID token validation failed": "id_token_validation",
+    "Nonce mismatch": "nonce_mismatch",
+    "Identity provider unavailable": "provider_unavailable",
+    "Authorization response issuer mismatch": "callback_issuer",
+    "UserInfo response has no subject": "userinfo_validation",
+    "UserInfo subject does not match ID token subject": "userinfo_validation",
+    "State mismatch (possible CSRF)": "state_validation",
+    "Authorization request failed": "op_error",
+    "Authorization response missing code": "missing_code",
+    "Provider did not return an ID token": "missing_id_token",
+    "No active login flow in session": "missing_flow",
+    "Malformed authorization response": "callback_parse",
+}
+_TOKEN_REASONS = frozenset(kind.value for kind in TokenValidationErrorKind)
+# The router's one formatted detail: "Provider discovery is missing '<name>'".
+_ROUTER_MISSING_ENDPOINT_PREFIX = "Provider discovery is missing "
+
+# The router answers an unhandled exception with a bare 500; that is a crash,
+# never a decision, so it gets a class no manifest lists as a rejection reason.
+ROUTER_CRASH_REASON = "router_crashed"
+
+# test_id of the most recent /authorize, for rejections that carry no flow
+# (a callback whose state matches no parked flow).
+_last_test_id = ""
+
+
+def _router_rejection(resp: httpx.Response) -> str:
+    """``<reason class>: <detail>`` for a router response that refused a flow."""
+    detail = _error_detail(resp)
+    if resp.status_code == httpx.codes.INTERNAL_SERVER_ERROR:
+        return f"{ROUTER_CRASH_REASON}: {detail}"
+    kind = resp.headers.get("X-Identity-Model-Error-Kind")
+    if resp.status_code == httpx.codes.UNAUTHORIZED and kind in _TOKEN_REASONS:
+        return f"{kind}: {detail}"
+    if (
+        resp.status_code == httpx.codes.BAD_GATEWAY
+        and kind == DiscoveryErrorKind.ISSUER_MISMATCH.value
+    ):
+        return f"{kind}: {detail}"
+    if detail.startswith(_ROUTER_MISSING_ENDPOINT_PREFIX):
+        return f"missing_endpoint: {detail}"
+    return f"{_ROUTER_REASONS.get(detail, 'router_rejected')}: {detail}"
+
+
+_unattributed_lock = threading.Lock()
+
+
+def _record_unattributed(test_id: str, error: str) -> None:
+    """Record a rejection that carries no flow (see app.merge_unattributed_rejection)."""
+    if not test_id:
+        return
+    with _unattributed_lock:
+        record = merge_unattributed_rejection(
+            test_results.get(test_id), test_id, error, after_login=False
+        )
+        if record is not None:
+            test_results[test_id] = record
+
+
 def _record_error(test_id: str, error: str) -> None:
     if test_id:
         test_results[test_id] = {
@@ -133,7 +201,12 @@ def _build_test_app(settings: OIDCSettings, *, fetch_userinfo: bool = True) -> F
     test_app = FastAPI()
     test_app.add_middleware(SessionMiddleware, secret_key=secrets.token_urlsafe(32))
     test_app.include_router(
-        build_oidc_router(settings, store_tokens=True, fetch_userinfo=fetch_userinfo)
+        build_oidc_router(
+            settings,
+            store_tokens=True,
+            fetch_userinfo=fetch_userinfo,
+            expose_error_kind=True,
+        )
     )
 
     @test_app.get("/session")
@@ -213,7 +286,8 @@ async def discover(
     """
     _set_active_test(profile, test_name)
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -223,7 +297,7 @@ async def discover(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_endpoint.url,
+        issuer=issuer,
         client_id="conformance-rp",
         redirect_uri=f"{RP_BASE_URL}/callback",
     )
@@ -236,7 +310,7 @@ async def discover(
     if resp.status_code != HTTP_FOUND:
         detail = _error_detail(resp)
         logger.error("REJECTED: router refused discovery: %s", detail)
-        _record_error(test_id, f"discovery_failed: {detail}")
+        _record_error(test_id, _router_rejection(resp))
         return JSONResponse(
             status_code=502,
             content={"error": "discovery_failed", "detail": detail},
@@ -276,8 +350,11 @@ async def authorize(
     parks the flow client for the callback.
     """
     _set_active_test(profile, test_name)
+    # A new flow starts with no recorded outcome (see app.py /authorize).
+    test_results.pop(test_id, None)
     try:
-        disco_endpoint = parse_discovery_url(issuer)
+        # Rejects a non-issuer (e.g. a discovery URL) before any request.
+        discovery_document_url(issuer)
     except ConfigurationException as exc:
         logger.error("REJECTED: invalid issuer URL: %s", exc)
         _record_error(test_id, f"invalid_issuer: {exc}")
@@ -287,7 +364,7 @@ async def authorize(
         )
 
     settings = OIDCSettings(
-        discovery_url=disco_endpoint.url,
+        issuer=issuer,
         client_id=client_id,
         client_secret=client_secret or None,
         redirect_uri=f"{RP_BASE_URL}/callback",
@@ -303,7 +380,7 @@ async def authorize(
         logger.error(
             "REJECTED: router /login failed (%d): %s", resp.status_code, detail
         )
-        _record_error(test_id, f"login_failed: {detail}")
+        _record_error(test_id, _router_rejection(resp))
         await client.aclose()
         return JSONResponse(
             status_code=502,
@@ -331,6 +408,8 @@ async def authorize(
     if test_id:
         flow.result["test_id"] = test_id
     flows[state_values[0]] = flow
+    global _last_test_id
+    _last_test_id = test_id
 
     logger.info(
         "ACCEPTED: router validated discovery for issuer '%s'; redirecting to OP",
@@ -345,7 +424,7 @@ async def _finish_callback(flow: FlowSession, resp: httpx.Response) -> HTMLRespo
     if resp.status_code != HTTP_FOUND:
         detail = _error_detail(resp)
         flow.result["status"] = "error"
-        flow.result["error"] = f"router_rejected ({resp.status_code}): {detail}"
+        flow.result["error"] = _router_rejection(resp)
         _store_test_result(flow)
         logger.error(
             "REJECTED: router rejected callback (%d): %s", resp.status_code, detail
@@ -401,7 +480,10 @@ async def callback_get(request: Request) -> HTMLResponse:
     """Replay the OP's query-mode callback into the per-test router."""
     flow = _pop_flow(request.query_params.get("state"))
     if flow is None:
-        logger.error("Unknown state: %s", request.query_params.get("state"))
+        logger.error(
+            "REJECTED: unknown or missing state: %s", request.query_params.get("state")
+        )
+        _record_unattributed(_last_test_id, "state_validation: unknown state")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,
@@ -427,7 +509,8 @@ async def callback_post(request: Request) -> HTMLResponse:
     )
     flow = _pop_flow(fields.get("state"))
     if flow is None:
-        logger.error("Unknown state in form_post: %s", fields.get("state"))
+        logger.error("REJECTED: unknown or missing state: %s", fields.get("state"))
+        _record_unattributed(_last_test_id, "state_validation: unknown state")
         return HTMLResponse(
             content="<h1>Error</h1><p>Unknown or missing state parameter</p>",
             status_code=400,

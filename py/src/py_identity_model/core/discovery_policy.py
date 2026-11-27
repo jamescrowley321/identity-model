@@ -1,5 +1,5 @@
 """
-Discovery policy and endpoint parsing for configurable security.
+Discovery policy and discovery URL derivation for configurable security.
 
 Inspired by Duende IdentityModel's DiscoveryPolicy, this module provides
 configurable validation for OpenID Connect discovery operations.
@@ -11,17 +11,32 @@ development. Use a relaxed policy for testing environments.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 import ipaddress
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from ..exceptions import ConfigurationException, DiscoveryHTTPSRequiredError
 
 
 _WELL_KNOWN_PATH = "/.well-known/openid-configuration"
+_OAUTH_WELL_KNOWN_PATH = "/.well-known/oauth-authorization-server"
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_CONTROL_CHARS = frozenset(map(chr, [*range(0x20), 0x7F]))
 
 
-@dataclass
+class DiscoveryLocation(Enum):
+    """Where the metadata document for an issuer is fetched from."""
+
+    OPENID_CONFIGURATION = "openid-configuration"
+    """OpenID Connect Discovery 1.0 §4.1: the issuer with any terminating ``/``
+    removed and ``/.well-known/openid-configuration`` appended."""
+    OAUTH_AUTHORIZATION_SERVER = "oauth-authorization-server"
+    """RFC 8414 §3.1: ``/.well-known/oauth-authorization-server`` inserted
+    between the issuer's host and its path, with any terminating ``/`` of the
+    path removed."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class DiscoveryPolicy:
     """Configurable security policy for discovery document validation.
 
@@ -39,13 +54,13 @@ class DiscoveryPolicy:
             discovery document.
         validate_endpoints: Validate that advertised endpoint URLs
             are well-formed.
-        require_key_set: Require a ``jwks_uri`` in the discovery
-            document.
         additional_endpoint_base_addresses: Extra base URLs that
             advertised endpoints are allowed to use (for multi-domain
             or CDN setups).
         authority: Expected authority (scheme + host) for endpoint
-            validation. When ``None``, derived from the discovery URL.
+            validation. The issuer's authority is always allowed; this adds
+            another. When ``None``, only the issuer's authority (plus
+            ``additional_endpoint_base_addresses``) is allowed.
         allow_loopback_endpoints: Allow ``mtls_endpoint_aliases`` to target a
             loopback address (``127.0.0.0/8`` / ``::1``) for local development.
             Default ``False`` — a loopback-routed mTLS request is a limited SSRF
@@ -54,21 +69,26 @@ class DiscoveryPolicy:
             blocked regardless of this flag. Distinct from
             ``allow_http_on_loopback`` (which relaxes only the HTTPS scheme
             requirement, not internal-IP routing).
+        location: Where the metadata document is fetched from, built from
+            the issuer: :attr:`DiscoveryLocation.OPENID_CONFIGURATION` (the
+            default) or :attr:`DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER`.
+            Either way the document's ``issuer`` must equal the configured
+            issuer exactly.
     """
 
     require_https: bool = True
     allow_http_on_loopback: bool = True
     validate_issuer: bool = True
     validate_endpoints: bool = True
-    require_key_set: bool = True
     additional_endpoint_base_addresses: list[str] = field(default_factory=list)
     authority: str | None = None
     allow_loopback_endpoints: bool = False
+    location: DiscoveryLocation = DiscoveryLocation.OPENID_CONFIGURATION
 
     def cache_key(self) -> tuple:
         """A hashable, canonical identity of this policy for cache partitioning.
 
-        The discovery cache keys entries on ``(address, policy.cache_key())`` so a
+        The discovery cache keys entries on ``(issuer, policy.cache_key())`` so a
         response admitted under a lax policy is never served to a caller running a
         stricter one — the policy-bypass guard that previously keyed on
         ``require_https`` alone. Every field that influences how a discovery
@@ -82,25 +102,11 @@ class DiscoveryPolicy:
             self.allow_http_on_loopback,
             self.validate_issuer,
             self.validate_endpoints,
-            self.require_key_set,
             tuple(self.additional_endpoint_base_addresses),
             self.authority,
             self.allow_loopback_endpoints,
+            self.location,
         )
-
-
-@dataclass
-class DiscoveryEndpoint:
-    """Parsed discovery endpoint URL with extracted authority.
-
-    Attributes:
-        url: The full discovery URL (with well-known path appended
-            if not already present).
-        authority: The scheme + host portion of the URL.
-    """
-
-    url: str
-    authority: str
 
 
 def is_loopback(host: str) -> bool:
@@ -118,49 +124,71 @@ def is_loopback(host: str) -> bool:
         return False
 
 
-def parse_discovery_url(url: str) -> DiscoveryEndpoint:
-    """Parse a discovery URL and extract its authority.
+def discovery_document_url(
+    issuer: str,
+    location: DiscoveryLocation = DiscoveryLocation.OPENID_CONFIGURATION,
+) -> str:
+    """The metadata document URL for *issuer* under *location*.
 
-    If the URL does not end with the well-known path, it is appended
-    automatically.
+    - :attr:`DiscoveryLocation.OPENID_CONFIGURATION` (OpenID Connect Discovery
+      1.0 §4.1): any terminating ``/`` is removed from the issuer and
+      ``/.well-known/openid-configuration`` is appended, so
+      ``https://example.com/issuer1`` maps to
+      ``https://example.com/issuer1/.well-known/openid-configuration``.
+    - :attr:`DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER` (RFC 8414 §3.1):
+      ``/.well-known/oauth-authorization-server`` is inserted between the host
+      and the path, with any terminating ``/`` of the path removed, so
+      ``https://example.com/issuer1`` maps to
+      ``https://example.com/.well-known/oauth-authorization-server/issuer1``.
 
     Args:
-        url: The discovery endpoint URL or base issuer URL.
+        issuer: The issuer identifier: an ``http``/``https`` URL with a host
+            and no query or fragment.
+        location: Which rule builds the URL.
 
     Returns:
-        DiscoveryEndpoint with the full URL and extracted authority.
+        The metadata document URL.
 
     Raises:
-        ConfigurationException: If the URL is malformed.
+        ConfigurationException: If *issuer* is empty, is not a valid
+            ``http``/``https`` URL with a host, has a query or fragment, or
+            is a metadata document URL rather than an issuer.
     """
-    if not url:
-        raise ConfigurationException("Discovery URL cannot be empty")
+    if not isinstance(issuer, str) or not issuer:
+        raise ConfigurationException("Issuer cannot be empty")
 
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        raise ConfigurationException(f"Discovery URL must include a scheme: {url}")
+    # urlsplit silently drops leading whitespace and control characters, and
+    # tab/CR/LF anywhere; refuse them so the returned URL is what was checked.
+    if issuer[0].isspace() or any(c in _CONTROL_CHARS for c in issuer):
+        raise ConfigurationException("Issuer is not a valid URL")
+    try:
+        parsed = urlsplit(issuer)
+        hostname = parsed.hostname
+    except ValueError:
+        raise ConfigurationException("Issuer is not a valid URL") from None
     if parsed.scheme not in ("http", "https"):
+        raise ConfigurationException("Issuer must be an HTTP or HTTPS URL")
+    if not hostname:
+        raise ConfigurationException("Issuer must include a host")
+    # "?" and "#" are checked on the string: urlsplit reports an empty query
+    # or fragment for a bare "?" or "#".
+    if "?" in issuer or "#" in issuer:
         raise ConfigurationException(
-            f"Discovery URL must use HTTP or HTTPS scheme, got: {parsed.scheme}"
-        )
-    if not parsed.netloc:
-        raise ConfigurationException(f"Discovery URL must include a host: {url}")
-    if parsed.query or parsed.fragment:
-        raise ConfigurationException(
-            "Discovery URL must not contain query or fragment components"
+            "Issuer must not contain query or fragment components"
         )
 
-    authority = f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path.rstrip("/")
+    if path.endswith((_WELL_KNOWN_PATH, _OAUTH_WELL_KNOWN_PATH)) or path.startswith(
+        _OAUTH_WELL_KNOWN_PATH + "/"
+    ):
+        raise ConfigurationException("Expected an issuer, got a discovery document URL")
 
-    full_url = url
-    if not parsed.path.rstrip("/").endswith(_WELL_KNOWN_PATH.rstrip("/")):
-        full_url = url.rstrip("/") + _WELL_KNOWN_PATH
-
-    # Normalize: strip trailing slash to avoid 404s on servers
-    # that don't accept the trailing-slash variant
-    full_url = full_url.rstrip("/")
-
-    return DiscoveryEndpoint(url=full_url, authority=authority)
+    if location is DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER:
+        # No query or fragment, so the issuer is "<scheme>://<authority>"
+        # followed by exactly parsed.path.
+        origin = issuer[: len(issuer) - len(parsed.path)]
+        return origin + _OAUTH_WELL_KNOWN_PATH + path
+    return issuer.rstrip("/") + _WELL_KNOWN_PATH
 
 
 def resolve_discovery_policy(
@@ -227,10 +255,10 @@ def validate_url_scheme(
 
 
 __all__ = [
-    "DiscoveryEndpoint",
+    "DiscoveryLocation",
     "DiscoveryPolicy",
+    "discovery_document_url",
     "is_loopback",
-    "parse_discovery_url",
     "resolve_discovery_policy",
     "validate_url_scheme",
 ]

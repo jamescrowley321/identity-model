@@ -1,6 +1,6 @@
 # Authorization code test fixtures
 
-Fixtures backing the `authorization-code` conformance suite
+Fixtures backing the `authorization-code` spec-vector suite
 (`spec/vectors/authorization-code.json`), per RFC 6749 §4.1.
 
 - `code-exchange-success.json` — the HTTP 200 token response to a code

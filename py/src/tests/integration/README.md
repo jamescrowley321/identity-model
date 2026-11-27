@@ -209,7 +209,9 @@ secrets when the fixture is provisioned. It points at
 local profiles, plus `TEST_DEVICE_CLIENT_ID` — the device-flow client, since
 Zitadel's client-credentials client is a service user and cannot use the
 device grant. Providers that leave it unset run the device-flow tests with
-`TEST_CLIENT_ID`.
+`TEST_CLIENT_ID`. It also sets `TEST_ID_TOKEN_TRUSTED_AUDIENCES`
+(comma-separated): Zitadel audiences an ID Token to every app in the
+project and to the project, and the client must name those to accept it.
 
 ## Shared Fixtures & the Go/Rust Suites
 

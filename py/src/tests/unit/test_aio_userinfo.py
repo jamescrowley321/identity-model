@@ -4,6 +4,7 @@ import httpx
 import pytest
 import respx
 
+from py_identity_model.aio import UserInfoErrorKind
 from py_identity_model.aio.userinfo import UserInfoRequest, get_userinfo
 from py_identity_model.exceptions import FailedResponseAccessError
 
@@ -30,6 +31,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -41,7 +43,7 @@ class TestAsyncUserInfo:
 
     @respx.mock
     async def test_async_get_userinfo_jwt_response(self):
-        """Test async UserInfo request with JWT response."""
+        """A JWT response cannot be checked against the ID token sub."""
         url = "https://example.com/userinfo"
         jwt_string = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyNDgyODk3NjEwMDEifQ.signature"
         respx.get(url).mock(
@@ -55,12 +57,13 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
-        assert result.is_successful is True
-        assert result.raw == jwt_string
-        assert result.claims is None
+        assert result.is_successful is False
+        assert result.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert result.unverified_jwt == jwt_string
 
     @respx.mock
     async def test_async_get_userinfo_http_error(self):
@@ -71,6 +74,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="expired_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -89,6 +93,7 @@ class TestAsyncUserInfo:
         request = UserInfoRequest(
             address=url,
             token="test_access_token",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
@@ -144,10 +149,10 @@ class TestAsyncUserInfoSubValidation:
         result = await get_userinfo(request)
 
         assert result.is_successful is False
-        assert result.error is not None
-        assert "sub mismatch" in result.error
-        assert "user-123" in result.error
-        assert "user-999" in result.error
+        assert (
+            result.error == "UserInfo sub mismatch: expected 'user-123', got 'user-999'"
+        )
+        assert result.error_kind is UserInfoErrorKind.SUB_MISMATCH
 
     @respx.mock
     async def test_sub_validation_missing_sub(self):
@@ -172,31 +177,46 @@ class TestAsyncUserInfoSubValidation:
         assert result.error is not None
         assert "missing" in result.error.lower()
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"name": "Test"},
+            {"sub": "", "name": "Test"},
+            {"sub": 123, "name": "Test"},
+            {"sub": None, "name": "Test"},
+            ["sub", "user-123"],
+        ],
+        ids=["absent", "empty", "non-string", "null", "non-object"],
+    )
     @respx.mock
-    async def test_sub_validation_not_requested(self):
-        """No expected_sub skips validation entirely."""
+    async def test_missing_sub_rejected(self, body):
+        """A response with no usable sub is rejected.
+
+        OIDC Core 1.0 §5.3.2: the sub claim MUST always be returned.
+        """
         url = "https://example.com/userinfo"
         respx.get(url).mock(
             return_value=httpx.Response(
                 200,
-                json={"sub": "user-123", "name": "Test"},
+                json=body,
                 headers={"Content-Type": "application/json"},
             )
         )
 
-        request = UserInfoRequest(
-            address=url,
-            token="tok",
-        )
+        request = UserInfoRequest(address=url, token="tok", expected_sub="user-123")
         result = await get_userinfo(request)
 
-        assert result.is_successful is True
-        assert result.claims is not None
-        assert result.claims["sub"] == "user-123"
+        assert result.is_successful is False
+        assert result.error == "UserInfo response is missing required 'sub' claim"
+        assert result.error_kind is UserInfoErrorKind.MISSING_SUB
 
     @respx.mock
     async def test_sub_validation_jwt_response(self):
-        """JWT responses skip sub validation (caller must decode first)."""
+        """A JWT response with expected_sub fails closed (OIDC Core §5.3.4).
+
+        The payload sub equals expected_sub: only an unverified decode could
+        compare it, so the unverifiable response is rejected, not accepted.
+        """
         url = "https://example.com/userinfo"
         jwt_string = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIyNDgyODk3NjEwMDEifQ.sig"
         respx.get(url).mock(
@@ -210,9 +230,14 @@ class TestAsyncUserInfoSubValidation:
         request = UserInfoRequest(
             address=url,
             token="tok",
-            expected_sub="user-123",
+            expected_sub="248289761001",
         )
         result = await get_userinfo(request)
 
-        assert result.is_successful is True
-        assert result.raw == jwt_string
+        assert result.is_successful is False
+        assert result.error == (
+            "UserInfo sub cannot be verified: the response is a signed or encrypted "
+            "JWT (application/jwt)"
+        )
+        assert result.error_kind is UserInfoErrorKind.UNVERIFIABLE_SUB
+        assert result.unverified_jwt == jwt_string

@@ -14,7 +14,7 @@ import (
 // fixtureSub is the "sub" claim in spec/test-fixtures/userinfo/standard-claims.json.
 const fixtureSub = "248289761001"
 
-// fixture reads a shared conformance fixture from spec/test-fixtures/userinfo.
+// fixture reads a shared spec fixture from spec/test-fixtures/userinfo.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	// test file lives at go/pkg/userinfo; fixtures at <repo>/spec/test-fixtures.

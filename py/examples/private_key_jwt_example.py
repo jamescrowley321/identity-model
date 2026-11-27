@@ -26,7 +26,7 @@ from py_identity_model import (
 
 
 # A placeholder issuer; swap for your own provider when running for real.
-DEMO_DISCOVERY_URL = "https://demo.duendesoftware.com/.well-known/openid-configuration"
+DEMO_ISSUER = "https://demo.duendesoftware.com"
 
 
 def generate_es256_private_key_pem() -> str:
@@ -52,13 +52,11 @@ def discover_auth_methods_example():
     print("Discover token_endpoint_auth_methods_supported")
     print("=" * 60)
 
-    response = get_discovery_document(
-        DiscoveryDocumentRequest(address=DEMO_DISCOVERY_URL)
-    )
+    response = get_discovery_document(DiscoveryDocumentRequest(issuer=DEMO_ISSUER))
 
     if not response.is_successful:
         print(f"  Discovery failed: {response.error}")
-        return None
+        return None, None
 
     methods = response.token_endpoint_auth_methods_supported or []
     print(f"\n  Token endpoint: {response.token_endpoint}")
@@ -69,10 +67,10 @@ def discover_auth_methods_example():
     else:
         print("  -> Server did NOT advertise private_key_jwt")
 
-    return response.token_endpoint
+    return response.issuer, response.token_endpoint
 
 
-def private_key_jwt_token_request(token_endpoint: str):
+def private_key_jwt_token_request(issuer: str, token_endpoint: str):
     """Build a client credentials request authenticated with private_key_jwt."""
     print("\n" + "=" * 60)
     print("Client Credentials with private_key_jwt")
@@ -84,9 +82,10 @@ def private_key_jwt_token_request(token_endpoint: str):
 
     # Step 2: Build the private_key_jwt authentication parameters.
     #   - algorithm "ES256" matches the key type (FAPI 2.0 compliant).
-    #   - audience defaults to the request address (token endpoint) when None.
+    #   - issuer is the AS issuer identifier (the discovery ``issuer``); it is
+    #     the assertion's sole ``aud``, never the token endpoint (RFC 10070 §4).
     #   - kid is optional; set it when the AS needs help locating your key.
-    auth = PrivateKeyJwt(private_key=private_key_pem, algorithm="ES256")
+    auth = PrivateKeyJwt(private_key=private_key_pem, algorithm="ES256", issuer=issuer)
 
     # Step 3: Attach the assertion to a token request. Note that a
     # client_secret is also provided here only to demonstrate precedence:
@@ -101,6 +100,7 @@ def private_key_jwt_token_request(token_endpoint: str):
     )
 
     print(f"  Token endpoint: {token_request.address}")
+    print(f"  Assertion aud (issuer): {auth.issuer}")
     print(f"  Client ID: {token_request.client_id}")
     print(f"  Assertion algorithm: {auth.algorithm}")
     print(f"  private_key_jwt set: {token_request.private_key_jwt is not None}")
@@ -115,9 +115,12 @@ def main():
     print("private_key_jwt CLIENT AUTHENTICATION (RFC 7523)")
     print("=" * 60)
 
-    token_endpoint = discover_auth_methods_example()
-    # Fall back to a placeholder endpoint when discovery is unavailable.
-    private_key_jwt_token_request(token_endpoint or "https://auth.example.com/token")
+    issuer, token_endpoint = discover_auth_methods_example()
+    # Fall back to placeholders when discovery is unavailable.
+    private_key_jwt_token_request(
+        issuer or "https://auth.example.com",
+        token_endpoint or "https://auth.example.com/token",
+    )
 
     print("\n" + "=" * 60)
     print("Examples completed!")

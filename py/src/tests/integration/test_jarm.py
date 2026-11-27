@@ -134,7 +134,7 @@ class TestJarmLiveVerification:
             process_jarm_response(
                 callback,
                 client_id="test-auth-code",
-                disco_doc_address=test_config["TEST_DISCO_ADDRESS"],
+                issuer=test_config["TEST_ISSUER"],
                 require_https=require_https,
             )
 

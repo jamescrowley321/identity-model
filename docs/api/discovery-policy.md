@@ -34,7 +34,7 @@ config = TokenValidationConfig(
 claims = validate_token(
     jwt=token,
     token_validation_config=config,
-    disco_doc_address="https://issuer.example",
+    issuer="https://issuer.example",
 )
 ```
 
@@ -45,11 +45,45 @@ under a lax policy is never served to a caller using a stricter one.
 
 ::: py_identity_model.core.discovery_policy.DiscoveryPolicy
 
-## Endpoint Parsing
+## Discovery Document Location
 
-::: py_identity_model.core.discovery_policy.DiscoveryEndpoint
+`DiscoveryDocumentRequest(issuer=...)`, `validate_token` and the other
+discovery entry points take the issuer identifier. `DiscoveryPolicy.location`
+selects how the document URL is built from it:
 
-::: py_identity_model.core.discovery_policy.parse_discovery_url
+| `DiscoveryLocation` | Rule | `https://auth.example.com/tenant1` fetches |
+| --- | --- | --- |
+| `OPENID_CONFIGURATION` (default) | OpenID Connect Discovery 1.0 §4.1: any terminating `/` removed, `/.well-known/openid-configuration` appended | `https://auth.example.com/tenant1/.well-known/openid-configuration` |
+| `OAUTH_AUTHORIZATION_SERVER` | RFC 8414 §3.1: `/.well-known/oauth-authorization-server` inserted between the host and the path | `https://auth.example.com/.well-known/oauth-authorization-server/tenant1` |
+
+For an issuer with no path the two differ only in the well-known suffix.
+
+```python
+from py_identity_model import (
+    DiscoveryDocumentRequest,
+    DiscoveryLocation,
+    DiscoveryPolicy,
+    get_discovery_document,
+)
+
+response = get_discovery_document(
+    DiscoveryDocumentRequest(
+        issuer="https://auth.example.com/tenant1",
+        policy=DiscoveryPolicy(
+            location=DiscoveryLocation.OAUTH_AUTHORIZATION_SERVER,
+        ),
+    )
+)
+```
+
+Under either location the document's `issuer` must equal the configured issuer
+exactly. `https://auth.example.com` and `https://auth.example.com/` are
+different issuers. An issuer that ends with `/.well-known/openid-configuration`
+or `/.well-known/oauth-authorization-server` is a configuration error
+(`ConfigurationException` from `validate_token`, `INVALID_CONFIGURATION` from
+`get_discovery_document`); pass the issuer, not the document URL.
+
+::: py_identity_model.core.discovery_policy.DiscoveryLocation
 
 ## Utilities
 

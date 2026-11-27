@@ -5,7 +5,6 @@ from pathlib import Path
 from dotenv import dotenv_values, load_dotenv
 
 from py_identity_model.aio.http_client import _reset_async_http_client
-from py_identity_model.ssl_config import get_ssl_verify
 from py_identity_model.sync.http_client import _reset_http_client
 import py_identity_model.sync.token_validation as _sync_token_validation
 
@@ -29,20 +28,18 @@ def set_env_file(env_file_path: str | None) -> None:
         # Don't load .env.local - it's for local IdentityServer testing only
         load_dotenv(".env", override=True)
 
-    # Clear SSL certificate environment variables for external service testing
+    # Clear SSL certificate environment variables for external service testing.
     # These may be set in .env.local for local IdentityServer testing but should
-    # not be used when testing against external services like Ory.
-    #
-    # We clear them BEFORE clearing caches to ensure get_ssl_verify() returns
-    # the correct value (True for system certificates) on next call.
+    # not be used when testing against external services like Ory. The library
+    # itself reads none of them (its CA bundle comes from Config.ca_bundle), but
+    # httpx clients the tests build directly still honor them (trust_env).
     os.environ.pop("SSL_CERT_FILE", None)
     os.environ.pop("REQUESTS_CA_BUNDLE", None)
     os.environ.pop("CURL_CA_BUNDLE", None)
 
-    # Clear all SSL and HTTP client caches to pick up environment changes.
-    # This is safe in parallel execution because each worker has its own process
-    # and environment, and this only runs once per session during fixture initialization.
-    get_ssl_verify.cache_clear()
+    # Drop the library default clients' connections so they are rebuilt.
+    # This is safe in parallel execution because each worker has its own process,
+    # and this only runs once per session during fixture initialization.
     _reset_http_client()
     _reset_async_http_client()
 
@@ -130,6 +127,24 @@ _REQUIRED_ENV_VARS = (
 )
 
 
+OIDC_WELL_KNOWN_SUFFIX = "/.well-known/openid-configuration"
+
+
+def issuer_from_discovery_address(address: str) -> str:
+    """The issuer whose OIDC discovery document is at *address*.
+
+    ``TEST_DISCO_ADDRESS`` holds the discovery URL; discovery takes the issuer,
+    so the suffix is stripped here once. Raises ``RuntimeError`` when the
+    address is not an OIDC discovery URL.
+    """
+    if not address.endswith(OIDC_WELL_KNOWN_SUFFIX):
+        raise RuntimeError(
+            f"TEST_DISCO_ADDRESS must end with {OIDC_WELL_KNOWN_SUFFIX!r} so the "
+            f"issuer can be derived from it; got {address!r}"
+        )
+    return address.removesuffix(OIDC_WELL_KNOWN_SUFFIX)
+
+
 def get_config(env_file: str | None = None) -> dict:
     """
     Get test configuration from environment variables.
@@ -150,6 +165,10 @@ def get_config(env_file: str | None = None) -> dict:
 
     config = {
         "TEST_DISCO_ADDRESS": os.environ.get("TEST_DISCO_ADDRESS", ""),
+        # Optional: the provider's issuer exactly as its discovery document
+        # declares it (e.g. with a trailing slash, which cannot be recovered
+        # from TEST_DISCO_ADDRESS). Unset derives it from TEST_DISCO_ADDRESS.
+        "TEST_ISSUER": os.environ.get("TEST_ISSUER", ""),
         "TEST_JWKS_ADDRESS": os.environ.get("TEST_JWKS_ADDRESS", ""),
         "TEST_CLIENT_ID": os.environ.get("TEST_CLIENT_ID", ""),
         "TEST_CLIENT_SECRET": os.environ.get("TEST_CLIENT_SECRET", ""),
@@ -175,6 +194,15 @@ def get_config(env_file: str | None = None) -> dict:
         # cannot use the device grant; unset falls back to TEST_CLIENT_ID.
         "TEST_DEVICE_CLIENT_ID": os.environ.get("TEST_DEVICE_CLIENT_ID", ""),
         "TEST_DEVICE_CLIENT_SECRET": os.environ.get("TEST_DEVICE_CLIENT_SECRET", ""),
+        # Audiences the provider adds to an ID Token besides the client's own
+        # (comma-separated); the RP must name them to accept the token.
+        "TEST_ID_TOKEN_TRUSTED_AUDIENCES": [
+            audience.strip()
+            for audience in os.environ.get("TEST_ID_TOKEN_TRUSTED_AUDIENCES", "").split(
+                ","
+            )
+            if audience.strip()
+        ],
         # Opaque token client for introspection/revocation tests
         "TEST_OPAQUE_CLIENT_ID": os.environ.get("TEST_OPAQUE_CLIENT_ID", ""),
         "TEST_OPAQUE_CLIENT_SECRET": os.environ.get("TEST_OPAQUE_CLIENT_SECRET", ""),
